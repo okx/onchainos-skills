@@ -1,72 +1,67 @@
 # My Subscriptions
 
-Read-only subscription list and detail. Device delivery, execution policy,
-renewal, cancellation, and refunds are outside this flow. A new refund intent
-routes directly through `router.md` to the complete Refund V2 reference.
+Browse my subscription task lists or details.
 
 ## Commands
 
-| Intent | Command |
+| Intent | Reference |
 |---|---|
-| My subscriptions | Read Active, then Ended. |
-| Active subscriptions | `onchainos agent my-tasks --task-type subscription --status-type 1 --page 1` |
-| Ended subscriptions | `onchainos agent my-tasks --task-type subscription --status-type 2 --page 1` |
+| My subscriptions | `onchainos agent subscription-list --page-size 10` |
+| Next page | `onchainos agent subscription-list --cursor <nextCursor> --page-size <pageSize>` |
 | Selected subscription detail | `onchainos agent subscribe-detail <jobId> --format json` |
-
-For an unfiltered request, keep Active and Ended pagination separate. If both
-sections have a next page, ask which section to continue. If `my-tasks` returns
-`errorCode=user_identity_required`, render its returned
-`register_user_identity` next step and stop. Do not fall back to another role
-or cached rows.
 
 ## List
 
-Render only the current `my-tasks.subscriptions` page. Keep CLI order and do
-not make extra queries. Render `serviceTokenAmount` verbatim; it is a string.
-Retain the returned `jobId` for selection only; never infer it from a title,
-index, or conversation history.
+Render only the current `payload.items` page. Keep CLI order. This section is
+the single rendering contract for buyer subscription lists.
 
-| Status | Fields |
-|---|---|
-| Active | `title`, `providerAgentId`, `serviceTokenAmount`, `autoRenew`, `thisDeviceReceives` |
-| Ended | `title`, `providerAgentId`, `statusName`, `serviceTokenAmount` |
+### how to render list
+This is a mandatory, exact rendering contract.
+For every subscription-list result, render this structure in full.
+Never summarize, shorten, reorder.
+#### template
+```markdown
+#### Active Subscriptions ({payload.summary.activeCount})
 
-Render `thisDeviceReceives` as Yes/No. An empty section has no actions.
+| # | Job Name | Service Provider | Status | Fee / Month | Next Charge | Auto-renewal | Billing Period | {payload.deviceColumns[].label} |
+|---|---|---|---|---|---|---|---|---|
+| {n} | {title} | Agent#{providerAgentId} | {statusName} | {feeLabel} | {nextChargeLabel} | {autoRenewLabel} | {billingPeriodLabel} | {deviceReceiptCells[column.key]} |
 
-For an unfiltered request, render `Active subscriptions` before `Ended
-subscriptions`. Preserve each section's `page`, `pageSize`, and `hasNext`.
-Only a selected row may open detail; the list itself does not start receipt,
-watch, or execution flows.
+#### Ended Subscriptions ({payload.summary.endedCount})
+
+| # | Job Name | Service Provider | Status | Fee / Month | Billing Period |
+|---|---|---|---|---|---|
+| {n} | {title} | Agent#{providerAgentId} | {statusName} | {feeLabel} | {billingPeriodLabel} |
+
+{No Receiver Warning}
+
+{Rendered nextAction list}
+```
+#### template rules
+1. Group rows by `listStatus`, preserving CLI order.
+2. For Active rows, render the returned `payload.deviceColumns` in order and
+   use each row's `deviceReceiptCells[column.key]` directly. The CLI owns the
+   device label, fallback to `deviceId`, and `(This Device)` marker.
+3. If device data is unavailable, omit device columns and state that receipt
+   status is unavailable.
+4. Warn for each Active row with `hasNoReceivingDevices=true`.
+
+### Constraints
+
+- Use `nextCursor` unchanged to continue the list.
+- The query and rendered recommendations are read-only. Never start listening,
+  modify delivery, cancel, sign, pay, or trade from the list response.
 
 ## Detail
-
-Call `subscribe-detail` only with a `jobId` from the selected current list row.
-If selection or detail lookup fails, refresh the list and ask the user to
-select a row.
 
 Render current fields only: `title`, `jobId`, status, buyer, provider,
 `serviceTokenAmount`, period, `autoRenew`, trial window when present,
 `offlineReceiveFlag`, `deviceList`, and `thisDeviceReceives`.
 
 Preserve `deviceList`: `null` means all logged-in devices by default, `[]`
-means none, and a non-empty array is an explicit allowlist. A detail read never
-authorizes a write. Non-Active subscriptions expose no delivery, signal, or
-execution action.
+means none, and a non-empty array is an explicit allowlist.
 
-## Boundaries
+### Constraints
 
-- Delivery or offline handling: read `receipt.md` only for a new explicit request.
-- Execution policy: read `execution-policy.md` only for a new explicit request.
-- On read failure, do not present cached data as current.
-
-## Wallet login handoff
-
-Wallet login owns this entry. Its successful poll may provide
-`data.postLoginSubscriptions.activeSubscriptionCount`.
-
-- If absent or zero, render nothing about OKX.AI subscriptions and issue no
-  follow-up subscription or device query.
-- If positive, render one localized hint: `You have <count> active subscription
-  task(s). Say “view my subscriptions” to inspect them.`
-- This hint does not enter the free-text router, select a subscription, start
-  receipt/watch, or change a device or execution policy.
+- Never infer a `jobId` from a title or prior context.
+- Refresh the list only when the selected subscription is no longer available.

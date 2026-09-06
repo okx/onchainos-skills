@@ -1,18 +1,5 @@
 # User's User Session Playbook
 
-> 🌐 **[Localization]** — all user-facing content must match the user's language. English users: template verbatim. Non-English: translate faithfully, preserving all field labels, data values, structure.
-
----
-
-## Reading Order
-
-Read this file only after [`router.md`](router.md)
-selects a playbook-owned operation. It contains execution, safety, and
-communication rules; it does not match free-text user intents.
-
-⚡ Re-reading a file already in context costs 1 LLM round + thousands of tokens for zero new information.
-
----
 
 ## §1.7 Deliverable intake contract
 
@@ -37,32 +24,6 @@ communication rules; it does not match free-text user intents.
   `[intent:deliver]` intake consumes the marker and creates the card after persistence succeeds. If
   the marker itself cannot be persisted, remain internal and fail closed; never claim it was retained.
 
----
-
-## User Intent Routing
-
-> When the user-session receives free-form text targeting a specific task and no pending decision matches, load [`router.md`](router.md) and follow its routing flow.
-
-| Intent | Trigger examples | Route to |
-|---|---|---|
-| Publish task | "subscribe / subscription task / publish / create a task / use or buy a service from Agent/ASP #XXXX / initiate a direct conversation with this provider" | [`../../identity/search.md`](../../identity/search.md) commissioning search, then route the `task-create-prepare` response's `data.decision` and `data.nextAction` through [`../../shared/task-action-routing.md`](../../shared/task-action-routing.md); do not read `data.action` from that response |
-| Add attachment / image | "attach a file/image to a task" | [`actions.md`](actions.md) §2 |
-| Stop task | "stop task / close task" | [`actions.md`](actions.md) §3 |
-| View deliverables | "view / list deliverables" | [`actions.md`](actions.md) §4 |
-| Subscription task list | "my subscriptions / subscription list / ongoing subscriptions / active subscriptions / ended subscriptions" | [`router.md`](router.md) §Task list → §Unified My Tasks. User-initiated lists use `my-tasks --task-type subscription`, never `my-subscriptions`. |
-| Rate | "rate this task / rate this subscription / review jobId X / give X five stars / leave feedback" | [`router.md`](router.md) §Rate an active subscription |
-| Refund, paid-deliverable rejection, or refund progress | "refund / get my money back / apply for refund / reject paid delivery / refund status / refund arbitration" | [`refund.md`](refund.md); do not route through disabled legacy close/reject/subscribe-reject/claim-auto-refund commands |
-| Other subscription task ops | "auto-renew / trial cancel / subscription charge / subscription cost" | §Subscription below |
-| Negotiate with provider | "negotiate with XXX" | Sub session handles automatically |
-| Re-submit / nudge | "re-submit / nudge" | [`router.md`](router.md) |
-| Task list / status / close / decision list | "my tasks / view decisions / close task" | [`router.md`](router.md) |
-
----
-
-## Deposit-address QR (insufficient-balance — MANDATORY)
-
-🛑 **Rule:** if `fundingNoticeCommand` exists, run it and follow its output exactly. For `image-notify`, put `markdownImage` under option 1. Never summarize the 4 options/address/gas/resume.
-
 ## Subscription
 
 ### Subscription-specific field rules
@@ -72,13 +33,13 @@ communication rules; it does not match free-text user intents.
 | `serviceId` | from `task-service-select` response | auto-filled |
 | `useTrial` | `subscriptionInfo.supportTrial == true` from `task-service-select` → auto `true`; otherwise `false`. Display hours from `subscriptionInfo.freeTrial` field | **auto-filled, do NOT ask user** |
 | `autoRenew` | ask user explicitly before form — no default | 0=off, 1=on |
-| Guide Consent | The subscribing Agent first derives and locally validates a projection from the selected service Guide; then collect only the Consent fields that projection declares. Never ask for an automatic/notification mode, amount, cap, quote, environment, margin mode, order policy, or credential unless that exact field is declared by the Guide. | **local Guide-defined Consent; ASP supplies Guide text only** |
+| Guide Consent | The subscribing Agent first derives and locally validates a projection from the selected service Guide; then collect only the Consent fields that projection declares. Never add platform execution mode, amount, cap, quote, environment, margin mode, order policy, or credential unless that exact field is declared by the Guide. | **local Guide-defined Consent; ASP supplies Guide text only** |
+| Execution mode | Confirm `signal_only` or `guide_direct`, then save it before `create-subscribe`. | **local; not Guide Consent** |
 | Guide preparation | A setup step runs only at the position and for the bounded tool declared by the Guide. On Install/connect, use the trusted matching Skill; Later remains allowed when the Guide permits it. Never execute ASP-provided commands, auto-install, or block subscription creation on generic readiness. | **optional; Guide-defined only** |
 | `serviceTokenAmount` | from `task-service-select` response `subscriptionInfo.feeAmount` | must match the selected subscription fee |
 
-Read `guideStatus` and `consentStatus` from the JSON success envelope. The Guide-driven happy path
-returns `active / active`; only that pair permits automatic signal execution. These are the only
-subscription execution states exposed to the flow.
+Guide-driven execution requires `guideStatus=active`, `consentStatus=active`,
+and local `executionMode=guide_direct`; otherwise it is receive-only.
 
 For a `next-action` route, its returned confirmation form is the sole field authority; never merge fields
 from a Skill appendix or other card into it. Use [`create.md` §Step 3](create.md#step-3--confirmation-data)
@@ -128,10 +89,8 @@ After `create-subscribe` succeeds, check the CLI output for a `[Watch]` block:
 
 | Intent | Command | Notes |
 |---|---|---|
-| Subscription detail | `subscribe-detail {subId} --format json` | show subscription detail; **always pass `--format json`** when you render or consume fields (the default text output is a human glance: it shows raw `offline` / `devices` but not `thisDeviceReceives` or joined names) |
 | Enable auto-renew | `start-autorenew {subId}` | on-chain, needs EIP-712 sign; may require approve |
 | Cancel subscription (trial conversion / formal auto-renew) | `subscribe-cancel {subId}` | cancellation is not Refund V2: trial → cancel auto-conversion while the trial continues; formal → close auto-renew while the current period continues |
-| Request or check a refund | `refund-prepare` | read [`refund.md`](refund.md), then use only returned Refund V2 actions |
 | Active subscription cost | `subscribe-cost` | total monthly cost of active formal subscriptions (no params needed) |
 | Pause / stop auto copy-trading | `autotrade-consent-set --job-id <jobId> --mode pause` | Direct local action; follow §Pause auto copy-trade below. Do **not** load `session.md`, query subscription state, or resolve an agent id. |
 | Start receiving on this device | `subscribe-device-update --job-id <id> --device-list <fresh list + this device>` | **fresh-read first** (`subscribe-detail <id> --format json` or `my-subscriptions`). If `deviceList:null`, default-all is active: report already receiving and do **NOT** write. For an explicit array, do not write if this device is present; otherwise union, write, re-read, and mark `✅ Yes (added now)`. |
@@ -190,11 +149,9 @@ authorized lifecycle/progress action unless the user explicitly made it conditio
 
 ### Restoring Guide-driven execution
 
-A Guide-driven subscription does not use fixed-field restoration commands or a separate automatic/
-notification choice. Its executable state is the persisted Guide plus the Guide-defined Consent created
-with the subscription. Keep receiving signals even when that local Consent is missing, paused, expired,
-or unreadable; the Guide-direct signal flow will safely skip execution. Never invent a replacement setting
-or collect legacy amount, cap, environment, order-policy, or credential fields from ASP prose.
+A Guide-driven subscription requires its Guide, Consent, and saved
+`guide_direct` mode. If any is unavailable, keep receiving Signals but skip
+execution. Never invent replacement settings from ASP prose.
 
 ### Pause auto copy-trade
 
@@ -222,23 +179,27 @@ onchainos agent autotrade-consent-set --job-id <jobId> --mode pause
 - **Overwrite from fresh read:** the new `--device-list` is ALWAYS built from the just-re-read state (`subscribe-detail <id> --format json` / `my-subscriptions`), never from conversational memory — `subscribe-device-update` overwrites wholesale, so a list read short by even one id silently stops that device from receiving. A fresh `null` is a routing mode, not an empty base list: enabling any device is a no-op; disabling one requires materializing the complete `device-list` first.
 - **Neutral copy:** promise only "messages for this subscription task"; make no promise about system-notification scope.
 
-### Refund V2
-
-Route Buyer refund requests, progress checks, and refund-related results to
-[`refund.md`](refund.md). It is the single source for
-eligibility, confirmation, settlement, and recovery. Cancellation remains a
-separate flow; execute only actions returned by Refund V2.
-
 ## Unified My Tasks
 
-Routing entry: [`router.md` §Task list](router.md#task-list--what-am-i-working-on).
+Run one initial read with independently selected filters:
+
+```bash
+onchainos agent my-tasks --task-type <type> --status-type <status> --page 1
+```
+
+| Parameter | User intent → value |
+|---|---|
+| `<type>` | all → `all`; subscription → `subscription`; one-time → `one-time` |
+| `<status>` | all → `0`; active → `1`; ended → `2` |
+
+`all my tasks` means the caller's own tasks; there is no public task pool.
 
 ### Response contract (non-negotiable)
 
 Build each list response from the current successful `my-tasks` result in this exact order:
 
 1. The matching opening summary below, using only `summary`.
-2. The requested subscription section, using [`../../shared/task-output-templates.md` §Subscription view](../../shared/task-output-templates.md#subscription-view), or its prescribed empty state.
+2. The requested subscription section, using [`subscription.md` §List](subscription.md#list), or its prescribed empty state.
 3. The requested one-time section, using the exact five-column table below, or its prescribed empty state.
 4. A next-page notice only for a returned section whose `hasNext` is `true`.
 
@@ -279,11 +240,11 @@ Render every requested section; omit only unrequested task types:
 
 The schemas below are the complete, mandatory list-row contract. They override generic task-reply rules,
 and their field-specific localization rules are authoritative. Use
-[`../../shared/task-output-templates.md` §Subscription view](../../shared/task-output-templates.md#subscription-view) for
+[`subscription.md` §List](subscription.md#list) for
 subscriptions and the five-column table below for one-time tasks; generic task-scoped `jobId` prefixes or
 fields do not apply to list responses.
 
-- `subscriptions`: if empty, say no matching subscription tasks; otherwise show `Subscription tasks` and render it with [`../../shared/task-output-templates.md` §Subscription view](../../shared/task-output-templates.md#subscription-view).
+- `subscriptions`: if empty, say no matching subscription tasks; otherwise show `Subscription tasks` and render it with [`subscription.md` §List](subscription.md#list).
 - `oneTimeTasks`: if empty, say no matching one-time tasks; otherwise show `One-time tasks (page {page}, {total} total)` and render this exact table:
 
 | # | Service | Agent ID | Price | Status |
@@ -350,35 +311,6 @@ a blocking local error.
 
 The old receipt/listening rule remains unchanged: during login, do **not** ask
 whether to turn on receipt or start listening — enabling happens only when the user explicitly asks later.
-
-## Subscription Detail
-
-Trigger: select a row / `subscription detail` / `show this subscription`. Command: `onchainos agent subscribe-detail <jobId> --format json`; the positional id is the row's **`jobId`** (the response primary key; no separate `subId`) → one `SubscriptionInfo`. **`--format json` is mandatory when consuming fields**: default text lacks `thisDeviceReceives` and joined device names. Render:
-
-> **{title}** — {statusName}
->
-> Subscriber: Agent#{buyerAgentId}
-> Provider: Agent#{providerAgentId}
-> Trial: {trialType==1 ? "Yes" : "No"}
-> Fee: {serviceTokenAmount} (token {serviceTokenAddress[0:6]}…) / period
-> Auto-Renew: {autoRenew==1 ? "On" : "Off"}
-> Billing Period: {periodIndex}
-> Offline Deliverables: {offlineReceiveFlag==1 ? "Discard" : "Replay (Default)"}
-
-- Amount fields (`serviceTokenAmount` / `paymentTokenAmount` / `paymentCurrencyAmount`) are **strings**; render verbatim, never as floats.
-- The CLI provides only `serviceTokenAddress`, not a token symbol; show a short address.
-- Offline Deliverables = detail response `offlineReceiveFlag`: `1` → `Discard`; `0` or absent → `Replay (Default)`. This field exists only in subscription detail; tolerate absence everywhere and never error on it.
-
-After the card, append a **two-column device table**; do not repeat subscription fields. Use one row per device. Prefix the current-device row with 🌟 and append `(This Device)` (e.g. `🌟xxxxxxx (iPhone 15) (This Device)`). The 🌟 prefix is exclusive to §Subscription Detail.
-
-| Logged-in Device | Receives Task Messages |
-|---|---|
-| {🌟 if this device}{deviceName}{(This Device) if this device} | {✅ Yes / ❌ No from `thisDeviceReceives` / membership} |
-
-- **Logged-in Device** names come from joining an explicit `deviceList` with `device-list`. For `deviceList:null`, use every logged-in buyer device because routing is default-all. **Fall back to a raw id/count when names are unavailable; never fabricate one.**
-- **Receives Task Messages**: `deviceList:null` → every buyer device is `✅ Yes`; explicit array → membership. The current-device row always uses CLI `thisDeviceReceives` directly.
-- Subscribe time fields render as Unix **seconds** (device-list times are ms — different unit).
-- **Degraded fallback:** when the device table is unavailable, show two rows: the known current device and `Other device receipt states unavailable`. Never present one device as the full set.
 
 ## Device List
 

@@ -58,6 +58,45 @@
         ],
         "response_includes": ["审核"]
       }
+    },
+    {
+      "id": 4,
+      "prompt": "查看我的订阅。",
+      "expected_output": "只读查询订阅列表，按 Active 和 Ended 展示规范字段、动态设备接收状态、无接收设备提醒，并从 nextAction.actionLabel 渲染后续选项。",
+      "files": ["evals/fixtures/subscription-list.json"],
+      "expectations": [
+        "Calls `onchainos agent subscription-list --page-size 10` exactly once.",
+        "Renders both active and ended subscriptions from the returned page.",
+        "Warns only for the explicit empty device list and renders each returned `nextAction.actionLabel` in order without executing it."
+      ],
+      "assertions": {
+        "required_commands": ["onchainos agent subscription-list --page-size 10"],
+        "forbidden_commands": [
+          "onchainos agent subscribe-detail",
+          "onchainos agent subscribe-device-update",
+          "onchainos agent subscribe-cancel",
+          "okx-a2a user watch"
+        ],
+        "response_includes": [
+          "Alpha Signal",
+          "Old Signal",
+          "2026-09-16 18:10 UTC",
+          "试用期",
+          "MacBook Pro",
+          "iPhone",
+          "No Receiver Signal",
+          "1. 调整接收设备",
+          "2. 查看订阅详情",
+          "3. 取消订阅",
+          "4. 查看下一页"
+        ],
+        "response_excludes": [
+          "开始监听",
+          "推荐",
+          "allowedJobIds",
+          "next_subscription_page"
+        ]
+      }
     }
   ]
 }

@@ -247,6 +247,18 @@ pub enum AgentCommand {
         flag: String,
     },
 
+    /// Persist this device's explicitly user-confirmed subscription execution mode.
+    #[command(name = "subscription-execution-config-set")]
+    SubscriptionExecutionConfigSet {
+        #[arg(long = "service-id")]
+        service_id: String,
+        #[arg(long = "execution-mode")]
+        execution_mode: String,
+        /// Replace an existing mode only after a fresh, explicit user confirmation.
+        #[arg(long)]
+        replace: bool,
+    },
+
     /// List the devices this agent is logged in on (paginated to completion).
     #[command(name = "device-list")]
     DeviceList {
@@ -403,6 +415,32 @@ pub enum AgentCommand {
             value_parser = clap::value_parser!(u32).range(1..=100)
         )]
         page_size: u32,
+    },
+
+    /// List the current User's subscription tasks in one combined, cursor-paginated view.
+    #[command(name = "subscription-list")]
+    SubscriptionList {
+        /// Opaque cursor returned by the preceding subscription-list response.
+        #[arg(long)]
+        cursor: Option<String>,
+        /// Rows per combined page (1-100). Must match the cursor's page size.
+        #[arg(
+            long = "page-size",
+            default_value_t = 10,
+            value_parser = clap::value_parser!(u32).range(1..=100)
+        )]
+        page_size: u32,
+    },
+
+    /// Change a task's visibility through the marketplace task API.
+    #[command(name = "task-visibility-update")]
+    TaskVisibilityUpdate {
+        /// Task job ID.
+        #[arg(long = "job-id")]
+        job_id: String,
+        /// Target visibility: public or private.
+        #[arg(long, value_enum)]
+        visibility: task::user::visibility::TaskVisibility,
     },
 
     /// Aggregated non-terminal tasks across **all agents under the current
@@ -812,9 +850,6 @@ pub enum AgentCommand {
         job_id: String,
         #[arg(long = "delivery-id")]
         delivery_id: String,
-        /// Exact amount derived by the runtime Agent from Guide, Consent, and Signal.
-        #[arg(long)]
-        amount: String,
     },
 
     /// Persist the documented result returned by an Agent-selected Skill/tool.
@@ -1589,6 +1624,21 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::SubscribeOfflineUpdate { job_id, flag } => {
             task::user::run_task(T::SubscribeOfflineUpdate { job_id, flag }, ctx).await
         }
+        AgentCommand::SubscriptionExecutionConfigSet {
+            service_id,
+            execution_mode,
+            replace,
+        } => {
+            task::user::run_task(
+                T::SubscriptionExecutionConfigSet {
+                    service_id,
+                    execution_mode,
+                    replace,
+                },
+                ctx,
+            )
+            .await
+        }
         AgentCommand::DeviceList { page, page_size } => {
             task::user::run_task(T::DeviceList { page, page_size }, ctx).await
         }
@@ -1726,6 +1776,14 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 ctx,
             )
             .await
+        }
+
+        AgentCommand::SubscriptionList { cursor, page_size } => {
+            task::user::run_task(T::SubscriptionList { cursor, page_size }, ctx).await
+        }
+
+        AgentCommand::TaskVisibilityUpdate { job_id, visibility } => {
+            task::user::run_task(T::TaskVisibilityUpdate { job_id, visibility }, ctx).await
         }
 
         AgentCommand::ActiveTasks {
@@ -2094,12 +2152,10 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::AutotradeDirectClaim {
             job_id,
             delivery_id,
-            amount,
         } => {
             let result = task::common::autotrade::executor::claim_guide_direct(
                 &job_id,
                 &delivery_id,
-                &amount,
             )?;
             crate::output::success(result);
             Ok(())

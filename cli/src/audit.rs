@@ -467,8 +467,12 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
             use crate::commands::agent_commerce::a2mcp_probe::A2mcpProbeCommand;
             match command {
                 A2mcpProbeCommand::Probe(_) => "a2mcp-probe probe".into(),
+                A2mcpProbeCommand::ConfirmFree(_) => "a2mcp-probe confirm-free".into(),
                 A2mcpProbeCommand::RefreshBalance(_) => "a2mcp-probe refresh-balance".into(),
                 A2mcpProbeCommand::Funding(_) => "a2mcp-probe funding".into(),
+                A2mcpProbeCommand::ResumeAfterFunding(_) => {
+                    "a2mcp-probe resume-after-funding".into()
+                }
                 A2mcpProbeCommand::PreparePayment(_) => "a2mcp-probe prepare-payment".into(),
             }
         }
@@ -514,6 +518,8 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::ListAttachments { .. } => "list-attachments".into(),
         AgentCommand::MySubscriptions { .. } => "my-subscriptions".into(),
         AgentCommand::MyTasks { .. } => "my-tasks".into(),
+        AgentCommand::SubscriptionList { .. } => "subscription-list".into(),
+        AgentCommand::TaskVisibilityUpdate { .. } => "task-visibility-update".into(),
         AgentCommand::SubscribeDetail { .. } => "subscribe-detail".into(),
         AgentCommand::ClaimAutoComplete { .. } => "claim-auto-complete".into(),
         AgentCommand::AspClaimable { .. } => "asp-claimable".into(),
@@ -588,6 +594,9 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::SubscribeCost { .. } => "subscribe-cost".into(),
         AgentCommand::SubscribeDeviceUpdate { .. } => "subscribe-device-update".into(),
         AgentCommand::SubscribeOfflineUpdate { .. } => "subscribe-offline-update".into(),
+        AgentCommand::SubscriptionExecutionConfigSet { .. } => {
+            "subscription-execution-config-set".into()
+        }
         AgentCommand::DeviceList { .. } => "device-list".into(),
         AgentCommand::AspMatch { .. } => "asp-match".into(),
         AgentCommand::ServiceMatch(_) => "service-match".into(),

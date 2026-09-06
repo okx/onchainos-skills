@@ -128,9 +128,9 @@ function prepareWorkspace(workspace, loadSkill) {
 
   mkdirSync(join(workspace, ".agents", "skills"), { recursive: true });
   mkdirSync(join(workspace, "skills"), { recursive: true });
-  link(skillDir, join(workspace, "skills", "okx-ai"));
+  link(skillDir, join(workspace, "skills", "okx-ai-v2"));
   link(join(repoRoot, "skills", "okx-agentic-wallet"), join(workspace, "skills", "okx-agentic-wallet"));
-  link("../../skills/okx-ai", join(workspace, ".agents", "skills", "okx-ai"));
+  link(skillDir, join(workspace, ".agents", "skills", "okx-ai-v2"));
   link("../../skills/okx-agentic-wallet", join(workspace, ".agents", "skills", "okx-agentic-wallet"));
 }
 

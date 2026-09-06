@@ -194,6 +194,26 @@ pub async fn handle_create_subscribe(
         eprintln!("[create-subscribe] user identity check passed (agentId: {user_agent_id})");
     }
 
+    let execution_mode = super::super::common::autotrade::subscription_config::execution_mode(
+        &user_agent_id,
+        &params.service_id,
+    )?
+    .ok_or_else(|| {
+        anyhow::anyhow!(
+            "subscription executionMode is not configured for userAgentId {user_agent_id} and serviceId {}. Ask the user to confirm signal_only or guide_direct, then run `onchainos agent subscription-execution-config-set --service-id {} --execution-mode <signal_only|guide_direct>` while logged in as this User Agent before retrying create-subscribe",
+            params.service_id,
+            params.service_id,
+        )
+    })?;
+    if execution_mode
+        == super::super::common::autotrade::subscription_config::ExecutionMode::GuideDirect
+        && guide_consent.is_none()
+    {
+        bail!(
+            "guide_direct executionMode requires --service-guide, --service-guide-hash when supplied by the provider, and --guide-consent-json before create-subscribe"
+        );
+    }
+
     // Repeat the selection-time duplicate and balance checks immediately
     // before the V2 subscription write boundary.
     let existing_subscriptions =
