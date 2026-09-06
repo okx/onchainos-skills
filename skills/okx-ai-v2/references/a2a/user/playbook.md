@@ -212,7 +212,7 @@ onchainos agent my-tasks --task-type <type> --status-type <status> --page 1
 Build each list response from the current successful `my-tasks` result in this exact order:
 
 1. The matching opening summary below, using only `summary`.
-2. The requested subscription section, using [`../../shared/task-output-templates.md` §Subscription view](../../shared/task-output-templates.md#subscription-view), or its prescribed empty state.
+2. The requested subscription section, using [`subscription.md` §List](subscription.md#list), or its prescribed empty state.
 3. The requested one-time section, using the exact five-column table below, or its prescribed empty state.
 4. A next-page notice only for a returned section whose `hasNext` is `true`.
 
@@ -253,11 +253,11 @@ Render every requested section; omit only unrequested task types:
 
 The schemas below are the complete, mandatory list-row contract. They override generic task-reply rules,
 and their field-specific localization rules are authoritative. Use
-[`../../shared/task-output-templates.md` §Subscription view](../../shared/task-output-templates.md#subscription-view) for
+[`subscription.md` §List](subscription.md#list) for
 subscriptions and the five-column table below for one-time tasks; generic task-scoped `jobId` prefixes or
 fields do not apply to list responses.
 
-- `subscriptions`: if empty, say no matching subscription tasks; otherwise show `Subscription tasks` and render it with [`../../shared/task-output-templates.md` §Subscription view](../../shared/task-output-templates.md#subscription-view).
+- `subscriptions`: if empty, say no matching subscription tasks; otherwise show `Subscription tasks` and render it with [`subscription.md` §List](subscription.md#list).
 - `oneTimeTasks`: if empty, say no matching one-time tasks; otherwise show `One-time tasks (page {page}, {total} total)` and render this exact table:
 
 | # | Service | Agent ID | Price | Status |
@@ -324,35 +324,6 @@ a blocking local error.
 
 The old receipt/listening rule remains unchanged: during login, do **not** ask
 whether to turn on receipt or start listening — enabling happens only when the user explicitly asks later.
-
-## Subscription Detail
-
-Trigger: select a row / `subscription detail` / `show this subscription`. Command: `onchainos agent subscribe-detail <jobId> --format json`; the positional id is the row's **`jobId`** (the response primary key; no separate `subId`) → one `SubscriptionInfo`. **`--format json` is mandatory when consuming fields**: default text lacks `thisDeviceReceives` and joined device names. Render:
-
-> **{title}** — {statusName}
->
-> Subscriber: Agent#{buyerAgentId}
-> Provider: Agent#{providerAgentId}
-> Trial: {trialType==1 ? "Yes" : "No"}
-> Fee: {serviceTokenAmount} (token {serviceTokenAddress[0:6]}…) / period
-> Auto-Renew: {autoRenew==1 ? "On" : "Off"}
-> Billing Period: {periodIndex}
-> Offline Deliverables: {offlineReceiveFlag==1 ? "Discard" : "Replay (Default)"}
-
-- Amount fields (`serviceTokenAmount` / `paymentTokenAmount` / `paymentCurrencyAmount`) are **strings**; render verbatim, never as floats.
-- The CLI provides only `serviceTokenAddress`, not a token symbol; show a short address.
-- Offline Deliverables = detail response `offlineReceiveFlag`: `1` → `Discard`; `0` or absent → `Replay (Default)`. This field exists only in subscription detail; tolerate absence everywhere and never error on it.
-
-After the card, append a **two-column device table**; do not repeat subscription fields. Use one row per device. Prefix the current-device row with 🌟 and append `(This Device)` (e.g. `🌟xxxxxxx (iPhone 15) (This Device)`). The 🌟 prefix is exclusive to §Subscription Detail.
-
-| Logged-in Device | Receives Task Messages |
-|---|---|
-| {🌟 if this device}{deviceName}{(This Device) if this device} | {✅ Yes / ❌ No from `thisDeviceReceives` / membership} |
-
-- **Logged-in Device** names come from joining an explicit `deviceList` with `device-list`. For `deviceList:null`, use every logged-in buyer device because routing is default-all. **Fall back to a raw id/count when names are unavailable; never fabricate one.**
-- **Receives Task Messages**: `deviceList:null` → every buyer device is `✅ Yes`; explicit array → membership. The current-device row always uses CLI `thisDeviceReceives` directly.
-- Subscribe time fields render as Unix **seconds** (device-list times are ms — different unit).
-- **Degraded fallback:** when the device table is unavailable, show two rows: the known current device and `Other device receipt states unavailable`. Never present one device as the full set.
 
 ## Device List
 

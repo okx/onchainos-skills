@@ -34,33 +34,6 @@ Rules:
   numbered choice when no user decision is required.
 - Do not expose raw JSON, internal phase names, or provider instructions.
 
-## Subscription view
-
-Render only the current `my-tasks.subscriptions` page. Keep the CLI order;
-never sort or compare token amounts. The list is read-only and does not add
-actions, routing, or extra CLI calls.
-
-For an unfiltered request, render `Active subscriptions` first and `Ended
-subscriptions` second. Keep pagination separate for the two CLI responses.
-
-For an Active row:
-
-| # | Service | Provider | Fee | Auto-Renew | This Device |
-|---|---|---|---|---|---|
-| 1 | <title> | Agent#<providerAgentId> | <serviceTokenAmount> | <autoRenew> | <thisDeviceReceives> |
-
-For an ended row:
-
-| # | Service | Provider | Status | Fee |
-|---|---|---|---|---|
-| 1 | <title> | Agent#<providerAgentId> | <statusName> | <serviceTokenAmount> |
-
-Use `<field>` for all placeholders in this file: it matches the surrounding
-templates and avoids confusing placeholder braces with literal JSON objects.
-Render `serviceTokenAmount` verbatim; it is a string. Render
-`thisDeviceReceives` directly from the CLI as Yes/No. Device-wide receipt
-state belongs to the explicit device-management flow, not this list.
-
 ## `decision=blocked`
 
 Use a concise status result and a recovery-oriented action list.

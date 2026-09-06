@@ -17,6 +17,9 @@ case "$*" in
   "agent activate --agent-id 42 --preferred-language zh-CN")
     cat "$ONCHAINOS_EVAL_FIXTURES/listing-submitted.json"
     ;;
+  "agent subscription-list --page-size 10")
+    cat "$ONCHAINOS_EVAL_FIXTURES/subscription-list.json"
+    ;;
   *)
     printf 'Unexpected onchainos invocation: %s\n' "$*" >&2
     exit 64
