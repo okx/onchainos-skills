@@ -37,20 +37,6 @@ communication rules; it does not match free-text user intents.
   `[intent:deliver]` intake consumes the marker and creates the card after persistence succeeds. If
   the marker itself cannot be persisted, remain internal and fail closed; never claim it was retained.
 
----
-
-## Free-text entry
-
-Free-text Buyer intents enter through [`router.md`](router.md). Once this
-playbook is selected, follow only the chosen task-list or Subscription section;
-route a new unrelated intent from `SKILL.md` again.
-
----
-
-## Deposit-address QR (insufficient-balance — MANDATORY)
-
-🛑 **Rule:** if `fundingNoticeCommand` exists, run it and follow its output exactly. For `image-notify`, put `markdownImage` under option 1. Never summarize the 4 options/address/gas/resume.
-
 ## Subscription
 
 ### Subscription-specific field rules
@@ -116,10 +102,8 @@ After `create-subscribe` succeeds, check the CLI output for a `[Watch]` block:
 
 | Intent | Command | Notes |
 |---|---|---|
-| Subscription detail | `subscribe-detail {subId} --format json` | show subscription detail; **always pass `--format json`** when you render or consume fields (the default text output is a human glance: it shows raw `offline` / `devices` but not `thisDeviceReceives` or joined names) |
 | Enable auto-renew | `start-autorenew {subId}` | on-chain, needs EIP-712 sign; may require approve |
 | Cancel subscription (trial conversion / formal auto-renew) | `subscribe-cancel {subId}` | cancellation is not Refund V2: trial → cancel auto-conversion while the trial continues; formal → close auto-renew while the current period continues |
-| Request or check a refund | `refund-prepare` | read [`refund.md`](refund.md), then use only returned Refund V2 actions |
 | Active subscription cost | `subscribe-cost` | total monthly cost of active formal subscriptions (no params needed) |
 | Pause / stop auto copy-trading | `autotrade-consent-set --job-id <jobId> --mode pause` | Direct local action; follow §Pause auto copy-trade below. Do **not** load `session.md`, query subscription state, or resolve an agent id. |
 | Start receiving on this device | `subscribe-device-update --job-id <id> --device-list <fresh list + this device>` | **fresh-read first** (`subscribe-detail <id> --format json` or `my-subscriptions`). If `deviceList:null`, default-all is active: report already receiving and do **NOT** write. For an explicit array, do not write if this device is present; otherwise union, write, re-read, and mark `✅ Yes (added now)`. |
@@ -207,13 +191,6 @@ onchainos agent autotrade-consent-set --job-id <jobId> --mode pause
 - **Clear-list confirmation:** if removal would empty the list, warn "No device will receive this subscription" and confirm before writing.
 - **Overwrite from fresh read:** the new `--device-list` is ALWAYS built from the just-re-read state (`subscribe-detail <id> --format json` / `my-subscriptions`), never from conversational memory — `subscribe-device-update` overwrites wholesale, so a list read short by even one id silently stops that device from receiving. A fresh `null` is a routing mode, not an empty base list: enabling any device is a no-op; disabling one requires materializing the complete `device-list` first.
 - **Neutral copy:** promise only "messages for this subscription task"; make no promise about system-notification scope.
-
-### Refund V2
-
-Route Buyer refund requests, progress checks, and refund-related results to
-[`refund.md`](refund.md). It is the single source for
-eligibility, confirmation, settlement, and recovery. Cancellation remains a
-separate flow; execute only actions returned by Refund V2.
 
 ## Unified My Tasks
 
