@@ -490,12 +490,15 @@ pub struct SubscriptionInfo {
     pub provider_agent_id: String,
     pub provider_agent_address: String,
     pub trial_type: i64,
+    #[serde(rename = "trialStartTime", alias = "trailStartTime")]
     pub trail_start_time: Option<i64>,
+    #[serde(rename = "trialEndTime", alias = "trailEndTime")]
     pub trail_end_time: Option<i64>,
     pub sub_start_time: Option<i64>,
     pub sub_end_time: Option<i64>,
     pub sub_buffer_end_time: Option<i64>,
     pub auto_renew: i64,
+    pub copy_trade: i64,
     pub period_index: Option<i64>,
     pub service_id: String,
     /// Canonical ASP service description when the subscription API includes it.
@@ -510,6 +513,9 @@ pub struct SubscriptionInfo {
     pub payment_token_address: String,
     pub payment_token_amount: String,
     pub payment_currency_amount: String,
+    pub offline_receive_flag: i64,
+    pub role: String,
+    pub has_feed_back: bool,
     // ── Device routing (additive) ─────────────────────────────────────────
     // Receive-device list for this subscription. Tri-state on the wire:
     // missing | null | array — all tolerated (Option so an explicit `null` on
@@ -1276,13 +1282,23 @@ mod tests {
     }
 
     #[test]
-    fn subscription_info_ignores_retired_server_field() {
+    fn subscription_info_preserves_current_copy_trade_field() {
         let wire = detail_fixture();
         assert!(wire.get("copyTrade").is_some());
 
         let info: SubscriptionInfo = serde_json::from_value(wire).unwrap();
         let list_output = serde_json::to_value(info).unwrap();
-        assert!(list_output.get("copyTrade").is_none());
+        assert_eq!(list_output["copyTrade"], 0);
+    }
+
+    #[test]
+    fn current_trial_field_names_are_emitted_with_legacy_input_compatibility() {
+        let info: SubscriptionInfo = serde_json::from_value(detail_fixture()).unwrap();
+        let output = serde_json::to_value(info).unwrap();
+        assert_eq!(output["trialStartTime"], 1_700_000_000i64);
+        assert_eq!(output["trialEndTime"], 1_700_600_000i64);
+        assert!(output.get("trailStartTime").is_none());
+        assert!(output.get("trailEndTime").is_none());
     }
 
     #[test]

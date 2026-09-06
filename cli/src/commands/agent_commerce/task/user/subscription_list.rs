@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use super::subscription_ops::enrich_buyer_subscription_page;
+use super::{content, device_routing};
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::query as common_query;
 use crate::commands::agent_commerce::task::common::AGENT_ROLE_USER;
@@ -98,6 +99,7 @@ fn parse_page(value: Value, stage: CursorStage) -> Result<SubscriptionPage> {
                 "listStatus".to_string(),
                 Value::String(list_status.to_string()),
             );
+            add_display_fields(object, stage);
         }
     }
     Ok(SubscriptionPage {
@@ -107,6 +109,105 @@ fn parse_page(value: Value, stage: CursorStage) -> Result<SubscriptionPage> {
         total,
         has_next: u64::from(page).saturating_mul(u64::from(page_size)) < total,
     })
+}
+
+fn add_display_fields(object: &mut serde_json::Map<String, Value>, stage: CursorStage) {
+    let amount = object
+        .get("serviceTokenAmount")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    object.insert("feeLabel".to_string(), Value::String(amount.to_string()));
+
+    let auto_renew = object.get("autoRenew").and_then(Value::as_i64);
+    object.insert(
+        "autoRenewLabel".to_string(),
+        Value::String(
+            match auto_renew {
+                Some(1) => "Enabled",
+                Some(0) => "Disabled",
+                _ => "—",
+            }
+            .to_string(),
+        ),
+    );
+
+    let billing_period = if object.get("trialType").and_then(Value::as_i64) == Some(1) {
+        "Trial Period".to_string()
+    } else {
+        object
+            .get("periodIndex")
+            .and_then(Value::as_i64)
+            .filter(|period| *period > 0)
+            .map(|period| format!("Billing Period {period}"))
+            .unwrap_or_else(|| "—".to_string())
+    };
+    object.insert(
+        "billingPeriodLabel".to_string(),
+        Value::String(billing_period),
+    );
+
+    let next_charge = if stage == CursorStage::Active && auto_renew == Some(1) {
+        content::fmt_epoch(object.get("subEndTime").and_then(Value::as_i64))
+    } else {
+        None
+    };
+    object.insert(
+        "nextChargeAt".to_string(),
+        next_charge.map(Value::String).unwrap_or(Value::Null),
+    );
+
+    let no_receivers = object
+        .get("deviceList")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty);
+    object.insert(
+        "hasNoReceivingDevices".to_string(),
+        Value::Bool(no_receivers),
+    );
+}
+
+fn attach_device_receipts(output: &mut Value, device_snapshot: Option<&Value>) {
+    let Some(payload) = output.get_mut("payload").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let Some(devices) = device_snapshot
+        .and_then(|snapshot| snapshot.get("list"))
+        .and_then(Value::as_array)
+    else {
+        payload.insert("deviceDataAvailable".to_string(), Value::Bool(false));
+        return;
+    };
+
+    payload.insert("deviceDataAvailable".to_string(), Value::Bool(true));
+    payload.insert("devices".to_string(), Value::Array(devices.clone()));
+    let Some(items) = payload.get_mut("items").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for item in items {
+        let Some(object) = item.as_object_mut() else {
+            continue;
+        };
+        let configured = object.get("deviceList").and_then(Value::as_array);
+        let default_all = object.get("deviceList").is_none_or(Value::is_null);
+        let receipts = devices
+            .iter()
+            .map(|device| {
+                let device_id = device
+                    .get("deviceId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let receives = default_all
+                    || configured.is_some_and(|ids| ids.iter().any(|id| id.as_str() == Some(device_id)));
+                json!({
+                    "deviceId": device_id,
+                    "deviceName": device.get("deviceName").cloned().unwrap_or(Value::Null),
+                    "isThisDevice": device.get("isThisDevice").cloned().unwrap_or(Value::Bool(false)),
+                    "receives": receives
+                })
+            })
+            .collect();
+        object.insert("deviceReceipts".to_string(), Value::Array(receipts));
+    }
 }
 
 async fn fetch_page(
@@ -149,11 +250,12 @@ fn ready_output(
     ended_count: u64,
 ) -> Result<Value> {
     let next_cursor = cursor.map(|cursor| encode_cursor(&cursor)).transpose()?;
+    let next_actions = subscription_actions(&items, next_cursor.as_deref(), page_size);
     Ok(json!({
         "phase": "subscription_browsing",
         "decision": "ready",
         "reason": "subscription_list_loaded",
-        "nextAction": [],
+        "nextAction": next_actions,
         "payload": {
             "items": items,
             "nextCursor": next_cursor,
@@ -164,6 +266,52 @@ fn ready_output(
             }
         }
     }))
+}
+
+fn subscription_actions(items: &[Value], next_cursor: Option<&str>, page_size: u32) -> Vec<Value> {
+    let all_job_ids = items
+        .iter()
+        .filter_map(|item| item.get("jobId").and_then(Value::as_str))
+        .collect::<Vec<_>>();
+    let active_job_ids = items
+        .iter()
+        .filter(|item| item.get("listStatus").and_then(Value::as_str) == Some("active"))
+        .filter_map(|item| item.get("jobId").and_then(Value::as_str))
+        .collect::<Vec<_>>();
+    let mut actions = Vec::new();
+    if !active_job_ids.is_empty() {
+        actions.push(json!({
+            "id": "manage_subscription_devices",
+            "actionLabel": "Adjust receiving devices",
+            "recommend": true,
+            "params": {"allowedJobIds": active_job_ids}
+        }));
+    }
+    if !all_job_ids.is_empty() {
+        actions.push(json!({
+            "id": "view_subscription_detail",
+            "actionLabel": "View subscription details",
+            "recommend": actions.is_empty(),
+            "params": {"allowedJobIds": all_job_ids}
+        }));
+    }
+    if !active_job_ids.is_empty() {
+        actions.push(json!({
+            "id": "cancel_subscription",
+            "actionLabel": "Cancel subscription",
+            "recommend": false,
+            "params": {"allowedJobIds": active_job_ids}
+        }));
+    }
+    if let Some(cursor) = next_cursor {
+        actions.push(json!({
+            "id": "next_subscription_page",
+            "actionLabel": "View next page",
+            "recommend": actions.is_empty(),
+            "params": {"cursor": cursor, "pageSize": page_size}
+        }));
+    }
+    actions
 }
 
 fn next_from_active(
@@ -301,7 +449,7 @@ pub async fn handle_subscription_list(cursor_raw: Option<&str>, page_size: u32) 
         return Ok(());
     }
 
-    let output = match cursor_raw {
+    let mut output = match cursor_raw {
         Some(raw) => {
             let cursor = decode_cursor(raw)?;
             if cursor.page_size != page_size {
@@ -311,6 +459,12 @@ pub async fn handle_subscription_list(cursor_raw: Option<&str>, page_size: u32) 
         }
         None => initial_page(&agent_id, page_size).await?,
     };
+    let mut device_client = TaskApiClient::new();
+    let device_snapshot =
+        device_routing::fetch_device_list_snapshot(&mut device_client, &agent_id, 1, 100)
+            .await
+            .ok();
+    attach_device_receipts(&mut output, device_snapshot.as_ref());
     crate::output::success(output);
     Ok(())
 }
@@ -385,5 +539,113 @@ mod tests {
         assert_eq!(output["phase"], "identity");
         assert_eq!(output["decision"], "blocked");
         assert_eq!(output["nextAction"][0]["id"], "register_user_identity");
+    }
+
+    #[test]
+    fn display_fields_follow_active_subscription_contract() {
+        let mut item = serde_json::Map::from_iter([
+            ("serviceTokenAmount".to_string(), json!("10")),
+            ("autoRenew".to_string(), json!(1)),
+            ("trialType".to_string(), json!(0)),
+            ("periodIndex".to_string(), json!(2)),
+            ("subEndTime".to_string(), json!(1_700_000_000i64)),
+            ("deviceList".to_string(), json!([])),
+        ]);
+        add_display_fields(&mut item, CursorStage::Active);
+        assert_eq!(item["feeLabel"], "10");
+        assert_eq!(item["autoRenewLabel"], "Enabled");
+        assert_eq!(item["billingPeriodLabel"], "Billing Period 2");
+        assert_eq!(item["nextChargeAt"], "2023-11-14 22:13 UTC");
+        assert_eq!(item["hasNoReceivingDevices"], true);
+    }
+
+    #[test]
+    fn trial_and_ended_rows_do_not_invent_a_next_charge() {
+        let mut item = serde_json::Map::from_iter([
+            ("serviceTokenAmount".to_string(), json!("0.1")),
+            ("autoRenew".to_string(), json!(1)),
+            ("trialType".to_string(), json!(1)),
+            ("periodIndex".to_string(), json!(0)),
+            ("subEndTime".to_string(), json!(1_700_000_000i64)),
+            ("deviceList".to_string(), Value::Null),
+        ]);
+        add_display_fields(&mut item, CursorStage::Ended);
+        assert_eq!(item["billingPeriodLabel"], "Trial Period");
+        assert!(item["nextChargeAt"].is_null());
+        assert_eq!(item["hasNoReceivingDevices"], false);
+    }
+
+    #[test]
+    fn device_receipts_preserve_null_empty_and_allowlist_semantics() {
+        let mut output = json!({"payload": {"items": [
+            {"jobId":"all", "deviceList": null},
+            {"jobId":"none", "deviceList": []},
+            {"jobId":"one", "deviceList": ["d2"]}
+        ]}});
+        let devices = json!({"list": [
+            {"deviceId":"d1", "deviceName":"Mac", "isThisDevice":true},
+            {"deviceId":"d2", "deviceName":"Phone", "isThisDevice":false}
+        ]});
+        attach_device_receipts(&mut output, Some(&devices));
+        assert_eq!(
+            output["payload"]["items"][0]["deviceReceipts"][1]["receives"],
+            true
+        );
+        assert_eq!(
+            output["payload"]["items"][1]["deviceReceipts"][0]["receives"],
+            false
+        );
+        assert_eq!(
+            output["payload"]["items"][2]["deviceReceipts"][0]["receives"],
+            false
+        );
+        assert_eq!(
+            output["payload"]["items"][2]["deviceReceipts"][1]["receives"],
+            true
+        );
+    }
+
+    #[test]
+    fn unavailable_device_data_has_an_explicit_degraded_signal() {
+        let mut output = json!({"payload": {"items": []}});
+        attach_device_receipts(&mut output, None);
+        assert_eq!(output["payload"]["deviceDataAvailable"], false);
+    }
+
+    #[test]
+    fn actions_follow_current_page_capabilities() {
+        let items = vec![
+            json!({"jobId":"active-1", "listStatus":"active"}),
+            json!({"jobId":"ended-1", "listStatus":"ended"}),
+        ];
+        let actions = subscription_actions(&items, Some("next-cursor"), 10);
+        assert_eq!(actions.len(), 4);
+        assert_eq!(actions[0]["id"], "manage_subscription_devices");
+        assert_eq!(actions[0]["actionLabel"], "Adjust receiving devices");
+        assert_eq!(actions[1]["id"], "view_subscription_detail");
+        assert_eq!(actions[1]["actionLabel"], "View subscription details");
+        assert_eq!(actions[2]["id"], "cancel_subscription");
+        assert_eq!(actions[2]["actionLabel"], "Cancel subscription");
+        assert_eq!(actions[3]["id"], "next_subscription_page");
+        assert_eq!(actions[3]["actionLabel"], "View next page");
+        assert_eq!(actions[0]["params"]["allowedJobIds"], json!(["active-1"]));
+        assert_eq!(
+            actions[1]["params"]["allowedJobIds"],
+            json!(["active-1", "ended-1"])
+        );
+        assert_eq!(actions[3]["params"]["cursor"], "next-cursor");
+    }
+
+    #[test]
+    fn ended_only_actions_omit_mutations() {
+        let actions = subscription_actions(
+            &[json!({"jobId":"ended-1", "listStatus":"ended"})],
+            None,
+            10,
+        );
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0]["id"], "view_subscription_detail");
+        assert_eq!(actions[0]["actionLabel"], "View subscription details");
+        assert_eq!(actions[0]["recommend"], true);
     }
 }
