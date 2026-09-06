@@ -55,6 +55,8 @@ CLAUDE.local.md
 .codex/build/
 .codex/runtime/
 .codex/skills/
+.codex/config.toml
+.codex/dev.json
 .cursor
 .ai-mat
 .cursorrules
@@ -99,7 +101,12 @@ skills/okx-agent-task-workspace/
 
 output/
 
-scripts/dev
+scripts/dev/*
+!scripts/dev/common.sh
+!scripts/dev/dev.mjs
+!scripts/dev/dev.test.mjs
+!scripts/dev/okx-a2a.sh
+!scripts/dev/onchainos.sh
 
 .aiide/
 .aiide-preview/
