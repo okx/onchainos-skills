@@ -1,18 +1,5 @@
 # User's User Session Playbook
 
-> 🌐 **[Localization]** — all user-facing content must match the user's language. English users: template verbatim. Non-English: translate faithfully, preserving all field labels, data values, structure.
-
----
-
-## Reading Order
-
-Read this file only after [`router.md`](router.md)
-selects a playbook-owned operation. It contains execution, safety, and
-communication rules; it does not match free-text user intents.
-
-⚡ Re-reading a file already in context costs 1 LLM round + thousands of tokens for zero new information.
-
----
 
 ## §1.7 Deliverable intake contract
 

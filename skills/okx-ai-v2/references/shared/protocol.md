@@ -15,7 +15,7 @@ Use this envelope when a CLI result requires continuation:
 - `phase`: current business stage.
 - `decision`: `ready`, `blocked`, or `requires_user_input`.
 - `reason`: machine-readable reason.
-- `nextAction`: currently allowed stable actions.
+- `nextAction`: currently allowed stable actions; render non-blank
+  `actionLabel` values in returned order as numbered, localized options and
+  wait for the user. Do not expose Action IDs, `recommend`, or `params`.
 - `payload`: current facts.
-
-Route by `decision`; never infer state from human-readable text.

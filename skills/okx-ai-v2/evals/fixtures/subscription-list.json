@@ -18,13 +18,14 @@
         "statusName": "ACTIVE",
         "feeLabel": "20",
         "nextChargeAt": "2026-09-16 18:10 UTC",
+        "nextChargeLabel": "2026-09-16 18:10 UTC",
         "autoRenewLabel": "Enabled",
         "billingPeriodLabel": "Billing Period 1",
         "deviceList": null,
         "hasNoReceivingDevices": false,
         "deviceReceipts": [
-          {"deviceId":"d1","deviceName":"MacBook Pro","isThisDevice":true,"receives":true},
-          {"deviceId":"d2","deviceName":"iPhone","isThisDevice":false,"receives":true}
+          {"deviceId":"d1","deviceName":"MacBook Pro","isThisDevice":true,"receives":true,"receivesLabel":"✅"},
+          {"deviceId":"d2","deviceName":"iPhone","isThisDevice":false,"receives":true,"receivesLabel":"✅"}
         ]
       },
       {
@@ -35,13 +36,14 @@
         "statusName": "ACTIVE",
         "feeLabel": "1",
         "nextChargeAt": null,
+        "nextChargeLabel": "—",
         "autoRenewLabel": "Disabled",
         "billingPeriodLabel": "Trial Period",
         "deviceList": [],
         "hasNoReceivingDevices": true,
         "deviceReceipts": [
-          {"deviceId":"d1","deviceName":"MacBook Pro","isThisDevice":true,"receives":false},
-          {"deviceId":"d2","deviceName":"iPhone","isThisDevice":false,"receives":false}
+          {"deviceId":"d1","deviceName":"MacBook Pro","isThisDevice":true,"receives":false,"receivesLabel":"❌"},
+          {"deviceId":"d2","deviceName":"iPhone","isThisDevice":false,"receives":false,"receivesLabel":"❌"}
         ]
       },
       {
@@ -52,6 +54,7 @@
         "statusName": "CLOSED",
         "feeLabel": "0.02",
         "nextChargeAt": null,
+        "nextChargeLabel": "—",
         "autoRenewLabel": "Disabled",
         "billingPeriodLabel": "Billing Period 1",
         "deviceList": ["d1"],

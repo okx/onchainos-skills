@@ -153,7 +153,14 @@ fn add_display_fields(object: &mut serde_json::Map<String, Value>, stage: Cursor
     };
     object.insert(
         "nextChargeAt".to_string(),
-        next_charge.map(Value::String).unwrap_or(Value::Null),
+        next_charge
+            .clone()
+            .map(Value::String)
+            .unwrap_or(Value::Null),
+    );
+    object.insert(
+        "nextChargeLabel".to_string(),
+        Value::String(next_charge.unwrap_or_else(|| "—".to_string())),
     );
 
     let no_receivers = object
@@ -180,6 +187,33 @@ fn attach_device_receipts(output: &mut Value, device_snapshot: Option<&Value>) {
 
     payload.insert("deviceDataAvailable".to_string(), Value::Bool(true));
     payload.insert("devices".to_string(), Value::Array(devices.clone()));
+    let device_columns = devices
+        .iter()
+        .map(|device| {
+            let device_id = device
+                .get("deviceId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let name = device
+                .get("deviceName")
+                .and_then(Value::as_str)
+                .filter(|name| !name.is_empty())
+                .unwrap_or(device_id);
+            let is_this_device = device
+                .get("isThisDevice")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            json!({
+                "key": device_id,
+                "label": if is_this_device {
+                    format!("{name} (This Device)")
+                } else {
+                    name.to_string()
+                }
+            })
+        })
+        .collect();
+    payload.insert("deviceColumns".to_string(), Value::Array(device_columns));
     let Some(items) = payload.get_mut("items").and_then(Value::as_array_mut) else {
         return;
     };
@@ -189,6 +223,7 @@ fn attach_device_receipts(output: &mut Value, device_snapshot: Option<&Value>) {
         };
         let configured = object.get("deviceList").and_then(Value::as_array);
         let default_all = object.get("deviceList").is_none_or(Value::is_null);
+        let mut receipt_cells = serde_json::Map::new();
         let receipts = devices
             .iter()
             .map(|device| {
@@ -198,15 +233,19 @@ fn attach_device_receipts(output: &mut Value, device_snapshot: Option<&Value>) {
                     .unwrap_or_default();
                 let receives = default_all
                     || configured.is_some_and(|ids| ids.iter().any(|id| id.as_str() == Some(device_id)));
+                let receives_label = if receives { "✅" } else { "❌" };
+                receipt_cells.insert(device_id.to_string(), json!(receives_label));
                 json!({
                     "deviceId": device_id,
                     "deviceName": device.get("deviceName").cloned().unwrap_or(Value::Null),
                     "isThisDevice": device.get("isThisDevice").cloned().unwrap_or(Value::Bool(false)),
-                    "receives": receives
+                    "receives": receives,
+                    "receivesLabel": receives_label
                 })
             })
             .collect();
         object.insert("deviceReceipts".to_string(), Value::Array(receipts));
+        object.insert("deviceReceiptCells".to_string(), Value::Object(receipt_cells));
     }
 }
 
@@ -556,6 +595,7 @@ mod tests {
         assert_eq!(item["autoRenewLabel"], "Enabled");
         assert_eq!(item["billingPeriodLabel"], "Billing Period 2");
         assert_eq!(item["nextChargeAt"], "2023-11-14 22:13 UTC");
+        assert_eq!(item["nextChargeLabel"], "2023-11-14 22:13 UTC");
         assert_eq!(item["hasNoReceivingDevices"], true);
     }
 
@@ -572,6 +612,7 @@ mod tests {
         add_display_fields(&mut item, CursorStage::Ended);
         assert_eq!(item["billingPeriodLabel"], "Trial Period");
         assert!(item["nextChargeAt"].is_null());
+        assert_eq!(item["nextChargeLabel"], "—");
         assert_eq!(item["hasNoReceivingDevices"], false);
     }
 
@@ -592,8 +633,16 @@ mod tests {
             true
         );
         assert_eq!(
+            output["payload"]["items"][0]["deviceReceipts"][1]["receivesLabel"],
+            "✅"
+        );
+        assert_eq!(
             output["payload"]["items"][1]["deviceReceipts"][0]["receives"],
             false
+        );
+        assert_eq!(
+            output["payload"]["items"][1]["deviceReceipts"][0]["receivesLabel"],
+            "❌"
         );
         assert_eq!(
             output["payload"]["items"][2]["deviceReceipts"][0]["receives"],

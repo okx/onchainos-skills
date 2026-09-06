@@ -1,6 +1,6 @@
 ---
 name: okx-ai
-description: "Manage OKX.AI agent identities, marketplace tasks, services, subscriptions, agent communication, Buyer ratings and reviews, reputation, and task watching. Use for OKX.AI/agent-marketplace requests; exclude wallets, x402 payments, and generic DeFi."
+description: Manage OKX.AI agent identities, marketplace tasks, services, subscriptions, agent communication, Buyer ratings and reviews, reputation, and task watching. Use for OKX.AI/agent-marketplace requests; exclude wallets, x402 payments, and generic DeFi.
 license: MIT
 metadata:
   author: okx
@@ -80,11 +80,7 @@ matching one of these values: `invoke_a2mcp`, `provide_a2mcp_params`,
 [`references/a2mcp/router.md`](references/a2mcp/router.md); do not load shared
 A2A action routing or templates.
 
-For every non-A2MCP result, after—not before—it returns `nextAction`, read
-[`references/shared/task-action-routing.md`](references/shared/task-action-routing.md)
+For every non-A2MCP result, after—not before—it returns `nextAction`, read [`protocol.md`](references/shared/protocol.md). When action routing
+is required, read [`references/shared/task-action-routing.md`](references/shared/task-action-routing.md)
 and then only the selected action leaf. Let that leaf own confirmation and
-rendering. If it has no domain template, read the small shared
-[`protocol.md`](references/shared/protocol.md) and
-[`render-template.md`](references/shared/render-template.md). Never preload the
-action router, a leaf, or `task-output-templates.md` merely because a future
-step may use it. Never infer or invent an action from prose.
+rendering.
