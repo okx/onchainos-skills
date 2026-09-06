@@ -13,14 +13,16 @@
 //! `SubStatus`) defines valid codes: -1 (Init), 0 (Created), 1 (Active), 3 (Rejected),
 //! 4 (Disputed), 6 (Completed), 7 (Closed), 8 (Expired), 9 (Failed).
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use serde::Serialize;
 use serde_json::Value;
 use std::time::Duration;
 
 use crate::audit;
-use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-use crate::commands::agent_commerce::task::common::subscription_identity::select_subscription_agent_id;
+use crate::commands::agent_commerce::task::common::{
+    self, network::task_api_client::TaskApiClient,
+    subscription_identity::select_subscription_agent_id,
+};
 use crate::commands::agent_commerce::task::signing;
 
 /// `jobType` value that marks a task as a subscription (Subscribe API doc §1.3).
@@ -498,8 +500,9 @@ const MAX_DISPUTE_REASON_CHARS: usize = 2000;
 /// `subscribe-dispute` — the ASP raises arbitration for a rejected subscription period via the
 /// backend's single combined endpoint (§2.10 `POST /priapi/v1/aieco/task/{jobId}/dispute/
 /// approveAndCreateDispute` — approve + create in one call, NOT the old two-phase
-/// dispute raise/confirm). Fetch uopData → sign → broadcast; `reason` rides the broadcast
-/// bizContext so the arbitration record carries the ASP's argument.
+/// dispute raise/confirm). Fetch uopData → hand the exact reason to the task session → sign →
+/// broadcast; `reason` also rides the broadcast bizContext so the arbitration record and the
+/// later evidence flow share the ASP's argument.
 pub async fn handle_dispute(
     client: &mut TaskApiClient,
     job_id: &str,
@@ -515,12 +518,32 @@ pub async fn handle_dispute(
         bail!("Dispute reason exceeds {MAX_DISPUTE_REASON_CHARS} characters. Please shorten it and try again.");
     }
     let (account_id, address) = signing::resolve_wallet_by_agent_id(agent_id).await?;
+    let subscription_detail = client
+        .fetch_subscription(job_id, agent_id)
+        .await
+        .context("subscribe-dispute: failed to fetch subscription detail for reason handoff")?;
+    let buyer_agent_id = subscription_detail["buyerAgentId"]
+        .as_str()
+        .or_else(|| subscription_detail["userAgentId"].as_str())
+        .filter(|value| !value.trim().is_empty())
+        .context(
+            "subscribe-dispute: subscription detail missing buyerAgentId for reason handoff",
+        )?;
     let body = serde_json::json!({});
 
     // §2.10 combined approve+create (subId == jobId). Path shape is /task/{jobId}/dispute/…,
     // NOT under /subscribe/.
     let path = client.endpoint(job_id, "dispute/approveAndCreateDispute");
     let resp = client.post_with_identity(&path, &body, agent_id).await?;
+
+    // Deliver the original reason to the existing subscription task session before
+    // broadcasting the combined transaction. The later `sub_asp_dispute` event is handled
+    // in that session and can therefore include the same reason in the evidence upload.
+    let reason_handoff =
+        super::dispute_raise::build_subscription_reason_handoff(job_id, agent_id, reason);
+    common::okx_a2a::session_send(job_id, Some(buyer_agent_id), &reason_handoff).context(
+        "subscribe-dispute: failed to hand off the arbitration reason to the task session; combined dispute transaction was not broadcast",
+    )?;
 
     // Ride the reason on the broadcast bizContext (mirrors `dispute confirm`); the
     // approveAndCreateDispute request body itself stays empty, matching the one-shot path.

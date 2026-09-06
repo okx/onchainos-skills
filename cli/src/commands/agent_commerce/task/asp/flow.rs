@@ -1235,18 +1235,23 @@ pub async fn generate_next_action(
             "[Current state] sub_asp_dispute (subscription evaluation on-chain; CLI auto-submits evidence on this event)\n\
              [Role] ASP (Agent Service ASP)\n\n\
              🛑 **This event triggers an AUTOMATIC evidence upload — no user interaction**.\n\
-             The agent does NOT ask the user for evidence; it pulls the full chat history from this sub\n\
+             The agent does NOT ask the user for evidence; it recovers the exact arbitration reason and pulls the full chat history from this sub\n\
              session, calls `dispute upload` (which also auto-attaches the most recent 20 deliverables saved under\n\
              `~/.onchainos/deliverables/asp/{job_id}/`), and then notifies the user via\n\
              `onchainos agent user-notify`. **Do NOT** use `pending-decisions-v2 request` for this event.\n\
              **Do NOT** `okx-a2a session send` anything to the User Agent — both sides see the evaluation via on-chain events.\n\n\
              {task_fields}\n\
-             **Step 1 — Pull this sub session's chat history** (use `buyerAgentId` from the **Task fields** block above):\n\n\
+             **Step 1 — Recover the arbitration reason:**\n\
+             Find the latest `[ARBITRATION_REASON_CONTEXT]` message in this task conversation whose `jobId` is `{job_id}`, `providerAgentId` is `{agent_id}`, `taskType` is `subscription`, and `resumeEvent` is `sub_asp_dispute`. Preserve its `reason` exactly.\n\
+             The matching context is required for this evidence upload. When it is unavailable, return `arbitration_reason_context_missing` and end this turn.\n\n\
+             **Step 2 — Pull this sub session's chat history** (use `buyerAgentId` from the **Task fields** block above):\n\n\
              ```bash\n\
              okx-a2a session history --job-id {job_id} --to-agent-id <buyerAgentId> --json\n\
              ```\n\n\
-             **Step 2 — Format the chat history as the `--text` body**:\n\n\
+             **Step 3 — Format the arbitration reason and chat history as the `--text` body**:\n\n\
              ```\n\
+             ==== ASP arbitration reason (from ARBITRATION_REASON_CONTEXT) ====\n\
+             <exact reason>\n\
              ==== Negotiation / delivery chat history (from okx-a2a session history) ====\n\
              [time] User Agent(<agentId>): ...\n\
              [time] ASP(<agentId>): ...\n\
@@ -1254,15 +1259,15 @@ pub async fn generate_next_action(
              ```\n\n\
              ⚠️ **`--text` is capped at 16 KB** — if the chat history is long, **keep only** the key checkpoints and prepend `(key checkpoints extracted)`; do NOT blindly drop the first N entries.\n\
              If history is genuinely empty, pass a minimal placeholder like `(no chat history available)` so `--text` is non-empty.\n\n\
-             **Step 3 — Upload (off-chain multipart):**\n\
+             **Step 4 — Upload (off-chain multipart):**\n\
              ```bash\n\
-             onchainos agent dispute upload {job_id} --role asp --agent-id {agent_id} --max-files 20 --text \"<chat history block>\"\n\
+             onchainos agent dispute upload {job_id} --role asp --agent-id {agent_id} --max-files 20 --text \"<arbitration reason + chat history block>\"\n\
              ```\n\
-             The CLI auto-attaches the most recent 20 entries under `~/.onchainos/deliverables/asp/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers the deliverable copies saved at delivery time. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 4 — the on-chain dispute will continue without off-chain evidence and the evaluator rules on what is available.\n\n\
-             **Step 4 — Notify the user (after upload returns):**\n\n\
+             The CLI auto-attaches the most recent 20 entries under `~/.onchainos/deliverables/asp/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers the deliverable copies saved at delivery time. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 5 — the on-chain dispute will continue without off-chain evidence and the evaluator rules on what is available.\n\n\
+             **Step 5 — Notify the user (after upload returns):**\n\n\
              content:\n\
-             \x20\x20\x20\x20[Evaluation opened] Subscription evaluation for job `{job_id}` is on-chain. The system has automatically submitted your evidence (chat history + saved deliverables). Awaiting the evaluator's verdict.\n\n\
-             **Step 5 — End this turn.** Do NOT `okx-a2a session send` anything to the User Agent.\n\n\
+             \x20\x20\x20\x20[Evaluation opened] Subscription evaluation for job `{job_id}` is on-chain. The system has automatically submitted your evidence (arbitration reason + chat history + saved deliverables). Awaiting the evaluator's verdict.\n\n\
+             **Step 6 — End this turn.** Do NOT `okx-a2a session send` anything to the User Agent.\n\n\
              [Follow-up events]\n\
              - job_completed → won, funds released to the ASP\n\
              - dispute_resolved → lost, funds refunded to the User Agent\n"
@@ -1611,9 +1616,11 @@ mod tests {
 
     #[tokio::test]
     async fn dispute_approved_runs_confirm_and_job_disputed_owns_evidence() {
-        let approved = run_asp(
+        let task = notification_task("One-time work", 0, "1", "USDT", 4);
+        let approved = run_asp_with_task(
             "dispute_approved",
             json!({"event":"dispute_approved", "code":0}),
+            &task,
         )
         .await;
         assert!(approved.contains("Run the stage-2 dispute broadcast"));
@@ -1622,16 +1629,44 @@ mod tests {
         assert!(approved.contains("--reason-b64"));
         assert!(approved.contains("arbitration_reason_context_missing"));
         assert!(!approved.contains("--reason \"\""));
-        assert!(approved.contains("`job_disputed` system notification starts the independent evidence-upload workflow"));
+        assert!(approved.contains("- `job_disputed` system notification"));
 
-        let disputed = run_asp(
+        let disputed = run_asp_with_task(
             "job_disputed",
             json!({"event":"job_disputed", "buyerAgentId":"8315"}),
+            &task,
         )
         .await;
         assert!(disputed.contains("job_disputed"));
         assert!(disputed.contains("evidence"));
         assert!(disputed.contains("onchainos agent dispute upload"));
+    }
+
+    #[tokio::test]
+    async fn sub_asp_dispute_uses_handed_off_reason_in_evidence() {
+        let task =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &json!({
+                    "title": "Subscription work",
+                    "jobType": 1,
+                    "subStatus": 4,
+                    "providerAgentId": ASP_AGENT_ID,
+                    "buyerAgentId": "buyer-1",
+                }),
+            );
+        let output = run_asp_with_task(
+            "sub_asp_dispute",
+            json!({"event": "sub_asp_dispute"}),
+            &task,
+        )
+        .await;
+
+        assert!(output.contains("[ARBITRATION_REASON_CONTEXT]"));
+        assert!(output.contains("taskType` is `subscription`"));
+        assert!(output.contains("resumeEvent` is `sub_asp_dispute`"));
+        assert!(output.contains("arbitration_reason_context_missing"));
+        assert!(output.contains("<arbitration reason + chat history block>"));
+        assert!(!output.contains("onchainos agent dispute confirm"));
     }
 
     #[tokio::test]

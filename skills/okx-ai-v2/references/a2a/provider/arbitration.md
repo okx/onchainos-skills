@@ -185,20 +185,31 @@ in the current conversation.
 
 ## Reason handoff
 
-For a one-time arbitration, `dispute raise` sends one local task-session
-message before broadcasting the approval transaction:
+Both arbitration commands send one local task-session message before their
+on-chain broadcast. The shared fields preserve the exact reason.
+
+One-time task:
 
 ```text
 [ARBITRATION_REASON_CONTEXT]
 {"version":1,"intent":"arbitration_reason_context","jobId":"<jobId>","providerAgentId":"<aspAgentId>","reason":"<exact reason>","reasonB64":"<URL-safe base64>","confirmArgs":[...]}
 ```
 
+Subscription:
+
+```text
+[ARBITRATION_REASON_CONTEXT]
+{"version":1,"intent":"arbitration_reason_context","taskType":"subscription","jobId":"<jobId>","providerAgentId":"<aspAgentId>","reason":"<exact reason>","reasonB64":"<URL-safe base64>","resumeEvent":"sub_asp_dispute"}
+```
+
 When this message arrives:
 
 1. Match `jobId` and `providerAgentId` to the current task conversation.
 2. Keep `reason` and `reasonB64` exactly in the conversation context.
-3. End the turn and continue when the matching `dispute_approved` event
-   arrives.
+3. For a one-time task, keep `confirmArgs` and continue when the matching
+   `dispute_approved` event arrives.
+4. For a subscription, match `taskType=subscription` and
+   `resumeEvent=sub_asp_dispute`, then continue when that event arrives.
 
 For that `dispute_approved` event, read the latest matching context and run its
 confirmation once:
@@ -211,6 +222,11 @@ onchainos agent dispute confirm <jobId> \
 The CLI decodes `reasonB64` back to the exact original reason before building
 the dispute broadcast. A missing matching context returns
 `arbitration_reason_context_missing` and ends the event turn.
+
+For `sub_asp_dispute`, read the latest matching subscription context and place
+its exact `reason` before the task chat history in the ASP evidence text. A
+missing matching context returns `arbitration_reason_context_missing` and ends
+the event turn.
 
 ## Query arbitration cases
 
@@ -261,8 +277,10 @@ with fresh detail fields. Localize status with:
   `disputed` status check. That flow resolves the buyer, reads task chat
   history, attaches saved deliverables when available, uploads evidence, and
   waits for `dispute_resolved`.
-- A subscription B decision runs `subscribe-dispute`; `sub_asp_dispute`
-  supplies the dispute-creation facts.
+- A subscription B decision runs `subscribe-dispute`. The command sends the
+  exact reason to the task sub-session, then broadcasts the combined
+  approve-and-create transaction. The task sub-session receives
+  `sub_asp_dispute` and includes that reason in the evidence upload.
 - Refund, evidence, and ruling events continue through their scoped lifecycle
   handlers and `../../runtime/watch.md`.
 

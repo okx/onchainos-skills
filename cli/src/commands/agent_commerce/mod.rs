@@ -1014,8 +1014,8 @@ pub enum AgentCommand {
     #[command(name = "subscribe-dispute")]
     SubscribeDispute {
         job_id: String,
-        /// ASP's non-empty dispute reason — persisted on-chain via the broadcast
-        /// bizContext (like `dispute confirm`).
+        /// ASP's non-empty dispute reason — sent to the task session for evidence and
+        /// persisted on-chain via the broadcast bizContext (like `dispute confirm`).
         #[arg(long = "reason")]
         reason: String,
         /// ASP agentId (required)

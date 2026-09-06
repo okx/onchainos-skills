@@ -23,34 +23,74 @@ use crate::commands::agent_commerce::task::signing;
 const MAX_REASON_CHARS: usize = 2000;
 const ARBITRATION_REASON_CONTEXT: &str = "[ARBITRATION_REASON_CONTEXT]";
 
-fn build_reason_handoff(
+#[derive(Clone, Copy)]
+enum ReasonHandoffFlow {
+    OneTime,
+    Subscription,
+}
+
+fn build_reason_handoff_for(
     job_id: &str,
     provider_agent_id: &str,
     reason: &str,
+    flow: ReasonHandoffFlow,
 ) -> String {
     let reason_b64 = BASE64_URL.encode(reason.as_bytes());
-    let context = serde_json::json!({
+    let mut context = serde_json::json!({
         "version": 1,
         "intent": "arbitration_reason_context",
         "jobId": job_id,
         "providerAgentId": provider_agent_id,
         "reason": reason,
         "reasonB64": reason_b64.clone(),
-        "confirmArgs": [
-            "agent",
-            "dispute",
-            "confirm",
-            job_id,
-            "--reason-b64",
-            reason_b64,
-            "--agent-id",
-            provider_agent_id,
-        ],
     });
-    format!(
-        "{ARBITRATION_REASON_CONTEXT}\n{context}\n\
-         Keep this exact reason in the current task conversation and end this turn. \
-         When the matching dispute_approved event arrives, execute confirmArgs once."
+
+    let instruction = match flow {
+        ReasonHandoffFlow::OneTime => {
+            context["confirmArgs"] = serde_json::json!([
+                "agent",
+                "dispute",
+                "confirm",
+                job_id,
+                "--reason-b64",
+                reason_b64,
+                "--agent-id",
+                provider_agent_id,
+            ]);
+            "Keep this exact reason in the current task conversation and end this turn. \
+             When the matching dispute_approved event arrives, execute confirmArgs once."
+        }
+        ReasonHandoffFlow::Subscription => {
+            context["taskType"] = serde_json::json!("subscription");
+            context["resumeEvent"] = serde_json::json!("sub_asp_dispute");
+            "Keep this exact reason in the current task conversation and end this turn. \
+             When the matching sub_asp_dispute event arrives, include it as the ASP's \
+             arbitration reason in the evidence upload."
+        }
+    };
+
+    format!("{ARBITRATION_REASON_CONTEXT}\n{context}\n{instruction}")
+}
+
+fn build_reason_handoff(job_id: &str, provider_agent_id: &str, reason: &str) -> String {
+    build_reason_handoff_for(
+        job_id,
+        provider_agent_id,
+        reason,
+        ReasonHandoffFlow::OneTime,
+    )
+}
+
+pub(super) fn build_subscription_reason_handoff(
+    job_id: &str,
+    provider_agent_id: &str,
+    reason: &str,
+) -> String {
+    build_reason_handoff_for(
+        job_id,
+        provider_agent_id,
+        reason,
+        ReasonHandoffFlow::Subscription,
     )
 }
 
@@ -206,5 +246,24 @@ mod tests {
             reason.as_bytes(),
             "the task session must recover the exact main-session reason"
         );
+    }
+
+    #[test]
+    fn subscription_reason_handoff_preserves_raw_reason_for_evidence() {
+        let reason = "订阅交付与约定不符：保留符号 + / = 与换行\n第二行";
+        let content = build_subscription_reason_handoff("sub-1", "asp-1", reason);
+        let mut lines = content.lines();
+        assert_eq!(lines.next(), Some(ARBITRATION_REASON_CONTEXT));
+        let payload: serde_json::Value =
+            serde_json::from_str(lines.next().expect("context json")).unwrap();
+        assert_eq!(payload["jobId"], "sub-1");
+        assert_eq!(payload["providerAgentId"], "asp-1");
+        assert_eq!(payload["taskType"], "subscription");
+        assert_eq!(payload["resumeEvent"], "sub_asp_dispute");
+        assert_eq!(payload["reason"], reason);
+        assert!(payload.get("confirmArgs").is_none());
+
+        let encoded = payload["reasonB64"].as_str().unwrap();
+        assert_eq!(BASE64_URL.decode(encoded).unwrap(), reason.as_bytes());
     }
 }
