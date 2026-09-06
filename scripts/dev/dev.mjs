@@ -99,15 +99,9 @@ function refreshSkills() {
   const globals = globalSkillsByName();
   const desired = new Map();
   const conflicts = [];
-  const reused = [];
 
   for (const skill of sourceSkills()) {
     const globalMatches = globals.get(skill.name) || [];
-    const sameSource = globalMatches.find((candidate) => sameFile(candidate, skill.skillMd));
-    if (sameSource) {
-      reused.push({ name: skill.name, path: sameSource });
-      continue;
-    }
     desired.set(skill.name, skill.dir);
     for (const candidate of globalMatches) conflicts.push({ name: skill.name, path: candidate });
   }
@@ -130,7 +124,7 @@ function refreshSkills() {
   }
 
   updateConflictConfig(conflicts);
-  return { linked: [...desired.keys()], reused, conflicts };
+  return { linked: [...desired.keys()], conflicts };
 }
 
 function stripGeneratedConflictBlocks(text) {
@@ -240,7 +234,7 @@ function init() {
   console.log(`  Config: ${devConfig}`);
   console.log(`  CLI:    ${path.join(binDir, "onchainos")}`);
   console.log(`  A2A:    ${path.join(binDir, "okx-a2a")} -> ${a2a}`);
-  console.log(`  Skills: linked=${skills.linked.length} reused-global-same-source=${skills.reused.length} conflicts-disabled=${skills.conflicts.length}`);
+  console.log(`  Skills: linked=${skills.linked.length} global-conflicts-disabled=${skills.conflicts.length}`);
   console.log("Reload Codex and start a new task before validating Skill routing.");
 }
 
@@ -271,11 +265,9 @@ function doctor() {
   if (!configText.includes(binDir)) errors.push(".codex/config.toml does not put .codex/bin on PATH");
 
   const skills = sourceSkills();
-  const globals = globalSkillsByName();
   for (const skill of skills) {
-    const sameGlobal = (globals.get(skill.name) || []).some((candidate) => sameFile(candidate, skill.skillMd));
     const local = path.join(projectSkillsDir, skill.name);
-    if (!sameGlobal && !sameFile(local, skill.dir)) errors.push(`skill '${skill.name}' has no active project or same-source global link`);
+    if (!sameFile(local, skill.dir)) errors.push(`skill '${skill.name}' is not linked from the current project`);
   }
 
   console.log(`Environment: ${env.label}`);
@@ -332,7 +324,7 @@ switch (command) {
   case "init": init(); break;
   case "skills": {
     const result = refreshSkills();
-    console.log(`Skills refreshed: linked=${result.linked.length} reused-global-same-source=${result.reused.length} conflicts-disabled=${result.conflicts.length}`);
+    console.log(`Skills refreshed: linked=${result.linked.length} global-conflicts-disabled=${result.conflicts.length}`);
     console.log("Reload Codex/start a new task after changing Skill metadata or membership.");
     break;
   }

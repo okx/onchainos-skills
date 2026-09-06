@@ -20,6 +20,10 @@ The command creates ignored, machine-specific files under `.codex/` and
 project Skill links under `.agents/skills/`. Reload Codex and start a new task
 after the first initialization.
 
+The project links are always created from this checkout. Same-named global
+Skills are disabled for this workspace, including global links that resolve to
+the same source, so local development never depends on a global Skill entry.
+
 Verify from the new task:
 
 ```bash

@@ -24,6 +24,8 @@ build/
 out/
 target/
 target-pack/
+.cargo-home/
+.cargo-target/
 
 # Xcode / Swift
 xcuserdata/
