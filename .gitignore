@@ -86,6 +86,8 @@ test-cases.json
 **/evals/
 !skills/okx-ai-v2/evals/
 !skills/okx-ai-v2/evals/**
+!skills/okx-agentic-wallet/evals/
+!skills/okx-agentic-wallet/evals/**
 
 # Agent task workspace (local only)
 skills/okx-agent-task-workspace/

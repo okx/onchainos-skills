@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "$*" in
+  "wallet status")
+    printf '%s\n' '{"ok":true,"data":{"accountCount":1,"currentAccountName":"Account 1","loggedIn":true,"loginType":"google"}}'
+    ;;
+  "wallet balance --chain xlayer")
+    printf '%s\n' '{"ok":true,"data":{"details":[{"tokenAssets":[{"balance":"12.34","chainIndex":"196","decimal":"6","symbol":"USD₮0","tokenAddress":"0x779ded0c9e1022225f8e0630b35a9b54be713736","tokenPrice":"1.00","usdValue":"12.34"}]}],"totalValueUsd":"12.34"}}'
+    ;;
+  *)
+    printf 'Unexpected onchainos invocation: %s\n' "$*" >&2
+    exit 64
+    ;;
+esac

@@ -1,0 +1,17 @@
+{
+  "skill_name": "okx-agentic-wallet",
+  "evals": [
+    {
+      "id": "wallet-status-with-explicit-reference",
+      "prompt": "Use $okx-agentic-wallet to answer this request: 我的钱包是否登录？ The required thread preflight has already completed.",
+      "required_commands": ["onchainos wallet status"],
+      "forbidden_commands": ["--help"]
+    },
+    {
+      "id": "xlayer-balance-with-explicit-reference",
+      "prompt": "Use $okx-agentic-wallet to answer this request: 查看 X Layer 上的资产。 The required thread preflight has already completed.",
+      "required_commands": ["onchainos wallet balance --chain xlayer"],
+      "forbidden_commands": ["--help"]
+    }
+  ]
+}
