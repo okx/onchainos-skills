@@ -11,8 +11,22 @@ onchainos agent get-my-agents [--role <role>]
 ```
 
 Add `--role` only when the user supplied one.
-**MUST** use the `Agent table` in `output-templates.md` to render only
-display-ready `cells[]` in order; do not derive table values from raw fields.
+
+### Agent table
+
+**MUST** use the template below to render display-ready `cells[]` in order.
+
+```markdown
+| Agent ID | Name | Role | Status | Approval status | Rating |
+|---|---|---|---|---|---|
+| <agentId> | <name> | <role> | <status> | <approvalStatus> | <rating> |
+```
+
+#### Rules
+
+- User/Evaluator: `Status` and `Approval status` MUST be `—`.
+
+### Await user action
 
 **STOP.** Wait for an explicit Agent-detail request.
 
@@ -24,17 +38,35 @@ Run:
 onchainos agent get-agents --agent-ids <id[,id...]>
 ```
 
-**MUST** render each Agent's display-ready `card[]` with `Agent detail` from
-`output-templates.md`. For ASPs only, run
-`agent service-list --agent-id <id> --page 1 --page-size 3` and apply
-`## Services for an explicit Agent ID`.
+### Agent detail
+
+**MUST** use the template below to render each Agent's display-ready `card[]`
+in order.
+
+```markdown
+| Field | Value |
+|---|---|
+| Agent ID | <agentId> |
+| Name | <name> |
+| Role | <role> |
+| Status | <status> |
+| Approval status | <approvalStatus> |
+| Address | <address> |
+| Description | <description> |
+| Profile photo | <profilePhoto> |
+| Rating | <rating> |
+```
+
+#### Rules
+
+- User/Evaluator: omit `Status`, `Approval status`, and `Rating`.
 
 ## Services for an explicit Agent ID
 
-Run:
+For ASPs only, run:
 
 ```bash
-onchainos agent service-list --agent-id <id> --page <n> --page-size 3
+onchainos agent service-list --agent-id <id> --page 1 --page-size 3
 ```
 
 **MUST** use the `Service table` in `output-templates.md` to render only

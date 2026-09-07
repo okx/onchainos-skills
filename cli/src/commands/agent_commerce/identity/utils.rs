@@ -853,7 +853,7 @@ fn enrich_agent_row(row: &mut Value) {
 
 // ─── `card`: ordered, ready-to-render detail-card rows ────────────────────
 //
-// Mirrors `skills/okx-ai-v2/references/identity/output-templates.md §Agent detail`:
+// Mirrors `skills/okx-ai-v2/references/identity/profile.md §Agent detail`:
 // one ordered `{ "label": <canonical-English>, "value": <string> }` row per
 // visible field, omitting a row when its value is unavailable (same omit
 // rules the skill uses today). Service rows are ASP-ONLY — the
@@ -1031,7 +1031,7 @@ fn format_service_value(service: &Value) -> Option<String> {
     Some(format!("{name} — {}", segments.join(", ")))
 }
 
-/// Assemble the ordered `card` array per references/identity/output-templates.md §Agent detail.
+/// Assemble the ordered `card` array per references/identity/profile.md §Agent detail.
 fn build_agent_card(map: &serde_json::Map<String, Value>) -> Vec<Value> {
     let mut card: Vec<Value> = Vec::new();
 
@@ -1593,7 +1593,7 @@ fn derive_has_more(map: &mut serde_json::Map<String, Value>) {
 
 // ─── §5 feedback-list row cells ───────────────────────────────────────────
 //
-// references/identity/output-templates.md §Reputation list renders these
+// references/identity/reputation.md §Display results renders these
 // ordered cells directly. Fields:
 //   Score (`valueString` / `value` divided by 20 and displayed on a 5-point
 //     scale without a suffix; legacy `score` stays supported as an
