@@ -5,8 +5,11 @@ only. It is a collaboration subflow inside Created state, not a new task status.
 Subscriptions must never enter this leaf or call `service-param-update`; the ASP
 must decline a subscription with a concrete reason when required input is absent.
 If an older CLI playbook routes a subscription here, treat that route as stale:
-do not send `task_params_request`, do not update the backend, and return to
-[`provider/assignment.md`](provider/assignment.md) for `ACCEPT` or `REJECT`.
+
+- ASP: do not send `task_params_request` or update the backend; return to
+  [`provider/assignment.md`](provider/assignment.md) for `ACCEPT` or `REJECT`.
+- Buyer: do not call `service-param-update` or send `task_params_response`; stop
+  and wait for the ASP's subscription acceptance or decline.
 
 ## ASP request
 
