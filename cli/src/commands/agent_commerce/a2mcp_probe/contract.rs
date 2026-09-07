@@ -118,6 +118,11 @@ pub(super) fn parse_probe_input(
                 .and_then(Value::as_str)
                 .filter(|value| !value.trim().is_empty())
                 .map(ToOwned::to_owned),
+            provider_agent_id: object
+                .get("asp")
+                .and_then(Value::as_object)
+                .and_then(|asp| scalar_string(asp.get("aspAgentId")))
+                .filter(|value| !value.trim().is_empty()),
             endpoint,
             method,
             method_was_defaulted,
@@ -182,7 +187,7 @@ pub(super) fn outstanding_input(
         required.required_any_of.clear();
     }
     if required.fields.is_empty() && required.required_any_of.is_empty() {
-        None
+        required.needs_description_fallback.then_some(required)
     } else {
         Some(required)
     }
@@ -214,6 +219,7 @@ pub(super) fn discover_input_required(value: &Value) -> Option<InputRequired> {
                             .and_then(Value::as_str)
                             .map(ToOwned::to_owned)
                     }),
+                needs_description_fallback: false,
             });
         }
     }
@@ -236,6 +242,7 @@ pub(super) fn discover_input_required(value: &Value) -> Option<InputRequired> {
                     .get("method")
                     .and_then(Value::as_str)
                     .map(ToOwned::to_owned),
+                needs_description_fallback: false,
             });
         }
     }
@@ -259,6 +266,7 @@ pub(super) fn discover_input_required(value: &Value) -> Option<InputRequired> {
                 .and_then(|schema| schema.get("method"))
                 .and_then(Value::as_str)
                 .map(ToOwned::to_owned),
+            needs_description_fallback: false,
         });
     }
     let missing = string_array(value.get("missingParams"));
@@ -291,7 +299,55 @@ pub(super) fn discover_input_required(value: &Value) -> Option<InputRequired> {
             .and_then(|schema| schema.get("method"))
             .and_then(Value::as_str)
             .map(ToOwned::to_owned),
+        needs_description_fallback: true,
     })
+}
+
+/// Detect an endpoint-owned, human-readable missing-input signal without
+/// inventing a business field name or type. The Skill may use the service
+/// description only to fill the missing interaction details.
+pub(super) fn discover_input_fallback_hint(value: &Value) -> Option<InputRequired> {
+    let message = ["error", "message", "detail"]
+        .into_iter()
+        .filter_map(|key| value.get(key).and_then(Value::as_str))
+        .find(|message| message_reports_missing_input(message))?;
+    Some(InputRequired {
+        fields: Vec::new(),
+        required_any_of: Vec::new(),
+        message: Some(message.to_string()),
+        method: None,
+        needs_description_fallback: true,
+    })
+}
+
+fn message_reports_missing_input(message: &str) -> bool {
+    let normalized = message
+        .trim()
+        .trim_end_matches(|character: char| character.is_ascii_punctuation())
+        .to_ascii_lowercase();
+    if normalized.contains("payment required")
+        || normalized.contains("authentication required")
+        || normalized.contains("authorization required")
+    {
+        return false;
+    }
+    if normalized.contains("missing required parameter")
+        || normalized.contains("required parameter missing")
+        || normalized.contains("missing required input")
+        || normalized.contains("required input missing")
+        || normalized.contains("missing required argument")
+        || normalized.contains("required argument missing")
+    {
+        return true;
+    }
+    let words = normalized.split_whitespace().collect::<Vec<_>>();
+    words.len() == 3
+        && words[1] == "is"
+        && words[2] == "required"
+        && !words[0].is_empty()
+        && words[0].chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '_' || character == '-'
+        })
 }
 
 pub(super) fn parse_fields(value: &Value) -> Vec<FieldConstraint> {

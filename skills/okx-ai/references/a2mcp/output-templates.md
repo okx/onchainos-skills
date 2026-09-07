@@ -1,73 +1,69 @@
 # A2MCP Output Templates
 
-Use these templates for the A2MCP invocation flow. Render structured CLI
-fields as facts; never expose raw JSON, machine reason codes, action IDs, Skill
-names, or internal routing narration.
+Use only after `invoke.md` explicitly routes a `payment_confirmation` result
+here. Use the latest structured CLI result only; never reuse the previously
+loaded Identity template with the same basename.
 
-## Payment-confirmation card
+## Service card
 
-Show exactly one card after the request parameters are complete, including for
-free services and insufficient balances.
+Require `payload.presentation.type=a2mcp_confirmation`. Render its
+`columns[]` and `rows[]` in returned order as one Markdown table. Localize only
+column/row labels and static sentinels such as `Free` or `Select a payment
+option`; preserve every returned value. Render the Service Parameters value as
+inline code. Do not replace the table with bullets, a sentence, or a paragraph.
 
-```text
-Service: {serviceName}
-Endpoint: {endpoint}
-Request: {method} {typedParams}
-Amount: {selected amount and token, Free, or "Select a payment option"}
-{ASP quote comparison only when amountMismatch=true}
-{Network only for paid candidates}
-{Token only for paid candidates}
-{Balance only for paid candidates}
-{Shortfall when selected token is insufficient}
+The CLI presentation contract is equivalent to:
+
+```markdown
+| Field | Value |
+|---|---|
+| {localized presentation.rows[0].label} | {presentation.rows[0].value} |
+| {localized presentation.rows[1].label} | {presentation.rows[1].value} |
+| {localized presentation.rows[2].label} | {presentation.rows[2].value} |
+| {localized presentation.rows[3].label} | {localized presentation.rows[3].value when static} |
+| {localized presentation.rows[4].label} | `{presentation.rows[4].value}` |
 ```
 
-Rules:
+- Require exactly these row keys in this order: `serviceProvider`,
+  `serviceName`, `endpoint`, `fee`, `serviceParameters`.
+- Parameter keys and types are dynamic. Never extract or invent an `Asset`,
+  `Token`, HTTP method, or other business row.
+- `Free` is localized as free and never displayed as `0` or `0 {token}`.
+- If presentation is absent or malformed, do not improvise another layout;
+  report that the installed CLI/Skill contract is incompatible and stop.
 
-- `Free` is the exact amount display for a free path.
-- When `amountSemantics=maximum`, label the amount as localized “Up to”
-  (Chinese: “最多支付”); never present an authorization ceiling as a fixed
-  charge.
-- Preserve Endpoint and Request from the latest `payment_confirmation` payload.
-- Show the quote-difference row only when `amountMismatch=true`.
-- Insufficient balance disables payment confirmation but does not replace the
-  card with a balance-only message.
+Immediately below the table render a localized `Recommend actions:` label.
+Use only the latest non-blank `nextAction[].actionLabel`; never invent an
+operation from `reason`, price, balance, or prose.
 
-When `payload.candidates[]` contains multiple entries, append:
+- For `free_confirmation_required`, combine the returned confirm and cancel
+  labels into one numbered localized instruction asking whether to invoke the
+  service.
+- For `payment_confirmation_required`, combine the returned confirm and cancel
+  labels into one numbered localized instruction asking whether to pay.
+- For `token_selection_required`, ask the User to select a numbered candidate;
+  cancellation remains available.
+- For `insufficient_balance`, list the returned Funding, alternative-selection,
+  and cancellation labels in their returned order. Never offer confirmation.
 
-```text
-Payment options:
-1. {tokenSymbol} · {network/chainName} · {amountDisplay} · {availableDisplay} available{ · Shortfall: shortfallDisplay when insufficient}
-2. {...}
+Wait after rendering. A displayed action is not authorization.
+
+## Payment candidates
+
+For every paid state, render returned candidates in order; one candidate still
+gets one row. Before selection, show every candidate simultaneously. This
+candidate table follows the Service card and precedes Recommend actions.
+
+```markdown
+| # | Token | Network | Fee | Available Balance | Status | Shortfall |
+|---|---|---|---|---|---|---|
+| 1 | {tokenSymbol} | {chainName or network} | {amountDisplay} | {availableDisplay} | {localized balanceStatus} | {shortfallDisplay or —} |
 ```
 
-Use only the latest returned candidates and preserve their order. Ask the user
-to choose one numbered option; add that option's `candidateId` to the latest
-`select_a2mcp_token.params.preparedId` without displaying either ID. A
-selection does not authorize payment.
+A selection binds only that candidate to `select_a2mcp_token`; it never
+authorizes payment or permits an automatic token/network switch.
 
-## Paid confirmation
-
-When the selected candidate is sufficient before Funding, present exactly two
-choices:
-
-1. Confirm the displayed payment and use the service.
-2. Cancel.
-
-Only the user's confirmation may trigger `prepare-payment --yes`, followed by
-the payment protocol execution. Cancellation performs no write.
-The sole exception is user-declared completed Funding: `funding.md` invokes
-`resume-after-funding --yes`, whose CLI-owned flow refreshes the balance and
-prepares payment only when the same candidate is now sufficient.
-
-When the selected candidate is insufficient, keep confirmation disabled and
-render only the returned funding/cancellation choices. If the user selects
-Funding, read `funding.md`; this template does not own the Funding continuation.
-
-## Free result
-
-For `free_confirmation_required`, show the single confirmation card with
-`Amount: Free`, using `serviceName`, `endpoint`, `method`, and `typedParams`
-from that payload. Do not invent a token, network, balance, or payment
-candidate. Present exactly two choices: confirm the free invocation or cancel.
-Only confirmation may invoke `confirm_a2mcp_free`; render the result solely from
-the resulting `endpoint_result/free_result` payload.
+For `free_confirmation_required`, do not render payment candidates, network, or
+balance. Only the returned confirmation action may invoke `confirm_a2mcp_free`.
+For insufficient balance, Funding enters `funding.md`; only that file may
+continue the bound payment after funding.

@@ -24,6 +24,7 @@ pub(super) const ERR_FREE_RESULT_EXPIRED_OR_MISSING: &str = "a2mcp_free_result_e
 pub(super) struct FreeResultInput {
     pub service_id: String,
     pub service_name: Option<String>,
+    pub provider_agent_id: Option<String>,
     pub endpoint: String,
     pub method: String,
     pub typed_params: Map<String, Value>,
@@ -42,6 +43,8 @@ pub(super) struct FreeResultState {
     service_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     service_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    provider_agent_id: Option<String>,
     endpoint: String,
     method: String,
     typed_params: Map<String, Value>,
@@ -79,6 +82,10 @@ impl FreeResultState {
 
     pub(super) fn service_name(&self) -> Option<&str> {
         self.service_name.as_deref()
+    }
+
+    pub(super) fn provider_agent_id(&self) -> Option<&str> {
+        self.provider_agent_id.as_deref()
     }
 
     pub(super) fn endpoint(&self) -> &str {
@@ -141,6 +148,7 @@ pub(super) fn store_free_result(
         expires_at: created_at.saturating_add(FREE_RESULT_TTL_SECS),
         service_id: input.service_id,
         service_name: input.service_name,
+        provider_agent_id: input.provider_agent_id,
         endpoint: input.endpoint,
         method: input.method,
         typed_params: input.typed_params,
@@ -213,6 +221,7 @@ mod tests {
         FreeResultInput {
             service_id: "service-1".into(),
             service_name: Some("Free service".into()),
+            provider_agent_id: Some("8136".into()),
             endpoint: "https://example.com/free".into(),
             method: "POST".into(),
             typed_params: Map::from_iter([("query".into(), json!("BTC"))]),
@@ -261,6 +270,7 @@ mod tests {
             })
             .unwrap();
             assert_eq!(pending.reason, "free_confirmation_required");
+            assert_eq!(pending.payload["providerAgentId"], "8136");
             assert!(pending.payload.get("result").is_none());
 
             let ready = super::super::run_confirm_free(&super::super::ConfirmFreeArgs {

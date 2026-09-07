@@ -15,7 +15,8 @@ use probe::*;
 use std::{collections::HashSet, time::Duration};
 
 use anyhow::{anyhow, Context, Result};
-use clap::{Args, Subcommand};
+use base64::{engine::general_purpose::STANDARD as B64, Engine};
+use clap::{ArgGroup, Args, Subcommand};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use url::Url;
@@ -43,11 +44,47 @@ pub struct ConfirmFreeArgs {
 }
 
 #[derive(Args, Debug)]
+#[command(
+    group(ArgGroup::new("routing_input").required(true).multiple(false).args(["routing_json", "routing_base64"])),
+    group(ArgGroup::new("params_input").multiple(false).args(["params_json", "params_base64"]))
+)]
 pub struct ProbeArgs {
     #[arg(long = "routing-json")]
-    pub routing_json: String,
-    #[arg(long, default_value = "{}")]
-    pub params_json: String,
+    pub routing_json: Option<String>,
+    /// Base64-encoded UTF-8 routing JSON. Prefer this for agent/shell callers
+    /// because service metadata is untrusted and may contain shell metacharacters.
+    #[arg(long = "routing-base64")]
+    pub routing_base64: Option<String>,
+    #[arg(long)]
+    pub params_json: Option<String>,
+    /// Base64-encoded UTF-8 dynamic parameter JSON.
+    #[arg(long = "params-base64")]
+    pub params_base64: Option<String>,
+}
+
+fn decode_probe_json_args(
+    args: &ProbeArgs,
+) -> std::result::Result<(String, String), ContractError> {
+    fn decode(value: &str, label: &'static str) -> std::result::Result<String, ContractError> {
+        let bytes = B64.decode(value).map_err(|error| ContractError {
+            code: label,
+            message: format!("base64 input is invalid: {error}"),
+        })?;
+        String::from_utf8(bytes).map_err(|error| ContractError {
+            code: label,
+            message: format!("base64 input is not UTF-8: {error}"),
+        })
+    }
+
+    let routing = match args.routing_base64.as_deref() {
+        Some(value) => decode(value, "invalid_a2mcp_routing")?,
+        None => args.routing_json.clone().unwrap_or_default(),
+    };
+    let params = match args.params_base64.as_deref() {
+        Some(value) => decode(value, "invalid_a2mcp_params")?,
+        None => args.params_json.clone().unwrap_or_else(|| "{}".to_string()),
+    };
+    Ok((routing, params))
 }
 
 #[derive(Args, Debug)]
@@ -115,6 +152,7 @@ struct ServiceSnapshot {
     raw: Value,
     service_id: String,
     service_name: Option<String>,
+    provider_agent_id: Option<String>,
     endpoint: Url,
     method: String,
     method_was_defaulted: bool,
@@ -170,11 +208,15 @@ struct InputRequired {
     message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     method: Option<String>,
+    #[serde(skip)]
+    needs_description_fallback: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 struct Action {
     id: String,
+    #[serde(rename = "actionLabel")]
+    action_label: String,
     recommend: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     params: Option<Value>,
@@ -182,8 +224,21 @@ struct Action {
 
 impl Action {
     fn new(id: impl Into<String>, recommend: bool) -> Self {
+        let id = id.into();
+        let action_label = match id.as_str() {
+            "provide_a2mcp_params" => "Provide service parameters",
+            "select_a2mcp_token" => "Select payment option",
+            "fund_a2mcp_token" => "Fund this payment option",
+            "resume_a2mcp_after_funding" => "Continue after funding",
+            "confirm_a2mcp_free" => "Confirm service invocation",
+            "confirm_a2mcp_payment" => "Confirm payment",
+            "execute_a2mcp_payment" => "Execute payment",
+            "cancel_a2mcp" => "Cancel",
+            _ => "Continue",
+        };
         Self {
-            id: id.into(),
+            id,
+            action_label: action_label.to_string(),
             recommend,
             params: None,
         }
@@ -193,6 +248,38 @@ impl Action {
         self.params = Some(params);
         self
     }
+}
+
+fn confirmation_presentation(
+    provider_agent_id: Option<&str>,
+    service_name: Option<&str>,
+    endpoint: &str,
+    fee_display: &str,
+    typed_params: &Map<String, Value>,
+) -> Value {
+    let provider = provider_agent_id
+        .map(|id| format!("Agent ID {id}"))
+        .unwrap_or_else(|| "—".to_string());
+    let params = serde_json::to_string(typed_params).unwrap_or_else(|_| "{}".to_string());
+    json!({
+        "type": "a2mcp_confirmation",
+        "columns": [
+            {"key": "field", "label": "Field"},
+            {"key": "value", "label": "Value"}
+        ],
+        "rows": [
+            {"key": "serviceProvider", "label": "Service Provider", "value": provider},
+            {"key": "serviceName", "label": "Service Name", "value": service_name.unwrap_or("—")},
+            {"key": "endpoint", "label": "Endpoint", "value": endpoint},
+            {"key": "fee", "label": "Fee", "value": fee_display},
+            {"key": "serviceParameters", "label": "Service Parameters", "value": params}
+        ]
+    })
+}
+
+fn paid_fee_display(amount: &str, symbol: &str, semantics: &str) -> String {
+    let prefix = if semantics == "maximum" { "Up to " } else { "" };
+    format!("{prefix}{amount} {symbol}")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
