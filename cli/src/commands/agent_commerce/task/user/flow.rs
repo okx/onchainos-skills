@@ -1732,7 +1732,10 @@ mod tests {
             json!({ "event": "job_asp_accept_expire", "jobId": JOB_ID }),
         )
         .await;
-        assert!(out.contains("[ASP Acceptance Timeout Detail Incomplete]"), "{out}");
+        assert!(
+            out.contains("[ASP Acceptance Timeout Detail Incomplete]"),
+            "{out}"
+        );
         assert!(!out.contains(TERMINAL_NOTIFICATION_MARKER), "{out}");
         assert!(!out.contains("session-cleanup"), "{out}");
         assert!(
@@ -1765,7 +1768,10 @@ mod tests {
             json!({ "event": "job_asp_reject_expire", "jobId": JOB_ID }),
         )
         .await;
-        assert!(out.contains("[Automatic Refund Detail Incomplete]"), "{out}");
+        assert!(
+            out.contains("[Automatic Refund Detail Incomplete]"),
+            "{out}"
+        );
         assert!(out.contains("refund-prepare"), "{out}");
         assert!(!out.contains(TERMINAL_NOTIFICATION_MARKER), "{out}");
         assert!(!out.contains("session-cleanup"), "{out}");
@@ -2069,7 +2075,7 @@ mod tests {
     async fn dispute_resolved_uses_online_copy_for_subscriptions_too() {
         use crate::commands::agent_commerce::task::common::PreFetchedTaskContext;
         // Product decision 2026-07-24: arbitration copy uses the existing online version — a
-        // subscription dispute (jobType=1) must render the SAME online [Dispute Won]/[Dispute Lost]
+        // subscription evaluation (jobType=1) must render the same online evaluation result
         // copy as a task dispute, with no subscription-specific arbitration variant.
         let p = subscription_refund_prefetched(9, "0.0005");
         let out = generate_next_action(
@@ -2087,7 +2093,7 @@ mod tests {
         )
         .await;
         assert!(
-            out.contains("[Dispute Won]"),
+            out.contains("[Evaluation Result]"),
             "subscription dispute uses online copy: {out}"
         );
         assert!(
@@ -2205,7 +2211,7 @@ mod tests {
             })),
         )
         .await;
-        assert!(lost_out.contains("[Dispute Lost]"), "{lost_out}");
+        assert!(lost_out.contains("[Evaluation Result]"), "{lost_out}");
         assert!(
             lost_out.contains("Original payment: 0.0005 USDT"),
             "{lost_out}"

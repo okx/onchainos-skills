@@ -130,7 +130,7 @@ pub fn job_rejected_user_notify(job_id: &str, title: &str) -> String {
     };
     format!(
         "{lead}\n\
-         The ASP will choose: file a dispute or agree to a refund.\n\
+         The ASP will choose: request evaluation or agree to a refund.\n\
          If the ASP takes no action, funds will be auto-refunded to your wallet."
     )
 }
@@ -209,7 +209,7 @@ pub fn dispute_won_user_notify(
         )
     };
     format!(
-        "[Dispute Won] {title} (`{job_id}`) — dispute resolved; User Agent wins.\n\
+        "[Evaluation Result] {title} (`{job_id}`) — evaluation completed; User Agent wins.\n\
          - Refund ASP: {}\n\
          - Service: {}\n\
          {settlement}\n\
@@ -232,7 +232,7 @@ pub fn dispute_lost_user_notify(
     symbol: Option<&str>,
 ) -> String {
     format!(
-        "[Dispute Lost] {title} (`{job_id}`) — the refund request was not approved; ASP wins.\n\
+        "[Evaluation Result] {title} (`{job_id}`) — the refund request was not approved; ASP wins.\n\
          - Refund: Not issued\n\
          - ASP: {}\n\
          - Service: {}\n\
@@ -365,11 +365,11 @@ pub fn submit_expired_user_notify(job_id: &str) -> String {
 pub fn reject_expired_user_notify(job_id: &str) -> String {
     if is_cli_mode() {
         format!(
-            "Job `{job_id}` — the ASP did not file a dispute in time after you rejected the deliverable. An auto-refund is in progress; funds will return to your wallet and a final refund-settled notice will follow shortly."
+            "Job `{job_id}` — the ASP did not request evaluation in time after you rejected the deliverable. An auto-refund is in progress; funds will return to your wallet and a final refund-settled notice will follow shortly."
         )
     } else {
         format!(
-            "Job `{job_id}` — the ASP did not file a dispute in time after you rejected the deliverable. An auto-refund has been requested; funds will return to your wallet."
+            "Job `{job_id}` — the ASP did not request evaluation in time after you rejected the deliverable. An auto-refund has been requested; funds will return to your wallet."
         )
     }
 }
@@ -383,7 +383,7 @@ pub fn review_deadline_warn_user_prompt(job_id: &str, short_id: &str) -> String 
          After expiry, the ASP can auto-claim the funds.\n\
          Please decide soon:\n\
          A. Approve the deliverable\n\
-         B. Reject the deliverable — please state your reason (if the ASP files a dispute, your rejection reason will be automatically submitted as evidence to the Evaluator)"
+         B. Reject the deliverable"
     )
 }
 
@@ -698,21 +698,22 @@ pub fn sub_user_reject_user_notify(
     out
 }
 
-/// `sub_asp_dispute` (user side) — the ASP disputed the user's rejection; evaluation
-/// opened (non-terminal). Added the current-period range (subStartTime/subEndTime).
+/// `sub_asp_dispute` (user side) — the ASP requested evaluation of the user's rejection;
+/// evaluation opened (non-terminal). Added the current-period range (subStartTime/subEndTime).
 pub fn sub_asp_dispute_user_notify(
     service_name: &str,
     job_id: &str,
     period_start: Option<i64>,
     period_end: Option<i64>,
 ) -> String {
-    let mut out =
-        format!("[Dispute Filed] The ASP has disputed your rejection of \"{service_name}\"");
+    let mut out = format!(
+        "[Evaluation Opened] The ASP requested evaluation of your rejection of \"{service_name}\""
+    );
     if let (Some(s), Some(e)) = (fmt_epoch(period_start), fmt_epoch(period_end)) {
         out.push_str(&format!("'s current period ({s}–{e})"));
     }
     out.push_str(&format!(
-        " and escalated to evaluation. Job {job_id} status: Disputed."
+        ". Evaluation is in progress for Job {job_id} (protocol status: Disputed)."
     ));
     out
 }
@@ -1518,17 +1519,19 @@ mod tests {
             Some(1_700_000_000),
             Some(1_700_500_000),
         );
-        assert!(out.starts_with("[Dispute Filed]"));
-        assert!(out.contains("disputed your rejection of \"My Sub\""));
+        assert!(out.starts_with("[Evaluation Opened]"));
+        assert!(out.contains("requested evaluation of your rejection of \"My Sub\""));
         // Current-period range included.
         assert!(
             out.contains("current period ("),
             "period range present: {out}"
         );
-        assert!(out.contains("Job job-1 status: Disputed."));
+        assert!(
+            out.contains("Evaluation is in progress for Job job-1 (protocol status: Disputed).")
+        );
         // Period absent → range omitted, core copy intact.
         let bare = sub_asp_dispute_user_notify("My Sub", "job-1", None, None);
-        assert!(bare.contains("disputed your rejection of \"My Sub\" and escalated to evaluation"));
+        assert!(bare.contains("requested evaluation of your rejection of \"My Sub\""));
         assert!(!bare.contains("current period"));
     }
 

@@ -959,6 +959,27 @@ pub(crate) async fn fetch_my_subscriptions_snapshot_for_agent(
     status: Option<i32>,
     header_agent: String,
 ) -> Result<MySubscriptionsSnapshot> {
+    fetch_my_subscriptions_snapshot_for_agent_with_mode(client, role, status, header_agent, true)
+        .await
+}
+
+pub(crate) async fn fetch_my_subscriptions_snapshot_for_agent_read_only(
+    client: &mut TaskApiClient,
+    role: SubscriptionRole,
+    status: Option<i32>,
+    header_agent: String,
+) -> Result<MySubscriptionsSnapshot> {
+    fetch_my_subscriptions_snapshot_for_agent_with_mode(client, role, status, header_agent, false)
+        .await
+}
+
+async fn fetch_my_subscriptions_snapshot_for_agent_with_mode(
+    client: &mut TaskApiClient,
+    role: SubscriptionRole,
+    status: Option<i32>,
+    header_agent: String,
+    establish_sessions: bool,
+) -> Result<MySubscriptionsSnapshot> {
     let header_agent = select_subscription_agent_id(&header_agent, "")?;
 
     let path = my_subscriptions_path();
@@ -982,7 +1003,7 @@ pub(crate) async fn fetch_my_subscriptions_snapshot_for_agent(
     }
     // Buyer listing subscriptions on any device establishes the provider session for
     // every active subscription (drains held deliverables cross-device).
-    if matches!(role, SubscriptionRole::Buyer) {
+    if establish_sessions && matches!(role, SubscriptionRole::Buyer) {
         for item in &list {
             if should_ensure_subscription_session(item.status) {
                 ensure_subscription_session(&item.job_id, &header_agent, &item.provider_agent_id);

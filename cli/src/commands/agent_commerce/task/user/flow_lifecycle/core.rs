@@ -1807,7 +1807,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
      File path: [<localPath>](<localPath>)\n\
      Payment: escrow\n\
      A. Approve → reply 'A'\n\
-     B. Reject (state reason; used as evidence if disputed) → reply 'B reason: …'\n\
+     B. Reject → reply 'B'\n\
      {review_deadline_line}\
      ```\n\n\
      ▸ deliverableType=text:\n\
@@ -1819,7 +1819,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
      ---End of deliverable---\n\
      Payment: escrow\n\
      A. Approve → reply 'A'\n\
-     B. Reject (state reason; used as evidence if disputed) → reply 'B reason: …'\n\
+     B. Reject → reply 'B'\n\
      {review_deadline_line}\
      ```\n\n\
      Push to user (localize `--user-content` and `--list-label` to user's language first):\n\n\
@@ -2680,10 +2680,7 @@ Part B continues
             "escrow card should append the Review reminder line; got:\n{out}"
         );
         assert!(out.contains("A. Approve → reply 'A'"), "{out}");
-        assert!(
-            out.contains("B. Reject (state reason; used as evidence if disputed)"),
-            "{out}"
-        );
+        assert!(out.contains("B. Reject → reply 'B'"), "{out}");
         assert!(!out.contains("Full refund request:"), "{out}");
     }
 

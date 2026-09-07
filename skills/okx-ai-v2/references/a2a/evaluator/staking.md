@@ -7,7 +7,7 @@ claims and cancellations, stake-state queries, and staking lifecycle receipts.
 
 | Intent | Flow |
 |---|---|
-| Stake to become eligible for dispute review | [First stake](#first-stake) |
+| Stake to become eligible for evaluation work | [First stake](#first-stake) |
 | Increase or replenish stake | [Increase stake](#increase-stake) |
 | Request partial or full unstake | [Request unstake](#request-unstake) |
 | Claim an unlocked unstake | [Claim unstake](#claim-unstake) |
@@ -42,12 +42,12 @@ Relevant fields include `minCumulativeStakeOkb`,
 
 ## Economic contract
 
-Every staking and dispute-review transaction uses the platform-sponsored
+Every staking and evaluation transaction uses the platform-sponsored
 channel. Calculate required wallet balance from the requested OKB stake
 principal. Majority-aligned votes are eligible for a stake-weighted share of
 the review stake and minority-side slash pool. Minority votes and missed Commit
 or Reveal deadlines follow the returned slashing terms. A timeout also enters
-the returned selection cooldown. Active dispute participation constrains
+the returned selection cooldown. Active evaluation participation constrains
 unstake.
 
 For ordinary command and event results, clearly state the outcome, relevant
@@ -98,7 +98,7 @@ Use this flow for voluntary increases and post-slash replenishment.
 2. Collect an explicit numeric OKB amount.
 3. Validate the amount against `activeStake` and
    `partialUnstakeMinRetainOkb`. Full unstake uses the complete `activeStake`.
-4. When `activeDisputes > 0`, state the active-dispute count and keep the
+4. When `activeDisputes > 0`, state the active-evaluation count and keep the
    request available for a later eligible state.
 5. Render [Confirm unstake](#confirm-unstake) with the amount,
    `unstakeCooldownDays`, and remaining stake.
@@ -150,7 +150,7 @@ Render [Stake state](#stake-state) with:
 | `activeStake` | Currently staked OKB. |
 | `pendingUnstake` | OKB awaiting cooldown completion. |
 | `validStake` | Effective selection stake: `activeStake - pendingUnstake`. |
-| `activeDisputes` | In-progress reviews that currently constrain unstake. |
+| `activeDisputes` | In-progress evaluations that currently constrain unstake. |
 | `unstakeAvailableAt` | Unix seconds for claim availability; `0` means no pending unstake. |
 | `cooldownEndsAt` | Unix seconds for slash cooldown completion; `0` means no active slash cooldown. |
 
@@ -179,7 +179,7 @@ onchainos agent user-notify --content "<localized concise update>"
 | `unstake_requested` | State `pendingUnstake`, claim time, and cancellation availability. |
 | `unstake_claimed` | State that the unstaked OKB was credited. |
 | `unstake_cancelled` | State that pending OKB returned to active stake. |
-| `stake_stopped` | State that dispute-review selection stopped. |
+| `stake_stopped` | State that evaluation selection stopped. |
 | `cooldown_entered` | Query `my-stake` and state `cooldownEndsAt` in local time when available. |
 
 Review selection, Commit/Reveal, ruling, reward, and penalty events enter

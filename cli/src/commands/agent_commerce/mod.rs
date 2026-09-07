@@ -384,6 +384,33 @@ pub enum AgentCommand {
         status: Option<i32>,
     },
 
+    /// List display-ready refund tasks for a buyer or pending refund requests for a provider.
+    #[command(name = "refund-list")]
+    RefundList {
+        /// Query viewpoint.
+        #[arg(long, value_enum)]
+        role: task::refund_list::RefundListRole,
+        /// Buyer query scope. Providers support requested only.
+        #[arg(long, value_enum)]
+        scope: task::refund_list::RefundListScope,
+        #[arg(long, default_value = "1")]
+        page: u32,
+        #[arg(long = "page-size", default_value = "20")]
+        page_size: u32,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
+    },
+
+    /// Show one display-ready refund request.
+    #[command(name = "refund-detail")]
+    RefundDetail {
+        job_id: String,
+        #[arg(long, value_enum)]
+        role: task::refund_list::RefundListRole,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
+    },
+
     /// List subscription and one-time tasks for the current User identity.
     #[command(name = "my-tasks")]
     MyTasks {
@@ -460,7 +487,7 @@ pub enum AgentCommand {
         include_terminal: bool,
     },
 
-    /// List arbitration tasks visible to one User or ASP identity.
+    /// List evaluation cases visible to one User or ASP identity.
     #[command(name = "arbitration-list")]
     ArbitrationList {
         /// User or ASP agentId used as the agenticId request header.
@@ -472,7 +499,7 @@ pub enum AgentCommand {
         page_size: u32,
     },
 
-    /// Show the current arbitration state visible to one User or ASP identity.
+    /// Show the current evaluation state visible to one User or ASP identity.
     #[command(name = "arbitration-detail")]
     ArbitrationDetail {
         job_id: String,
@@ -1008,13 +1035,13 @@ pub enum AgentCommand {
         agent_id: String,
     },
 
-    /// ASP: raise arbitration for a rejected subscription period via the §2.10 single combined
+    /// ASP: request evaluation for a rejected subscription period via the §2.10 single combined
     /// endpoint (POST /task/{jobId}/dispute/approveAndCreateDispute → sign → broadcast). The
     /// "dispute" outcome of a `sub_user_reject` decision.
     #[command(name = "subscribe-dispute")]
     SubscribeDispute {
         job_id: String,
-        /// ASP's non-empty dispute reason — sent to the task session for evidence and
+        /// ASP's non-empty evaluation reason — sent to the task session for evidence and
         /// persisted on-chain via the broadcast bizContext (like `dispute confirm`).
         #[arg(long = "reason")]
         reason: String,
@@ -1143,7 +1170,7 @@ pub enum AgentCommand {
     },
 
     // ── Task system (sub-groups) ────────────────────────────────────────────
-    /// Dispute actions (provider): raise, evidence, info, upload
+    /// Evaluation actions (ASP): request, confirm, and upload evidence.
     #[command(subcommand)]
     Dispute(task::asp::DisputeCommand),
 
@@ -1155,7 +1182,7 @@ pub enum AgentCommand {
     // Historically wrapped as `Evaluator(EvaluatorCommand)`; flattened to the top level in 2026-05
     // to align with the user/provider style. The `agent evaluator <sub>` form is no longer supported;
     // see the file header comment in `evaluator/mod.rs` for per-command correspondence.
-    /// Fetch dispute evidence: each side's `reason` (provider = dispute-raise reason; client =
+    /// Fetch evaluation evidence: each side's `reason` (provider = evaluation-request reason; client =
     /// reject-delivery reason), `texts[]` (free text), and `files[]` (any file type, downloaded
     /// locally **without extensions** — the evaluator agent probes type itself via `file
     /// --mime-type` per the playbook). Backend resolves the active dispute round from jobId —
@@ -1214,7 +1241,7 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")]
         agent_id: String,
     },
-    /// Claim arbitration reward after task/dispute resolved. Account-level pull — one call drains
+    /// Claim evaluation reward after an evaluation resolves. Account-level pull — one call drains
     /// every pending reward across all settled disputes (POST /task/claim, no jobId).
     /// Distinct from user's `claim` (which pulls per-job refund/reward).
     #[command(name = "arbitration-claim")]
@@ -1223,7 +1250,7 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")]
         agent_id: String,
     },
-    /// List account-level claimable arbitration rewards across all settled disputes
+    /// List account-level claimable evaluation rewards across all settled disputes
     /// (GET /task/claimable). Read-only; no tx.
     #[command(name = "arbitration-claimable")]
     ArbitrationClaimable {
@@ -1277,7 +1304,7 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")]
         agent_id: String,
     },
-    /// Read platform staking & arbitration config (Apollo-driven, JWT auth, no body).
+    /// Read platform staking and evaluation config (Apollo-driven, JWT auth, no body).
     /// Mirrors GET /priapi/v1/aieco/task/staking/config.
     #[command(name = "staking-config", visible_alias = "stakingconfig")]
     StakingConfig {
@@ -1309,7 +1336,7 @@ pub enum AgentCommand {
     ///                                              from the inbound notification
     ///
     /// All other inputs (`jobId`, `event`, `code`, `jobTitle`, `provider`, `data`,
-    /// etc.) are extracted from inside the `--message` JSON. Arbitration-decision
+    /// etc.) are extracted from inside the `--message` JSON. Evaluation-decision
     /// relays also carry their validated `decisionId`, `selectedActionId`, and
     /// `params` in that same object.
     /// This keeps the LLM-facing surface minimal: copy the envelope through, the
@@ -1328,7 +1355,7 @@ pub enum AgentCommand {
         /// CLI reads: `code` / `jobTitle` / `provider` / `data`. A
         /// `user_decision_job_rejected` or `user_decision_sub_user_reject`
         /// message also contains `decisionId`, `selectedActionId`, and `params`;
-        /// an arbitration action carries the user's non-empty reason in
+        /// an evaluation action carries the user's non-empty reason in
         /// `params.reason`.
         /// (plus any task-detail fields like `paymentMode` /
         /// `tokenAmount` / `tokenSymbol` / `serviceParams` that downstream scenes
@@ -1760,6 +1787,40 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::user::run_task(T::MySubscriptions { role, status }, ctx).await
         }
 
+        AgentCommand::RefundList {
+            role,
+            scope,
+            page,
+            page_size,
+            agent_id,
+        } => {
+            let mut client = task::common::network::task_api_client::TaskApiClient::new();
+            task::refund_list::handle_refund_list(
+                &mut client,
+                role,
+                scope,
+                page,
+                page_size,
+                agent_id.as_deref().unwrap_or(""),
+            )
+            .await
+        }
+
+        AgentCommand::RefundDetail {
+            job_id,
+            role,
+            agent_id,
+        } => {
+            let mut client = task::common::network::task_api_client::TaskApiClient::new();
+            task::refund_list::handle_refund_detail(
+                &mut client,
+                &job_id,
+                role,
+                agent_id.as_deref().unwrap_or(""),
+            )
+            .await
+        }
+
         AgentCommand::MyTasks {
             task_type,
             status_type,
@@ -2153,10 +2214,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             job_id,
             delivery_id,
         } => {
-            let result = task::common::autotrade::executor::claim_guide_direct(
-                &job_id,
-                &delivery_id,
-            )?;
+            let result =
+                task::common::autotrade::executor::claim_guide_direct(&job_id, &delivery_id)?;
             crate::output::success(result);
             Ok(())
         }
@@ -2824,13 +2883,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             agent_id,
         } => {
             let mut client = task::common::network::task_api_client::TaskApiClient::new();
-            task::asp::subscription::handle_dispute(
-                &mut client,
-                &job_id,
-                &reason,
-                &agent_id,
-            )
-            .await
+            task::asp::subscription::handle_dispute(&mut client, &job_id, &reason, &agent_id).await
         }
 
         // ── Sub-groups ──────────────────────────────────────────────
@@ -3106,21 +3159,19 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
             // Status mismatch → block script output (to prevent sub from running an old script on-chain based on a stale event).
             // Only skip validation for PSEUDO_EVENTS / unknown / network failure; under normal conditions enforce strictly.
-            let (freshness_warning, prefetched) = if handler_fetches_own_task_detail(
-                &resolved_role,
-                &event,
-            ) {
-                (None, None)
-            } else {
-                check_status_freshness(
-                    &job_id,
-                    &event,
-                    &agent_id,
-                    &resolved_role,
-                    parsed_message.as_ref(),
-                )
-                .await
-            };
+            let (freshness_warning, prefetched) =
+                if handler_fetches_own_task_detail(&resolved_role, &event) {
+                    (None, None)
+                } else {
+                    check_status_freshness(
+                        &job_id,
+                        &event,
+                        &agent_id,
+                        &resolved_role,
+                        parsed_message.as_ref(),
+                    )
+                    .await
+                };
             if let Some(w) = freshness_warning {
                 println!("{w}");
                 return Ok(());
@@ -4004,9 +4055,18 @@ mod escape_control_chars_tests {
     fn completion_handlers_own_their_task_detail_requests() {
         assert!(handler_fetches_own_task_detail("user", "job_completed"));
         assert!(handler_fetches_own_task_detail("asp", "job_completed"));
-        assert!(!handler_fetches_own_task_detail("evaluator", "job_completed"));
-        assert!(handler_fetches_own_task_detail("user", "sub_complete_notify"));
-        assert!(!handler_fetches_own_task_detail("asp", "sub_complete_notify"));
+        assert!(!handler_fetches_own_task_detail(
+            "evaluator",
+            "job_completed"
+        ));
+        assert!(handler_fetches_own_task_detail(
+            "user",
+            "sub_complete_notify"
+        ));
+        assert!(!handler_fetches_own_task_detail(
+            "asp",
+            "sub_complete_notify"
+        ));
         assert!(!handler_fetches_own_task_detail("user", "sub_close_notify"));
     }
 
@@ -4020,10 +4080,7 @@ mod escape_control_chars_tests {
 
     #[test]
     fn job_completed_never_uses_a2mcp_flow() {
-        assert!(!should_block_legacy_a2mcp_flow(
-            Some(3),
-            "job_completed"
-        ));
+        assert!(!should_block_legacy_a2mcp_flow(Some(3), "job_completed"));
     }
 
     #[test]
@@ -4038,8 +4095,7 @@ fn handler_fetches_own_task_detail(role: &str, event: &str) -> bool {
 }
 
 fn should_block_legacy_a2mcp_flow(payment_mode: Option<i64>, event: &str) -> bool {
-    matches!(payment_mode, Some(3))
-        && !matches!(event, "sub_complete_notify" | "job_completed")
+    matches!(payment_mode, Some(3)) && !matches!(event, "sub_complete_notify" | "job_completed")
 }
 
 fn detail_path_for_event(
@@ -4240,7 +4296,7 @@ fn buyer_refund_freshness_ready(
     refund_final_context_ready(context, event, expected_user_agent_id)
 }
 
-/// A user-side arbitration result is allowed to emit verdict, rating,
+/// A user-side evaluation result is allowed to emit verdict, rating,
 /// notification, and cleanup side effects only after a fresh composed
 /// task/subscription read binds the job to the current buyer. Subscription
 /// Failed(9) is ambiguous in the legacy backend, so it additionally needs the
@@ -4252,18 +4308,18 @@ fn dispute_result_context_block_reason(
 ) -> Option<String> {
     if !matches!(context.job_type, Some(0 | 1)) {
         return Some(
-            "[next-action blocked] Fresh arbitration detail is missing a supported jobType. Do not announce a verdict, rate, notify, or clean up from caller-supplied event data."
+            "[next-action blocked] Fresh evaluation detail is missing a supported jobType. Do not announce a verdict, rate, notify, or clean up from caller-supplied event data."
                 .to_string(),
         );
     }
     if context.user_agent_id.as_deref() != Some(expected_user_agent_id) {
         return Some(format!(
-            "[next-action blocked] Fresh arbitration detail does not bind dispute_resolved to User Agent {expected_user_agent_id}. Do not announce a verdict, rate, notify, or clean up from caller-supplied event data."
+            "[next-action blocked] Fresh evaluation detail does not bind dispute_resolved to User Agent {expected_user_agent_id}. Do not announce a verdict, rate, notify, or clean up from caller-supplied event data."
         ));
     }
     if !context.refund_request_provenance {
         return Some(
-            "[next-action blocked] Fresh terminal status has no durable local refund-request provenance. Do not treat an ordinary completion/failure as an arbitration verdict or run rating/cleanup side effects."
+            "[next-action blocked] Fresh terminal status has no durable local refund-request provenance. Do not treat an ordinary completion/failure as an evaluation verdict or run rating/cleanup side effects."
                 .to_string(),
         );
     }
@@ -4279,11 +4335,11 @@ fn dispute_result_context_block_reason(
             None
         }
         Some(9) => Some(
-            "[next-action blocked] Fresh subscription Failed(9) is ambiguous and has no durable local refund-request provenance. Do not announce an arbitration refund or clean up; reconcile with refund-prepare."
+            "[next-action blocked] Fresh subscription Failed(9) is ambiguous and has no durable local refund-request provenance. Do not announce an evaluation refund or clean up; reconcile with refund-prepare."
                 .to_string(),
         ),
         status => Some(format!(
-            "[next-action blocked] Fresh arbitration status {status:?} is not Completed(6) or a confirmed user-refund Failed(9). Do not announce a verdict, rate, notify, or clean up."
+            "[next-action blocked] Fresh evaluation status {status:?} is not Completed(6) or a confirmed user-refund Failed(9). Do not announce a verdict, rate, notify, or clean up."
         )),
     }
 }
@@ -4344,10 +4400,12 @@ fn arbitration_decision_is_stale(
             } else {
                 ["periodIndex", "subStartTime", "subEndTime"]
                     .into_iter()
-                    .all(|key| match scalar(message.and_then(|value| value.get(key))) {
-                        Some(expected) => scalar(detail.get(key)) == Some(expected),
-                        None => true,
-                    })
+                    .all(
+                        |key| match scalar(message.and_then(|value| value.get(key))) {
+                            Some(expected) => scalar(detail.get(key)) == Some(expected),
+                            None => true,
+                        },
+                    )
             };
             status.as_deref() != Some("3") || !period_matches
         }
@@ -4429,8 +4487,8 @@ async fn check_status_freshness(
     ];
 
     let arbitration_source = arbitration_decision_source(job_status_or_event);
-    let is_arbitration_relay = job_status_or_event.starts_with("user_decision_")
-        && arbitration_source.is_some();
+    let is_arbitration_relay =
+        job_status_or_event.starts_with("user_decision_") && arbitration_source.is_some();
     let is_prefetch_only = PREFETCH_ONLY_EVENTS.contains(&job_status_or_event);
     let refund_status_policy = buyer_refund_event_status_policy(role, job_status_or_event);
 
@@ -4497,10 +4555,10 @@ async fn check_status_freshness(
         let Some(context) = latest_context else {
             let diagnostic = latest_error
                 .map(|error| format!("{error:#}"))
-                .unwrap_or_else(|| "authoritative arbitration detail unavailable".to_string());
+                .unwrap_or_else(|| "authoritative evaluation detail unavailable".to_string());
             return (
                 Some(format!(
-                    "[next-action blocked] Cannot fetch composed buyer-owned arbitration detail for dispute_resolved: {diagnostic}. Do not announce a verdict, rate, notify, or clean up."
+                    "[next-action blocked] Cannot fetch composed buyer-owned evaluation detail for dispute_resolved: {diagnostic}. Do not announce a verdict, rate, notify, or clean up."
                 )),
                 None,
             );
@@ -4852,9 +4910,10 @@ mod authoritative_detail_path_tests {
         asp_refund_context_block_reason, buyer_refund_event_status_policy,
         buyer_refund_freshness_ready, detail_path_for_event, dispute_result_context_block_reason,
         expired_timeout_uses_authoritative_status, refund_event_status_policy,
-        refund_final_context_ready, subscription_acceptance_status, subscription_event_block_reason,
-        subscription_failed_context_block_reason, subscription_refund_final_block_reason,
-        subscription_side_effect_context_block_reason, subscription_side_effect_event_status_policy,
+        refund_final_context_ready, subscription_acceptance_status,
+        subscription_event_block_reason, subscription_failed_context_block_reason,
+        subscription_refund_final_block_reason, subscription_side_effect_context_block_reason,
+        subscription_side_effect_event_status_policy,
     };
     use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 
@@ -4919,15 +4978,13 @@ mod authoritative_detail_path_tests {
             "ACTIVE"
         )
         .is_none());
-        assert!(
-            subscription_event_block_reason(
-                &serde_json::json!({}),
-                "sub_asp_selected",
-                1,
-                "ACTIVE"
-            )
-            .is_some()
-        );
+        assert!(subscription_event_block_reason(
+            &serde_json::json!({}),
+            "sub_asp_selected",
+            1,
+            "ACTIVE"
+        )
+        .is_some());
         assert!(subscription_event_block_reason(
             &serde_json::json!({"subStatus": 1}),
             "sub_asp_selected",
@@ -5084,7 +5141,10 @@ mod authoritative_detail_path_tests {
             Some((9, true))
         );
         assert_eq!(refund_event_status_policy("job_expired"), Some((8, false)));
-        assert_eq!(refund_event_status_policy("submit_expired"), Some((8, false)));
+        assert_eq!(
+            refund_event_status_policy("submit_expired"),
+            Some((8, false))
+        );
         assert_eq!(
             refund_event_status_policy("job_asp_reject_closed"),
             Some((7, true))

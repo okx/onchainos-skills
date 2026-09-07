@@ -112,7 +112,10 @@ fn format_ambiguous_identities(agents: &[Value]) -> String {
 /// - R4: Layer 2 list empty / lookup failed → abort mentioning `--agent-id`.
 /// - R5: Layer 2 list has ≥2 usable identities → abort enumerating every candidate.
 /// - R6: Layer 2 single malformed entry → abort mentioning `--agent-id`.
-async fn resolve_agent_id_or_error(explicit_agent_id: &str, role: i64) -> Result<String> {
+pub(crate) async fn resolve_agent_id_or_error(
+    explicit_agent_id: &str,
+    role: i64,
+) -> Result<String> {
     // R1 — explicit --agent-id wins; skip all resolution.
     let explicit = explicit_agent_id.trim();
     if !explicit.is_empty() {
@@ -199,10 +202,17 @@ pub async fn handle_status(
     } else {
         let t = &resp;
         let token_sym = t["tokenSymbol"].as_str().unwrap_or("?");
-        println!("Task status: {}", t["status"].as_i64().map(status_name).unwrap_or("?"));
+        println!(
+            "Task status: {}",
+            t["status"].as_i64().map(status_name).unwrap_or("?")
+        );
         println!("  jobId:    {job_id}");
         println!("  title:    {}", t["title"].as_str().unwrap_or("?"));
-        println!("  budget:   {} {}", t["tokenAmount"].as_str().unwrap_or("?"), token_sym);
+        println!(
+            "  budget:   {} {}",
+            t["tokenAmount"].as_str().unwrap_or("?"),
+            token_sym
+        );
         println!("  user:    {}", t["buyerAgentId"].as_str().unwrap_or("?"));
         if let Some(pid) = t["providerAgentId"].as_str() {
             println!("  asp: {pid}");
@@ -220,6 +230,8 @@ fn emit_arbitration_status(
         job_id,
         supplement,
         Some(dispute),
+        None,
+        None,
     );
     crate::output::success(result);
 }

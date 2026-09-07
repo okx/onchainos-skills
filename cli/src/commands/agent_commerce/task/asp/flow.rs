@@ -179,11 +179,19 @@ fn arbitration_decision_json(
             .find_map(|key| scalar_string(message.and_then(|value| value.get(*key))))
     };
     let name = message_field(&["jobTitle", "title", "serviceName"])
-        .or_else(|| job_title.map(str::to_string).filter(|value| !value.is_empty()))
         .or_else(|| {
-            prefetched
-                .map(|value| value.title.clone())
+            job_title
+                .map(str::to_string)
                 .filter(|value| !value.is_empty())
+        })
+        .or_else(|| {
+            prefetched.and_then(|value| {
+                value
+                    .service_name
+                    .clone()
+                    .filter(|name| !name.is_empty())
+                    .or_else(|| (!value.title.is_empty()).then(|| value.title.clone()))
+            })
         });
     let amount = message_field(&["tokenAmount", "serviceTokenAmount"]).or_else(|| {
         prefetched.and_then(|value| {
@@ -521,7 +529,7 @@ pub async fn generate_next_action(
              The backend now opens the Buyer review after successful submission. The ASP does **not** wait for `job_submitted`; end this turn and wait for `job_completed` or `job_rejected`.\n\n\
              [Follow-up events]\n\
              - `job_completed` (User Agent reviewed and accepted) — auto-rate the User Agent + notify the user\n\
-             - `job_rejected`  (User Agent rejected the deliverable) — push dispute-vs-refund decision to the user\n"
+             - `job_rejected`  (User Agent rejected the deliverable) — push evaluation-vs-refund decision to the user\n"
             )
         }
 
@@ -542,10 +550,10 @@ pub async fn generate_next_action(
              content:\n\
              {user_notify}\n\n\
              **Step 2 — End this turn.** Wait for `job_completed` / `job_rejected` to drive the next action.\n\n\
-             When `job_completed` or `job_rejected` arrives, those are **action-required** events (auto-rate the User Agent / push a dispute-vs-refund decision to the user).\n\n\
+             When `job_completed` or `job_rejected` arrives, those are **action-required** events (auto-rate the User Agent / push an evaluation-vs-refund decision to the user).\n\n\
              [Follow-up events]\n\
              - `job_completed` (review passed) — auto-rate the User Agent + notify the user\n\
-             - `job_rejected`  (User Agent rejected) — push dispute-vs-refund decision to the user\n"
+             - `job_rejected`  (User Agent rejected) — push evaluation-vs-refund decision to the user\n"
             )
         },
 
@@ -563,7 +571,7 @@ pub async fn generate_next_action(
             format!(
             "[Current state] job_rejected (User Agent rejected the deliverable)\n\
              [Role] ASP (Agent Service ASP)\n\n\
-             🛑 **MUST push the dispute/refund decision via `pending-decisions-v2 request-prompt`** — `onchainos agent user-notify` is one-way (no reply relay) and a plain text reply doesn't reach the user-session; either path = 24h timeout → auto-refund.\n\
+             🛑 **MUST push the evaluation/refund decision via `pending-decisions-v2 request-prompt`** — `onchainos agent user-notify` is one-way (no reply relay) and a plain text reply doesn't reach the user-session; either path = 24h timeout → auto-refund.\n\
              ⚠️ Do NOT send `okx-a2a session send` `received the rejection` filler to the User Agent — they just rejected; they know. Go straight to the user-decision flow.\n\
              ⚠️ **24h hard deadline** — if the user does not decide within 24h, funds are auto-refunded to the User Agent. (Agent-side context; do NOT include in `--user-content` unless the localized template already mentions it.)\n\n\
              **Step 1 — Push the decision to the user via `pending-decisions-v2 request-prompt`**:\n\n\
@@ -572,7 +580,7 @@ pub async fn generate_next_action(
              onchainos agent pending-decisions-v2 request-prompt \\\n\
              \x20\x20--job-id {job_id} --role asp --agent-id {agent_id}{to_flag} \\\n\
              \x20\x20--user-content \"<localized content shown below>\" \\\n\
-             \x20\x20--list-label \"[Decision {short_id}] {title_display} dispute decision\" \\\n\
+             \x20\x20--list-label \"[Decision {short_id}] {title_display} evaluation decision\" \\\n\
              \x20\x20--source-event job_rejected\n\
              ```\n\
              content (only the lines between `=== BEGIN ===` and `=== END ===` — translate before passing; do NOT include the markers themselves, do NOT append anything else):\n\
@@ -600,34 +608,15 @@ pub async fn generate_next_action(
                 )
             }
 
-        // ─── Scene 6.3.5: Dispute phase 1 approve confirmed on-chain → run phase 2 dispute ─
-        Event::DisputeApproved => match prefetched.and_then(|task| task.job_type) {
-            Some(0) => format!(
-                "[Current state] dispute_approved (dispute approve tx receipt)\n\
+        // Compatibility receipt from the retired two-stage path. Evaluation
+        // creation is already complete in the combined request, so this event
+        // has no write action.
+        Event::DisputeApproved => format!(
+            "[Current state] dispute_approved (compatibility receipt)\n\
              [Role] ASP\n\n\
-             **Step 1 — Recover the arbitration reason:**\n\
-             Find the latest `[ARBITRATION_REASON_CONTEXT]` message in this task conversation whose `jobId` is `{job_id}` and `providerAgentId` is `{agent_id}`. Preserve its `reason` exactly and use its URL-safe `reasonB64` value below.\n\n\
-             **Step 2 — Run the stage-2 dispute broadcast once:**\n\
-             ```bash\n\
-             onchainos agent dispute confirm {job_id} --reason-b64 <reasonB64 from the matching context> --agent-id {agent_id}\n\
-             ```\n\
-             The matching context is required for this write. When it is unavailable, return `arbitration_reason_context_missing` and end this turn. After the command completes, end this turn.\n\n\
-             [Follow-up events]\n\
-             - `job_disputed` system notification\n"
-            ),
-            Some(1) => format!(
-                "[Current state] dispute_approved (subscription compatibility event)\n\
-                 [Role] ASP (subscription)\n\n\
-                 This subscription uses the one-step `subscribe-dispute` flow (`approveAndCreateDispute`). Do NOT call `dispute confirm` or submit another dispute transaction. End this turn idempotently and wait for `sub_asp_dispute` / fresh subscription status.\n\
-                 jobId={job_id}\n"
-            ),
-            Some(other) => format!(
-                "[next-action blocked] dispute_approved requires a one-time task with jobType=0; fresh detail returned unsupported jobType={other}. Do NOT call `dispute confirm`. jobId={job_id}\n"
-            ),
-            None => format!(
-                "[next-action blocked] Cannot verify jobType=0 for dispute_approved. Do NOT call `dispute confirm`; fetch fresh task detail and retry. jobId={job_id}\n"
-            ),
-        },
+             Evaluation creation is already submitted by `approveAndCreateDispute`. End this turn and continue when the matching evaluation event or fresh status arrives.\n\
+             jobId={job_id}\n"
+        ),
 
         // ─── Scene 6.2: User chose to agree to refund (user-instruction pseudo-event) ───
         Event::Other(ref s) if s == "agree_refund" => format!(
@@ -642,9 +631,9 @@ pub async fn generate_next_action(
              ⚠️ Do NOT push to the user with `onchainos agent user-notify`.\n"
         ),
 
-        // ─── Subscription Scene: buyer rejected the current period → ASP decides refund/dispute ──
+        // ─── Subscription Scene: buyer rejected the current period → ASP decides refund/evaluation ──
         // `sub_user_reject` is a first-class Event (state_machine → SubStatus::Rejected). The ASP
-        // owns this scene per the design doc: push a refund/dispute decision to the user, mirroring
+        // owns this scene per the design doc: push a refund/evaluation decision to the user, mirroring
         // job_rejected but routing to the SUBSCRIPTION endpoints. ~1-day window before the backend
         // auto-refunds this period. (Removed from the "not handled in this slice" notify group.)
         Event::SubUserReject => {
@@ -683,7 +672,7 @@ pub async fn generate_next_action(
             format!(
             "[Current state] sub_user_reject (the buyer rejected the current subscription period)\n\
              [Role] ASP (subscription)\n\n\
-             🛑 **Push the refund/dispute decision via `pending-decisions-v2 request-prompt`** — `onchainos agent user-notify` is one-way (no reply relay); a plain reply doesn't reach the user-session, so either path lets the ~1-day window lapse into an auto-refund.\n\
+             🛑 **Push the refund/evaluation decision via `pending-decisions-v2 request-prompt`** — `onchainos agent user-notify` is one-way (no reply relay); a plain reply doesn't reach the user-session, so either path lets the ~1-day window lapse into an auto-refund.\n\
              ⚠️ Limited reaction window (about 1 day). Let the USER choose — do NOT decide autonomously; do NOT `okx-a2a session send` the buyer (they just rejected — they know).\n\n\
              **Step 1 — push the decision to the user**:\n\n\
              🌐 **Localize first** — translate the content between the markers to the user's language; keep the `A.` / `B.` letters and the `[Decision {short_id}]` label. Do NOT translate, move, or re-inline the reserved `{copy_ph}` / `{label_ph}` tokens or the `--template-vars-b64` value — they are substituted in-process.\n\
@@ -691,7 +680,7 @@ pub async fn generate_next_action(
              onchainos agent pending-decisions-v2 request-prompt \\\n\
              \x20\x20--job-id {job_id} --role asp --agent-id {agent_id}{to_flag} \\\n\
              \x20\x20--user-content \"<localized content shown below>\" \\\n\
-             \x20\x20--list-label \"[Decision {short_id}] {label_ph} — refund or dispute\" \\\n\
+             \x20\x20--list-label \"[Decision {short_id}] {label_ph} — refund or evaluation\" \\\n\
              \x20\x20--source-event sub_user_reject \\\n\
              \x20\x20--template-vars-b64 \"{title_b64}\"\n\
              ```\n\
@@ -833,18 +822,23 @@ pub async fn generate_next_action(
             "[Current state] job_disputed (evaluation is on-chain; CLI auto-submits evidence on this event)\n\
              [Role] ASP (Agent Service ASP)\n\n\
              🛑 **This event triggers an AUTOMATIC evidence upload — no user interaction**.\n\
-             The agent does NOT ask the user for evidence; it pulls the full chat history from this sub\n\
+             The agent does NOT ask the user for evidence; it recovers the exact evaluation reason and pulls the full chat history from this sub\n\
              session, calls `dispute upload` (which also auto-attaches the deliverable copy saved under\n\
              `~/.onchainos/deliverables/asp/{job_id}/`), and then notifies the user via\n\
              `onchainos agent user-notify`. **Do NOT** use `pending-decisions-v2 request` for this event.\n\
              **Do NOT** `okx-a2a session send` anything to the User Agent — both sides see the evaluation via on-chain events.\n\n\
              {task_fields}\n\
-             **Step 1 — Pull this sub session's chat history** (use `buyerAgentId` from the **Task fields** block above):\n\n\
+             **Step 1 — Recover the evaluation reason:**\n\
+             Find the latest `[ARBITRATION_REASON_CONTEXT]` message in this task conversation whose `jobId` is `{job_id}`, `providerAgentId` is `{agent_id}`, `taskType` is `one_time`, and `resumeEvent` is `job_disputed`. Preserve its `reason` exactly.\n\
+             The matching context is required for this evidence upload. When it is unavailable, return `arbitration_reason_context_missing` and end this turn.\n\n\
+             **Step 2 — Pull this sub session's chat history** (use `buyerAgentId` from the **Task fields** block above):\n\n\
              ```bash\n\
              okx-a2a session history --job-id {job_id} --to-agent-id <buyerAgentId> --json\n\
              ```\n\n\
-             **Step 2 — Format the chat history as the `--text` body**:\n\n\
+             **Step 3 — Format the evaluation reason and chat history as the `--text` body**:\n\n\
              ```\n\
+             ==== ASP evaluation reason (from ARBITRATION_REASON_CONTEXT) ====\n\
+             <exact reason>\n\
              ==== Negotiation / delivery chat history (from okx-a2a session history) ====\n\
              [time] User Agent(<agentId>): ...\n\
              [time] ASP(<agentId>): ...\n\
@@ -852,15 +846,15 @@ pub async fn generate_next_action(
              ```\n\n\
              ⚠️ **`--text` is capped at 16 KB** — if the chat history is long, **keep only** the key checkpoints (opener / scope clarifications / capability confirmation / deliverable / each side's key contention points) and prepend `(key checkpoints extracted)`; do NOT blindly drop the first N entries.\n\
              If history is genuinely empty, pass a minimal placeholder like `(no chat history available)` so `--text` is non-empty.\n\n\
-             **Step 3 — Upload (off-chain multipart):**\n\
+             **Step 4 — Upload (off-chain multipart):**\n\
              ```bash\n\
-             onchainos agent dispute upload {job_id} --role asp --agent-id {agent_id} --text \"<chat history block>\"\n\
+             onchainos agent dispute upload {job_id} --role asp --agent-id {agent_id} --text \"<evaluation reason + chat history block>\"\n\
              ```\n\
-             The CLI auto-attaches every entry under `~/.onchainos/deliverables/asp/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers the deliverable copy saved at `deliver` time. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 4 — the on-chain dispute will continue without off-chain evidence and the evaluator rules on what is available.\n\n\
-             **Step 4 — Notify the user (after upload returns):**\n\n\
+             The CLI auto-attaches every entry under `~/.onchainos/deliverables/asp/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers the deliverable copy saved at `deliver` time. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 5 — the on-chain evaluation will continue with the available evidence.\n\n\
+             **Step 5 — Notify the user (after upload returns):**\n\n\
              content:\n\
-             \x20\x20\x20\x20[Evaluation opened] Evaluation for job `{job_id}` is on-chain. The system has automatically submitted your evidence (chat history + saved deliverable). Awaiting the evaluator's verdict.\n\n\
-             **Step 5 — End this turn.** Do NOT `okx-a2a session send` anything to the User Agent.\n\n\
+             \x20\x20\x20\x20[Evaluation opened] Evaluation for job `{job_id}` is on-chain. The system has automatically submitted your evidence (evaluation reason + chat history + saved deliverable). Awaiting the evaluator's verdict.\n\n\
+             **Step 6 — End this turn.** Do NOT `okx-a2a session send` anything to the User Agent.\n\n\
              [Follow-up events]\n\
              - job_completed → won, funds released to the ASP\n\
              - dispute_resolved → lost, funds refunded to the User Agent\n"
@@ -1235,22 +1229,22 @@ pub async fn generate_next_action(
             "[Current state] sub_asp_dispute (subscription evaluation on-chain; CLI auto-submits evidence on this event)\n\
              [Role] ASP (Agent Service ASP)\n\n\
              🛑 **This event triggers an AUTOMATIC evidence upload — no user interaction**.\n\
-             The agent does NOT ask the user for evidence; it recovers the exact arbitration reason and pulls the full chat history from this sub\n\
+             The agent does NOT ask the user for evidence; it recovers the exact evaluation reason and pulls the full chat history from this sub\n\
              session, calls `dispute upload` (which also auto-attaches the most recent 20 deliverables saved under\n\
              `~/.onchainos/deliverables/asp/{job_id}/`), and then notifies the user via\n\
              `onchainos agent user-notify`. **Do NOT** use `pending-decisions-v2 request` for this event.\n\
              **Do NOT** `okx-a2a session send` anything to the User Agent — both sides see the evaluation via on-chain events.\n\n\
              {task_fields}\n\
-             **Step 1 — Recover the arbitration reason:**\n\
+             **Step 1 — Recover the evaluation reason:**\n\
              Find the latest `[ARBITRATION_REASON_CONTEXT]` message in this task conversation whose `jobId` is `{job_id}`, `providerAgentId` is `{agent_id}`, `taskType` is `subscription`, and `resumeEvent` is `sub_asp_dispute`. Preserve its `reason` exactly.\n\
              The matching context is required for this evidence upload. When it is unavailable, return `arbitration_reason_context_missing` and end this turn.\n\n\
              **Step 2 — Pull this sub session's chat history** (use `buyerAgentId` from the **Task fields** block above):\n\n\
              ```bash\n\
              okx-a2a session history --job-id {job_id} --to-agent-id <buyerAgentId> --json\n\
              ```\n\n\
-             **Step 3 — Format the arbitration reason and chat history as the `--text` body**:\n\n\
+             **Step 3 — Format the evaluation reason and chat history as the `--text` body**:\n\n\
              ```\n\
-             ==== ASP arbitration reason (from ARBITRATION_REASON_CONTEXT) ====\n\
+             ==== ASP evaluation reason (from ARBITRATION_REASON_CONTEXT) ====\n\
              <exact reason>\n\
              ==== Negotiation / delivery chat history (from okx-a2a session history) ====\n\
              [time] User Agent(<agentId>): ...\n\
@@ -1261,12 +1255,12 @@ pub async fn generate_next_action(
              If history is genuinely empty, pass a minimal placeholder like `(no chat history available)` so `--text` is non-empty.\n\n\
              **Step 4 — Upload (off-chain multipart):**\n\
              ```bash\n\
-             onchainos agent dispute upload {job_id} --role asp --agent-id {agent_id} --max-files 20 --text \"<arbitration reason + chat history block>\"\n\
+             onchainos agent dispute upload {job_id} --role asp --agent-id {agent_id} --max-files 20 --text \"<evaluation reason + chat history block>\"\n\
              ```\n\
-             The CLI auto-attaches the most recent 20 entries under `~/.onchainos/deliverables/asp/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers the deliverable copies saved at delivery time. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 5 — the on-chain dispute will continue without off-chain evidence and the evaluator rules on what is available.\n\n\
+             The CLI auto-attaches the most recent 20 entries under `~/.onchainos/deliverables/asp/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers the deliverable copies saved at delivery time. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 5 — the on-chain evaluation will continue with the available evidence.\n\n\
              **Step 5 — Notify the user (after upload returns):**\n\n\
              content:\n\
-             \x20\x20\x20\x20[Evaluation opened] Subscription evaluation for job `{job_id}` is on-chain. The system has automatically submitted your evidence (arbitration reason + chat history + saved deliverables). Awaiting the evaluator's verdict.\n\n\
+             \x20\x20\x20\x20[Evaluation opened] Subscription evaluation for job `{job_id}` is on-chain. The system has automatically submitted your evidence (evaluation reason + chat history + saved deliverables). Awaiting the evaluator's verdict.\n\n\
              **Step 6 — End this turn.** Do NOT `okx-a2a session send` anything to the User Agent.\n\n\
              [Follow-up events]\n\
              - job_completed → won, funds released to the ASP\n\
@@ -1573,7 +1567,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn one_time_dispute_approved_routes_to_confirm() {
+    async fn one_time_dispute_approved_is_a_write_free_compatibility_receipt() {
         let task = notification_task("One-time work", 0, "1", "USDT", 3);
         let output = run_asp_with_task(
             "dispute_approved",
@@ -1581,11 +1575,12 @@ mod tests {
             &task,
         )
         .await;
-        assert!(output.contains("onchainos agent dispute confirm"));
+        assert!(output.contains("compatibility receipt"));
+        assert!(!output.contains("onchainos agent dispute confirm"));
     }
 
     #[tokio::test]
-    async fn subscription_dispute_approved_never_routes_to_confirm() {
+    async fn dispute_approved_is_a_write_free_compatibility_receipt() {
         let task = notification_task("Subscription", 1, "1", "USDT", 4);
         let output = run_asp_with_task(
             "dispute_approved",
@@ -1593,15 +1588,15 @@ mod tests {
             &task,
         )
         .await;
-        assert!(output.contains("subscription compatibility event"));
-        assert!(output.contains("Do NOT call `dispute confirm`"));
+        assert!(output.contains("compatibility receipt"));
+        assert!(output.contains("approveAndCreateDispute"));
         assert!(!output.contains("onchainos agent dispute confirm"));
     }
 
     #[tokio::test]
-    async fn dispute_approved_without_job_type_fails_closed() {
+    async fn dispute_approved_does_not_require_job_type() {
         let output = run_asp("dispute_approved", json!({"event": "dispute_approved"})).await;
-        assert!(output.contains("Cannot verify jobType=0"));
+        assert!(output.contains("compatibility receipt"));
         assert!(!output.contains("onchainos agent dispute confirm"));
     }
 
@@ -1615,7 +1610,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dispute_approved_runs_confirm_and_job_disputed_owns_evidence() {
+    async fn one_time_job_disputed_uses_handed_off_reason_in_evidence() {
         let task = notification_task("One-time work", 0, "1", "USDT", 4);
         let approved = run_asp_with_task(
             "dispute_approved",
@@ -1623,13 +1618,8 @@ mod tests {
             &task,
         )
         .await;
-        assert!(approved.contains("Run the stage-2 dispute broadcast"));
-        assert!(approved.contains("onchainos agent dispute confirm"));
-        assert!(approved.contains("[ARBITRATION_REASON_CONTEXT]"));
-        assert!(approved.contains("--reason-b64"));
-        assert!(approved.contains("arbitration_reason_context_missing"));
-        assert!(!approved.contains("--reason \"\""));
-        assert!(approved.contains("- `job_disputed` system notification"));
+        assert!(approved.contains("compatibility receipt"));
+        assert!(!approved.contains("onchainos agent dispute confirm"));
 
         let disputed = run_asp_with_task(
             "job_disputed",
@@ -1638,6 +1628,11 @@ mod tests {
         )
         .await;
         assert!(disputed.contains("job_disputed"));
+        assert!(disputed.contains("[ARBITRATION_REASON_CONTEXT]"));
+        assert!(disputed.contains("taskType` is `one_time`"));
+        assert!(disputed.contains("resumeEvent` is `job_disputed`"));
+        assert!(disputed.contains("arbitration_reason_context_missing"));
+        assert!(disputed.contains("<evaluation reason + chat history block>"));
         assert!(disputed.contains("evidence"));
         assert!(disputed.contains("onchainos agent dispute upload"));
     }
@@ -1665,7 +1660,7 @@ mod tests {
         assert!(output.contains("taskType` is `subscription`"));
         assert!(output.contains("resumeEvent` is `sub_asp_dispute`"));
         assert!(output.contains("arbitration_reason_context_missing"));
-        assert!(output.contains("<arbitration reason + chat history block>"));
+        assert!(output.contains("<evaluation reason + chat history block>"));
         assert!(!output.contains("onchainos agent dispute confirm"));
     }
 
@@ -2099,7 +2094,7 @@ mod tests {
     #[tokio::test]
     async fn asp_non_actionable_subscription_events_are_ignored() {
         // NOTE: `sub_user_reject` is intentionally NOT in this list — per the design doc it is an
-        // ASP-handled decision scene (refund/dispute), covered by
+        // ASP-handled decision scene (refund/evaluation), covered by
         // `asp_sub_user_reject_renders_refund_dispute_decision` below.
         // `sub_renew` is NOT in this list either — it routes to the subscribe-asp-claim
         // guidance (see `asp_sub_renew_renders_claim_guidance`).
@@ -2274,17 +2269,41 @@ mod tests {
         }
         let cases = [
             // jobTitle=JobT, title=PlainT → title_display JobT / copy JobT / label JobT
-            Case { name: "jobTitle=JobT, title=PlainT", job_title: Some("JobT"), title: Some("PlainT"),
-                   expected_title_display: "JobT", expected_copy: "JobT", expected_label: "JobT" },
+            Case {
+                name: "jobTitle=JobT, title=PlainT",
+                job_title: Some("JobT"),
+                title: Some("PlainT"),
+                expected_title_display: "JobT",
+                expected_copy: "JobT",
+                expected_label: "JobT",
+            },
             // no jobTitle, title=PlainT → title_display <title> / copy PlainT / label <title>
-            Case { name: "no jobTitle, title=PlainT", job_title: None, title: Some("PlainT"),
-                   expected_title_display: "<title>", expected_copy: "PlainT", expected_label: "<title>" },
+            Case {
+                name: "no jobTitle, title=PlainT",
+                job_title: None,
+                title: Some("PlainT"),
+                expected_title_display: "<title>",
+                expected_copy: "PlainT",
+                expected_label: "<title>",
+            },
             // neither → title_display <title> / copy <title> / label <title>
-            Case { name: "neither", job_title: None, title: None,
-                   expected_title_display: "<title>", expected_copy: "<title>", expected_label: "<title>" },
+            Case {
+                name: "neither",
+                job_title: None,
+                title: None,
+                expected_title_display: "<title>",
+                expected_copy: "<title>",
+                expected_label: "<title>",
+            },
             // jobTitle="", title="" → title_display "" / copy "" / label ""
-            Case { name: "jobTitle=\"\", title=\"\"", job_title: Some(""), title: Some(""),
-                   expected_title_display: "", expected_copy: "", expected_label: "" },
+            Case {
+                name: "jobTitle=\"\", title=\"\"",
+                job_title: Some(""),
+                title: Some(""),
+                expected_title_display: "",
+                expected_copy: "",
+                expected_label: "",
+            },
         ];
 
         for c in cases {
@@ -2376,12 +2395,16 @@ mod tests {
             let head_copy = template_vars::render_all(&[head_copy_tmpl.as_str()], &copy_vars)
                 .expect("copy renders")
                 .remove(0);
-            assert_eq!(head_copy, base_copy, "[{}] user-content byte-for-byte", c.name);
+            assert_eq!(
+                head_copy, base_copy,
+                "[{}] user-content byte-for-byte",
+                c.name
+            );
 
             // Base-vs-head final list-label byte-for-byte (short_id slot is stable
             // across base/head, so a fixed sentinel isolates the title substitution).
             let label_tmpl = format!(
-                "[Decision SID] {} — refund or dispute",
+                "[Decision SID] {} — refund or evaluation",
                 template_vars::LABEL_TITLE_PLACEHOLDER
             );
             let mut label_vars = BTreeMap::new();
@@ -2392,8 +2415,12 @@ mod tests {
             let head_label = template_vars::render_all(&[label_tmpl.as_str()], &label_vars)
                 .expect("label renders")
                 .remove(0);
-            let base_label = format!("[Decision SID] {expected_label} — refund or dispute");
-            assert_eq!(head_label, base_label, "[{}] list-label byte-for-byte", c.name);
+            let base_label = format!("[Decision SID] {expected_label} — refund or evaluation");
+            assert_eq!(
+                head_label, base_label,
+                "[{}] list-label byte-for-byte",
+                c.name
+            );
         }
     }
 

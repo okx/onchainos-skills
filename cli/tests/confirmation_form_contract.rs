@@ -10,7 +10,7 @@ const REFUND_PREPARE: &str = include_str!("../../skills/okx-ai-v2/references/a2a
 const REFUND_CONFIRM: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/refund-confirm.md");
 const REFUND_EXECUTE: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/refund-execute.md");
 const REFUND_CONTRACT: &str = include_str!("../../skills/okx-ai-v2/references/shared/refund-contract.md");
-const REFUND_DISPLAY: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/refund-display.md");
+const TASK_QUERY: &str = include_str!("../../skills/okx-ai-v2/references/a2a/task-query.md");
 const COMPLETION: &str = include_str!("../../skills/okx-ai-v2/references/a2a/completion.md");
 const FEEDBACK: &str = include_str!("../../skills/okx-ai-v2/references/a2a/feedback.md");
 const NOTIFY: &str = include_str!("../../skills/okx-ai-v2/references/a2a/notify.md");
@@ -90,11 +90,13 @@ fn refund_finality_and_display_remain_exact() {
         assert!(REFUND_CONTRACT.contains(fact));
     }
     assert!(REFUND_CONTRACT.contains("A Tx Hash is optional audit metadata"));
-    for source in ["payload.job.jobName", "payload.job.jobId", "payload.payment.originalAmount"] {
-        assert!(REFUND_DISPLAY.contains(source));
-    }
-    assert!(REFUND_DISPLAY.contains("Preserve IDs, exact decimal amounts"));
-    assert!(REFUND_DISPLAY.contains("User-authored reason"));
+    assert!(REFUND_CONFIRM.contains("## Output Templates"));
+    assert!(REFUND_CONFIRM.contains("### Confirm Refund Request"));
+    assert!(REFUND_CONFIRM.contains("include your refund reason"));
+    assert!(TASK_QUERY.contains("## Output Templates"));
+    assert!(TASK_QUERY.contains("### Refund Task List"));
+    assert!(TASK_QUERY.contains("### Refund Request Details"));
+    assert!(TASK_QUERY.contains("Preserve the full Job ID and the original refund reason"));
 }
 
 #[test]

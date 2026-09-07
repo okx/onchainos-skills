@@ -80,6 +80,7 @@ struct RefundSnapshot {
     original_amount: String,
     response_deadline: Option<i64>,
     requested_at: Option<i64>,
+    recorded_refund_reason: Option<String>,
     settlement_confirmed: bool,
     settlement_tx_hash: Option<String>,
     settlement_provenance: Option<RefundSettlementProvenance>,
@@ -91,6 +92,14 @@ struct RefundSnapshot {
     /// Set only after a durable local request-refund receipt is reconciled
     /// against the exact fresh task/payment lifecycle facts.
     refund_request_provenance: bool,
+}
+
+pub(crate) struct RefundListItem {
+    pub(crate) display: Value,
+    pub(crate) deadline: Option<i64>,
+    pub(crate) job_type: i64,
+    pub(crate) status: i64,
+    pub(crate) refund_request_available: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1389,7 +1398,7 @@ impl RefundSnapshot {
             job_type,
             status,
             title: lookup(&["title", "jobTitle"], &["title", "jobTitle"])
-                .unwrap_or_else(|| job_id.to_string()),
+                .unwrap_or_default(),
             buyer_agent_id,
             provider_agent_id: lookup(
                 &["providerAgentId", "aspAgentId"],
@@ -1416,12 +1425,16 @@ impl RefundSnapshot {
             payment_mode,
             original_amount,
             response_deadline: lookup_i64(
-                &["rejectWindowEndsAt", "responseDeadline"],
-                &["rejectWindowEndsAt", "responseDeadline"],
+                &["rejectWindowEndsAt", "responseDeadline", "expireTime"],
+                &["rejectWindowEndsAt", "responseDeadline", "expireTime"],
             ),
             requested_at: lookup_i64(
                 &["refundRequestedAt", "rejectTime"],
                 &["refundRequestedAt", "rejectTime"],
+            ),
+            recorded_refund_reason: lookup(
+                &["refundReason", "rejectReason", "userReason"],
+                &["refundReason", "rejectReason", "userReason"],
             ),
             // Tx Hash is optional display/audit metadata. The authoritative
             // task status is projected only after the backend consumes the
@@ -1452,8 +1465,7 @@ impl RefundSnapshot {
             };
         let paid_one_time_final = snapshot.job_type == 0
             && !is_zero_decimal(&snapshot.original_amount)
-            && (snapshot.status == 9
-                || (snapshot.status == 7 && snapshot.payment_mode == Some(1)));
+            && (snapshot.status == 9 || (snapshot.status == 7 && snapshot.payment_mode == Some(1)));
         if paid_expired || paid_one_time_final {
             snapshot.settlement_confirmed = true;
         }
@@ -1477,7 +1489,6 @@ impl RefundSnapshot {
 
     fn has_required_refund_display_details(&self) -> bool {
         self.provider_agent_id.is_some()
-            && (self.service_name.is_some() || self.service_id.is_some())
             && self
                 .token_symbol
                 .as_deref()
@@ -1794,6 +1805,72 @@ impl RefundSnapshot {
         }
     }
 
+    fn display_timestamp(timestamp: Option<i64>) -> Value {
+        timestamp
+            .and_then(common::deadline::format_local_timestamp_with_offset)
+            .map(Value::String)
+            .unwrap_or(Value::Null)
+    }
+
+    fn display_current_period(&self) -> Value {
+        if !self.is_subscription() {
+            return Value::Null;
+        }
+        let (Some(start_time), Some(end_time)) = (self.period_start_time, self.period_end_time)
+        else {
+            return Value::Null;
+        };
+        match (
+            common::deadline::format_local_timestamp_with_offset(start_time),
+            common::deadline::format_local_timestamp_with_offset(end_time),
+        ) {
+            (Some(start), Some(end)) => Value::String(format!("{start}–{end}")),
+            _ => Value::Null,
+        }
+    }
+
+    fn display_refund_amount(&self, refundable_amount: &str) -> Value {
+        if is_zero_decimal(refundable_amount) {
+            return Value::String("No refund required".to_string());
+        }
+        match self
+            .token_symbol
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            Some(symbol) => Value::String(format!("{refundable_amount} {symbol}")),
+            None => Value::Null,
+        }
+    }
+
+    fn display_payload(&self, reason: Option<&str>, refundable_amount: &str) -> Value {
+        let service_name = self
+            .service_name
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| (!self.title.trim().is_empty()).then_some(self.title.as_str()))
+            .map(|value| Value::String(value.to_string()))
+            .unwrap_or(Value::Null);
+        let result_deadline = self.response_deadline.or_else(|| {
+            (self.is_subscription() && self.status == 1)
+                .then_some(self.period_end_time)
+                .flatten()
+        });
+        json!({
+            "serviceName": service_name,
+            "jobId": self.job_id,
+            "serviceProviderName": self.provider_name,
+            "agentId": self.provider_agent_id,
+            "taskType": if self.is_subscription() { "Subscription" } else { "One-time" },
+            "currentPeriod": self.display_current_period(),
+            "refundAmount": self.display_refund_amount(refundable_amount),
+            "reasonForRefund": reason.or(self.recorded_refund_reason.as_deref()),
+            "requestedAt": Self::display_timestamp(self.requested_at),
+            "resultDeadline": Self::display_timestamp(result_deadline),
+        })
+    }
+
     fn payload(&self, reason: Option<&str>, plan: &Plan) -> Value {
         let refund_flow_verified = matches!(
             plan.reason,
@@ -1814,6 +1891,7 @@ impl RefundSnapshot {
         } else {
             "0"
         };
+        let display = self.display_payload(reason, refundable_amount);
         let required_params = match plan.reason {
             "refund_reason_required" | "refund_reason_too_long" => json!(["reason"]),
             _ => json!([]),
@@ -1859,6 +1937,7 @@ impl RefundSnapshot {
         json!({
             "schemaVersion": SCHEMA_VERSION,
             "refundContextId": self.context_id(reason),
+            "display": display,
             "job": {
                 "jobId": self.job_id,
                 "jobName": self.title,
@@ -2091,6 +2170,43 @@ async fn fetch_snapshot_for_identity(
     } else {
         RefundSnapshot::from_details_with_expected_buyer(job_id, &task, subscription.as_ref(), None)
     }
+}
+
+pub(crate) async fn fetch_refund_list_item_for_identity(
+    client: &mut TaskApiClient,
+    job_id: &str,
+    caller_agent_id: &str,
+    require_buyer_ownership: bool,
+) -> Result<RefundListItem> {
+    let mut snapshot = fetch_snapshot_for_identity(
+        client,
+        job_id,
+        caller_agent_id,
+        require_buyer_ownership,
+    )
+    .await?;
+    if snapshot.provider_name.is_none() {
+        if let Some(provider_agent_id) = snapshot.provider_agent_id.as_deref() {
+            snapshot.provider_name = common::fetch_agent_profile(provider_agent_id).await.name;
+        }
+    }
+    let refund_request_available = snapshot.plan(None).reason == "refund_reason_required";
+    let deadline = snapshot.response_deadline.or_else(|| {
+        (snapshot.is_subscription() && snapshot.status == 1)
+            .then_some(snapshot.period_end_time)
+            .flatten()
+    });
+    let mut display = snapshot.display_payload(None, &snapshot.original_amount);
+    display["requestedRefund"] = display["refundAmount"].clone();
+    display["buyerReason"] = display["reasonForRefund"].clone();
+    display["responseDeadline"] = display["resultDeadline"].clone();
+    Ok(RefundListItem {
+        display,
+        deadline,
+        job_type: snapshot.job_type,
+        status: snapshot.status,
+        refund_request_available,
+    })
 }
 
 impl From<RefundSnapshot> for common::PreFetchedTaskContext {
@@ -2411,11 +2527,7 @@ fn reconcile_actions(job_id: &str, operation: Option<RefundOperation>) -> Value 
 
     let follow_up = action("watch_task", false, Some(json!({"jobId": job_id})));
     Value::Array(vec![
-        action(
-            "view_refund_status",
-            true,
-            Some(json!({"jobId": job_id})),
-        ),
+        action("view_refund_status", true, Some(json!({"jobId": job_id}))),
         follow_up,
     ])
 }
@@ -4238,6 +4350,27 @@ mod tests {
         let mut failed = expired;
         failed.status = 9;
         assert!(pending_mutation_resolved(&legacy_finalize_pending, &failed));
+    }
+
+    #[test]
+    fn refund_display_is_english_display_ready_and_omits_transaction_hashes() {
+        let mut detail = task(json!(0), json!(3), "1.25");
+        detail.as_object_mut().unwrap().remove("serviceName");
+        detail["rejectReason"] = json!("The result missed the requested scope");
+        detail["expireTime"] = json!(1_700_100_000);
+        let snapshot =
+            RefundSnapshot::from_details("job-1", &detail, None, "buyer-1").unwrap();
+        let display = snapshot.display_payload(None, &snapshot.original_amount);
+
+        assert_eq!(display["serviceName"], "Audit task");
+        assert_eq!(display["taskType"], "One-time");
+        assert_eq!(display["refundAmount"], "1.25 USDT");
+        assert_eq!(
+            display["reasonForRefund"],
+            "The result missed the requested scope"
+        );
+        assert!(display["resultDeadline"].as_str().is_some());
+        assert!(display.get("txHash").is_none());
     }
 
     #[test]

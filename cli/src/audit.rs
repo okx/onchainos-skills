@@ -517,6 +517,8 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::TaskAttach { .. } => "task-attach".into(),
         AgentCommand::ListAttachments { .. } => "list-attachments".into(),
         AgentCommand::MySubscriptions { .. } => "my-subscriptions".into(),
+        AgentCommand::RefundList { .. } => "refund-list".into(),
+        AgentCommand::RefundDetail { .. } => "refund-detail".into(),
         AgentCommand::MyTasks { .. } => "my-tasks".into(),
         AgentCommand::SubscriptionList { .. } => "subscription-list".into(),
         AgentCommand::TaskVisibilityUpdate { .. } => "task-visibility-update".into(),

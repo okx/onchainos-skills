@@ -19,10 +19,10 @@ Backend `status` int field → local `Status` enum mapping (`state_machine.rs::S
 | `0` | `created` | `Status::Created` | Task on-chain, awaiting acceptance | `job_created` |
 | `1` | `accepted` | `Status::Accepted` | Designated ASP accepted the buyer-created-and-funded task; execution starts | `job_accepted` |
 | `2` | `submitted` | `Status::Submitted` | ASP deliverable on-chain | `job_submitted` |
-| `3` | `rejected` | `Status::Rejected` | User Agent rejected deliverable; 24h decision window (dispute / agree-refund) | `job_rejected` |
-| `4` | `disputed` | `Status::Disputed` | Dispute in progress (evidence period + commit/reveal) | `job_disputed` |
+| `3` | `rejected` | `Status::Rejected` | User Agent rejected deliverable; 24h decision window (evaluation / agree-refund) | `job_rejected` |
+| `4` | `disputed` | `Status::Disputed` | Evaluation in progress (evidence period + commit/reveal) | `job_disputed` |
 | `5` | `admin_stopped` | `Status::AdminStopped` | Terminal: admin-stopped by the platform | — |
-| `6` | `completed` | `Status::Completed` | Terminal: task completed (normal acceptance / dispute won by ASP / review timeout auto-complete) | `job_completed` or `job_auto_completed` |
+| `6` | `completed` | `Status::Completed` | Terminal: task completed (normal acceptance / evaluation favors ASP / review timeout auto-complete) | `job_completed` or `job_auto_completed` |
 | `7` | `close` | `Status::Close` | Terminal close. Refund meaning depends on task kind and payment facts. | `job_closed` or `job_asp_reject_closed` |
 | `8` | `expired` | `Status::Expired` | Terminal timeout. Paid non-trial tasks are refunded; trial and zero-amount tasks have no refundable funds. | `job_expired` or `job_asp_accept_expire` |
 | `9` | `failed` | `Status::Failed` | Terminal refund-or-failure state; subscription cause can be ambiguous. | `job_refunded`, `job_auto_refunded`, `job_asp_reject_expire`, `sub_asp_agree`, `sub_reject_refund_notify`, `dispute_resolved`, or `sub_failed_notify` |
@@ -31,6 +31,6 @@ Backend `status` int field → local `Status` enum mapping (`state_machine.rs::S
 > Refund V2 flow in [`../a2a/refund-reconcile.md`](../a2a/refund-reconcile.md); its structured
 > result owns settlement, provenance, and terminal handling.
 >
-> ⚠️ **There is no `applied` status** — `provider_applied` is an event; when it fires, status is still `created`. Similarly when `dispute_approved` fires, status is still `rejected` (dispute phase 1 approve). Events are just "what just happened" — they don't necessarily change status.
+> ⚠️ **There is no `applied` status** — `provider_applied` is an event; when it fires, status is still `created`. Similarly when `dispute_approved` fires, status is still `rejected` (evaluation phase 1 approval). Events are just "what just happened" — they don't necessarily change status.
 
 ---

@@ -140,6 +140,31 @@ pub fn build_decision_result(
         })
         .collect::<Vec<_>>();
     let extra_fields = optional_fields(message);
+    let is_subscription = source_event == SUB_USER_REJECT;
+    let current_period = if is_subscription {
+        display_period(
+            message
+                .and_then(|value| integer_from_keys(value, &["subStartTime", "periodStartTime"])),
+            message.and_then(|value| integer_from_keys(value, &["subEndTime", "periodEndTime"])),
+        )
+    } else {
+        Value::Null
+    };
+    let buyer_reason = message
+        .map(|value| {
+            value_from_keys(
+                value,
+                &["refundReason", "rejectReason", "userReason", "reason"],
+            )
+        })
+        .unwrap_or(Value::Null);
+    let response_deadline = format_timestamp_value(message.and_then(|value| {
+        integer_from_keys(
+            value,
+            &["rejectWindowEndsAt", "responseDeadline", "expireTime"],
+        )
+    }));
+    let requested_refund = display_amount(amount.as_deref(), token_symbol.as_deref());
     progression(
         "arbitration_decision",
         "requires_user_input",
@@ -148,10 +173,15 @@ pub fn build_decision_result(
         json!({
             "jobId": job_id,
             "decisionId": decision_id(source_event, job_id, message),
-            "taskType": if source_event == SUB_USER_REJECT { "subscription" } else { "one_time" },
+            "taskType": if is_subscription { "Subscription" } else { "One-time" },
             "name": name,
+            "serviceName": name,
             "amount": amount,
             "tokenSymbol": token_symbol,
+            "currentPeriod": current_period,
+            "requestedRefund": requested_refund,
+            "buyerReason": buyer_reason,
+            "responseDeadline": response_deadline,
             "extraFields": extra_fields,
         }),
     )
@@ -216,7 +246,7 @@ pub fn validate_choices(
         || !valid_choice_params(choices, job_id)
     {
         return Err(
-            "arbitration choices must map A/B to the source event's allowed actions".to_string(),
+            "evaluation choices must map A/B to the source event's allowed actions".to_string(),
         );
     }
     Ok(())
@@ -405,10 +435,7 @@ fn deterministic_choice_key(reply: &str) -> Option<&'static str> {
         || lowered.starts_with("agree to refund")
         || lowered.starts_with("accept refund")
         || lowered.starts_with("accept full refund")
-        || reply.starts_with("同意退款")
-        || reply.starts_with("同意全额退款")
-        || reply.starts_with("确认退款")
-        || reply.starts_with("确认退还")
+        || lowered.starts_with("approve refund")
     {
         return Some("A");
     }
@@ -417,8 +444,8 @@ fn deterministic_choice_key(reply: &str) -> Option<&'static str> {
         || lowered.starts_with("raise dispute")
         || lowered.starts_with("file arbitration")
         || lowered.starts_with("raise arbitration")
-        || reply.starts_with("发起仲裁")
-        || reply.starts_with("提起仲裁")
+        || lowered.starts_with("request evaluation")
+        || lowered.starts_with("start evaluation")
     {
         return Some("B");
     }
@@ -434,19 +461,15 @@ fn contains_choice_marker(value: &str, expected: char) -> bool {
 fn starts_with_choice(value: &str, expected: char) -> bool {
     let mut chars = value.chars();
     chars.next() == Some(expected)
-        && chars.next().is_none_or(|next| {
-            next.is_whitespace() || matches!(next, '.' | ':' | '：' | ',' | '，')
-        })
+        && chars
+            .next()
+            .is_none_or(|next| next.is_whitespace() || matches!(next, '.' | ':' | ','))
 }
 
 fn arbitration_reason(reply: &str) -> Option<String> {
     let trimmed = reply.trim();
     let after_choice = if starts_with_choice(&trimmed.to_ascii_lowercase(), 'b') {
         trimmed.get(1..).unwrap_or("")
-    } else if let Some(rest) = trimmed.strip_prefix("发起仲裁") {
-        rest
-    } else if let Some(rest) = trimmed.strip_prefix("提起仲裁") {
-        rest
     } else {
         let lower = trimmed.to_ascii_lowercase();
         if lower.starts_with("file dispute") {
@@ -457,35 +480,123 @@ fn arbitration_reason(reply: &str) -> Option<String> {
             trimmed.get("file arbitration".len()..).unwrap_or("")
         } else if lower.starts_with("raise arbitration") {
             trimmed.get("raise arbitration".len()..).unwrap_or("")
+        } else if lower.starts_with("request evaluation") {
+            trimmed.get("request evaluation".len()..).unwrap_or("")
+        } else if lower.starts_with("start evaluation") {
+            trimmed.get("start evaluation".len()..).unwrap_or("")
         } else {
             ""
         }
     };
-    let reason = after_choice.trim_start_matches(|c: char| {
-        c.is_whitespace() || matches!(c, '.' | ':' | '：' | ',' | '，')
-    });
-    let reason = reason.strip_prefix("理由").unwrap_or_else(|| {
-        let Some(prefix) = reason.get(.."reason".len()) else {
-            return reason;
-        };
+    let reason = after_choice
+        .trim_start_matches(|c: char| c.is_whitespace() || matches!(c, '.' | ':' | ','));
+    let reason = if let Some(prefix) = reason.get(.."reason".len()) {
         let rest = reason.get("reason".len()..).unwrap_or("");
         if prefix.eq_ignore_ascii_case("reason")
-            && rest.chars().next().is_none_or(|c| {
-                c.is_whitespace() || matches!(c, '.' | ':' | '：' | ',' | '，')
-            })
+            && rest
+                .chars()
+                .next()
+                .is_none_or(|c| c.is_whitespace() || matches!(c, '.' | ':' | ','))
         {
             rest
         } else {
             reason
         }
-    });
+    } else {
+        reason
+    };
     let reason = reason
-        .trim_start_matches(|c: char| c.is_whitespace() || matches!(c, ':' | '：'))
+        .trim_start_matches(|c: char| c.is_whitespace() || c == ':')
         .trim();
     (!reason.is_empty()).then(|| reason.to_string())
 }
 
-/// Unified read-only CLI entry for ASP arbitration cases.
+fn integer_value(value: Option<&Value>) -> Option<i64> {
+    let value = value?;
+    value
+        .as_i64()
+        .or_else(|| value.as_u64().and_then(|value| i64::try_from(value).ok()))
+        .or_else(|| value.as_str().and_then(|value| value.trim().parse().ok()))
+}
+
+fn integer_from_keys(value: &Value, keys: &[&str]) -> Option<i64> {
+    keys.iter().find_map(|key| integer_value(value.get(*key)))
+}
+
+fn format_timestamp(timestamp: Option<i64>) -> Option<String> {
+    super::common::deadline::format_local_timestamp_with_offset(timestamp?)
+}
+
+fn format_timestamp_value(timestamp: Option<i64>) -> Value {
+    format_timestamp(timestamp)
+        .map(Value::String)
+        .unwrap_or(Value::Null)
+}
+
+fn display_period(start: Option<i64>, end: Option<i64>) -> Value {
+    match (format_timestamp(start), format_timestamp(end)) {
+        (Some(start), Some(end)) => Value::String(format!("{start}–{end}")),
+        _ => Value::Null,
+    }
+}
+
+fn is_zero_amount(amount: &str) -> bool {
+    let value = amount.trim().trim_start_matches('+');
+    !value.is_empty()
+        && value
+            .chars()
+            .all(|character| matches!(character, '0' | '.'))
+}
+
+fn display_amount(amount: Option<&str>, token_symbol: Option<&str>) -> Value {
+    let Some(amount) = amount.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Value::Null;
+    };
+    if is_zero_amount(amount) {
+        return Value::String("No refund required".to_string());
+    }
+    let Some(token_symbol) = token_symbol
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Value::Null;
+    };
+    Value::String(format!("{amount} {token_symbol}"))
+}
+
+fn evaluation_status_at(
+    task_status: Option<i64>,
+    prepare_end_time: Option<i64>,
+    now_seconds: i64,
+    now_millis: i64,
+) -> &'static str {
+    if matches!(task_status, Some(6 | 9)) {
+        return "Decided";
+    }
+    if let Some(deadline) = prepare_end_time {
+        let now = if deadline.unsigned_abs() >= 100_000_000_000 {
+            now_millis
+        } else {
+            now_seconds
+        };
+        if now <= deadline {
+            return "Evidence preparation";
+        }
+    }
+    "Evaluating"
+}
+
+fn evaluation_status(task_status: Option<i64>, prepare_end_time: Option<i64>) -> &'static str {
+    let now = chrono::Utc::now();
+    evaluation_status_at(
+        task_status,
+        prepare_end_time,
+        now.timestamp(),
+        now.timestamp_millis(),
+    )
+}
+
+/// Unified read-only CLI entry for ASP evaluation cases.
 pub async fn handle_arbitration_list(
     client: &mut TaskApiClient,
     agent_id: &str,
@@ -509,12 +620,30 @@ pub async fn handle_arbitration_list(
     let response = client.get_with_agent_id(&path, agent_id).await?;
     let items = response["list"].as_array().cloned().unwrap_or_default();
     let total = response["total"].as_u64().unwrap_or(0);
-    let result = build_list_result(page, total, &items);
+    let mut enriched = Vec::with_capacity(items.len());
+    for item in items {
+        let status = match item["jobId"]
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            Some(job_id) => {
+                let path = client.endpoint(job_id, "dispute/status");
+                match client.get_with_agent_id(&path, agent_id).await {
+                    Ok(response) => serde_json::from_value::<DisputeStatusResponse>(response).ok(),
+                    Err(_) => None,
+                }
+            }
+            None => None,
+        };
+        enriched.push((item, status));
+    }
+    let result = build_list_result(page, total, &enriched);
     crate::output::success(result);
     Ok(())
 }
 
-/// Unified read-only CLI entry for one ASP arbitration case.
+/// Unified read-only CLI entry for one ASP evaluation case.
 pub async fn handle_arbitration_detail(
     client: &mut TaskApiClient,
     job_id: &str,
@@ -534,7 +663,7 @@ pub async fn handle_arbitration_detail(
     let path = client.endpoint(job_id, "dispute/status");
     let backend_response = client.get_with_agent_id(&path, agent_id).await?;
     let arbitration = serde_json::from_value::<DisputeStatusResponse>(backend_response.clone())
-        .context("failed to parse arbitration detail response")?;
+        .context("failed to parse evaluation detail response")?;
     let supplement = if arbitration.job_type == Some(1) {
         client
             .fetch_subscription(job_id, agent_id)
@@ -546,7 +675,18 @@ pub async fn handle_arbitration_detail(
             .await
             .unwrap_or_else(|_| json!({}))
     };
-    let result = build_detail_result(job_id, &supplement, Some(&arbitration));
+    let evidence_path = client.endpoint(job_id, "evidence");
+    let evidence = client
+        .get_with_agent_id(&evidence_path, agent_id)
+        .await
+        .ok();
+    let result = build_detail_result(
+        job_id,
+        &supplement,
+        Some(&arbitration),
+        Some(&backend_response),
+        evidence.as_ref(),
+    );
     crate::output::success(result);
     Ok(())
 }
@@ -621,22 +761,46 @@ fn arbitration_verdict(task_status: Option<i64>) -> Value {
     }
 }
 
-pub(crate) fn build_list_result(page: u32, total: u64, items: &[Value]) -> Value {
+pub(crate) fn build_list_result(
+    page: u32,
+    total: u64,
+    items: &[(Value, Option<DisputeStatusResponse>)],
+) -> Value {
     let items = items
         .iter()
-        .filter_map(|item| {
+        .filter_map(|(item, arbitration)| {
             let job_id = item["jobId"].as_str()?.trim();
             if job_id.is_empty() {
                 return None;
             }
-            let task_status = item["status"].as_i64();
+            let task_status = arbitration
+                .as_ref()
+                .map(|value| i64::from(value.task_status))
+                .or_else(|| item["status"].as_i64());
+            let prepare_end_time = arbitration.as_ref().and_then(|value| value.prepare_end_time);
+            let status = evaluation_status(task_status, prepare_end_time);
+            let key_time = match status {
+                "Evidence preparation" => format_timestamp_value(prepare_end_time),
+                "Evaluating" => format_timestamp_value(
+                    arbitration.as_ref().and_then(|value| value.round_end_time),
+                ),
+                "Decided" => format_timestamp_value(integer_from_keys(
+                    item,
+                    &["resolvedAt", "decisionTime", "updatedAt", "updateTime"],
+                )),
+                _ => Value::Null,
+            };
             Some(json!({
                 "jobId": job_id,
+                "serviceName": value_from_keys(item, &["serviceName", "title", "jobTitle"]),
+                "status": status,
+                "evaluationStarted": format_timestamp_value(integer_from_keys(item, &["disputeTime", "evaluationStartedAt", "createdAt", "createTime"])),
+                "keyTime": key_time,
                 "description": value_from_keys(item, &["title"]),
                 "occurredAt": value_from_keys(item, &["createTime"]),
                 "taskStatus": task_status.map(backend_task_status_name),
-                "taskStatusCode": value_from_keys(item, &["status"]),
-                "arbitrationPhase": arbitration_phase(task_status, None),
+                "taskStatusCode": task_status,
+                "arbitrationPhase": arbitration_phase(task_status, prepare_end_time),
                 "verdict": arbitration_verdict(task_status),
             }))
         })
@@ -661,7 +825,7 @@ pub(crate) fn build_list_result(page: u32, total: u64, items: &[Value]) -> Value
                 "recommend": false,
                 "params": {
                     "allowedJobIds": allowed_job_ids,
-                    "confirmationRequired": true,
+                    "confirmationRequired": false,
                 }
             })]
         },
@@ -673,18 +837,45 @@ pub(crate) fn build_detail_result(
     job_id: &str,
     supplement: &Value,
     arbitration: Option<&DisputeStatusResponse>,
+    status_payload: Option<&Value>,
+    evidence: Option<&Value>,
 ) -> Value {
     let task_status = arbitration
         .map(|value| i64::from(value.task_status))
         .or_else(|| supplement["status"].as_i64());
     let prepare_end_time = arbitration.and_then(|value| value.prepare_end_time);
     let phase = arbitration_phase(task_status, prepare_end_time);
+    let status = evaluation_status(task_status, prepare_end_time);
     let explicit_verdict = value_from_keys(supplement, &["verdict", "disputeResult"]);
     let verdict = if explicit_verdict.is_null() {
         arbitration_verdict(task_status)
     } else {
         explicit_verdict
     };
+    let service_name = value_from_keys(supplement, &["serviceName", "title", "jobTitle"]);
+    let amount = arbitration
+        .and_then(|value| value.token_amount.clone())
+        .or_else(|| {
+            scalar_string(Some(&value_from_keys(
+                supplement,
+                &["tokenAmount", "serviceTokenAmount"],
+            )))
+        });
+    let token_symbol = arbitration
+        .and_then(|value| value.token_symbol.clone())
+        .or_else(|| {
+            scalar_string(Some(&value_from_keys(
+                supplement,
+                &["tokenSymbol", "paymentTokenSymbol"],
+            )))
+        });
+    let buyer_reason = evidence
+        .map(|value| value_from_keys(&value["client"], &["reason"]))
+        .filter(|value| !value.is_null())
+        .unwrap_or(Value::Null);
+    let evaluation_started = status_payload
+        .and_then(|value| integer_from_keys(value, &["disputeTime", "createdAt", "createTime"]))
+        .or_else(|| integer_from_keys(supplement, &["disputeTime"]));
     progression(
         "arbitration_detail",
         "ready",
@@ -692,17 +883,16 @@ pub(crate) fn build_detail_result(
         Vec::new(),
         json!({
             "jobId": job_id,
+            "serviceName": service_name,
+            "requestedRefund": display_amount(amount.as_deref(), token_symbol.as_deref()),
+            "buyerReason": buyer_reason,
+            "status": status,
+            "evaluationStarted": format_timestamp_value(evaluation_started),
             "description": value_from_keys(supplement, &["title", "serviceName"]),
             "occurredAt": value_from_keys(supplement, &["disputeTime", "updatedAt", "updateTime", "createdAt", "createTime"]),
             "jobType": arbitration.and_then(|value| value.job_type),
-            "amount": arbitration
-                .and_then(|value| value.token_amount.clone())
-                .map(Value::String)
-                .unwrap_or_else(|| value_from_keys(supplement, &["tokenAmount", "serviceTokenAmount"])),
-            "tokenSymbol": arbitration
-                .and_then(|value| value.token_symbol.clone())
-                .map(Value::String)
-                .unwrap_or_else(|| value_from_keys(supplement, &["tokenSymbol", "paymentTokenSymbol"])),
+            "amount": amount,
+            "tokenSymbol": token_symbol,
             "taskStatus": task_status.map(backend_task_status_name),
             "taskStatusCode": task_status,
             "arbitrationPhase": phase,
@@ -718,7 +908,6 @@ pub(crate) fn build_detail_result(
             "verdict": verdict,
             "fundDestination": value_from_keys(supplement, &["fundDestination", "fundsTo"]),
             "refundAmount": value_from_keys(supplement, &["refundAmount"]),
-            "txHash": value_from_keys(supplement, &["disputeTxHash", "refundTxHash", "txHash"]),
         }),
     )
 }
@@ -761,11 +950,8 @@ mod tests {
     }
 
     #[test]
-    fn deterministic_reply_maps_choice_and_requires_arbitration_reason() {
+    fn deterministic_reply_maps_choice_and_requires_evaluation_reason() {
         let choices = default_choices(JOB_REJECTED, "job-1");
-        let selected = resolve_choice(JOB_REJECTED, &choices, "B，理由：按要求完成").unwrap();
-        assert_eq!(selected.action_id, "raise_arbitration");
-        assert_eq!(selected.params["reason"], "按要求完成");
         let selected = resolve_choice(
             JOB_REJECTED,
             &choices,
@@ -773,10 +959,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(selected.params["reason"], "delivery below expectation");
-        let selected = resolve_choice(JOB_REJECTED, &choices, "B 交付产物不及预期").unwrap();
-        assert_eq!(selected.params["reason"], "交付产物不及预期");
         assert_eq!(
-            resolve_choice(JOB_REJECTED, &choices, "同意退款")
+            resolve_choice(JOB_REJECTED, &choices, "Approve refund")
                 .unwrap()
                 .action_id,
             "agree_refund"
@@ -788,8 +972,29 @@ mod tests {
             "agree_refund"
         );
         assert_eq!(
-            resolve_choice(JOB_REJECTED, &choices, "发起仲裁"),
+            resolve_choice(JOB_REJECTED, &choices, "Request evaluation"),
             Err(ChoiceError::MissingReason)
+        );
+        let selected = resolve_choice(
+            JOB_REJECTED,
+            &choices,
+            "Request evaluation: the delivery met the agreed requirements",
+        )
+        .unwrap();
+        assert_eq!(selected.action_id, "raise_arbitration");
+        assert_eq!(
+            selected.params["reason"],
+            "the delivery met the agreed requirements"
+        );
+        let selected = resolve_choice(
+            JOB_REJECTED,
+            &choices,
+            "request evaluation reason: delivery meets the specification",
+        )
+        .unwrap();
+        assert_eq!(
+            selected.params["reason"],
+            "delivery meets the specification"
         );
         assert_eq!(
             resolve_choice(JOB_REJECTED, &choices, "B"),
@@ -910,18 +1115,22 @@ mod tests {
         let result = build_list_result(
             1,
             1,
-            &[json!({
-                "jobId": "job-1",
-                "title": "Research",
-                "status": 4,
-                "createTime": 123,
-            })],
+            &[(
+                json!({
+                    "jobId": "job-1",
+                    "title": "Research",
+                    "status": 4,
+                    "createTime": 1_700_000_000,
+                }),
+                None,
+            )],
         );
         assert_eq!(result["phase"], "arbitration_list");
         assert_eq!(result["payload"]["items"][0]["jobId"], "job-1");
         assert_eq!(result["payload"]["items"][0]["description"], "Research");
-        assert_eq!(result["payload"]["items"][0]["occurredAt"], 123);
+        assert_eq!(result["payload"]["items"][0]["occurredAt"], 1_700_000_000);
         assert_eq!(result["payload"]["items"][0]["taskStatus"], "disputed");
+        assert_eq!(result["payload"]["items"][0]["status"], "Evaluating");
         assert!(result["payload"]["items"][0]["verdict"].is_null());
         assert_eq!(result["nextAction"][0]["id"], "view_arbitration");
         assert_eq!(
@@ -930,7 +1139,7 @@ mod tests {
         );
         assert_eq!(
             result["nextAction"][0]["params"]["confirmationRequired"],
-            true
+            false
         );
     }
 
@@ -940,13 +1149,15 @@ mod tests {
             "job-1",
             &json!({"status": 4, "title": "Research", "disputeTime": 123}),
             None,
+            None,
+            None,
         );
         assert_eq!(result["phase"], "arbitration_detail");
         assert_eq!(result["payload"]["jobId"], "job-1");
         assert_eq!(result["payload"]["occurredAt"], 123);
         assert_eq!(result["payload"]["arbitrationPhase"], "unknown");
         assert!(result["payload"]["verdict"].is_null());
-        assert!(result["payload"]["txHash"].is_null());
+        assert_eq!(result["payload"]["status"], "Evaluating");
     }
 
     #[test]
@@ -973,6 +1184,8 @@ mod tests {
                 "tokenAmount": "stale"
             }),
             Some(&arbitration),
+            None,
+            Some(&json!({"client": {"reason": "The output missed the requested scope"}})),
         );
 
         assert_eq!(result["payload"]["jobType"], 1);
@@ -985,6 +1198,11 @@ mod tests {
         assert_eq!(result["payload"]["deadline"], 200);
         assert_eq!(result["payload"]["amount"], "3");
         assert_eq!(result["payload"]["tokenSymbol"], "USDT");
+        assert_eq!(result["payload"]["status"], "Evaluating");
+        assert_eq!(
+            result["payload"]["buyerReason"],
+            "The output missed the requested scope"
+        );
     }
 
     #[test]
@@ -996,8 +1214,9 @@ mod tests {
                 "disputeRoundStatus": 3
             }))
             .unwrap();
-            let result = build_detail_result("job-1", &json!({}), Some(&arbitration));
+            let result = build_detail_result("job-1", &json!({}), Some(&arbitration), None, None);
             assert_eq!(result["payload"]["arbitrationPhase"], "resolved");
+            assert_eq!(result["payload"]["status"], "Decided");
             assert_eq!(result["payload"]["verdict"], expected);
         }
     }
@@ -1020,6 +1239,22 @@ mod tests {
                 2_000_000_000_000,
             ),
             "evidence_preparation"
+        );
+    }
+
+    #[test]
+    fn evaluation_status_uses_only_the_three_product_states() {
+        assert_eq!(
+            evaluation_status_at(Some(4), Some(2_000), 2_000, 2_000_000),
+            "Evidence preparation"
+        );
+        assert_eq!(
+            evaluation_status_at(Some(4), Some(1_999), 2_000, 2_000_000),
+            "Evaluating"
+        );
+        assert_eq!(
+            evaluation_status_at(Some(6), None, 2_000, 2_000_000),
+            "Decided"
         );
     }
 }

@@ -140,7 +140,7 @@ pub enum ProviderCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
-    /// Account-pull: query pending rewards (balance accumulated from arbitration wins, etc.).
+    /// Account-pull: query pending rewards (balance accumulated from evaluation wins, etc.).
     Claimable {
         #[arg(long = "agent-id")]
         agent_id: String,
@@ -156,8 +156,8 @@ pub enum ProviderCommand {
 
 #[derive(Subcommand)]
 pub enum DisputeCommand {
-    /// Dispute stage 1: call the approve API to grant the dispute contract token approval (calldata → sign → broadcast).
-    /// The `dispute_approved` signal continues with `dispute confirm` in the task sub-session.
+    /// Request evaluation with one combined approve-and-create transaction.
+    /// The `job_disputed` signal starts evidence preparation in the task session.
     Raise {
         job_id: String,
         #[arg(long)]
@@ -166,12 +166,15 @@ pub enum DisputeCommand {
         #[arg(long = "agent-id")]
         agent_id: String,
     },
-    /// Dispute stage 2: call the dispute API to actually raise the dispute (calldata → sign → broadcast).
-    /// Triggered by `dispute_approved`; `job_disputed` starts evidence preparation.
+    /// Retired compatibility command. Evaluation creation now completes in `raise`.
     Confirm {
         job_id: String,
-        /// Original arbitration reason in plain text.
-        #[arg(long, required_unless_present = "reason_b64", conflicts_with = "reason_b64")]
+        /// Original evaluation reason in plain text.
+        #[arg(
+            long,
+            required_unless_present = "reason_b64",
+            conflicts_with = "reason_b64"
+        )]
         reason: Option<String>,
         /// URL-safe base64 form supplied by the task-session reason handoff.
         #[arg(
@@ -184,7 +187,7 @@ pub enum DisputeCommand {
         #[arg(long = "agent-id")]
         agent_id: String,
     },
-    /// [Internal] Upload offchain evidence (multipart, 1h preparation window only) — shared by both sides.
+    /// [Internal] Upload offchain evaluation evidence (multipart, 1h preparation window only) — shared by both sides.
     ///
     /// ⚠️ **Not user-facing**: this command is invoked automatically by the User Agent / ASP sub
     /// session on the `job_disputed` event (via the next-action playbook). Users must NOT call it
@@ -363,8 +366,7 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
                 None,
             );
             println!("✓ reward claim submitted (account={address})");
-            println!("  txHash: {tx_hash}");
-            println!("note: All settled dispute rewards are claimed in one go; the credited amount will be notified after on-chain confirmation.");
+            println!("note: All settled evaluation rewards are claimed in one go; the credited amount will be notified after on-chain confirmation.");
             Ok(())
         }
     }

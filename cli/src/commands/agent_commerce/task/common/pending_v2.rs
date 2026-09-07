@@ -985,39 +985,22 @@ fn print_arbitration_blocked(reason: &str, job_id: &str, source_event: &str) {
 }
 
 fn local_arbitration_resolution(
-    user_reply: &str,
-    role: &str,
-    agent_id: &str,
+    _user_reply: &str,
+    _role: &str,
+    _agent_id: &str,
     job_id: &str,
-    source_event: &str,
+    _source_event: &str,
     decision_id: Option<&str>,
     selection: &ResolvedChoice,
 ) -> serde_json::Value {
-    let message = serde_json::json!({
-        "event": format!("user_decision_{source_event}"),
-        "data": user_reply,
-        "code": 0,
-        "description": "The rejection decision was resolved in the current conversation. Validate the fresh task state, then execute the returned action in this conversation.",
-        "source": "system",
-        "jobId": job_id,
-        "decisionId": decision_id,
-        "selectedActionId": selection.action_id,
-        "params": selection.params,
-        "role": role,
-        "timestamp": Utc::now().timestamp(),
-    });
     serde_json::json!({
         "phase": "arbitration_decision",
         "decision": "ready",
         "reason": "user_choice_resolved",
         "nextAction": [{
-            "id": "validate_arbitration_choice",
+            "id": selection.action_id,
             "recommend": true,
-            "params": {
-                "role": role,
-                "agentId": agent_id,
-                "message": message,
-            },
+            "params": selection.params,
         }],
         "payload": {
             "jobId": job_id,
@@ -1100,9 +1083,8 @@ fn request_prompt_inner(
         use crate::commands::agent_commerce::task::common::template_vars;
         use crate::commands::sink::CodedError;
         let vars = match template_vars_b64.as_deref() {
-            Some(b64) => template_vars::decode_and_validate(b64).map_err(|e| {
-                CodedError::new(e.code(), Some("template-vars-b64"), e.to_string())
-            })?,
+            Some(b64) => template_vars::decode_and_validate(b64)
+                .map_err(|e| CodedError::new(e.code(), Some("template-vars-b64"), e.to_string()))?,
             None => std::collections::BTreeMap::new(),
         };
         let rendered = template_vars::render_all(&[&user_content, &list_label], &vars)
@@ -1126,12 +1108,18 @@ fn request_prompt_inner(
         let is_buyer_review = role == "user" && source_event.as_deref() == Some("job_submitted");
         // CLI mode has no queue entry to deduplicate. Reuse the queue lock so
         // concurrent delivery-first and event-first requests serialize.
-        let _review_lock = if is_buyer_review { Some(acquire_lock()?) } else { None };
+        let _review_lock = if is_buyer_review {
+            Some(acquire_lock()?)
+        } else {
+            None
+        };
         if is_buyer_review && super::deliverables::has_review_card_sent_marker(&job_id) {
             trace_log(&format!(
                 "request_prompt CLI_MODE: buyer review already sent for job_id={job_id}"
             ));
-            if print_ok { println!("OK"); }
+            if print_ok {
+                println!("OK");
+            }
             return Ok(());
         }
         let now = Utc::now();
@@ -1189,7 +1177,9 @@ fn request_prompt_inner(
             trace_log(&format!(
                 "request_prompt QUEUE_MODE: buyer review already sent for job_id={job_id}"
             ));
-            if print_ok { println!("OK"); }
+            if print_ok {
+                println!("OK");
+            }
             return Ok(());
         }
         let mut q = read_queue()?;
@@ -2333,7 +2323,7 @@ fn strip_label_prefix(label: &str) -> &str {
 /// - `user_content`: the user-facing prompt body (canonical English; LLM localizes
 ///   before pasting). Double-quote (`"`) and backslash safety is handled internally.
 /// - `list_label_full`: full label INCLUDING bracket prefix
-///   (e.g. `[Decision <short_id>] <title> dispute decision`).
+///   (e.g. `[Decision <short_id>] <title> evaluation decision`).
 /// - `source_event`: bare event name (e.g. `job_rejected`); becomes the
 ///   `<source_event>` token in the relay envelope's
 ///   `event = user_decision_<source_event>` after the user replies.
@@ -2448,8 +2438,9 @@ fn buyer_review_llm_content_cli(entry: &PendingEntry) -> Option<String> {
          Step 2 — Handle that reply in this current conversation. Enter through `skills/okx-ai-v2/SKILL.md`, then apply `skills/okx-ai-v2/references/runtime/watch.md` §Handling the user reply: cancel the wake when applicable, and for a non-defer reply claim the decision with `okx-a2a user check --todo-ids <todo_id> --json`. Continue on `handled`.\n\
          Step 3 — Interpret the choice and complete the selected review action here:\n\
            - A or an unambiguous approval: run `onchainos agent next-action --role user --agentId {agent} --message '{{\"event\":\"approve_review\",\"jobId\":\"{job}\"}}'`. For `reason=completion_submitted`, give one localized friendly confirmation equivalent to: \"Deliverable approved. The on-chain completion transaction has been submitted.\" For any other result, present its returned status and actions.\n\
-           - B with a non-blank reason: treat this reply as the user's final rejection confirmation. Extract the user-authored reason after the choice marker and keep it verbatim. Run `onchainos agent refund-prepare {job} --reason \"<verbatim reason>\"`. Continue when it returns `payload.schemaVersion=2`, `phase=refund_confirmation`, `decision=ready`, `reason=refund_request_confirmation_required`, and `nextAction[id=submit_refund_request]`; immediately run `onchainos agent refund-execute <params.jobId> --operation <params.operation> --refund-context-id <params.refundContextId> --reason \"<params.reason verbatim>\" --confirm` with every parameter copied from that fresh action. For `reason=refund_request_broadcast_submitted`, give one localized friendly confirmation equivalent to: \"Rejection request submitted. Reason: <verbatim reason>. Refund or arbitration progress will update in this task. You can ask me to check the task result, or run `onchainos agent status {job} --agent-id {agent}`.\" For any other result, present its returned status and actions.\n\
-           - B without a reason: ask for the rejection reason in this conversation and keep this decision context active. The next non-blank reason completes the B choice.\n\
+           - B or an unambiguous rejection: run the read-only `onchainos agent refund-prepare {job}`. Render the returned `payload.display` with the Confirm Refund Request template and ask the user to reply `Submit refund request` with a refund reason, or describe changes. End the turn.\n\
+           - After the card, analyze the reply for both the submission intent and a refund reason. If it contains clear `Submit refund request` intent and a non-blank reason, preserve the reason verbatim and continue immediately. If the intent is clear but the reason is missing, ask only for the refund reason and keep the Job ID and latest Refund V2 context active. During that follow-up, treat the next non-blank reply as the verbatim reason.\n\
+           - After obtaining the reason: run `onchainos agent refund-prepare {job} --reason \"<verbatim reason>\"`. Continue only when it returns `payload.schemaVersion=2`, `phase=refund_confirmation`, `decision=ready`, `reason=refund_request_confirmation_required`, and `nextAction[id=submit_refund_request]`; immediately run `onchainos agent refund-execute <params.jobId> --operation <params.operation> --refund-context-id <params.refundContextId> --reason \"<params.reason verbatim>\" --confirm` with every parameter copied from that fresh action. For `reason=refund_request_broadcast_submitted`, give one concise localized confirmation that the request was submitted and progress will update in this task. For any other result, present its returned status and actions.\n\
            - Ambiguous or unrelated text: show the same A/B choice and wait.\n\n\
          The current conversation owns choice parsing, action execution, and result feedback. For `refund_request_broadcast_submitted`, end the turn after the pending confirmation and do not resume the originating watch; the User may request a later status query explicitly. Other decisions resume the exact originating watch only when the watch-core rules require it.",
         job = entry.job_id,
@@ -2496,12 +2487,12 @@ fn asp_arbitration_llm_content(entry: &PendingEntry, queue_mode: bool) -> Option
         "[USER_DECISION_REQUEST][job: {job}][role: {role}][agent: {agent}]\n\n\
          Step 1 — The card was just delivered. End this turn and wait for the user's next message.\n\
          Step 2 — Handle the next reply in this current conversation. Enter through `skills/okx-ai-v2/SKILL.md`, then apply `skills/okx-ai-v2/references/runtime/watch.md` §Handling the user reply: cancel the wake when applicable, and claim a non-defer reply with `okx-a2a user check --todo-ids <todo_id> --json`. Continue on `handled`.\n\
-         Step 3 — Resolve the user's complete reply as the final decision by running this pre-filled command once:\n\
+         Step 3 — Analyze the reply for both the decision intent and any evaluation reason. Resolve `Approve refund`, or `Request evaluation` with a non-blank reason, by running this pre-filled command once:\n\
            `{resolver}`\n\
-         The resolver preserves the card's `decisionId`, choices, deadline, job binding, and the user's B reason. For `ambiguous_choice`, show the same card. For `arbitration_reason_required`, ask for `B <reason>` and keep the card active.\n\n\
-         Step 4 — For `phase=arbitration_decision`, `decision=ready`, `reason=user_choice_resolved`, and sole `nextAction.id=validate_arbitration_choice`, run `onchainos agent next-action --role <nextAction.params.role> --agentId <nextAction.params.agentId> --message '<nextAction.params.message as exact compact JSON>'`. Use the fresh sole action it returns.\n\
+         The resolver preserves the card's `decisionId`, choices, deadline, and job binding. When a reply contains the `Request evaluation` intent and a non-blank reason, preserve that reason verbatim and pass the canonical `--user-reply \"Request evaluation: <verbatim reason>\"`. If the intent is clear but the reason is missing, ask only for the evaluation reason and keep this card context active. During that follow-up, treat the next non-blank reply as the reason, preserve it verbatim, and resolve once with the same canonical form. For `ambiguous_choice`, show the same card.\n\n\
+         Step 4 — For `phase=arbitration_decision`, `decision=ready`, and `reason=user_choice_resolved`, execute the sole returned action directly in this current conversation.\n\
            - `agree_refund`: run `onchainos agent agree-refund <params.jobId> --agent-id {agent}` in this current conversation, then give one concise localized result with the outcome, relevant returned fields, and next available query.\n\
-           - `raise_arbitration`: run `onchainos agent dispute raise <params.jobId> --reason \"<params.reason verbatim>\" --agent-id {agent}` in this current conversation, then give one concise localized result with the outcome, relevant returned fields, and next available query. A later `dispute_approved` event enters the ASP task event flow, which runs `dispute confirm` once.\n\
+           - `raise_arbitration`: run `onchainos agent dispute raise <params.jobId> --reason \"<params.reason verbatim>\" --agent-id {agent}` in this current conversation, then give one concise localized result with the outcome, relevant returned fields, and next available query. The later `job_disputed` event starts automatic evidence submission in the task session.\n\
            - `sub_agree_refund`: run `onchainos agent subscribe-agree-refund <params.jobId> --agent-id {agent}` in this current conversation, then give one concise localized result with the outcome and relevant returned fields.\n\
            - `raise_subscription_arbitration`: run `onchainos agent subscribe-dispute <params.jobId> --reason \"<params.reason verbatim>\" --agent-id {agent}` in this current conversation, then give one concise localized result with the outcome, relevant returned fields, and next available query.\n\n\
          The current conversation owns choice resolution, freshness validation, returned action execution, concise result feedback, and resuming the exact originating watch when one exists.",
@@ -3024,7 +3015,7 @@ mod shared_encoding_shell_safety_tests {
     fn shared_encoding_keeps_titles_off_the_command_line_and_round_trips() {
         // sub_user_reject carries two independent titles: decision-copy + list-label.
         let content = "Body copy: {{__OKX_TASK_TITLE__}} — please review.";
-        let label = "[Decision 0xabc] {{__OKX_TASK_LABEL_TITLE__}} — refund or dispute";
+        let label = "[Decision 0xabc] {{__OKX_TASK_LABEL_TITLE__}} — refund or evaluation";
         for &copy_title in CORPUS {
             for &label_title in CORPUS {
                 let b64 = encode_title_vars(copy_title, label_title);
@@ -3175,15 +3166,13 @@ mod sanitize_tests {
             let content = resolve_llm_content_cli(&entry);
 
             assert!(content.contains("Handle that reply in this current conversation"));
-            assert!(content.contains("final rejection confirmation"));
+            assert!(content.contains("Confirm Refund Request template"));
+            assert!(content.contains("both the submission intent and a refund reason"));
             assert!(content.contains("refund-prepare job-123"));
             assert!(content.contains("refund-execute <params.jobId>"));
             assert!(content.contains("--confirm"));
             assert!(content.contains("Deliverable approved"));
-            assert!(content.contains("Rejection request submitted"));
-            assert!(content.contains("ask me to check the task result"));
-            assert!(content.contains("onchainos agent status job-123 --agent-id 8315"));
-            assert!(content.contains("result feedback"));
+            assert!(content.contains("the request was submitted"));
             assert!(!content.contains("pending-decisions-v2 resolve"));
             assert!(!content.contains("okx-a2a session send"));
             assert!(!content.contains("another confirmation card"));
@@ -3246,22 +3235,20 @@ mod sanitize_tests {
             resolve_llm_content_prompt_user(&entry),
         ] {
             assert!(content.contains("Handle the next reply in this current conversation"));
-            assert!(content.contains("final decision"));
-            assert!(content.contains("validate_arbitration_choice"));
+            assert!(content.contains("Request evaluation: <reason>"));
+            assert!(content.contains("execute the sole returned action directly"));
             assert!(content.contains("onchainos agent agree-refund <params.jobId>"));
             assert!(content.contains("onchainos agent dispute raise <params.jobId>"));
             assert!(content.contains("in this current conversation"));
             assert!(content.contains("one concise localized result"));
-            assert!(
-                content.contains("A later `dispute_approved` event enters the ASP task event flow")
-            );
-            assert!(content.contains("which runs `dispute confirm` once"));
+            assert!(content
+                .contains("The later `job_disputed` event starts automatic evidence submission"));
             assert!(!content.contains("Full refund approved"));
-            assert!(!content.contains("Arbitration transaction submitted"));
+            assert!(!content.contains("Evaluation transaction submitted"));
             assert!(!content.contains("onchainos agent status job-123 --agent-id 11802"));
             assert!(!content.contains("onchainos agent arbitration-list --agent-id 11802"));
             assert!(!content.contains("friendly result feedback"));
-            assert!(!content.contains("matching arbitration Output Template"));
+            assert!(!content.contains("matching evaluation Output Template"));
             assert!(!content.contains("onchainos agent dispute confirm <params.jobId>"));
             assert!(!content.contains("okx-a2a session send"));
             assert!(!content.contains("second confirmation"));
@@ -3283,10 +3270,12 @@ mod sanitize_tests {
 
         let content = resolve_llm_content_cli(&entry);
 
-        assert!(content.contains("validate_arbitration_choice"));
-        assert!(content.contains("A later `dispute_approved` event enters the ASP task event flow"));
+        assert!(content.contains("execute the sole returned action directly"));
+        assert!(
+            content.contains("The later `job_disputed` event starts automatic evidence submission")
+        );
         assert!(content.contains("one concise localized result"));
-        assert!(!content.contains("matching arbitration Output Template"));
+        assert!(!content.contains("matching evaluation Output Template"));
         assert!(!content.contains("onchainos agent dispute confirm <params.jobId>"));
         assert!(!content.contains("legacy-arbitration"));
         assert!(!content.contains("okx-a2a session send"));
@@ -3318,15 +3307,9 @@ mod sanitize_tests {
 
         assert_eq!(result["phase"], "arbitration_decision");
         assert_eq!(result["decision"], "ready");
-        assert_eq!(result["nextAction"][0]["id"], "validate_arbitration_choice");
-        assert_eq!(result["nextAction"][0]["params"]["role"], "asp");
-        assert_eq!(result["nextAction"][0]["params"]["agentId"], "11802");
+        assert_eq!(result["nextAction"][0]["id"], "raise_arbitration");
         assert_eq!(
-            result["nextAction"][0]["params"]["message"]["selectedActionId"],
-            "raise_arbitration"
-        );
-        assert_eq!(
-            result["nextAction"][0]["params"]["message"]["params"]["reason"],
+            result["nextAction"][0]["params"]["reason"],
             "delivery below expectation"
         );
         assert_eq!(result["payload"]["executionOwner"], "current_conversation");
@@ -3347,7 +3330,7 @@ mod sanitize_tests {
             crate::commands::agent_commerce::task::arbitration::JOB_REJECTED,
             &entry.job_id,
             &entry.choices,
-            "B 理由：done",
+            "Request evaluation: done",
         )
         .unwrap()
         .unwrap();

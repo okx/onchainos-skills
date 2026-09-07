@@ -48,7 +48,6 @@ pub async fn handle_agree_refund(
     );
 
     println!("✓ Full refund submitted");
-    println!("  txHash: {tx_hash}");
     println!("  Progress will update in this task.");
     println!("  Check: onchainos agent status {job_id} --agent-id {agent_id}");
     Ok(())

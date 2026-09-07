@@ -1,69 +1,55 @@
-# ASP Refund-or-Arbitration Decision
+# ASP Refund-or-Evaluation Decision
 
-Use this leaf for `job_rejected`, `sub_user_reject`, or an active
-refund-or-arbitration card. An explicit instruction to arbitrate a specified
-task is already authorization and routes directly to
-[`dispute.md`](dispute.md); do not create another decision card. Rejected
-candidates and filed cases are different sets; use
-[`arbitration-query.md`](arbitration-query.md) for queries.
+Use this leaf for `job_rejected`, `sub_user_reject`, a pending refund request,
+or an explicit request to evaluate one rejected task.
 
-## Open a decision
+## Refund request detail and decision
 
-For a structured event, resolve the complete envelope through
-[`../router.md`](../router.md):
+Use the fresh structured event decision or `refund-detail` result.
+Render [Buyer Refund Request](#buyer-refund-request).
 
-```text
-onchainos agent next-action --role auto --agentId <envelope.agentId> \
-  --message '<complete envelope.message as one JSON string>'
+## Resolve the decision
+
+For an event-created card, preserve its Job ID, decision ID, deadline, and
+choice binding in `pending-decisions-v2`.
+
+- `Approve refund` resolves to `agree_refund` or `sub_agree_refund` and runs the returned command in the current conversation.
+- Analyze a `Request evaluation` reply for both the intent and an evaluation reason. When both are present, preserve the reason verbatim, resolve the bound action, and run it in the current conversation.
+- When the reply contains the `Request evaluation` intent without a reason, ask only for the evaluation reason. Treat the next non-blank reply as the reason, preserve it verbatim, resolve the bound action, and run it in the current conversation.
+
+For a card opened directly from a selected pending request, keep the selected
+Job ID and fresh `nextAction` values in the current conversation:
+
+- `Approve refund` runs the matching refund action returned by `refund-detail`.
+- Analyze a `Request evaluation` reply for both the intent and an evaluation reason. When both are present, preserve the reason verbatim, add it to the matching evaluation action, and run it immediately.
+- When the reply contains the `Request evaluation` intent without a reason, ask only for the evaluation reason. Treat the next non-blank reply as the reason, preserve it verbatim, add it to the matching evaluation action, and run it immediately.
+
+The returned action is the final authorization. Present one concise localized
+result after the command completes.
+
+## Output Templates
+
+The template below is an English source. Reply in the language of the current
+conversation while preserving the full Job ID, amounts, token symbols,
+timestamps, and user-authored reasons exactly.
+
+### Buyer Refund Request
+
+```markdown
+### Buyer Refund Request
+
+| Service Name | Job ID | Task Type | Current Period | Requested Refund | Buyer’s Reason | Response Deadline |
+|---|---|---|---|---|---|---|
+| {serviceName} | {jobId} | {taskType} | {currentPeriod} | {requestedRefund} | {buyerReason} | {responseDeadline} |
+
+Please respond by the deadline. Otherwise, a full refund will be issued automatically.
+
+To refund the buyer, reply “Approve refund”. To request platform evaluation, reply “Request evaluation” and include your evaluation reason.
 ```
 
-Render the returned task name, exact amount/token, period/deadline when present,
-and these choices:
+Display rules:
 
-```text
-A. Approve full refund
-B. Start arbitration — reply with B followed by your reason
-```
-
-Build each choice mechanically from the same result:
-
-```json
-{"key":nextAction.key,"actionId":nextAction.id,"params":nextAction.params}
-```
-
-Request one durable decision card:
-
-```text
-onchainos agent pending-decisions-v2 request-prompt \
-  --job-id <payload.jobId> --role asp --agent-id <aspAgentId> \
-  --source-event <job_rejected|sub_user_reject> \
-  --decision-id <payload.decisionId> \
-  --choices-json '<choices built from nextAction>' \
-  --user-content '<rendered card>' \
-  --list-label '<payload.name> — <payload.amount> <payload.tokenSymbol>' \
-  [--expires-at <returned deadline>]
-```
-
-Preserve subscription `decisionBindingKey` and `decisionBindingValue`. After
-delivery, end the turn.
-
-## Resume and resolve
-
-Re-render a matching active `[USER_DECISION_REQUEST]`. If absent, list with
-`pending-decisions-v2 list --format markdown` and activate a selection with
-`pending-decisions-v2 pick --index <N>`. Regenerate only when the specified job
-has no durable entry.
-
-Final replies are `A` or `B <reason>`. Preserve the complete B reason verbatim;
-an empty reason keeps the card active.
-
-1. Run the card's pre-filled `resolve-with-sessionkey` command in CLI-driver
-   mode, or `resolve-prompt` in queue mode, with the full reply.
-2. Execute returned `validate_arbitration_choice` through `next-action` using
-   its exact role, agentId, and complete message.
-3. Route the resulting action through [`dispute.md`](dispute.md).
-
-`ambiguous_choice` re-renders the card. `arbitration_reason_required` asks only
-for `B <reason>`. Metadata missing, expiry, unsupported action, stale event, or
-job mismatch is rendered with returned recovery guidance. A valid reply is the
-final confirmation for exactly that bound action.
+1. Show `Current Period` only for a subscription.
+2. Preserve the full Job ID and the buyer-authored reason.
+3. Use CLI-provided display values directly.
+4. An explicit request to evaluate a selected task uses this same decision view.

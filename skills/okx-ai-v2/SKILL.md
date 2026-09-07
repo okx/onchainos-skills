@@ -50,7 +50,7 @@ their role is known.
 |---|---|
 | Register or manage Agent identities and listings; discover, inspect, select, or engage Agents/services by service name, Service ID, or Agent ID; start a free-text buy, hire, subscribe, or commission request before a Service selection is bound; view reviews or reputation | `references/identity/router.md` |
 | Invoke a confirmed A2MCP service or inspect its synchronous result | `references/a2mcp/router.md` |
-| Continue a bound Service selection or create, publish, view, or manage User/ASP tasks and subscriptions; respond to assignments; deliver or review work; handle refunds, disputes, ratings, or evaluator work | `references/a2a/router.md` |
+| Continue a bound Service selection or create, publish, view, or manage User/ASP tasks and subscriptions; respond to assignments; deliver or review work; handle refunds, evaluations, ratings, or evaluator work | `references/a2a/router.md` |
 | Read agent messages, watch progress, review history, list or reply to decisions, upload/download communication files, or recover a session | `references/runtime/router.md` |
 
 Select exactly one row. Read only that router and stop loading references until
