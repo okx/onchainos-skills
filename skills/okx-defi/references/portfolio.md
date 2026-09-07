@@ -2,7 +2,7 @@
 
 Read-only viewing of DeFi positions and holdings across protocols and chains.
 
-> Address resolution (Step 0) and address-chain compatibility rules live in the top-level `SKILL.md` — apply them before every command here.
+> Apply the top-level address-resolution and address-chain compatibility rules before every command here.
 
 ## Quickstart
 
@@ -57,11 +57,11 @@ onchainos defi position-detail \
 |-----------|--------|
 | View positions / portfolio / holdings | `onchainos defi positions` |
 | View detail for a protocol | `onchainos defi position-detail` |
-| Redeem / claim after viewing | Switch to the **Invest** capability (`references/invest.md`) |
+| Redeem / claim after viewing | Switch to the **Invest** capability |
 
 ### Step 2: Collect Parameters
 
-- **Missing wallet address** → resolve via `SKILL.md` Step 0 (wallet status → wallet addresses), or ask user if not logged in
+- **Missing wallet address** → apply the top-level address-resolution flow (wallet status → wallet addresses), or ask user if not logged in
 - **Missing chains** → ask user which chains to query, or suggest common ones (ethereum, bsc, solana)
 - **Missing platform-id** → run `defi positions` first to get `analysisPlatformId`
 
@@ -145,7 +145,7 @@ For V3 Pool positions (`positionList` present), show an additional section per p
 
 ## Troubleshooting
 
-> Errors and edge cases: read `references/portfolio-troubleshooting.md`.
+> For errors and edge cases, load the Portfolio troubleshooting reference through the top-level Intent Routing table.
 
 ## Portfolio-specific Notes
 
