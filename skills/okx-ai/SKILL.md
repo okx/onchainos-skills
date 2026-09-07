@@ -73,21 +73,16 @@ Use this envelope when a CLI result requires continuation:
 For every structured CLI result, apply this contract before applying any
 domain-specific rendering or routing rules.
 
-Once a flow enters through `invoke_a2mcp`, the V2 A2MCP references own its
-subsequent results, including results with an empty `nextAction`, until the
-first of these boundaries: `endpoint_result/free_result`, handoff of
-`execute_a2mcp_payment` to the payment protocol, user selection of
-`cancel_a2mcp`, or a blocked `invocation_recovery`. Clear the active A2MCP
-context at that boundary and route later results afresh.
-
-Also treat a result as A2MCP only when an object in `nextAction[]` has an `id`
-matching one of these values: `invoke_a2mcp`, `provide_a2mcp_params`,
-`select_a2mcp_token`, `fund_a2mcp_token`, `resume_a2mcp_after_funding`,
-`confirm_a2mcp_free`, `confirm_a2mcp_payment`, `execute_a2mcp_payment`, or
-`cancel_a2mcp`. The confirmed result in `a2a/user/create-prepare.md` is the
-single direct entry to [`references/a2mcp/handoff.md`](references/a2mcp/handoff.md).
-For an already active invocation or any other action-identified A2MCP result,
-read only [`references/a2mcp/router.md`](references/a2mcp/router.md).
+`invoke_a2mcp` starts an active A2MCP invocation. Its confirmed
+`a2a/user/create-prepare.md` result enters
+[`references/a2mcp/handoff.md`](references/a2mcp/handoff.md); while active,
+route every subsequent result through
+[`references/a2mcp/router.md`](references/a2mcp/router.md), including results
+with an empty `nextAction`. Outside that context, use the router only when the
+latest `nextAction[].id` is A2MCP-namespaced; never classify from prose. Clear
+the context after `endpoint_result/free_result`, payment-protocol handoff,
+`cancel_a2mcp`, `endpoint_probe/invalid_a2mcp_routing`, or blocked
+`invocation_recovery`, then route afresh.
 
 For a System envelope, `a2a/router.md` calls `next-action` once, handles an
 exact cross-domain action before role selection, then loads one role router and

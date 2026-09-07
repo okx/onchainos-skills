@@ -756,6 +756,8 @@ pub struct A2mcpConfirmationContextV1 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     service_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    provider_agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     asp_amount: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     asp_symbol: Option<String>,
@@ -765,12 +767,14 @@ impl A2mcpConfirmationContextV1 {
     pub fn new(
         service_id: String,
         service_name: Option<String>,
+        provider_agent_id: Option<String>,
         asp_amount: Option<String>,
         asp_symbol: Option<String>,
     ) -> Self {
         Self {
             service_id,
             service_name,
+            provider_agent_id,
             asp_amount,
             asp_symbol,
         }
@@ -781,6 +785,9 @@ impl A2mcpConfirmationContextV1 {
     }
     pub fn service_name(&self) -> Option<&str> {
         self.service_name.as_deref()
+    }
+    pub fn provider_agent_id(&self) -> Option<&str> {
+        self.provider_agent_id.as_deref()
     }
     pub fn asp_amount(&self) -> Option<&str> {
         self.asp_amount.as_deref()
@@ -1327,6 +1334,7 @@ mod tests {
             confirmation_context: A2mcpConfirmationContextV1::new(
                 "service-1".into(),
                 Some("Yield report".into()),
+                Some("8136".into()),
                 Some("1.25".into()),
                 Some("USDT".into()),
             ),
@@ -1351,6 +1359,10 @@ mod tests {
             assert_eq!(
                 loaded.confirmation_context().service_name(),
                 Some("Yield report")
+            );
+            assert_eq!(
+                loaded.confirmation_context().provider_agent_id(),
+                Some("8136")
             );
             assert_eq!(loaded.confirmation_context().asp_amount(), Some("1.25"));
             assert_eq!(loaded.confirmation_context().asp_symbol(), Some("USDT"));

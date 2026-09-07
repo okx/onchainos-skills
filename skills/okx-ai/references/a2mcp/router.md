@@ -1,15 +1,11 @@
 # A2MCP Router
 
-| Intent | Reference |
-|---|---|
-| Invoke a confirmed A2MCP service, collect parameters, or handle synchronous results | `invoke.md` |
-| Recover an invalid, stale, or expired invocation context | `recovery.md` |
-| Structured `execute_a2mcp_payment` action with its `paymentId` | `okx-agent-payments-protocol` |
+For a confirmed free-text invocation, read `invoke.md`. For every active
+invocation, route only from the latest CLI `nextAction`; never infer an action
+or opaque ID from prose.
 
-## Action routing
-
-Route only from the latest CLI `nextAction` and use that action's `params` as
-its command arguments. Do not infer an action or opaque ID from prose.
+An active `endpoint_result/free_result` with an empty `nextAction` returns to
+`invoke.md` for result rendering, then ends the invocation.
 
 | Action ID | Route |
 |---|---|
@@ -23,9 +19,7 @@ its command arguments. Do not infer an action or opaque ID from prose.
 | `execute_a2mcp_payment` | Hand its bound `paymentId` to `okx-agent-payments-protocol` |
 | `cancel_a2mcp` | End the invocation without another CLI call |
 
-Invocation results are synchronous and do not enter A2A assignment, XMTP,
-subscription, or watch flows.
-
-An HTTP 402 response remains inside `invoke.md` for input resolution,
-candidate filtering, balance checks, and payment preparation. Do not hand off
-the raw 402 response to the Payment Protocol.
+Read `recovery.md` only for `phase=invocation_recovery` or when `invoke.md`
+routes an error there. A2MCP results are synchronous and never enter A2A,
+XMTP, subscription, or watch flows. Keep raw HTTP 402 responses in `invoke.md`;
+only `execute_a2mcp_payment.params.paymentId` enters the Payment Protocol.

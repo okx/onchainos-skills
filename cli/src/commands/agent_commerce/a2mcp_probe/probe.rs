@@ -52,6 +52,9 @@ pub(super) async fn send_probe(input: &ProbeInput) -> Result<HttpOutcome> {
         }
         return Ok(HttpOutcome::Challenge { challenge, body });
     }
+    if let Some(required) = discover_input_fallback_hint(&body) {
+        return Ok(HttpOutcome::InputRequired(required));
+    }
     if status.is_success() {
         return Ok(HttpOutcome::Free {
             status: status.as_u16(),

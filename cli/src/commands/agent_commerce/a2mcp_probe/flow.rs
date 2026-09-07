@@ -1,10 +1,19 @@
 use super::*;
 
 pub(super) async fn run_probe(args: &ProbeArgs) -> Result<ProbeDecision> {
-    let mut input = match parse_probe_input(&args.routing_json, &args.params_json) {
+    let (routing_json, params_json) = match decode_probe_json_args(args) {
+        Ok(values) => values,
+        Err(error) => {
+            return Ok(ProbeDecision::blocked(
+                error.code,
+                json!({"schemaVersion":1,"message":error.message}),
+            ))
+        }
+    };
+    let mut input = match parse_probe_input(&routing_json, &params_json) {
         Ok(input) => input,
         Err(error) if error.code == "invalid_a2mcp_param_value" => {
-            return Ok(invalid_params_decision(args, error))
+            return Ok(invalid_params_decision(&routing_json, &params_json, error))
         }
         Err(error) => {
             return Ok(ProbeDecision::blocked(
@@ -103,6 +112,7 @@ pub(super) async fn run_probe(args: &ProbeArgs) -> Result<ProbeDecision> {
                 FreeResultInput {
                     service_id: input.snapshot.service_id.clone(),
                     service_name: input.snapshot.service_name.clone(),
+                    provider_agent_id: input.snapshot.provider_agent_id.clone(),
                     endpoint: input.snapshot.endpoint.to_string(),
                     method: input.snapshot.method.clone(),
                     typed_params: input.typed_params.clone(),
@@ -145,6 +155,7 @@ pub(super) fn free_confirmation_decision(
     build_free_confirmation_decision(
         &input.snapshot.service_id,
         input.snapshot.service_name.as_deref(),
+        input.snapshot.provider_agent_id.as_deref(),
         input.snapshot.endpoint.as_str(),
         &input.snapshot.method,
         &input.typed_params,
@@ -156,6 +167,7 @@ fn free_confirmation_decision_from_state(state: &FreeResultState) -> ProbeDecisi
     build_free_confirmation_decision(
         state.service_id(),
         state.service_name(),
+        state.provider_agent_id(),
         state.endpoint(),
         state.method(),
         state.typed_params(),
@@ -166,11 +178,19 @@ fn free_confirmation_decision_from_state(state: &FreeResultState) -> ProbeDecisi
 fn build_free_confirmation_decision(
     service_id: &str,
     service_name: Option<&str>,
+    provider_agent_id: Option<&str>,
     endpoint: &str,
     method: &str,
     typed_params: &Map<String, Value>,
     confirmation_id: &str,
 ) -> ProbeDecision {
+    let presentation = confirmation_presentation(
+        provider_agent_id,
+        service_name,
+        endpoint,
+        "Free",
+        typed_params,
+    );
     ProbeDecision {
         phase: "payment_confirmation".to_string(),
         decision: "requires_user_input".to_string(),
@@ -184,12 +204,14 @@ fn build_free_confirmation_decision(
             "schemaVersion":1,
             "serviceId":service_id,
             "serviceName":service_name,
+            "providerAgentId":provider_agent_id,
             "endpoint":endpoint,
             "method":method,
             "typedParams":typed_params,
             "amountDisplay":"Free",
             "confirmationEnabled":true,
             "confirmationId":confirmation_id,
+            "presentation":presentation,
         }),
     }
 }
@@ -211,6 +233,7 @@ pub(super) fn run_confirm_free(args: &ConfirmFreeArgs) -> Result<ProbeDecision> 
             "schemaVersion":1,
             "serviceId":state.service_id(),
             "serviceName":state.service_name(),
+            "providerAgentId":state.provider_agent_id(),
             "endpoint":state.endpoint(),
             "method":state.method(),
             "typedParams":state.typed_params(),
@@ -233,6 +256,17 @@ pub(super) fn apply_input_required_method(
 }
 
 pub(super) fn input_required_decision(input: ProbeInput, required: InputRequired) -> ProbeDecision {
+    let response_fields = if required.needs_description_fallback {
+        Value::Array(
+            required
+                .fields
+                .iter()
+                .map(|field| json!({"name":field.name,"required":field.required}))
+                .collect(),
+        )
+    } else {
+        json!(required.fields)
+    };
     let mut required_fields = required.fields.clone();
     for name in &required.required_any_of {
         if !required_fields.iter().any(|field| field.name == *name) {
@@ -245,7 +279,11 @@ pub(super) fn input_required_decision(input: ProbeInput, required: InputRequired
             });
         }
     }
-    let request_fields = merge_field_constraints(&input.snapshot.param_plan, &required_fields);
+    let request_fields = if required.needs_description_fallback {
+        input.snapshot.param_plan.clone()
+    } else {
+        merge_field_constraints(&input.snapshot.param_plan, &required_fields)
+    };
     let request_spec = RequestSpec {
         method: (!input.snapshot.method_was_defaulted).then(|| input.snapshot.method.clone()),
         fields: request_fields,
@@ -260,19 +298,23 @@ pub(super) fn input_required_decision(input: ProbeInput, required: InputRequired
             Action::new("cancel_a2mcp", false),
         ],
         payload: json!({
-            "schemaVersion":1,"serviceId":input.snapshot.service_id,"fields":required.fields,
+            "schemaVersion":1,"serviceId":input.snapshot.service_id,"fields":response_fields,
             "requiredAnyOf":required.required_any_of,"message":required.message,"typedParams":input.typed_params,
+            "needsDescriptionFallback":required.needs_description_fallback,
             "autoProbeOnValid":true,
             "nextProbePayload":{"schemaVersion":1,"serviceSnapshot":input.snapshot.raw,"requestSpec":request_spec},
         }),
     }
 }
 
-pub(super) fn invalid_params_decision(args: &ProbeArgs, error: ContractError) -> ProbeDecision {
-    let routing = serde_json::from_str::<RoutingPayload>(&args.routing_json).ok();
-    let next_probe_payload =
-        serde_json::from_str::<Value>(&args.routing_json).unwrap_or(Value::Null);
-    let typed_params = serde_json::from_str::<Value>(&args.params_json)
+pub(super) fn invalid_params_decision(
+    routing_json: &str,
+    params_json: &str,
+    error: ContractError,
+) -> ProbeDecision {
+    let routing = serde_json::from_str::<RoutingPayload>(routing_json).ok();
+    let next_probe_payload = serde_json::from_str::<Value>(routing_json).unwrap_or(Value::Null);
+    let typed_params = serde_json::from_str::<Value>(params_json)
         .ok()
         .and_then(|value| value.as_object().cloned())
         .unwrap_or_default();
@@ -322,6 +364,7 @@ pub(super) fn outstanding_request_input(input: &ProbeInput) -> Option<InputRequi
             required_any_of: input.snapshot.required_any_of.clone(),
             message: None,
             method: Some(input.snapshot.method.clone()),
+            needs_description_fallback: false,
         },
         &input.typed_params,
     )
@@ -377,6 +420,22 @@ pub(super) async fn run_refresh_balance(args: &RefreshBalanceArgs) -> Result<Pro
             .asp_amount()
             .is_some_and(|amount| !decimal_strings_equal(amount, candidate.amount_display()))
     });
+    let fee_display = single
+        .map(|candidate| {
+            paid_fee_display(
+                candidate.amount_display(),
+                candidate.symbol(),
+                amount_semantics(candidate.scheme()),
+            )
+        })
+        .unwrap_or_else(|| "Select a payment option".to_string());
+    let presentation = confirmation_presentation(
+        confirmation_context.provider_agent_id(),
+        confirmation_context.service_name(),
+        prepared.frozen_request().endpoint(),
+        &fee_display,
+        prepared.frozen_request().typed_params(),
+    );
     let (reason, next_action) = if let Some(candidate_id) = selected_id {
         let confirmation = ProbeDecision::payment_confirmation(
             &replacement_id,
@@ -403,6 +462,7 @@ pub(super) async fn run_refresh_balance(args: &RefreshBalanceArgs) -> Result<Pro
         payload: json!({
             "schemaVersion":1,"serviceId":confirmation_context.service_id(),
             "serviceName":confirmation_context.service_name(),
+            "providerAgentId":confirmation_context.provider_agent_id(),
             "endpoint":prepared.frozen_request().endpoint(),
             "method":prepared.frozen_request().method(),"typedParams":prepared.frozen_request().typed_params(),
             "aspPrice":{"amount":confirmation_context.asp_amount(),"symbol":confirmation_context.asp_symbol()},
@@ -410,6 +470,7 @@ pub(super) async fn run_refresh_balance(args: &RefreshBalanceArgs) -> Result<Pro
             "selectedCandidateId":selected_id,"confirmationEnabled":selected_enabled,
             "walletError":prepared.wallet_error(),"candidates":candidates,
             "preparedId":replacement_id,
+            "presentation":presentation,
         }),
     })
 }
@@ -550,6 +611,18 @@ pub(super) async fn run_prepare_payment(args: &PreparePaymentArgs) -> Result<Pro
         let mismatch = confirmation_context
             .asp_amount()
             .is_some_and(|amount| !decimal_strings_equal(amount, candidate.amount_display()));
+        let fee_display = paid_fee_display(
+            candidate.amount_display(),
+            candidate.symbol(),
+            amount_semantics(candidate.scheme()),
+        );
+        let presentation = confirmation_presentation(
+            confirmation_context.provider_agent_id(),
+            confirmation_context.service_name(),
+            prepared.frozen_request().endpoint(),
+            &fee_display,
+            prepared.frozen_request().typed_params(),
+        );
         let mut decision = ProbeDecision::payment_confirmation(
             &args.prepared_id,
             candidate.candidate_id(),
@@ -560,6 +633,7 @@ pub(super) async fn run_prepare_payment(args: &PreparePaymentArgs) -> Result<Pro
             "schemaVersion":1,
             "serviceId":confirmation_context.service_id(),
             "serviceName":confirmation_context.service_name(),
+            "providerAgentId":confirmation_context.provider_agent_id(),
             "endpoint":prepared.frozen_request().endpoint(),
             "method":prepared.frozen_request().method(),
             "typedParams":prepared.frozen_request().typed_params(),
@@ -579,6 +653,7 @@ pub(super) async fn run_prepare_payment(args: &PreparePaymentArgs) -> Result<Pro
             },
             "walletError":prepared.wallet_error(),
             "preparedId":args.prepared_id,
+            "presentation":presentation,
         });
         return Ok(decision);
     }
@@ -651,6 +726,7 @@ pub(super) async fn build_payment_decision(
         confirmation_context: A2mcpConfirmationContextV1::new(
             input.snapshot.service_id.clone(),
             input.snapshot.service_name.clone(),
+            input.snapshot.provider_agent_id.clone(),
             input.snapshot.asp_amount.clone(),
             input.snapshot.asp_symbol.clone(),
         ),
@@ -706,6 +782,22 @@ pub(super) async fn build_payment_decision(
     let selected_id = single.map(|candidate| candidate.candidate_id());
     let selected_enabled =
         single.is_some_and(|candidate| candidate.balance_status() == "sufficient");
+    let fee_display = single
+        .map(|candidate| {
+            paid_fee_display(
+                candidate.amount_display(),
+                candidate.symbol(),
+                amount_semantics(candidate.scheme()),
+            )
+        })
+        .unwrap_or_else(|| "Select a payment option".to_string());
+    let presentation = confirmation_presentation(
+        input.snapshot.provider_agent_id.as_deref(),
+        input.snapshot.service_name.as_deref(),
+        input.snapshot.endpoint.as_str(),
+        &fee_display,
+        &input.typed_params,
+    );
     let (reason, next_action) = if let Some(candidate_id) = selected_id {
         let confirmation = ProbeDecision::payment_confirmation(
             &prepared_id,
@@ -731,12 +823,14 @@ pub(super) async fn build_payment_decision(
         next_action,
         payload: json!({
             "schemaVersion":1,"serviceId":input.snapshot.service_id,"serviceName":input.snapshot.service_name,
+            "providerAgentId":input.snapshot.provider_agent_id,
             "endpoint":input.snapshot.endpoint.as_str(),"method":paid_method,"typedParams":input.typed_params,
             "aspPrice":{"amount":input.snapshot.asp_amount,"symbol":input.snapshot.asp_symbol},
             "selectedCandidateId":selected_id,"confirmationEnabled":selected_enabled,
             "amountMismatch":selected_mismatch,
             "walletError":prepared.wallet_error(),"candidates":candidate_views,
             "preparedId":prepared_id,
+            "presentation":presentation,
         }),
     })
 }

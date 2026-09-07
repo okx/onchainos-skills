@@ -26,6 +26,10 @@ Begin a route only from an action ID present in the latest Funding result's
 `nextAction` array. A route may show its own read-only choice list before it
 finishes.
 
+An upstream business may attach its own bound continuation action to a shared
+insufficient-balance result. Preserve it, but do not route it through this
+table; the caller owns its execution after Funding presentation.
+
 | Action ID | Route |
 | --- | --- |
 | `specify_funding_chain` | If the user supplied a chain, run `wallet receive --chain <chain>`. Otherwise run `wallet chains` and show only the returned network choices. |
@@ -79,9 +83,9 @@ did not return.
 
 Match the common result by `phase=funding_required`, `decision=blocked`, and
 `reason=insufficient_balance`. The payload contains only shared Funding fields;
-it does not accept or preserve a business-specific payload. `nextAction` is
-empty because displaying a receive address and QR is read-only and happens
-immediately.
+it does not accept or preserve business-specific payload fields. `nextAction`
+is normally empty, but may contain a caller-owned bound continuation that this
+Reference preserves without executing.
 
 Validate these common payload fields:
 
@@ -97,6 +101,10 @@ report that funding is complete. Do not query another address, reconstruct a
 QR, or calculate a missing amount in the Skill.
 
 When the user later says they funded the account:
+
+If the latest Funding result contains a caller-owned continuation, return to
+that business Reference immediately. Its return rule overrides the generic
+verification flow below.
 
 1. Use only `payload.fundingTarget.chainIndex` and
    `payload.fundingNeed.{tokenAddress,required,asset}` from the latest structured

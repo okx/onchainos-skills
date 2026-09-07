@@ -247,6 +247,7 @@ pub(super) fn discover_endpoint_param_issues(
         required_any_of: Vec::new(),
         message: Some(messages.join("; ")),
         method: None,
+        needs_description_fallback: false,
     })
 }
 
