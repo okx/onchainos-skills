@@ -13,7 +13,7 @@ its command arguments. Do not infer an action or opaque ID from prose.
 
 | Action ID | Route |
 |---|---|
-| `invoke_a2mcp` | Start `invoke.md` with a fresh invocation generation |
+| `invoke_a2mcp` | Validate the Task exclusion in `handoff.md`, then start `invoke.md` with a fresh invocation generation |
 | `provide_a2mcp_params` | Continue `invoke.md` with the returned `nextProbePayload` |
 | `select_a2mcp_token` | Continue `invoke.md`; add only the candidate selected by the user to the action's bound `preparedId` |
 | `fund_a2mcp_token` | Follow `funding.md` end to end with its bound `preparedId` and `candidateId` |

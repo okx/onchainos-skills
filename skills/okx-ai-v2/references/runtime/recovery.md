@@ -1,6 +1,10 @@
 # Exception Escalation Rules (shared by user / asp)
 
-Each agent turn is stateless, with **no built-in loop protection**. The 4 rules below cover all a2a / CLI scenarios. `../a2a/user/session.md` / `../a2a/provider/job.md` stack role-specific exceptions on top (each writing their own §6).
+Each agent turn is stateless, with **no built-in loop protection**. The four
+rules below cover all A2A/CLI scenarios. Selected leaves such as
+[`peer.md`](../a2a/peer.md) and
+[`execution.md`](../a2a/provider/execution.md) add only
+their role-specific constraints.
 
 > All rules share one principle: on entering an exception, **immediately push to the user session**, and **do not auto-retry inside the sub**.
 
@@ -36,6 +40,7 @@ it to [funding.md](../../../okx-agentic-wallet/references/funding.md).
    onchainos agent pending-decisions-v2 request \
      --job-id <jobId> --role <role> --agent-id <agentId> \
      [--to-agent-id <peer agentId — task sub only; omit for backup sub>] \
+     --source-event cli_failed \
      --user-content "<localized error decision card — see template below>" \
      --list-label "[Error <short jobId>] CLI failed"
    ```
@@ -63,7 +68,12 @@ it to [funding.md](../../../okx-agentic-wallet/references/funding.md).
 
 **Network timeout / connection error does NOT qualify as an exception** — go through the pending-decisions-v2 flow above and let the user decide. Blindly retrying network flakes = pushing repeatedly inside the same turn, which overlaps with the §4 anti-pattern.
 
-**Role-specific exception (evaluator)**: `vote-commit` / `vote-reveal` / `arbitration-claim` are penalized at 0.3% stake the moment the commit / reveal window closes, so the sub is allowed up to 3 internal retries — this is a hard constraint forced by the dispute economic model; see `../a2a/evaluator/dispute.md` §6 for details. Other evaluator commands (`stake` / `unstake-*` / `info` / `download` etc.) still follow the §2 standard flow. User Agent / ASP have no such exception.
+**Role-specific exception (evaluator)**: `vote-commit`, `vote-reveal`, and
+`arbitration-claim` may retry up to three times while their economic window is
+open; see [`evidence.md`](../a2a/evaluator/evidence.md),
+[`reveal.md`](../a2a/evaluator/reveal.md), and
+[`result.md`](../a2a/evaluator/result.md). Other evaluator commands
+still follow the standard flow. User Agent and ASP have no such exception.
 
 ## 3. ❌ Absolute prohibition: broadcasting technical errors to the counterpart
 

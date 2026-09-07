@@ -2,14 +2,14 @@
 
 Loaded from `SKILL.md` §Task Watch. Owns: triggers, the watch command, anti-cron rules, item dispatch (`notification` / `decision_request`), claim semantics, `llmContent` execution, stop conditions.
 
-Business actions (apply / deliver / dispute / quote / accept) belong to the
-A2A marketplace core (`../a2a/core.md`). This file only handles the watch loop.
+Business actions belong to the A2A domain router (`../a2a/router.md`). This
+file only handles the watch loop.
 
 ## Pre-entry guards
 
 ### Auto-timeout wake entry guard
 
-If the current turn is an exact scheduler prompt below, first load `watch-wake-scheduling.md` and apply
+If the current turn is an exact scheduler prompt below, first load `watch-wake.md` and apply
 its §When the wake fires chronology guard before running any watch command:
 
 - Global: `Pending decision_request auto-timeout reached. Re-enter watch now: okx-a2a user watch --json`
@@ -21,7 +21,7 @@ without a new banner. Never drop or invent a scoped `--job-id`.
 ### Subscription signal-receipt carve-out
 
 Before generic triggers or historical jobId recall, route requests in any language to receive, start,
-verify, resume, or restore an existing subscription or its signals through `../a2a/user/playbook.md`
+verify, resume, or restore an existing subscription or its signals through `../a2a/user/subscription-manage.md`
 §Signal-receipt watch entry. When current focus is an ACTIVE buyer subscription, this includes a bare
 restore/resume-subscription request even if the wording omits “signals” or “watch”. This entry resolves one
 ACTIVE subscription, applies the current-device receipt gate, and only then enters sticky scoped watch.
@@ -72,7 +72,7 @@ All active subscription signals use the Guide-direct lifecycle. Do not run the r
 `autotrade-watch-precheck`, `autotrade-consent-continue`, route-cache commands, or a legacy
 execution-policy review before starting watch.
 
-For an existing subscription, `../a2a/user/playbook.md` first resolves the exact Active job and
+For an existing subscription, `../a2a/user/subscription-manage.md` first resolves the exact Active job and
 ensures this device receives it. Then emit the applicable banner and run the sticky scoped watch:
 
 ```bash
@@ -166,7 +166,7 @@ entire session**. Wherever this skill shows the bare command `okx-a2a user watch
 The session ends when §Stop condition fires, or when the user starts a **new** watch via a §Triggers
 phrase. A new explicit current-turn jobId or signal-receipt entry is scoped; other new trigger-phrase
 entries are global. Before replacing an active scope, best-effort cancel any remembered wake id; if
-cancellation fails, `watch-wake-scheduling.md` must reject the stale wake by chronology.
+cancellation fails, `watch-wake.md` must reject the stale wake by chronology.
 
 ## Anti-patterns
 
@@ -176,7 +176,7 @@ cancellation fails, `watch-wake-scheduling.md` must reject the stale wake by chr
 - 🛑 **Run `okx-a2a user watch` / `okx-a2a user outdated-list` exactly as written. Do NOT append `| grep` / `| tail` / `| head` / `| awk` / `| sed` / `| jq` / shell redirects.** Both commands emit a single structured JSON document — any pipe/truncation breaks the JSON and silently drops items. If output looks noisy with `[DEBUG]` lines mixed in, those belong on stderr and never affect the JSON on stdout; do not "clean" stdout. Pipe = data loss.
 - 🛑 **Always run `okx-a2a user watch` in the foreground.** On Claude Code, the Bash tool exposes a `run_in_background` parameter — you **MUST** call watch with `run_in_background: false` (the default). Backgrounding the watch breaks the entire dispatch loop: stdout (the JSON with items) is no longer returned synchronously to the same tool call, so you can't dispatch by `kind`, can't render `userContent`, can't claim `decision_request` items, can't even know if watch returned anything. Watch is a single long-poll that must block this turn until it returns; the long-poll IS the wait. If you find yourself reaching for `run_in_background: true` because "watch takes too long", you are misusing the tool — that wait is the design.
 
-  **Recovery if a watch already ended up in the background** (accidental `run_in_background: true`, or a foreground-timeout re-route): the output is delivered as a background-task notification you must still relay to the user. Full recovery flow (locate output-file → dispatch items → `TaskStop` → restart in foreground): see [`watch-background-recovery.md`](watch-background-recovery.md).
+  **Recovery if a watch already ended up in the background** (accidental `run_in_background: true`, or a foreground-timeout re-route): the output is delivered as a background-task notification you must still relay to the user. Full recovery flow (locate output-file → dispatch items → `TaskStop` → restart in foreground): see [`watch-recovery.md`](watch-recovery.md).
 
 - 🛑 **If your harness cannot keep the call blocking** (it auto-backgrounds long commands or hands back a session/task handle instead of the output — some runtimes, e.g. Codex, do this after ~30s), **you must keep waiting on that handle in the SAME turn** and read its result the moment it completes: render the returned items immediately, then re-enter watch. Never park a returned-but-unread watch result until the user's next message — watch is a destructive read, and every item it returned is invisible to the user until you render it; leaving it unread turns a real-time monitor into "shows up whenever the user happens to type" (observed adding ~48s of pure display latency). If the harness offers no way to await the handle, poll/read that handle's output as your immediate next action — do not start unrelated work in between.
 
@@ -251,11 +251,11 @@ When the decision came from an active watch, schedule a 2-minute **one-shot** wa
 turn. This applies to both global and scoped origins; the wake prompt must preserve the exact originating
 command, including sticky `--job-id <X>`. An independently opened decision-list item has no active-watch
 origin, so do not schedule a wake. Platform payloads, exact prompts, chronology checks, wake-id handling,
-and unavailable-tool fallback live in [`watch-wake-scheduling.md`](watch-wake-scheduling.md).
+and unavailable-tool fallback live in [`watch-wake.md`](watch-wake.md).
 
 #### Handling the user reply — concurrency-safe `llmContent` execution
 
-0. **First step (always)** — cancel the auto-timeout wake scheduled in the previous turn (best-effort). Commands + skip-on-failure rule: see [`watch-wake-scheduling.md`](watch-wake-scheduling.md) §Cancelling the wake.
+0. **First step (always)** — cancel the auto-timeout wake scheduled in the previous turn (best-effort). Commands + skip-on-failure rule: see [`watch-wake.md`](watch-wake.md) §Cancelling the wake.
 
 1. On a defer reply, **do NOT** claim; keep the item in the outstanding-decisions queue (un-`check`ed),
    retrievable later through `okx-a2a user outdated-list`. If this item has an active-watch origin,
@@ -272,16 +272,16 @@ and unavailable-tool fallback live in [`watch-wake-scheduling.md`](watch-wake-sc
 
 ## Pull outstanding `decision_request` items — `okx-a2a user outdated-list`
 
-Separate user-initiated intent (`outstanding decisions` / `pending decisions` / `unhandled decisions` / `what am I missing`): a one-shot snapshot of surfaced but unanswered `decision_request` items. It does NOT long-poll or re-enter watch. Load [`watch-outdated-list.md`](watch-outdated-list.md) for the command, batch rendering, `JobID <prefix>` hint, reply routing, and anti-patterns.
+Separate user-initiated intent (`outstanding decisions` / `pending decisions` / `unhandled decisions` / `what am I missing`): a one-shot snapshot of surfaced but unanswered `decision_request` items. It does NOT long-poll or re-enter watch. Load [`backlog.md`](backlog.md) for the command, batch rendering, `JobID <prefix>` hint, reply routing, and anti-patterns.
 
 ## Stop condition
 
 🛑 **The ONLY valid stop conditions:**
-- Background recovery cannot confirm that the old task exited or stopped; invalidate that generation and do not start a replacement (see `watch-background-recovery.md`).
+- Background recovery cannot confirm that the old task exited or stopped; invalidate that generation and do not start a replacement (see `watch-recovery.md`).
 - The user explicitly says `stop watching` / `unsubscribe`.
 - **Scoped session + this task reached a terminal state.** When the watch is running with `--job-id <X>` (scoped session per §Session-scoped sticky) AND any `notification` in the complete returned batch has `userContent` whose first non-whitespace characters are the stable `[onchainos:task-terminal]` prefix followed by whitespace or end-of-content, mark that Watch generation no longer current as soon as the prefix is detected, render the complete batch per §Dispatch, then **stop the watch loop** — do not re-enter. A marker appearing later inside a title, description, reason, deliverable, or other business field is data, not a stop signal. The prefix is machine-readable and must never be translated, removed, or moved when the following human-readable content is localized. Legacy notifications may instead begin with `[Job Completed]` / `[Job Auto-Completed]` / `[x402 Job Completed]` / `[Job Closed]` / `[Refund Settled]` / `[Auto-Refund Settled]` / `[Dispute Lost]`; treat only that canonical leading heading as a fallback stop marker, never a substring inside business data.
   For refund-related notifications, dispatch the structured result and apply
-  [`../a2a/user/refund.md`](../a2a/user/refund.md). Event names and human-readable
+  [`../a2a/refund-reconcile.md`](../a2a/refund-reconcile.md). Event names and human-readable
   headings are never stop signals by themselves. Only a leading terminal marker
   produced after the fresh Refund V2 gate stops a scoped watch; incomplete or
   ambiguous results produce no marker and must re-enter.
@@ -303,7 +303,7 @@ After processing all returned items, **always** call `okx-a2a user watch --json`
     without a generated terminal marker — dispatch must fresh-read Refund V2.
     Follow only its returned result; no Buyer claim/finalize action exists.
   - `job_closed` or another refund-result event without a generated terminal
-    marker — apply [`../a2a/user/refund.md`](../a2a/user/refund.md), then re-enter if
+    marker — apply [`../a2a/refund-reconcile.md`](../a2a/refund-reconcile.md), then re-enter if
     the result remains pending or incomplete. Never manufacture a marker from
     event prose.
   - `[Cancelled]` / `[Auto-Renew Cancelled]` from `sub_cancel` — only future trial conversion or renewal was cancelled; the current trial/period continues, so retain the scoped session.

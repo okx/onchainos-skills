@@ -44,12 +44,11 @@ documented interface.
 
    ```bash
      onchainos agent autotrade-direct-claim \
-     --job-id <jobId> --delivery-id <deliveryId> \
-     --amount <amount-derived-from-guide-consent-and-signal>
+     --job-id <jobId> --delivery-id <deliveryId>
    ```
 
-   Use only the amount determined from the Guide, Consent, and saved Signal.
-   Continue only if the result says
+   The selected tool still derives its amount from the Guide, Consent, and
+   saved Signal. Continue only if the claim result says
    `allowed:true` and `status:"claimed"`.
 5. Invoke the selected tool's normal final command exactly once. Never call `autotrade-execute`,
    `subscription-route-set`, `subscription-route-clear`, `command-json`, a shell,
