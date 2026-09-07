@@ -1,22 +1,22 @@
-const SKILL: &str = include_str!("../../skills/okx-ai-v2/SKILL.md");
-const ROUTER: &str = include_str!("../../skills/okx-ai-v2/references/a2a/router.md");
-const USER_ROUTER: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/router.md");
-const PROVIDER_ROUTER: &str = include_str!("../../skills/okx-ai-v2/references/a2a/provider/router.md");
-const EVALUATOR_ROUTER: &str = include_str!("../../skills/okx-ai-v2/references/a2a/evaluator/router.md");
-const IDENTITY_SEARCH: &str = include_str!("../../skills/okx-ai-v2/references/identity/search.md");
-const PREPARE: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/create-prepare.md");
-const CREATE: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/create.md");
-const GUIDE: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/create-guide.md");
-const REFUND_PREPARE: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/refund-prepare.md");
-const REFUND_CONFIRM: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/refund-confirm.md");
-const REFUND_EXECUTE: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/refund-execute.md");
-const REFUND_CONTRACT: &str = include_str!("../../skills/okx-ai-v2/references/shared/refund-contract.md");
-const REFUND_DISPLAY: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/refund-display.md");
-const COMPLETION: &str = include_str!("../../skills/okx-ai-v2/references/a2a/completion.md");
-const FEEDBACK: &str = include_str!("../../skills/okx-ai-v2/references/a2a/feedback.md");
-const NOTIFY: &str = include_str!("../../skills/okx-ai-v2/references/a2a/notify.md");
-const INTAKE: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/intake.md");
-const RECOVERY: &str = include_str!("../../skills/okx-ai-v2/references/runtime/recovery.md");
+const SKILL: &str = include_str!("../../skills/okx-ai/SKILL.md");
+const ROUTER: &str = include_str!("../../skills/okx-ai/references/a2a/router.md");
+const USER_ROUTER: &str = include_str!("../../skills/okx-ai/references/a2a/user/router.md");
+const PROVIDER_ROUTER: &str = include_str!("../../skills/okx-ai/references/a2a/provider/router.md");
+const EVALUATOR_ROUTER: &str = include_str!("../../skills/okx-ai/references/a2a/evaluator/router.md");
+const IDENTITY_SEARCH: &str = include_str!("../../skills/okx-ai/references/identity/search.md");
+const PREPARE: &str = include_str!("../../skills/okx-ai/references/a2a/user/create-prepare.md");
+const CREATE: &str = include_str!("../../skills/okx-ai/references/a2a/user/create.md");
+const GUIDE: &str = include_str!("../../skills/okx-ai/references/a2a/user/create-guide.md");
+const REFUND_PREPARE: &str = include_str!("../../skills/okx-ai/references/a2a/user/refund-prepare.md");
+const REFUND_CONFIRM: &str = include_str!("../../skills/okx-ai/references/a2a/user/refund-confirm.md");
+const REFUND_EXECUTE: &str = include_str!("../../skills/okx-ai/references/a2a/user/refund-execute.md");
+const REFUND_CONTRACT: &str = include_str!("../../skills/okx-ai/references/shared/refund-contract.md");
+const REFUND_DISPLAY: &str = include_str!("../../skills/okx-ai/references/a2a/user/refund-display.md");
+const COMPLETION: &str = include_str!("../../skills/okx-ai/references/a2a/completion.md");
+const FEEDBACK: &str = include_str!("../../skills/okx-ai/references/a2a/feedback.md");
+const NOTIFY: &str = include_str!("../../skills/okx-ai/references/a2a/notify.md");
+const INTAKE: &str = include_str!("../../skills/okx-ai/references/a2a/user/intake.md");
+const RECOVERY: &str = include_str!("../../skills/okx-ai/references/runtime/recovery.md");
 
 #[test]
 fn v2_uses_role_scoped_lazy_routing() {

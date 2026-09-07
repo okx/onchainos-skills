@@ -79,8 +79,8 @@ for (const file of runtimeFiles) {
     .split("\n")
     .filter((line) => !line.includes("assert!(!"))
     .join("\n");
-  if (source.includes("skills/okx-ai/references/")) {
-    errors.push(`${relative(file)}: legacy skills/okx-ai runtime reference`);
+  if (source.includes("skills/okx-ai-v2/references/")) {
+    errors.push(`${relative(file)}: retired skills/okx-ai-v2 runtime reference`);
   }
   if (source.includes("[SKILL_PREFETCH]") && source.includes("via references/a2a/router.md")) {
     errors.push(`${relative(file)}: SKILL_PREFETCH must re-enter through Top-level routing, not force a2a/router.md`);
@@ -184,9 +184,9 @@ if (fs.existsSync(tracesPath)) {
 }
 
 if (errors.length > 0) {
-  console.error(`okx-ai-v2 audit failed (${errors.length} issues):`);
+  console.error(`okx-ai audit failed (${errors.length} issues):`);
   for (const error of errors) console.error(`- ${error}`);
   process.exit(1);
 }
 
-console.log(`okx-ai-v2 audit passed: ${markdownFiles.length} Markdown files checked`);
+console.log(`okx-ai audit passed: ${markdownFiles.length} Markdown files checked`);

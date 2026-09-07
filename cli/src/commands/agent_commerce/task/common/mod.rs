@@ -1399,7 +1399,7 @@ async fn build_context(
     if !role_reference.is_empty() {
         out.push_str("[⚠️ Must Execute Immediately]\n");
         out.push_str(&format!(
-            "The role is already bound. Read skills/okx-ai-v2/{role_reference} directly; do not re-enter the A2A parent router. It contains the complete role-scoped rules.\n"
+            "The role is already bound. Read skills/okx-ai/{role_reference} directly; do not re-enter the A2A parent router. It contains the complete role-scoped rules.\n"
         ));
     }
 

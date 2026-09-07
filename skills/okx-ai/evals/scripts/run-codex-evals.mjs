@@ -11,7 +11,7 @@ const skillDir = resolve(evalDir, "..");
 const repoRoot = resolve(skillDir, "..", "..");
 const evals = JSON.parse(readFileSync(join(evalDir, "evals.json"), "utf8"));
 if (process.argv.includes("--help")) {
-  console.log("Usage: node skills/okx-ai-v2/evals/scripts/run-codex-evals.mjs [--case <id>] [--baseline]");
+  console.log("Usage: node skills/okx-ai/evals/scripts/run-codex-evals.mjs [--case <id>] [--baseline]");
   process.exit(0);
 }
 const selectedId = readOption("--case");
@@ -61,7 +61,7 @@ process.exitCode = summary.passed ? 0 : 1;
 
 function runScenario(scenario, mode) {
   const scenarioRoot = join(outputRoot, `case-${scenario.id}`, mode);
-  const workspace = mkdtempSync(join(tmpdir(), "okx-ai-v2-eval-"));
+  const workspace = mkdtempSync(join(tmpdir(), "okx-ai-eval-"));
   const resultDir = join(scenarioRoot, "result");
   mkdirSync(resultDir, { recursive: true });
   prepareWorkspace(workspace, mode === "with-skill");
@@ -128,9 +128,9 @@ function prepareWorkspace(workspace, loadSkill) {
 
   mkdirSync(join(workspace, ".agents", "skills"), { recursive: true });
   mkdirSync(join(workspace, "skills"), { recursive: true });
-  link(skillDir, join(workspace, "skills", "okx-ai-v2"));
+  link(skillDir, join(workspace, "skills", "okx-ai"));
   link(join(repoRoot, "skills", "okx-agentic-wallet"), join(workspace, "skills", "okx-agentic-wallet"));
-  link(skillDir, join(workspace, ".agents", "skills", "okx-ai-v2"));
+  link(skillDir, join(workspace, ".agents", "skills", "okx-ai"));
   link("../../skills/okx-agentic-wallet", join(workspace, ".agents", "skills", "okx-agentic-wallet"));
 }
 
