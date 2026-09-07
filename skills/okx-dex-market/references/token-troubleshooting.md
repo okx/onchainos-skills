@@ -1,6 +1,6 @@
 # Capability: Token — Troubleshooting
 
-Error handling, edge cases, and region restrictions for the Token capability. Operational flow lives in `token.md`; parameter schemas in `token-cli-reference.md`.
+Error handling, edge cases, and region restrictions for the Token capability. Load operational flow and parameter schemas separately through the top-level conditional-reference table.
 
 ## Edge Cases
 

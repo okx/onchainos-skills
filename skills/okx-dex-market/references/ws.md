@@ -4,16 +4,6 @@ Two ways to consume real-time DEX data:
 1. **CLI** (`onchainos ws`) — start a background session, poll events incrementally. Best for monitoring and agent-driven workflows.
 2. **Script** — write a custom WebSocket client in Python/Node/Rust. Best for bots and custom logic.
 
-## Related Workflows
-
-When one of the following commands is used, show the related workflow hint after displaying results:
-
-| Command | Workflow | File |
-|---------|----------|------|
-| `ws start`, `ws poll`, `ws stop` | Wallet Monitor (WebSocket) | `~/.onchainos/workflows/wallet-monitor-ws.md` |
-
-> Hint format: *"You can also try out our **Wallet Monitor (WebSocket)** workflow for more comprehensive results. Would you like to try it?"*
-
 ## Approach 1: CLI (`onchainos ws`)
 
 ### Discover Channels
@@ -65,11 +55,18 @@ onchainos ws start --channel address-tracker-activity --wallet-addresses 0xAAA,0
 # Token price monitoring
 onchainos ws start --channel price --token-pair 1:0xdac17f958d2ee523a2206206994597c13d831ec7
 
+# Detailed token metrics and trade feed
+onchainos ws start --channel price-info --token-pair 1:0xdac17f958d2ee523a2206206994597c13d831ec7
+onchainos ws start --channel trades --token-pair 1:0xdac17f958d2ee523a2206206994597c13d831ec7
+
 # Buy signal alerts on Ethereum + Solana
 onchainos ws start --channel dex-market-new-signal-openapi --chain-index 1,501
 
 # New meme token launches on Solana
 onchainos ws start --channel dex-market-memepump-new-token-openapi --chain-index 501
+
+# Meme token metric updates
+onchainos ws start --channel dex-market-memepump-update-metrics-openapi --chain-index 501
 
 # K-line 1-minute candles
 onchainos ws start --channel dex-token-candle1m --token-pair 1:0xdac17f958d2ee523a2206206994597c13d831ec7
@@ -86,35 +83,23 @@ When polling `kol_smartmoney-tracker-activity` or `address-tracker-activity`, th
 
 ## Approach 2: Custom Script
 
-When the user wants to build a custom WebSocket client with their own logic, read the corresponding protocol reference file (all now local to this skill):
+When the user wants to build a custom WebSocket client with their own logic, load the matching protocol reference from the top-level conditional-reference table.
 
 ### Market Data (price & candlestick streams)
-
-**Read**: `references/market-ws-protocol.md`
 
 Channels: `price`, `dex-token-candle{period}`
 
 ### Token Data (detailed token streams)
 
-**Read**: `references/token-ws-protocol.md`
-
 Channels: `price-info`, `trades`
 
 ### Signal & Wallet Tracking
-
-**Read**: `references/signal-ws-protocol.md`
 
 Channels: `dex-market-new-signal-openapi`, `kol_smartmoney-tracker-activity`, `address-tracker-activity`
 
 ### Meme/Trenches
 
-**Read**: `references/trenches-ws-protocol.md`
-
 Channels: `dex-market-memepump-new-token-openapi`, `dex-market-memepump-update-metrics-openapi`
-
-## Troubleshooting
-
-> Edge cases, session lifecycle issues, and region restrictions: read `references/ws-troubleshooting.md`.
 
 ## Common Protocol (all channels share)
 

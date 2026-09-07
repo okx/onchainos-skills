@@ -2,9 +2,9 @@
 
 Multi-chain DeFi product discovery and investment execution. The CLI handles precision conversion, multi-step orchestration, and validation internally.
 
-For CLI parameter details, see `references/invest-cli-reference.md`.
+Load exact CLI parameters and return schemas through the top-level Intent Routing table when needed.
 
-> Address resolution (Step 0) and address-chain compatibility rules live in the top-level `SKILL.md` — apply them before every command here.
+> Apply the top-level address-resolution and address-chain compatibility rules before every command here.
 
 ## Command Index
 
@@ -22,7 +22,7 @@ For CLI parameter details, see `references/invest-cli-reference.md`.
 | 10 | `defi tvl-chart --investment-id <id> [--time-range <range>]` | Historical TVL chart data |
 | 11 | `defi depth-price-chart --investment-id <id> [--chart-type <type>] [--time-range <range>]` | V3 Pool depth or price history chart |
 
-> `defi positions` / `defi position-detail` (viewing) are documented in the **Portfolio** capability (`references/portfolio.md`) — but you will call them here as mandatory pre-steps before withdraw/collect.
+> `defi positions` / `defi position-detail` (viewing) belong to the **Portfolio** capability, but call them here as mandatory pre-steps before withdraw/collect.
 
 ## Investment Types
 
@@ -225,13 +225,13 @@ onchainos wallet contract-call \
 | `defi list` / `defi search` | View details → `defi detail`, or start deposit flow |
 | `defi detail` | Check trends → `defi rate-chart` / `defi tvl-chart`, or proceed → `defi invest` |
 | `defi detail` (V3 Pool) | View depth → `defi depth-price-chart`, check price history → `defi depth-price-chart --chart-type PRICE` |
-| `defi invest` success | View positions → Portfolio capability (`references/portfolio.md`), or search more |
+| `defi invest` success | View positions → Portfolio capability, or search more |
 | `defi withdraw` success | Check positions → Portfolio capability, or check balance → `okx-agentic-wallet` |
 | `defi collect` success | Check positions → Portfolio capability, or swap rewards → `okx-agentic-wallet` |
 
 ## Troubleshooting
 
-> Error codes and failure handling: read `references/invest-troubleshooting.md`.
+> For error codes and failure handling, load the Invest troubleshooting reference through the top-level Intent Routing table.
 
 ## Invest-specific Notes
 
