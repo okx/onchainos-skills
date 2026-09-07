@@ -561,7 +561,7 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
 pub fn evaluator_selected_post_evidence_steps(job_id: &str, agent_id: &str) -> String {
     format!(
         "→ **Continue with Step 3 in this same turn — it is NOT event-driven.**\n\n\
-         **Step 3 — Enter through `skills/okx-ai-v2/SKILL.md`, follow its Evaluator route, and render the verdict per `skills/okx-ai-v2/references/a2a/evaluator/rubric.md`:**\n\
+         **Step 3 — Read `skills/okx-ai-v2/references/a2a/evaluator/rubric.md` directly and render the verdict:**\n\
          - **Prerequisite — file readability check**: read `skills/okx-ai-v2/references/a2a/evaluator/rubric.md`.\n\
          \x20\x20Read failure / file missing / empty content → **stop this turn immediately** (no commit, no fallback default rules, no search for replacement file). Run `onchainos agent user-notify` (🌐 localize first), then end the turn:\n\n\
          ```bash\n\

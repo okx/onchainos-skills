@@ -47,5 +47,5 @@ ASP/Provider. Select exactly one final leaf and stop routing.
 | `raise_arbitration`, `raise_subscription_arbitration` | [`dispute.md`](dispute.md) |
 | `view_arbitration` | [`arbitration-query.md`](arbitration-query.md) |
 
-Cross-domain actions remain owned by `../router.md`. Unknown actions are
-coverage failures; never infer a replacement from prose.
+Cross-domain actions are intercepted before this router is loaded. Unknown
+actions are coverage failures; never infer a replacement from prose.

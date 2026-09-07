@@ -3,6 +3,7 @@ const ROUTER: &str = include_str!("../../skills/okx-ai-v2/references/a2a/router.
 const USER_ROUTER: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/router.md");
 const PROVIDER_ROUTER: &str = include_str!("../../skills/okx-ai-v2/references/a2a/provider/router.md");
 const EVALUATOR_ROUTER: &str = include_str!("../../skills/okx-ai-v2/references/a2a/evaluator/router.md");
+const IDENTITY_SEARCH: &str = include_str!("../../skills/okx-ai-v2/references/identity/search.md");
 const PREPARE: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/create-prepare.md");
 const CREATE: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/create.md");
 const GUIDE: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/create-guide.md");
@@ -21,9 +22,9 @@ const RECOVERY: &str = include_str!("../../skills/okx-ai-v2/references/runtime/r
 fn v2_uses_role_scoped_lazy_routing() {
     assert!(SKILL.contains("references/a2a/router.md"));
     assert!(SKILL.contains("Select exactly one row"));
-    assert!(SKILL.contains("shared files never route"));
-    assert!(SKILL.contains("Do not preload the A2A"));
-    assert!(SKILL.contains("identity search leaf's single handoff"));
+    assert!(SKILL.contains("re-enter this Skill or the A2A parent router"));
+    assert!(IDENTITY_SEARCH.contains("Do not load any A2A creation"));
+    assert!(IDENTITY_SEARCH.contains("../a2a/user/create-prepare.md"));
     assert!(ROUTER.contains("select exactly one role router"));
     assert!(ROUTER.contains("Never preload all role routers"));
     assert!(ROUTER.contains("user/router.md"));

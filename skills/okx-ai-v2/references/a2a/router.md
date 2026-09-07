@@ -14,14 +14,12 @@ route by intent again.
 - Never preload all role routers or later lifecycle leaves.
 - A missing event or action mapping is a coverage failure: report it and stop.
 
-## Structured envelope entry
+## System envelope entry
 
-| Envelope | Route |
-|---|---|
-| `{agentId,message:{source:"system",event,jobId,...}}` | Validate the event below, call `next-action` exactly once, then route the exact result to the receiving Agent's role router. |
-| `{msgType:"a2a-agent-chat",jobId,sender:{role:1},...}` received by ASP | [`peer.md`](peer.md) |
-| `{msgType:"a2a-agent-chat",jobId,sender:{role:2},...}` received by User | [`peer.md`](peer.md) |
-| `[SKILL_PREFETCH]` or a legacy Skill-read phrase without either envelope shape | End the turn without a business action. |
+Enter here for valid JSON `{agentId,message:{source:"system",event,...}}` with
+non-empty `agentId` and `event` from the top-level Skill. `jobId` is optional.
+Validate the event below, call `next-action` exactly once, then route the exact
+result to the receiving Agent's role router.
 
 Known system events:
 
@@ -40,7 +38,8 @@ sub_open, sub_created, sub_asp_selected, and other sub_* lifecycle events
 Unknown system events are coverage failures. Stop before calling
 `next-action`, `common context`, or any task mutation.
 
-For a known system envelope, pass its complete `message` object unchanged:
+For a known system envelope, pass its complete `message` object unchanged.
+Preserve `jobId` when present; do not invent it when absent:
 
 ```bash
 onchainos agent next-action \
@@ -54,7 +53,9 @@ for that invocation; delayed output never authorizes a duplicate call. Treat a
 returned Markdown playbook as imperative CLI guidance. Treat structured
 `phase/decision/reason/nextAction/payload` as progression data.
 
-After the result returns, select by the receiving Agent role:
+After the result returns, first match its exact action against Cross-domain
+progression below. A match bypasses role routing. Otherwise select by the
+receiving Agent role:
 
 | Receiving role | Router |
 |---|---|
@@ -76,7 +77,7 @@ Never infer it from peer prose. Load only the selected role router.
 
 ## Cross-domain progression
 
-These action IDs leave the role routers:
+These exact action IDs bypass the role routers:
 
 | Action ID | Route |
 |---|---|
@@ -86,8 +87,8 @@ These action IDs leave the role routers:
 | `watch_task` | [`../runtime/watch.md`](../runtime/watch.md) |
 | `stop` | End the current flow without another command. |
 
-All other action IDs remain inside the selected role router. If neither this
-table nor that router recognizes the exact action, report a coverage failure.
+All other action IDs enter the selected role router. If neither this table nor
+that router recognizes the exact action, report a coverage failure.
 
 ## Action guards
 

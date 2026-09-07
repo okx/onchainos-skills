@@ -9,13 +9,19 @@ candidates and filed cases are different sets; use
 
 ## Open a decision
 
-For a structured event, resolve the complete envelope through
-[`../router.md`](../router.md):
+For a System entry, consume the progression result already produced by the A2A
+entry router. Do not call `next-action` again for the same envelope.
+
+Only an explicit free-text request to respond to a specified rejection without
+a fresh progression result makes one role-bound call:
 
 ```text
-onchainos agent next-action --role auto --agentId <envelope.agentId> \
-  --message '<complete envelope.message as one JSON string>'
+onchainos agent next-action --role asp --agentId <aspAgentId> \
+  --message '{"event":"<job_rejected|sub_user_reject>","jobId":"<jobId>"}'
 ```
+
+Call it exactly once. An explicit instruction to start arbitration remains the
+direct `dispute.md` entry and does not open this decision flow.
 
 Render the returned task name, exact amount/token, period/deadline when present,
 and these choices:

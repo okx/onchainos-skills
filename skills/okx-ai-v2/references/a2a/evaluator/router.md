@@ -21,5 +21,5 @@ Evaluator. Select exactly one final leaf and stop routing.
 | `reveal_started`, `vote_reveal_deadline_warn` | [`reveal.md`](reveal.md) |
 | `vote_revealed`, `dispute_resolved`, `round_failed`, `reward_claimed`, `cooldown_entered` | [`result.md`](result.md) |
 
-Unknown Evaluator events/actions are coverage failures. Cross-domain actions
-remain owned by `../router.md`.
+Cross-domain actions are intercepted before this router is loaded. Unknown
+Evaluator events/actions are coverage failures.

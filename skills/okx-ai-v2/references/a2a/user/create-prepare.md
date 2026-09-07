@@ -14,8 +14,8 @@ because output is delayed. Reuse its returned result for the rest of the turn.
 The CLI already checks login, User identity, authoritative Service state,
 subscription conflicts, effective price or trial, and payable balance. Do not
 repeat those reads in the Skill. A successful response contains
-`phase/decision/reason/nextAction/payload` under `data`; route its returned
-action through `router.md`.
+`phase/decision/reason/nextAction/payload` under `data`; select exactly one row
+from the Result matrix below without re-entering a router.
 
 ## Result matrix
 

@@ -1,9 +1,11 @@
 # Evaluator Evidence and Commit
 
 Use this leaf for `evaluator_selected`, `vote_committed`, and
-`vote_commit_deadline_warn`. Resolve each complete system envelope afresh
-through [`router.md`](router.md); non-system evaluator messages are recorded as
-policy events only.
+`vote_commit_deadline_warn`. For a System entry, consume the progression result
+already produced by the A2A entry router; never call `next-action` or route the
+same envelope again. A separately arriving System envelope starts a fresh
+top-level entry. Non-system evaluator messages are recorded as policy events
+only.
 
 For `evaluator_selected`:
 

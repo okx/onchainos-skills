@@ -18,6 +18,8 @@ const EVALUATOR_INFO_SOURCE: &str =
     include_str!("../src/commands/agent_commerce/task/evaluator/info.rs");
 const DISPUTE_LIFECYCLE_SOURCE: &str =
     include_str!("../src/commands/agent_commerce/task/user/flow_lifecycle/dispute.rs");
+const USER_MANAGE_SOURCE: &str =
+    include_str!("../src/commands/agent_commerce/task/user/flow_lifecycle/manage.rs");
 const PENDING_V2_SOURCE: &str =
     include_str!("../src/commands/agent_commerce/task/common/pending_v2.rs");
 const ASP_DISPUTE_RAISE_SOURCE: &str =
@@ -165,9 +167,21 @@ fn cli_guidance_targets_role_scoped_v2_tree() {
         );
     }
     assert!(PENDING_V2_SOURCE.contains("skills/okx-ai-v2/SKILL.md"));
-    assert!(TASK_COMMON_SOURCE.contains("references/a2a/router.md"));
+    assert!(TASK_COMMON_SOURCE.contains("references/a2a/user/router.md"));
+    assert!(TASK_COMMON_SOURCE.contains("references/a2a/provider/router.md"));
+    assert!(TASK_COMMON_SOURCE.contains("references/a2a/evaluator/router.md"));
+    assert!(!TASK_COMMON_SOURCE.contains("=> \"references/a2a/router.md\""));
     assert!(!TASK_COMMON_SOURCE.contains("references/a2a/user/session.md"));
+    assert!(USER_MANAGE_SOURCE.contains(
+        "read `skills/okx-ai-v2/references/a2a/user/subscription-manage.md` §Signal-receipt watch entry directly"
+    ));
+    assert!(USER_MANAGE_SOURCE.contains(
+        "Route `nextAction.id=watch_task` directly to `skills/okx-ai-v2/references/runtime/watch.md`"
+    ));
     assert!(EVALUATOR_FLOW_SOURCE.contains("references/a2a/evaluator/rubric.md"));
+    assert!(EVALUATOR_FLOW_SOURCE
+        .contains("Step 3 — Read `skills/okx-ai-v2/references/a2a/evaluator/rubric.md` directly"));
+    assert!(!EVALUATOR_FLOW_SOURCE.contains("Step 3 — Enter through `skills/okx-ai-v2/SKILL.md`"));
     assert!(!EVALUATOR_FLOW_SOURCE.contains("references/a2a/evaluator/dispute.md"));
     assert!(DISPUTE_LIFECYCLE_SOURCE.contains("references/runtime/recovery.md"));
 }

@@ -82,6 +82,9 @@ for (const file of runtimeFiles) {
   if (source.includes("skills/okx-ai/references/")) {
     errors.push(`${relative(file)}: legacy skills/okx-ai runtime reference`);
   }
+  if (source.includes("[SKILL_PREFETCH]") && source.includes("via references/a2a/router.md")) {
+    errors.push(`${relative(file)}: SKILL_PREFETCH must re-enter through Top-level routing, not force a2a/router.md`);
+  }
 }
 
 const forbiddenDispatchers = [
@@ -92,6 +95,30 @@ const forbiddenDispatchers = [
 for (const target of forbiddenDispatchers) {
   if (fs.existsSync(path.join(skillDir, target))) {
     errors.push(`${target}: retired dispatcher/encyclopedia still exists`);
+  }
+}
+
+const routingContracts = [
+  ["references/a2mcp/handoff.md", [/\]\(invoke\.md(?:#[^)]+)?\)/], [/\]\(router\.md(?:#[^)]+)?\)/]],
+  ["references/a2a/user/create-prepare.md", [/\]\(\.\.\/\.\.\/a2mcp\/handoff\.md(?:#[^)]+)?\)/], [/a2mcp\/router\.md/]],
+  ["references/a2a/evaluator/evidence.md", [], [/\]\(router\.md(?:#[^)]+)?\)/]],
+  ["references/a2a/provider/arbitration-decision.md", [], [/\]\(\.\.\/router\.md(?:#[^)]+)?\)/]],
+  ["SKILL.md", [/\]\(references\/a2a\/peer\.md\)/, /\[SKILL_PREFETCH\]/], [/^## Envelope precedence$/m]],
+  ["references/a2a/router.md", [], [/msgType:\s*"a2a-agent-chat"/, /\[SKILL_PREFETCH\]/]],
+  ["references/a2a/peer.md", [/\]\(user\/intake\.md\)/, /\]\(params\.md\)/, /\]\(user\/subscription-signal\.md\)/, /\]\(provider\/assignment\.md\)/], []],
+];
+for (const [target, required, forbidden] of routingContracts) {
+  const file = path.join(skillDir, target);
+  if (!fs.existsSync(file)) {
+    errors.push(`${target}: routing contract owner is missing`);
+    continue;
+  }
+  const source = fs.readFileSync(file, "utf8");
+  for (const pattern of required) {
+    if (!pattern.test(source)) errors.push(`${target}: missing required routing contract ${pattern}`);
+  }
+  for (const pattern of forbidden) {
+    if (pattern.test(source)) errors.push(`${target}: contains forbidden routing contract ${pattern}`);
   }
 }
 
