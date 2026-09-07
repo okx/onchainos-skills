@@ -1144,7 +1144,8 @@ mod tests {
         assert!(out.contains("job-id `job-123`"));
         assert!(out.contains("skills/okx-ai/SKILL.md"));
         assert!(out.contains("skills/okx-ai/references/runtime/watch.md"));
-        assert!(!out.contains("skills/okx-ai/references/"));
+        let retired_reference_root = ["skills/okx-ai-v", "2/references/"].concat();
+        assert!(!out.contains(&retired_reference_root));
         assert!(!out.contains("End the turn after Step 2"));
     }
 

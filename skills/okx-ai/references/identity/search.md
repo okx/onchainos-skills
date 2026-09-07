@@ -73,7 +73,8 @@ Use the requested limit; otherwise **MUST** pass `--limit 3`, **NEVER** use anot
 ### Read the result
 
 Read `services[]`, `searchAfter`, `hasMore`, and `tip`.
-Only now read `output-templates.md` for the selected Agent/Service display.
+Only now read `output-templates.md` for the selected Agent/Service display, and **MUST** render the
+result according to its applicable template.
 Do not load any A2A creation or action reference before the user explicitly
 selects a Service and `task-create-prepare` returns its next action.
 

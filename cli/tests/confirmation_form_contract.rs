@@ -87,10 +87,16 @@ fn create_confirmation_excludes_execution_configuration() {
 
 #[test]
 fn refund_reason_and_write_are_freshly_bound() {
-    for expected in ["User-authored", "non-blank", "preserved verbatim"] {
-        assert!(REFUND_PREPARE.contains(expected));
+    let confirmation = REFUND_CONFIRM
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+    for expected in ["user-authored", "non-blank", "preserve", "verbatim"] {
+        assert!(confirmation.contains(expected));
     }
-    assert!(REFUND_CONFIRM.contains("final input"));
+    assert!(confirmation.contains("final input"));
+    assert!(REFUND_PREPARE.contains("read-only Refund V2 result"));
     assert!(REFUND_CONFIRM.contains("submit_refund_request"));
     assert!(REFUND_EXECUTE.contains("refund-execute JOB_ID_ARG"));
     assert!(REFUND_EXECUTE.contains("--refund-context-id"));
