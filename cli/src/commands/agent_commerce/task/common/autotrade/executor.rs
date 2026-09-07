@@ -1615,17 +1615,6 @@ pub fn claim_guide_direct(
     if !guide::has_active_execution_contract(job_id) {
         bail!("active local Service Guide and Guide Consent are required")
     }
-    let service_guide = guide::load_guide(job_id)
-        .context("active local Service Guide is unreadable")?;
-    match super::subscription_config::execution_mode(&context.agent_id, &service_guide.service_id)
-    {
-        Ok(Some(super::subscription_config::ExecutionMode::GuideDirect)) => {}
-        Ok(Some(super::subscription_config::ExecutionMode::SignalOnly)) => {
-            bail!("subscription executionMode is signal_only")
-        }
-        Ok(None) => bail!("subscription executionMode is not configured"),
-        Err(_) => bail!("subscription executionMode is unreadable"),
-    }
     let path = outcome_path(job_id, delivery_id)?;
     if read_outcome(&path)?.is_some() {
         return Ok(DirectClaimResult {
