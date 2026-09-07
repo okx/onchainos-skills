@@ -66,10 +66,29 @@ the Service. After the User explicitly selects one displayed Service, follow
 the identity search leaf's single handoff to `a2a/user/create-prepare.md`; only the
 prepare result may open the next A2A leaf.
 
-## Task progression
+## Global Progression Contract
 
-Treat `phase`, `decision`, `reason`, `nextAction`, and `payload` as the CLI's
-progression contract.
+Use this envelope when a CLI result requires continuation:
+
+```json
+{
+  "phase": "receipt_validation",
+  "decision": "ready",
+  "reason": "device_not_receiving",
+  "nextAction": [{"id": "enable_this_device", "recommend": true}],
+  "payload": {}
+}
+```
+
+- `phase`: current business stage.
+- `decision`: `ready`, `blocked`, or `requires_user_input`.
+- `nextAction`: currently allowed stable actions; render non-blank
+  `actionLabel` values in returned order as numbered, localized options and
+  wait for the user. Do not expose Action IDs, `recommend`, or `params`.
+- `payload`: current facts.
+
+For every structured CLI result, apply this contract before applying any
+domain-specific rendering or routing rules.
 
 Once a flow enters through `invoke_a2mcp`, the V2 A2MCP references own its
 subsequent results, including results with an empty `nextAction`, until the
@@ -85,11 +104,3 @@ matching one of these values: `invoke_a2mcp`, `provide_a2mcp_params`,
 `cancel_a2mcp`. For an active or action-identified A2MCP result, read only
 [`references/a2mcp/router.md`](references/a2mcp/router.md); do not load shared
 A2A action routing or templates.
-
-For every non-A2MCP result, after—not before—it returns `nextAction`, read
-[`protocol.md`](references/shared/protocol.md), then
-[`references/a2a/router.md`](references/a2a/router.md), then exactly one selected
-role router and its final leaf. Let that leaf own confirmation and rendering.
-A leaf may name a small shared invariant or template, but shared files never route.
-Never preload other role routers or later leaves merely because a future
-step may use them, and never infer or invent an action from prose.
