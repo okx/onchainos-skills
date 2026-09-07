@@ -205,6 +205,14 @@ fn arbitration_decision_json(
             decision_context["expireTime"] = serde_json::Value::Number(expire_time.into());
         }
     }
+    if scalar_string(decision_context.get("serviceName")).is_none() {
+        if let Some(service_name) = prefetched
+            .and_then(|value| value.service_name.as_deref())
+            .filter(|value| !value.trim().is_empty())
+        {
+            decision_context["serviceName"] = serde_json::Value::String(service_name.to_string());
+        }
+    }
     let result = build_decision_result(
         source_event,
         job_id,
@@ -1513,6 +1521,32 @@ mod tests {
         assert_eq!(reject_expire_time(Some(&msg)), None);
         let msg = json!({ "expireTime": -1 });
         assert_eq!(reject_expire_time(Some(&msg)), None);
+    }
+
+    #[test]
+    fn refund_list_metadata_uses_prefetched_service_name() {
+        let prefetched =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &json!({
+                    "title": "Task",
+                    "jobType": 0,
+                    "serviceName": "Audit Service",
+                    "tokenAmount": "2.5",
+                    "tokenSymbol": "USDT",
+                    "expireTime": 2_000_000_000i64,
+                }),
+            );
+        let output = arbitration_decision_json(
+            crate::commands::agent_commerce::task::arbitration::JOB_REJECTED,
+            "job-1",
+            None,
+            Some(&prefetched),
+            Some(&json!({"eventId": "event-1"})),
+        );
+        let output: serde_json::Value = serde_json::from_str(&output).unwrap();
+
+        assert_eq!(output["payload"]["serviceName"], "Audit Service");
+        assert!(output["payload"]["refundDisplayB64"].is_string());
     }
 
     const ASP_JOB_ID: &str = "0xsub01";

@@ -24,19 +24,29 @@ or after creation. Do not show a second standalone parameter confirmation.
 
 ## Final confirmation
 
-Render exactly these business fields in the User's language:
+scene: One-time job creation confirmation
 
-| Field | Value |
-|---|---|
-| Task Name | `title` |
-| Task Description | confirmed `Description` |
-| Provider | `Agent <providerAgentId>(<providerAgentName>)`; omit absent name |
-| Service Parameters | confirmed `serviceParams` |
-| Service Price | exact `feeAmount feeTokenSymbol`; zero means localized Free |
+display template:
 
-List attachments below the table, not as another table row. Guide Consent was
-confirmed separately and is not merged into this form. Apply edits and show the
-whole confirmation again. Continue only after an explicit final confirmation.
+```markdown
+### One-time Job Creation Confirmation
+
+| Job Name | Job Description | Service Provider | Fee | Service Parameters |
+|---|---|---|---|---|
+| {title} | {Description} | Agent {providerAgentId}({providerAgentName}) | {feeAmount} {feeTokenSymbol} | {serviceParams} |
+
+To create this job, reply “Confirm”. To cancel, reply “Cancel”.
+```
+
+display rules:
+
+1. Preserve the confirmed Job Name, Job Description, and Service Parameters.
+2. Render the Service Provider as `Agent {providerAgentId}({providerAgentName})`. Omit only the parenthesized name when it is absent.
+3. Render a zero Fee as `Free`; otherwise render the exact amount and token symbol.
+4. Omit the Service Parameters column when no parameters were confirmed.
+5. List attachments below the table, not as another table field.
+6. Guide Consent was confirmed separately and must not be added to this confirmation.
+7. `Confirm` is the explicit final confirmation for only the current complete card. Apply edits and render the whole confirmation again.
 
 ## Communication check
 

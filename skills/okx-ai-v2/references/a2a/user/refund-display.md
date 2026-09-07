@@ -1,13 +1,38 @@
 # Refund Presentation
 
-Read this file only when rendering a refund result. Localize headings, labels,
-status names, and rule prose. Preserve IDs, exact decimal amounts, token
-symbols, and the User-authored reason.
+Read this file only when rendering a refund result. Use the English labels and
+action copy in the selected display template. Preserve IDs, exact decimal amounts,
+token symbols, and the User-authored reason.
 
-## Task details
+## Refund request confirmation
 
-Under a localized `refund_task_details` heading, render exactly these fields in
-order:
+scene: Refund request confirmation
+
+display template:
+
+```markdown
+### Refund Request
+
+| # | Service name | Job ID | Service Provider | Task Type | Current Period | Refund Amount | Reason for Refund |
+|---|---|---|---|---|---|---|---|
+| 1 | {payload.job.serviceName} | {payload.job.jobId} | {payload.display.serviceProviderLabel} | {payload.display.taskTypeLabel} | {payload.display.currentPeriodLabel} | {payload.display.refundAmountLabel} | {payload.request.userReason} |
+
+To submit the request, reply “Submit refund request”. To handle it later, reply “Not now”.
+```
+
+display rules:
+
+1. Use this scene only for `refund_request_confirmation_required` with the current `submit_refund_request` action.
+2. Preserve the Service name, full Job ID, Service Provider ID, token symbol, and User-authored reason exactly.
+3. Use `taskTypeLabel`, `serviceProviderLabel`, `currentPeriodLabel`, and `refundAmountLabel` directly. Do not calculate or infer them.
+4. Show Current Period only for a Subscription. For a One-time task, omit the Current Period column and cell.
+5. The Current Period and all displayed times use minute precision with an explicit UTC offset.
+6. `Submit refund request` selects only the returned `submit_refund_request` action. `Not now` ends the turn without a write.
+
+## Other refund confirmations
+
+For `zero_amount_close_confirmation_required` and
+`direct_refund_confirmation_required`, render these fields in order:
 
 | Order | Field | Source |
 |---:|---|---|
@@ -26,21 +51,8 @@ For every fresh Expired(8) result, render fields 1–6 first. A paid non-trial
 task then uses the confirmed settlement display; a trial or zero-price task
 uses the no-refundable-payment display.
 
-For `refund_request_confirmation_required` and its immediate
-`refund_request_broadcast_submitted` result, append `refund_reason` from
-`payload.request.userReason` verbatim, then a localized `refund_rules` heading
-with these rules in order:
-
-1. `provider_response`: the ASP may agree or open arbitration; a response
-   timeout produces an automatic refund only when `payload.rules` says so.
-2. `full_original_payment`: return the full original payment token; no partial
-   refund or time-based proration.
-3. `onchain_confirmation`: settlement requires chain confirmation; task detail
-   shows the amount and confirmation time, plus Tx Hash when available.
-4. `progress_visibility`: the User may return to task detail to check progress.
-
-Do not add Service, deadline, receipt, internal phase/reason, package, order, or
-context rows to these cards.
+Do not add receipt, internal phase/reason, package, order, or context rows to
+these other confirmation cards.
 
 ## Settlement
 

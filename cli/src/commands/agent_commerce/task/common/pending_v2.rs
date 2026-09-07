@@ -19,6 +19,7 @@ use chrono::{DateTime, Utc};
 use clap::{Subcommand, ValueEnum};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
@@ -26,7 +27,7 @@ use std::time::Duration;
 use tempfile::NamedTempFile;
 
 use crate::commands::agent_commerce::task::arbitration::{
-    self as arbitration, ChoiceError, DecisionChoice, ResolvedChoice,
+    self as arbitration, ChoiceError, DecisionChoice, RefundDisplayMetadata, ResolvedChoice,
 };
 
 const DEFAULT_TTL_DAYS: u64 = 7;
@@ -60,6 +61,64 @@ pub const DEFER_KEYWORDS: &[&str] = &[
 /// never of reply text such as A/B/C, an amount, a cap, or a defer keyword.
 fn decision_relay_post_action() -> &'static str {
     "Decision relayed. If this card was surfaced by a currently active `okx-a2a user watch`, immediately re-enter that exact originating watch command per `skills/okx-ai-v2/references/runtime/watch.md` (re-enter through `skills/okx-ai-v2/SKILL.md` and preserve global vs sticky `--job-id`). If it was opened independently through a decision list / outdated-list, do not start watch; end the turn normally. Never infer watch origin from the user's reply text.\n"
+}
+
+#[cfg(test)]
+mod refund_list_tests {
+    use super::*;
+
+    fn entry(job_id: &str, deadline: i64, amount: &str) -> PendingEntry {
+        let now = Utc::now();
+        PendingEntry {
+            job_id: job_id.to_string(),
+            role: "asp".to_string(),
+            agent_id: "asp-1".to_string(),
+            to_agent_id: None,
+            user_content: "decision".to_string(),
+            list_label: "decision".to_string(),
+            llm_content_override: None,
+            source_event: Some(arbitration::JOB_REJECTED.to_string()),
+            decision_id: Some(format!("{job_id}:job_rejected:event-1")),
+            choices: arbitration::default_choices(arbitration::JOB_REJECTED, job_id),
+            expires_at: Some(deadline),
+            refund_display: Some(RefundDisplayMetadata {
+                service_name: format!("Service {job_id}"),
+                task_type: "One-time".to_string(),
+                amount: amount.to_string(),
+                token_symbol: "USDT".to_string(),
+                response_deadline: deadline,
+            }),
+            status: Status::Queued,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn refund_list_sorts_deadlines_and_preserves_full_job_ids() {
+        let later = entry("job-full-later-123456", 2_000_000_200, "2");
+        let sooner = entry("job-full-sooner-123456", 2_000_000_100, "0");
+        let queue = refund_queue(&Queue {
+            entries: vec![later, sooner],
+        })
+        .unwrap();
+        let output = refund_list_json(&queue);
+
+        assert_eq!(output["pendingCount"], 2);
+        assert_eq!(output["items"][0]["jobId"], "job-full-sooner-123456");
+        assert_eq!(output["items"][0]["refundAmount"], "No refund required");
+        assert_eq!(output["items"][1]["jobId"], "job-full-later-123456");
+    }
+
+    #[test]
+    fn incomplete_refund_metadata_fails_closed() {
+        let mut incomplete = entry("job-1", 2_000_000_100, "1");
+        incomplete.refund_display = None;
+        assert!(refund_queue(&Queue {
+            entries: vec![incomplete]
+        })
+        .is_err());
+    }
 }
 
 /// Instruction embedded in arbitration-decision relays. The receiving session
@@ -131,6 +190,11 @@ struct PendingEntry {
     /// Optional unix-second deadline supplied by the event contract.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     expires_at: Option<i64>,
+    /// Structured fields for the ASP pending-refund list. Produced by the
+    /// arbitration layer from authoritative task/event data; never parsed
+    /// back out of user-facing card copy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    refund_display: Option<RefundDisplayMetadata>,
     status: Status,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -141,6 +205,7 @@ struct DecisionMetadata {
     decision_id: Option<String>,
     choices: Vec<DecisionChoice>,
     expires_at: Option<i64>,
+    refund_display: Option<RefundDisplayMetadata>,
 }
 
 fn decision_metadata(
@@ -149,6 +214,7 @@ fn decision_metadata(
     decision_id: Option<String>,
     choices_json: Option<&str>,
     expires_at: Option<i64>,
+    refund_display_b64: Option<&str>,
 ) -> Result<DecisionMetadata> {
     let source_event = source_event.unwrap_or("");
     let choices = arbitration::parse_choices(choices_json, source_event, job_id)
@@ -162,10 +228,24 @@ fn decision_metadata(
     } else {
         decision_id
     };
+    let refund_display = refund_display_b64
+        .map(RefundDisplayMetadata::decode)
+        .transpose()?;
+    if refund_display.is_some() && !arbitration::is_decision_source(source_event) {
+        bail!("refund display metadata requires a refund decision source event");
+    }
+    if refund_display.as_ref().is_some_and(|metadata| {
+        (source_event == arbitration::JOB_REJECTED && metadata.task_type != "One-time")
+            || (source_event == arbitration::SUB_USER_REJECT
+                && metadata.task_type != "Subscription")
+    }) {
+        bail!("refund display task type does not match the source event");
+    }
     Ok(DecisionMetadata {
         decision_id,
         choices,
         expires_at: expires_at.filter(|value| *value > 0),
+        refund_display,
     })
 }
 
@@ -558,6 +638,9 @@ pub enum PendingDecisionsV2Command {
         /// in-process after parsing. Never contains executable shell; logged redacted.
         #[arg(long = "template-vars-b64")]
         template_vars_b64: Option<String>,
+        /// Opaque URL-safe Base64 refund-list fields emitted by `next-action`.
+        #[arg(long = "refund-display-b64")]
+        refund_display_b64: Option<String>,
     },
 
     /// (user-session) Resolve the current active decision with user's reply.
@@ -631,16 +714,24 @@ pub enum PendingDecisionsV2Command {
         autotrade_candidate_json: Option<String>,
     },
 
-    /// (user-session) Pick entry by 1-based index from the displayed list.
+    /// (user-session) Pick entry by 1-based index or exact Job ID from the displayed list.
     Pick {
-        #[arg(long)]
-        index: usize,
+        #[arg(long, required_unless_present = "job_id", conflicts_with = "job_id")]
+        index: Option<usize>,
+        #[arg(
+            long = "job-id",
+            required_unless_present = "index",
+            conflicts_with = "index"
+        )]
+        job_id: Option<String>,
     },
 
     /// Query the current queue. Refreshes the display snapshot as a side effect.
     List {
         #[arg(long, default_value = "markdown")]
         format: ListFormat,
+        #[arg(long, default_value = "all")]
+        scope: ListScope,
     },
 
     /// (user-session) Silently cancel a pending decision (the sub is NOT notified;
@@ -657,6 +748,12 @@ pub enum PendingDecisionsV2Command {
 pub enum ListFormat {
     Markdown,
     Json,
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum, PartialEq, Eq)]
+pub enum ListScope {
+    All,
+    Refund,
 }
 
 pub async fn run(cmd: PendingDecisionsV2Command) -> Result<()> {
@@ -688,6 +785,7 @@ pub async fn run(cmd: PendingDecisionsV2Command) -> Result<()> {
                 decision_id,
                 choices_json.as_deref(),
                 expires_at,
+                None,
             )?;
             handle_request(
                 job_id,
@@ -715,6 +813,7 @@ pub async fn run(cmd: PendingDecisionsV2Command) -> Result<()> {
             choices_json,
             expires_at,
             template_vars_b64,
+            refund_display_b64,
         } => {
             let resolved_content = match (user_content, user_content_file) {
                 (Some(c), _) => c,
@@ -729,6 +828,7 @@ pub async fn run(cmd: PendingDecisionsV2Command) -> Result<()> {
                 decision_id,
                 choices_json.as_deref(),
                 expires_at,
+                refund_display_b64.as_deref(),
             )?;
             handle_request_prompt(
                 job_id,
@@ -786,8 +886,8 @@ pub async fn run(cmd: PendingDecisionsV2Command) -> Result<()> {
             decision_id,
             autotrade_candidate_json,
         ),
-        PendingDecisionsV2Command::Pick { index } => handle_pick(index),
-        PendingDecisionsV2Command::List { format } => handle_list(format),
+        PendingDecisionsV2Command::Pick { index, job_id } => handle_pick(index, job_id.as_deref()),
+        PendingDecisionsV2Command::List { format, scope } => handle_list(format, scope),
         PendingDecisionsV2Command::Cancel { index } => handle_cancel(index),
     }
 }
@@ -1147,6 +1247,7 @@ fn request_prompt_inner(
             decision_id: metadata.decision_id,
             choices: metadata.choices,
             expires_at: metadata.expires_at,
+            refund_display: metadata.refund_display,
             status: Status::Active,
             created_at: now,
             updated_at: now,
@@ -1178,6 +1279,7 @@ fn request_prompt_inner(
             decision_id: metadata.decision_id.clone(),
             choices: metadata.choices.clone(),
             expires_at: metadata.expires_at,
+            refund_display: metadata.refund_display.clone(),
             status: Status::Queued,
             created_at: now,
             updated_at: now,
@@ -1948,23 +2050,50 @@ fn handle_resolve(user_reply: String) -> Result<()> {
     Ok(())
 }
 
-fn handle_pick(index: usize) -> Result<()> {
+fn handle_pick(index: Option<usize>, job_id: Option<&str>) -> Result<()> {
     let _lock = acquire_lock()?;
     let mut q = read_queue()?;
     ensure_invariant_and_evict(&mut q);
 
     let snapshot = read_snapshot();
-    if index == 0 || index > snapshot.items.len() {
-        let new_snap = build_snapshot(&q);
-        write_snapshot_atomic(&new_snap)?;
-        print!(
-            "{}",
-            playbook_stale_relist(&new_snap, "selection index out of range")
-        );
-        return Ok(());
-    }
-
-    let target = snapshot.items[index - 1].clone();
+    let target = if let Some(index) = index {
+        if index == 0 || index > snapshot.items.len() {
+            let new_snap = build_snapshot(&q);
+            write_snapshot_atomic(&new_snap)?;
+            print!(
+                "{}",
+                playbook_stale_relist(&new_snap, "selection index out of range")
+            );
+            return Ok(());
+        }
+        snapshot.items[index - 1].clone()
+    } else if let Some(job_id) = job_id.map(str::trim).filter(|value| !value.is_empty()) {
+        let matches = snapshot
+            .items
+            .iter()
+            .filter(|item| item.job_id == job_id)
+            .cloned()
+            .collect::<Vec<_>>();
+        if matches.len() != 1 {
+            let new_snap = build_snapshot(&q);
+            write_snapshot_atomic(&new_snap)?;
+            print!(
+                "{}",
+                playbook_stale_relist(
+                    &new_snap,
+                    if matches.is_empty() {
+                        "selection Job ID was not in the displayed list"
+                    } else {
+                        "selection Job ID is ambiguous in the displayed list"
+                    },
+                )
+            );
+            return Ok(());
+        }
+        matches[0].clone()
+    } else {
+        bail!("either --index or --job-id is required");
+    };
     let target_to = target.to_agent_id.as_deref();
     let snap_displayed_at = snapshot.displayed_at;
 
@@ -2085,21 +2214,125 @@ fn handle_cancel(index: usize) -> Result<()> {
     Ok(())
 }
 
-fn handle_list(format: ListFormat) -> Result<()> {
+fn refund_queue(q: &Queue) -> Result<Queue> {
+    let now = Utc::now().timestamp();
+    let mut entries = q
+        .entries
+        .iter()
+        .filter(|entry| {
+            entry.role == "asp"
+                && entry
+                    .source_event
+                    .as_deref()
+                    .is_some_and(arbitration::is_decision_source)
+                && entry.expires_at.is_none_or(|deadline| deadline > now)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if entries.iter().any(|entry| entry.refund_display.is_none()) {
+        bail!(
+            "pending refund decision metadata is incomplete; refresh the affected rejection event"
+        );
+    }
+    entries.retain(|entry| {
+        entry
+            .refund_display
+            .as_ref()
+            .is_some_and(|metadata| metadata.response_deadline > now)
+    });
+    entries.sort_by_key(|entry| {
+        entry
+            .refund_display
+            .as_ref()
+            .map(|metadata| metadata.response_deadline)
+            .unwrap_or(i64::MAX)
+    });
+    Ok(Queue { entries })
+}
+
+fn refund_list_json(q: &Queue) -> Value {
+    json!({
+        "pendingCount": q.entries.len(),
+        "items": q.entries.iter().enumerate().filter_map(|(index, entry)| {
+            let metadata = entry.refund_display.as_ref()?;
+            Some(json!({
+                "index": index + 1,
+                "serviceName": metadata.service_name,
+                "jobId": entry.job_id,
+                "taskType": metadata.task_type,
+                "refundAmount": metadata.refund_amount_label(),
+                "amount": metadata.amount,
+                "tokenSymbol": metadata.token_symbol,
+                "responseDeadline": metadata.response_deadline,
+                "responseDeadlineLabel": metadata.response_deadline_label(),
+            }))
+        }).collect::<Vec<_>>(),
+    })
+}
+
+fn render_refund_list_markdown(q: &Queue) -> String {
+    let mut output = format!(
+        "You have {} refund requests awaiting a decision:\n\n\
+         | # | Service name | Job ID | Task Type | Refund Amount | Response Deadline |\n\
+         |---|---|---|---|---|---|\n",
+        q.entries.len()
+    );
+    for (index, entry) in q.entries.iter().enumerate() {
+        let Some(metadata) = entry.refund_display.as_ref() else {
+            continue;
+        };
+        let deadline = metadata
+            .response_deadline_label()
+            .unwrap_or_else(|| "—".to_string());
+        output.push_str(&format!(
+            "| {} | {} | {} | {} | {} | {} |\n",
+            index + 1,
+            metadata.service_name,
+            entry.job_id,
+            metadata.task_type,
+            metadata.refund_amount_label(),
+            deadline,
+        ));
+    }
+    if !q.entries.is_empty() {
+        output.push_str("\nReply with the number or Job ID to view and process a request.\n");
+    }
+    output
+}
+
+fn handle_list(format: ListFormat, scope: ListScope) -> Result<()> {
     let _lock = acquire_lock()?;
     let mut q = read_queue()?;
     let evicted = ensure_invariant_and_evict(&mut q);
 
-    // Refresh snapshot so subsequent `pick --index N` can resolve correctly
-    let snap = build_snapshot(&q);
+    let display_queue = if scope == ListScope::Refund {
+        refund_queue(&q)?
+    } else {
+        q.clone()
+    };
+
+    // Refresh snapshot so subsequent `pick --index N` / `pick --job-id ID`
+    // resolves against exactly the rows just displayed.
+    let snap = build_snapshot(&display_queue);
     write_snapshot_atomic(&snap)?;
     write_queue_atomic(&q)?;
+
+    if scope == ListScope::Refund {
+        match format {
+            ListFormat::Json => println!(
+                "{}",
+                serde_json::to_string_pretty(&refund_list_json(&display_queue))?
+            ),
+            ListFormat::Markdown => print!("{}", render_refund_list_markdown(&display_queue)),
+        }
+        return Ok(());
+    }
 
     match format {
         ListFormat::Json => {
             let payload = serde_json::json!({
                 "evicted_since_last_call": evicted,
-                "entries": q.entries.iter().enumerate().map(|(i, e)| serde_json::json!({
+                "entries": display_queue.entries.iter().enumerate().map(|(i, e)| serde_json::json!({
                     "index": i + 1,
                     "job_id": e.job_id,
                     "role": e.role,
@@ -2121,12 +2354,12 @@ fn handle_list(format: ListFormat) -> Result<()> {
                     evicted, ttl_days,
                 );
             }
-            let n = q.entries.len();
+            let n = display_queue.entries.len();
             if n == 0 {
                 println!("(no pending decisions)\n");
                 println!("Render the line above to the user as your assistant response.");
             } else {
-                let view = render_list_markdown(&q);
+                let view = render_list_markdown(&display_queue);
                 print!(
                     "3 steps (Steps 1-2 in this turn, Step 3 in the future turn):\n\n\
                      **Step 1** — Translate the [Source content] below to the user's language per [Translation rules].\n\n\
@@ -3088,6 +3321,7 @@ mod sanitize_tests {
             decision_id: None,
             choices: Vec::new(),
             expires_at: None,
+            refund_display: None,
             status: Status::Active,
             created_at: now,
             updated_at: now,

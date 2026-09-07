@@ -4,13 +4,13 @@ Use this leaf only for a freshly prepared Refund V2 confirmation result.
 
 ## Standard confirmation
 
-For `zero_amount_close_confirmation_required`,
-`direct_refund_confirmation_required`, or
-`refund_request_confirmation_required`, render the returned task details,
-verbatim reason, rules, and offered actions with
-[`refund-display.md`](refund-display.md). Wait for an explicit selection of the
-current write action. The initial word “refund”, a supplied reason, or a prior
-confirmation never confirms a new proposal.
+For `refund_request_confirmation_required`, render the Refund Request
+Confirmation scene in [`refund-display.md`](refund-display.md). For
+`zero_amount_close_confirmation_required` or
+`direct_refund_confirmation_required`, render the Other Refund Confirmations
+scene in that file. Wait for an explicit selection of the current write action.
+The initial word “refund”, a supplied reason, or a prior confirmation never
+confirms a new proposal.
 
 ## Active deliverable-review rejection
 
