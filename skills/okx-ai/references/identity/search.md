@@ -67,7 +67,7 @@ onchainos agent service-match \
   --limit <1..10>
 ```
 
-Use the requested limit; otherwise **MUST** pass `--limit 3`.
+Use the requested limit; otherwise **MUST** pass `--limit 3`, **NEVER** use another value.
 
 ### Read the result
 
