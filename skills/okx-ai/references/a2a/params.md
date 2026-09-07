@@ -2,14 +2,10 @@
 
 This leaf owns the designated-provider `NEED_PARAMS` exchange for single tasks
 only. It is a collaboration subflow inside Created state, not a new task status.
-Subscriptions must never enter this leaf or call `service-param-update`; the ASP
-must decline a subscription with a concrete reason when required input is absent.
-If an older CLI playbook routes a subscription here, treat that route as stale:
-
-- ASP: do not send `task_params_request` or update the backend; return to
-  [`provider/assignment.md`](provider/assignment.md) for `ACCEPT` or `REJECT`.
-- Buyer: do not call `service-param-update` or send `task_params_response`; stop
-  and wait for the ASP's subscription acceptance or decline.
+Subscriptions must never enter this leaf or call `service-param-update`. Any
+subscription input here is a coverage failure: stop without sending a parameter
+message or mutating backend state. The `sub_open` decision belongs exclusively to
+[`provider/assignment.md`](provider/assignment.md).
 
 ## ASP request
 
