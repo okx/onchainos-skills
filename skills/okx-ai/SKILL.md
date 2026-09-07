@@ -49,10 +49,29 @@ a CLI result names the next file. Use the linked path directly; never scan Skill
 directories to find an alternative copy. A missing linked file means the
 installation is incomplete—report it and stop.
 
-## Task progression
+## Global Progression Contract
 
-Treat `phase`, `decision`, `reason`, `nextAction`, and `payload` as the CLI's
-progression contract.
+Use this envelope when a CLI result requires continuation:
+
+```json
+{
+  "phase": "receipt_validation",
+  "decision": "ready",
+  "reason": "device_not_receiving",
+  "nextAction": [{"id": "enable_this_device", "recommend": true}],
+  "payload": {}
+}
+```
+
+- `phase`: current business stage.
+- `decision`: `ready`, `blocked`, or `requires_user_input`.
+- `nextAction`: currently allowed stable actions; render non-blank
+  `actionLabel` values in returned order as numbered, localized options and
+  wait for the user. Do not expose Action IDs, `recommend`, or `params`.
+- `payload`: current facts.
+
+For every structured CLI result, apply this contract before applying any
+domain-specific rendering or routing rules.
 
 Once a flow enters through `invoke_a2mcp`, the V2 A2MCP references own its
 subsequent results, including results with an empty `nextAction`, until the
