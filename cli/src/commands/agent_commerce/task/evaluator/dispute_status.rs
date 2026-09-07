@@ -122,7 +122,7 @@ pub async fn precheck_round_gate(
     let fmt_opt = |n: Option<i64>| n.map(|v| v.to_string()).unwrap_or_else(|| "null".into());
     let fmt_opt_i32 = |n: Option<i32>| n.map(|v| v.to_string()).unwrap_or_else(|| "null".into());
 
-    println!("dispute status (jobId={})", s.job_id);
+    println!("evaluation status (jobId={})", s.job_id);
     println!("  currentRound : {}", fmt_opt(s.current_round));
     println!(
         "  taskStatus   : {} ({})",
@@ -142,7 +142,7 @@ pub async fn precheck_round_gate(
         match &s.selected_voter {
             Some(_) => "present (this account is selected as juror for current round)",
             None =>
-                "null (not selected for current round / notification expired / no active dispute)",
+                "null (not selected for current round / notification expired / no active evaluation)",
         },
     );
 
@@ -161,7 +161,7 @@ pub async fn precheck_round_gate(
     let evaluator_terminal = evaluator_task_is_terminal(&task_status);
     let reason: Option<String> = if evaluator_terminal {
         Some(format!(
-            "taskStatus={} ({}) is terminal — task finished, dispute window closed",
+            "taskStatus={} ({}) is terminal — task finished, evaluation window closed",
             s.task_status,
             task_status.as_str(),
         ))
@@ -170,13 +170,13 @@ pub async fn precheck_round_gate(
             Err(e) => Some(format!("--round-num cannot be parsed as integer: {round_num:?} ({e})")),
             Ok(req_round) => match (s.current_round, dispute_round_status.as_ref()) {
                 (None, _) => Some(
-                    "currentRound=null — no active dispute (task not in dispute / already ended / backend has not advanced round)".into(),
+                    "currentRound=null — no active evaluation (task is not under evaluation / already ended / backend has not advanced round)".into(),
                 ),
                 (Some(cur), _) if req_round != cur => Some(format!(
                     "round mismatch: envelope round_num={req_round} != on-chain currentRound={cur} (stale envelope)",
                 )),
                 (Some(_), None) => Some(
-                    "disputeStatus=null — dispute sub-state-machine not started / already settled (commit window guaranteed closed)".into(),
+                    "disputeStatus=null — evaluation sub-state-machine not started / already settled (commit window guaranteed closed)".into(),
                 ),
                 (Some(_), Some(ds)) if *ds != DisputeRoundStatus::CommitPhase => Some(format!(
                     "disputeStatus={} ({}) is not {} — commit window not open / already closed",

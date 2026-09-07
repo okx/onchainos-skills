@@ -433,7 +433,6 @@ pub async fn handle_agree_refund(
     );
 
     println!("✓ Full refund for this subscription period submitted");
-    println!("  txHash: {tx_hash}");
     println!("  Progress will update in this task.");
     println!("  Check: onchainos agent status {job_id} --agent-id {agent_id}");
     Ok(())
@@ -497,11 +496,11 @@ pub async fn handle_asp_claim(
 /// Max on-chain dispute reason length (parity with the one-shot `dispute raise`/`confirm`).
 const MAX_DISPUTE_REASON_CHARS: usize = 2000;
 
-/// `subscribe-dispute` — the ASP raises arbitration for a rejected subscription period via the
+/// `subscribe-dispute` — the ASP requests evaluation for a rejected subscription period via the
 /// backend's single combined endpoint (§2.10 `POST /priapi/v1/aieco/task/{jobId}/dispute/
 /// approveAndCreateDispute` — approve + create in one call, NOT the old two-phase
 /// dispute raise/confirm). Fetch uopData → hand the exact reason to the task session → sign →
-/// broadcast; `reason` also rides the broadcast bizContext so the arbitration record and the
+/// broadcast; `reason` also rides the broadcast bizContext so the evaluation record and the
 /// later evidence flow share the ASP's argument.
 pub async fn handle_dispute(
     client: &mut TaskApiClient,
@@ -512,10 +511,10 @@ pub async fn handle_dispute(
     let validated_agent_id = select_subscription_agent_id("", agent_id)?;
     let agent_id = validated_agent_id.as_str();
     if reason.trim().is_empty() {
-        bail!("Dispute reason is required. Pass the user's arbitration reason with --reason.");
+        bail!("Evaluation reason is required. Pass the provided evaluation reason with --reason.");
     }
     if reason.chars().count() > MAX_DISPUTE_REASON_CHARS {
-        bail!("Dispute reason exceeds {MAX_DISPUTE_REASON_CHARS} characters. Please shorten it and try again.");
+        bail!("Evaluation reason exceeds {MAX_DISPUTE_REASON_CHARS} characters. Please shorten it and try again.");
     }
     let (account_id, address) = signing::resolve_wallet_by_agent_id(agent_id).await?;
     let subscription_detail = client
@@ -542,7 +541,7 @@ pub async fn handle_dispute(
     let reason_handoff =
         super::dispute_raise::build_subscription_reason_handoff(job_id, agent_id, reason);
     common::okx_a2a::session_send(job_id, Some(buyer_agent_id), &reason_handoff).context(
-        "subscribe-dispute: failed to hand off the arbitration reason to the task session; combined dispute transaction was not broadcast",
+        "subscribe-dispute: failed to hand off the evaluation reason to the task session; combined dispute transaction was not broadcast",
     )?;
 
     // Ride the reason on the broadcast bizContext (mirrors `dispute confirm`); the
@@ -573,12 +572,9 @@ pub async fn handle_dispute(
         None,
     );
 
-    println!("✓ Arbitration request submitted");
-    println!("  txHash: {tx_hash}");
+    println!("✓ Evaluation request submitted");
     println!("  Progress will update in this task.");
-    println!(
-        "  Check: onchainos agent arbitration-detail {job_id} --agent-id {agent_id}"
-    );
+    println!("  Check: onchainos agent arbitration-detail {job_id} --agent-id {agent_id}");
     Ok(())
 }
 

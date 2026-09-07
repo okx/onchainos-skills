@@ -37,6 +37,26 @@ pub(crate) fn format_local_deadline(expire_time: i64) -> Option<String> {
         .map(|dt| dt.format("%m-%d %H:%M").to_string())
 }
 
+/// Format a seconds-or-milliseconds Unix timestamp to minute precision with
+/// the local UTC offset. Display templates consume this value directly.
+pub(crate) fn format_local_timestamp_with_offset(timestamp: i64) -> Option<String> {
+    let seconds = if timestamp.unsigned_abs() >= 100_000_000_000 {
+        timestamp / 1_000
+    } else {
+        timestamp
+    };
+    let local = Local.timestamp_opt(seconds, 0).single()?;
+    let offset = local.offset().local_minus_utc();
+    let sign = if offset < 0 { '-' } else { '+' };
+    let absolute = offset.unsigned_abs();
+    Some(format!(
+        "{} (UTC{sign}{:02}:{:02})",
+        local.format("%Y-%m-%d %H:%M"),
+        absolute / 3_600,
+        (absolute % 3_600) / 60,
+    ))
+}
+
 /// Format an authoritative unix timestamp to minute precision with an explicit
 /// UTC offset. Millisecond-scale values are tolerated because some legacy event
 /// envelopes used milliseconds while the current contract uses seconds.

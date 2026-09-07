@@ -1,12 +1,12 @@
 # Capability: Portfolio — Troubleshooting
 
-Error handling and edge cases for position viewing. Operational flow lives in `portfolio.md`; parameter schemas in `portfolio-cli-reference.md`.
+Error handling and edge cases for position viewing. Load the operational flow and parameter schemas separately through the top-level Intent Routing table.
 
 ## Common Errors
 
 | Code | Scenario | Handling |
 |------|----------|----------|
-| 84019 | Address format mismatch | The `--address` and chain params are incompatible (EVM `0x…` vs Solana base58 vs Sui/Tron/TON) — see the Address-Chain Compatibility rule in `SKILL.md`; split EVM and Solana into two separate calls |
+| 84019 | Address format mismatch | The `--address` and chain params are incompatible (EVM `0x…` vs Solana base58 vs Sui/Tron/TON) — apply the top-level Address-Chain Compatibility rule and split EVM and Solana into two separate calls |
 | 84021 | Asset syncing | "Position data is syncing, please retry shortly" |
 | 50011 | Rate limit | Wait 1–2 s and retry once |
 

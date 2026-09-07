@@ -1,14 +1,8 @@
-//! Raise dispute (ASP) step 1 — onchainos agent dispute raise <jobId> --reason "..."
+//! Request evaluation for a one-time task with one combined approve-and-create call.
 //!
-//! Dispute is a two-stage on-chain flow; each stage has its own tx and its own chain event:
-//!   Stage 1 (this command): POST /aieco/task/{jobId}/dispute/approve → ERC-20 token approve to the dispute contract
-//!                     → wait for on-chain `dispute_approved` system notification
-//!   Stage 2 (dispute confirm command): POST /aieco/task/{jobId}/dispute → actually raises the dispute
-//!                     → wait for on-chain `job_disputed` system notification
-//!
-//! This command runs stage 1 only. The task sub-session handles `dispute confirm`
-//! after the `dispute_approved` notification arrives.
-//! reason is included in the stage-1 broadcast bizContext for the later dispute creation.
+//! The command sends the exact ASP reason to the task session before broadcasting
+//! `approveAndCreateDispute`. The later `job_disputed` event uses that reason when
+//! it assembles and uploads evidence.
 
 use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL, Engine as _};
@@ -47,25 +41,18 @@ fn build_reason_handoff_for(
 
     let instruction = match flow {
         ReasonHandoffFlow::OneTime => {
-            context["confirmArgs"] = serde_json::json!([
-                "agent",
-                "dispute",
-                "confirm",
-                job_id,
-                "--reason-b64",
-                reason_b64,
-                "--agent-id",
-                provider_agent_id,
-            ]);
+            context["taskType"] = serde_json::json!("one_time");
+            context["resumeEvent"] = serde_json::json!("job_disputed");
             "Keep this exact reason in the current task conversation and end this turn. \
-             When the matching dispute_approved event arrives, execute confirmArgs once."
+             When the matching job_disputed event arrives, include it as the ASP's \
+             evaluation reason in the evidence upload."
         }
         ReasonHandoffFlow::Subscription => {
             context["taskType"] = serde_json::json!("subscription");
             context["resumeEvent"] = serde_json::json!("sub_asp_dispute");
             "Keep this exact reason in the current task conversation and end this turn. \
              When the matching sub_asp_dispute event arrives, include it as the ASP's \
-             arbitration reason in the evidence upload."
+             evaluation reason in the evidence upload."
         }
     };
 
@@ -104,10 +91,10 @@ pub async fn handle_dispute_raise(
         bail!("--agent-id is required (pass the ASP's own agentId; beta backend rejects empty agenticId header)");
     }
     if reason.trim().is_empty() {
-        bail!("Dispute reason is required. Pass the user's arbitration reason with --reason.");
+        bail!("Evaluation reason is required. Pass the provided evaluation reason with --reason.");
     }
     if reason.chars().count() > MAX_REASON_CHARS {
-        bail!("Dispute reason exceeds {MAX_REASON_CHARS} characters. Please shorten it and try again.");
+        bail!("Evaluation reason exceeds {MAX_REASON_CHARS} characters. Please shorten it and try again.");
     }
     let (account_id, address) = signing::resolve_wallet_by_agent_id(agent_id).await?;
 
@@ -126,13 +113,14 @@ pub async fn handle_dispute_raise(
     let token_symbol = task_resp["tokenSymbol"].as_str().unwrap_or("?");
     if task_amount > 0.0 {
         let required = task_amount * 0.05;
-        if let Err(e) = common::ensure_sufficient_balance_at(required, token_symbol, &address).await {
+        if let Err(e) = common::ensure_sufficient_balance_at(required, token_symbol, &address).await
+        {
             // Preserve the dispute-bond framing, then enrich with the ASP signing
             // account's deposit address + stderr QR (FR-2 — explicit address, no
             // agentId resolution). enrich_blocking_at folds the full `{:#}` chain
             // (incl. this context) into the error message byte-for-byte.
             let e = e.context(format!(
-                "Raising a dispute requires a deposit >= 5% of the task amount ({required} {token_symbol}; task amount {task_amount} {token_symbol})"
+                "Requesting evaluation requires a deposit >= 5% of the task amount ({required} {token_symbol}; task amount {task_amount} {token_symbol})"
             ));
             let enriched = common::deposit_qr::enrich_blocking_at(e, &address);
             return print_dispute_funding_block_from_error(enriched);
@@ -141,17 +129,16 @@ pub async fn handle_dispute_raise(
 
     let body = serde_json::json!({});
 
-    // POST /dispute/approve → uopData → sign + broadcast
-    let approve_path = client.endpoint(job_id, "dispute/approve");
-    let approve_resp = client
-        .post_with_identity(&approve_path, &body, agent_id)
+    // One-time and subscription evaluations use the same combined endpoint.
+    let evaluation_path = client.endpoint(job_id, "dispute/approveAndCreateDispute");
+    let evaluation_resp = client
+        .post_with_identity(&evaluation_path, &body, agent_id)
         .await
-        .context("dispute raise (stage 1): dispute/approve API request failed")?;
+        .context("dispute raise: approveAndCreateDispute API request failed")?;
 
-    // Hand the exact reason to the existing task sub-session before the approve
-    // transaction is broadcast. The future `dispute_approved` event is delivered
-    // to that session, so ordering the local dispatch first guarantees that the
-    // stage-2 command can reuse the main-session reason without machine storage.
+    // Hand the exact reason to the existing task session before the combined
+    // transaction is broadcast. The future `job_disputed` event is delivered to
+    // that session, so it can reuse the main-session reason without machine storage.
     let buyer_agent_id = task_resp["buyerAgentId"]
         .as_str()
         .or_else(|| task_resp["userAgentId"].as_str())
@@ -159,43 +146,40 @@ pub async fn handle_dispute_raise(
         .context("dispute raise: task detail missing buyerAgentId for reason handoff")?;
     let reason_handoff = build_reason_handoff(job_id, agent_id, reason);
     common::okx_a2a::session_send(job_id, Some(buyer_agent_id), &reason_handoff).context(
-        "dispute raise: failed to hand off the arbitration reason to the task session; approve transaction was not broadcast",
+        "dispute raise: failed to hand off the evaluation reason to the task session; combined transaction was not broadcast",
     )?;
 
     let reason_json = serde_json::json!({ "reason": reason });
-    let approve_tx = signing::sign_uop_and_broadcast(
+    let evaluation_tx = signing::sign_uop_and_broadcast(
         client,
-        &approve_resp["uopData"],
+        &evaluation_resp["uopData"],
         &account_id,
         &address,
         job_id,
-        signing::extract_biz_type(&approve_resp),
+        signing::extract_biz_type(&evaluation_resp),
         agent_id,
         Some(&reason_json),
     )
     .await
-    .context("dispute raise (stage 1): approve on-chain broadcast failed")?;
+    .context("dispute raise: approveAndCreateDispute on-chain broadcast failed")?;
 
     audit::log(
         "cli",
-        "ASP/dispute_approve_submitted",
+        "ASP/evaluation_requested",
         true,
         Duration::default(),
         Some(vec![
             format!("jobId={job_id}"),
             format!("agentId={agent_id}"),
             format!("reasonLen={}", reason.chars().count()),
-            format!("txHash={approve_tx}"),
+            format!("txHash={evaluation_tx}"),
         ]),
         None,
     );
 
-    println!("✓ Arbitration request submitted");
-    println!("  txHash: {approve_tx}");
+    println!("✓ Evaluation request submitted");
     println!("  Progress will update in this task.");
-    println!(
-        "  Check: onchainos agent arbitration-detail {job_id} --agent-id {agent_id}"
-    );
+    println!("  Check: onchainos agent arbitration-detail {job_id} --agent-id {agent_id}");
     Ok(())
 }
 
@@ -211,7 +195,7 @@ fn print_dispute_funding_block_from_error(err: anyhow::Error) -> Result<()> {
                 data: common::funding_notice::funding_blocked_envelope(
                     &warning,
                     "dispute-bond",
-                    "Dispute bond",
+                    "Evaluation bond",
                 ),
             }
             .into())
@@ -225,8 +209,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reason_handoff_preserves_raw_reason_and_safe_confirm_args() {
-        let reason = "已交付：用户说 \"不满意\"; $(touch /tmp/nope)";
+    fn one_time_reason_handoff_preserves_raw_reason_for_evidence() {
+        let reason = "The delivered output missed the requested scope; $(touch /tmp/nope)";
         let content = build_reason_handoff("job-1", "asp-1", reason);
         let mut lines = content.lines();
         assert_eq!(lines.next(), Some(ARBITRATION_REASON_CONTEXT));
@@ -240,7 +224,9 @@ mod tests {
         assert!(encoded
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')));
-        assert_eq!(payload["confirmArgs"][5], encoded);
+        assert_eq!(payload["taskType"], "one_time");
+        assert_eq!(payload["resumeEvent"], "job_disputed");
+        assert!(payload.get("confirmArgs").is_none());
         assert_eq!(
             BASE64_URL.decode(encoded).unwrap(),
             reason.as_bytes(),
@@ -250,7 +236,8 @@ mod tests {
 
     #[test]
     fn subscription_reason_handoff_preserves_raw_reason_for_evidence() {
-        let reason = "订阅交付与约定不符：保留符号 + / = 与换行\n第二行";
+        let reason =
+            "The subscription output missed the agreement: keep + / = and a newline\nsecond line";
         let content = build_subscription_reason_handoff("sub-1", "asp-1", reason);
         let mut lines = content.lines();
         assert_eq!(lines.next(), Some(ARBITRATION_REASON_CONTEXT));

@@ -1,7 +1,8 @@
 # ASP — Designated Provider Decision (v2)
 
-This reference implements Lark flow §1.3 for one-time tasks. The buyer has
-already created and funded the task. The ASP no longer applies or counter-applies.
+This reference implements Lark flow §1.3 for designated-provider assignments.
+The Buyer has already created and funded the task or subscription. The ASP no
+longer applies or counter-applies.
 
 ## Trigger and authoritative status
 
@@ -41,9 +42,10 @@ attachments, and the registered `serviceDescription`.
 
 - Single task: produce exactly `ACCEPT`, `NEED_PARAMS`, or `REJECT`.
 - Subscription: produce exactly `ACCEPT` or `REJECT`. `NEED_PARAMS` is forbidden
-  because all Service parameters and Guide Consent must be settled before the
-  subscription is created. If required input is missing, decline with one
-  concrete reason instead of asking the Buyer for parameters.
+  because Buyer-side execution configuration is outside the ASP's scope. Missing
+  or empty `serviceParams` is valid for a subscription and is never a reason to
+  decline. Reject only for a concrete mismatch between the requested subscription
+  and the registered Service capability; otherwise accept.
 - Compatibility guard: if a `sub_open` `next-action` playbook from an older CLI
   still presents `NEED_PARAMS`, `task_params_request`, or
   `service-param-update`, treat that subscription-only text as stale and ignore
@@ -57,13 +59,15 @@ Apply this strict boundary before choosing:
 - Never infer missing parameters from `serviceGuide`, Guide Consent, signal
   schemas, risk disclosures, execution prerequisites, or CLI/API command
   arguments. Those are not `serviceParams`.
-- For trading-signal subscriptions, execution settings such as leverage, margin
-  mode, trade amount, denomination/target currency, and close strategy belong to
-  the Buyer's separately confirmed Guide Consent or local execution profile.
-  Never request or update them through the task-parameter clarification flow.
-- Empty `serviceParams` is complete when `serviceDescription` does not explicitly
-  require subscriber input. A task description stating that the Guide was
-  confirmed is not permission to reconstruct or reconfirm its values.
+- For subscriptions, do not validate whether `serviceParams` is complete. Treat
+  an absent or empty value as valid. `copyTrade`, Guide Consent, leverage, margin
+  mode, trade amount, denomination/target currency, close strategy, credentials,
+  and every other execution setting are Buyer-local state that the ASP must not
+  inspect, reconstruct, request, or use as a rejection reason.
+- For a single task, empty `serviceParams` is complete when
+  `serviceDescription` does not explicitly require user input. A task description
+  stating that the Guide was confirmed is not permission to reconstruct or
+  reconfirm its values.
 
 No legacy `apply`, counter-offer, or `asp-reject` path is part of this flow.
 
@@ -105,4 +109,4 @@ broadcast `bizContext`.
 Single tasks only: enter [`../params.md`](../params.md). It is the sole owner of
 request IDs, rounds, complete replacement parameters, backend-update
 confirmation, and the three-successful-update limit. A subscription must never
-enter this leaf; decline it with a concrete reason when required input is absent.
+enter this leaf.

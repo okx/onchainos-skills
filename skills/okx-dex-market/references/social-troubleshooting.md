@@ -1,6 +1,6 @@
 # Capability: Social — Troubleshooting
 
-Error handling, edge cases, and region restrictions for the Social capability. Operational flow lives in `social.md`; parameter schemas in `social-cli-reference.md`.
+Error handling, edge cases, and region restrictions for the Social capability. Load operational flow and parameter schemas separately through the top-level conditional-reference table.
 
 ## Edge Cases
 

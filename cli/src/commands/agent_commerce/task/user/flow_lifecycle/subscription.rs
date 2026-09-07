@@ -180,10 +180,7 @@ pub(crate) fn sub_open(ctx: &FlowContext<'_>, message: Option<&serde_json::Value
     )
 }
 
-pub(crate) fn sub_created(
-    ctx: &FlowContext<'_>,
-    message: Option<&serde_json::Value>,
-) -> String {
+pub(crate) fn sub_created(ctx: &FlowContext<'_>, message: Option<&serde_json::Value>) -> String {
     // Subscribe-success has two copy variants keyed on trialType: 1 → trial start
     // (charge-free; the real first charge is announced by sub_trial_into_active),
     // anything else / absent → paid subscription with immediate first charge.
@@ -373,7 +370,7 @@ pub(crate) fn sub_asp_dispute(
         None => {
             return format!(
                 "[sub_asp_dispute] prefetched.provider_agent_id missing for job {job_id}; \
-             cannot fetch chat history for dispute evidence.\n\n\
+             cannot fetch chat history for evaluation evidence.\n\n\
              Enter through `skills/okx-ai/SKILL.md`, then see `skills/okx-ai/references/runtime/recovery.md` §2 — push `cli_failed` decision.\n"
             )
         }
@@ -418,12 +415,12 @@ pub(crate) fn sub_asp_dispute(
      {chat_block}\n\
      ```\n\n\
      **Step 2 — Extract a `--text` body from the chat history above** (≤16 KB):\n\
-     Keep ONLY the key checkpoints — subscription scope discussion / deliverable messages + both sides' key dispute points. Prepend `(key checkpoints extracted)` so the evaluator knows it was trimmed. If history is genuinely empty, pass a minimal placeholder like `(no chat history available)`.\n\n\
+     Keep ONLY the key checkpoints — subscription scope discussion / deliverable messages + both sides' key evaluation points. Prepend `(key checkpoints extracted)` so the evaluator knows it was trimmed. If history is genuinely empty, pass a minimal placeholder like `(no chat history available)`.\n\n\
      **Step 3 — Upload (off-chain multipart):**\n\
      ```bash\n\
      onchainos agent dispute upload {job_id} --role user --agent-id {agent_id} --max-files 20 --text \"<chat history block from Step 2>\"\n\
      ```\n\
-     The CLI auto-attaches the most recent 20 entries under `~/.onchainos/deliverables/user/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers all locally-saved deliverables. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 4 — the on-chain dispute will continue without off-chain evidence and the evaluator rules on what is available.\n\n\
+     The CLI auto-attaches the most recent 20 entries under `~/.onchainos/deliverables/user/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers all locally-saved deliverables. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 4 — the on-chain evaluation will continue with the available evidence.\n\n\
      **Step 4 — Notify the user via `onchainos agent user-notify` (after upload returns):**\n\
      **Localize first** — translate the content below into the user's language before sending.\n\
      ```bash\n\
@@ -896,10 +893,7 @@ mod tests {
             prefetched: Some(&prefetched),
             data: None,
         };
-        let out = sub_created(
-            &ctx,
-            Some(&serde_json::json!({"event": "sub_created"})),
-        );
+        let out = sub_created(&ctx, Some(&serde_json::json!({"event": "sub_created"})));
         assert!(out.contains("subscribing to Authoritative Title"));
         assert!(out.contains("First charge of 9.5 USDT completed"));
         assert!(!out.contains("subscribing to This is not the service title"));

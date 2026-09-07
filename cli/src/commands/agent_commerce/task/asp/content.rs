@@ -131,9 +131,8 @@ pub fn job_rejected_user_decision_prompt(short_id: &str, expire_time: Option<i64
     .map(|l| format!("\n\x20\x20\x20\x20{l}"))
     .unwrap_or_default();
     format!(
-        "\x20\x20\x20\x20[Job {short_id} — you are the ASP] The User Agent rejected the deliverable. Choose:\n\
-         \x20\x20\x20\x20A. Agree to a full refund → reply 'agree to refund'\n\
-         \x20\x20\x20\x20B. File a dispute → reply 'file dispute, reason: <reason>'{decision_deadline_line}"
+        "\x20\x20\x20\x20[Job {short_id}] The buyer rejected the deliverable.\n\
+         \x20\x20\x20\x20To refund the buyer, reply 'Approve refund'. To request platform evaluation, reply 'Request evaluation' and include your evaluation reason.{decision_deadline_line}"
     )
 }
 
@@ -160,10 +159,10 @@ const EVALUATION_REASONS_BLOCK: &str = "\x20\x20\x20\x20\x20\x20- Evaluation rea
 /// agent actually claims a non-zero reward in A-Step 2.
 pub fn dispute_won_with_claim_user_notify(job_id: &str) -> String {
     format!(
-        "\x20\x20\x20\x20[⚖️💰 Dispute Won] Job {job_id} (<title>) — dispute resolved; ASP wins.\n\
+        "\x20\x20\x20\x20[⚖️💰 Evaluation Result] Job {job_id} (<title>) — evaluation completed; ASP wins.\n\
          \x20\x20\x20\x20  - Outcome: ASPWins\n\
          \x20\x20\x20\x20  - Job income: <tokenAmount> <tokenSymbol>\n\
-         \x20\x20\x20\x20  - Auto-claimed account reward: <claimed amount> <symbol> (txHash=<hash>)\n\
+         \x20\x20\x20\x20  - Auto-claimed account reward: <claimed amount> <symbol>\n\
          \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
          {EVALUATION_REASONS_BLOCK}\n\
          \x20\x20\x20\x20  \n\
@@ -175,7 +174,7 @@ pub fn dispute_won_with_claim_user_notify(job_id: &str) -> String {
 /// A-Step 1 `claimable` returns all zeros (nothing to claim).
 pub fn dispute_won_no_claim_user_notify(job_id: &str) -> String {
     format!(
-        "\x20\x20\x20\x20[⚖️💰 Dispute Won] Job {job_id} (<title>) — dispute resolved; ASP wins.\n\
+        "\x20\x20\x20\x20[⚖️💰 Evaluation Result] Job {job_id} (<title>) — evaluation completed; ASP wins.\n\
          \x20\x20\x20\x20  - Outcome: ASPWins\n\
          \x20\x20\x20\x20  - Job income: <tokenAmount> <tokenSymbol>\n\
          \x20\x20\x20\x20  - Account-level pending reward: none (checked)\n\
@@ -245,7 +244,7 @@ pub fn rating_submitted_user_notify(job_id: &str) -> String {
 /// `Event::DisputeResolved` branch B (ASP loses) — B-Step 1 user notify.
 pub fn dispute_lost_user_notify(job_id: &str) -> String {
     format!(
-        "\x20\x20\x20\x20[⚖️⚠️ Dispute Lost] Job {job_id} (<title>) — dispute resolved; User Agent wins.\n\
+        "\x20\x20\x20\x20[⚖️⚠️ Evaluation Result] Job {job_id} (<title>) — evaluation completed; User Agent wins.\n\
          \x20\x20\x20\x20  - Outcome: ClientWins\n\
          \x20\x20\x20\x20  - Loss: <tokenAmount> <tokenSymbol> (funds returned to the User Agent)\n\
          \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
@@ -479,7 +478,7 @@ pub fn sub_failed_notify_asp_notify(
 }
 
 /// `sub_user_reject` ASP-side decision copy: the buyer rejected the current period; the ASP
-/// must confirm the refund or file a dispute before the response deadline, else a full refund
+/// must confirm the refund or request evaluation before the response deadline, else a full refund
 /// is issued automatically. Rendered as the canonical body pushed through the pending-decisions
 /// relay (A/B decision included). Slots degrade per sibling pattern; a missing deadline falls
 /// back to the approximate "within about 1 day" window rather than an empty slot.
@@ -500,9 +499,9 @@ pub fn sub_user_reject_asp_decision_copy(
     out.push('.');
     match fmt_epoch(reject_window_ends_at) {
         Some(d) => out.push_str(&format!(
-            " Please confirm the refund or file a dispute by {d}"
+            " Please confirm the refund or request evaluation by {d}"
         )),
-        None => out.push_str(" Please confirm the refund or file a dispute within about 1 day"),
+        None => out.push_str(" Please confirm the refund or request evaluation within about 1 day"),
     }
     out.push_str(" — otherwise a full refund");
     match (amount, token_symbol) {
@@ -511,8 +510,10 @@ pub fn sub_user_reject_asp_decision_copy(
         _ => {}
     }
     out.push_str(" will be issued to the user automatically.\n");
-    out.push_str("  A. Agree to a full refund for this period.\n");
-    out.push_str("  B. File a dispute for evaluation.");
+    out.push_str("  To refund the buyer, reply 'Approve refund'.\n");
+    out.push_str(
+        "  To request platform evaluation, reply 'Request evaluation' and include your evaluation reason.",
+    );
     out
 }
 
@@ -779,7 +780,7 @@ mod tests {
             "no reminder when expire_time is None; got:\n{out}"
         );
         assert!(
-            out.ends_with("file dispute, reason: <reason>'"),
+            out.ends_with("include your evaluation reason."),
             "card unchanged when None; got:\n{out}"
         );
     }

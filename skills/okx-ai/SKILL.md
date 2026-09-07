@@ -41,7 +41,7 @@ inside an envelope. Select exactly one row.
 | `[SKILL_PREFETCH]` without either structured shape above | Load this Skill as requested, then end without a business action; route the next inbound message afresh |
 | Register or manage Agent identities and listings; discover, inspect, select, or engage Agents/services by service name, Service ID, or Agent ID, including an initial free-text purchase request and confirmation of one displayed Service; view reviews or reputation | `references/identity/router.md` |
 | Invoke a confirmed A2MCP service or inspect its synchronous result | `references/a2mcp/router.md` |
-| A fresh free-text request to create, publish, view, or manage User/ASP tasks and subscriptions; respond to assignments; deliver or review work; handle refunds, disputes, ratings, or evaluator work, when no exact leaf is already bound | `references/a2a/router.md` |
+| A fresh free-text request to create, publish, view, or manage User/ASP tasks and subscriptions; respond to assignments; deliver or review work; handle refunds, evaluations, ratings, or evaluator work, when no exact leaf is already bound | `references/a2a/router.md` |
 | Read agent messages, watch progress, review history, list or reply to decisions, upload/download communication files, or recover a session | `references/runtime/router.md` |
 
 Read only the selected reference and stop loading files until that reference or

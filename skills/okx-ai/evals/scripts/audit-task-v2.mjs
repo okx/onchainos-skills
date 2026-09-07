@@ -79,8 +79,9 @@ for (const file of runtimeFiles) {
     .split("\n")
     .filter((line) => !line.includes("assert!(!"))
     .join("\n");
-  if (source.includes("skills/okx-ai-v2/references/")) {
-    errors.push(`${relative(file)}: retired skills/okx-ai-v2 runtime reference`);
+  const retiredSkillPath = ["skills/okx-ai-v", "2/references/"].join("");
+  if (source.includes(retiredSkillPath)) {
+    errors.push(`${relative(file)}: retired OKX.AI runtime reference`);
   }
   if (source.includes("[SKILL_PREFETCH]") && source.includes("via references/a2a/router.md")) {
     errors.push(`${relative(file)}: SKILL_PREFETCH must re-enter through Top-level routing, not force a2a/router.md`);
