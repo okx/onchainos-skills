@@ -1,43 +1,103 @@
-# ASP Arbitration Query
+# ASP Evaluation Queries
 
-Use this leaf for rejected candidates, filed cases, and case details. Keep
-candidate and filed-case result sets separate.
+Use this leaf for pending refund requests, evaluation records, and evaluation
+details.
 
-## Rejected candidates
+## Pending refund requests
 
-“可仲裁/待仲裁/哪些可以仲裁” means rejected candidates:
+Pending evaluation, evaluable-task, and required-evaluation intents all mean
+the current rejected-task set:
 
 ```text
-onchainos agent tasks --status rejected --agent-id <aspAgentId> --page 1 --limit 20
-onchainos agent my-subscriptions --role provider --status rejected
+onchainos agent refund-list --role provider --scope requested --agent-id <aspAgentId> --page 1 --page-size 20
 ```
 
-Render CLI order, type, Job ID, exact amount/token, rejection time, and
-pagination. Ask for a sequence or Job ID. An empty set means there is currently
-no rejected task or period eligible for this decision.
+Render [Pending Refund Requests](#pending-refund-requests). A selected
+sequence or Job ID runs the following fresh detail query, then loads
+[`arbitration-decision.md`](arbitration-decision.md) to render its Buyer Refund
+Request decision template:
 
-## Filed cases
+```text
+onchainos agent refund-detail <jobId> --role provider --agent-id <aspAgentId>
+```
 
-“仲裁列表/已发起仲裁/仲裁案件” means filed cases. Preserve an explicitly
-provided or envelope-bound ASP Agent ID. Otherwise use `my-agents`, retain role
-ASP (`2`), and select only a sole match or ask the User to choose.
+## Evaluation records
+
+An in-progress, filed, or completed evaluation query uses:
 
 ```text
 onchainos agent arbitration-list --agent-id <aspAgentId> [--page <n>] [--page-size <n>]
 ```
 
-Render `payload.items[]` in order. Selection is restricted to
-`nextAction[id=view_arbitration].params.allowedJobIds`; the CLI may normalize
-legacy `view_dispute` from a persisted card.
+Render [Evaluation Records](#evaluation-records).
 
-For an explicit or allowed Job ID:
+## Evaluation details
 
 ```text
 onchainos agent arbitration-detail <jobId> --agent-id <aspAgentId>
 ```
 
-Map fresh detail only: `evidence_preparation` means evidence preparation,
-`in_progress` means arbitration in progress, resolved `asp_won` means ASP won,
-and resolved `asp_lost_auto_refund` means ASP lost with automatic refund.
-Unknown values remain unknown. Include exact Job ID, deadline, verdict, amount,
-fund destination, refund amount, and Tx Hash only when returned.
+Render [Evaluation Details](#evaluation-details).
+
+## Output Templates
+
+The templates below are English sources. Reply in the language of the current
+conversation while preserving Job IDs, amounts, token symbols, timestamps, and
+user-authored reasons exactly.
+
+### Pending Refund Requests
+
+```markdown
+You have {pendingCount} refund requests from buyers awaiting your decision:
+
+| # | Service Name | Job ID | Task Type | Requested Refund | Response Deadline |
+|---|---|---|---|---|---|
+| {n} | {serviceName} | {jobId} | {taskType} | {requestedRefund} | {responseDeadline} |
+
+A full refund will be issued automatically if no action is taken by the deadline. Reply with a number or Job ID to view the request.
+```
+
+Display rules:
+
+1. Use only pending records returned by the CLI.
+2. Number records sequentially and preserve the full Job ID.
+3. Preserve CLI order after its response-deadline sort.
+4. Use the CLI-provided service name, task type, amount, and formatted deadline.
+
+### Evaluation Records
+
+```markdown
+You have {evaluationCount} evaluation records:
+
+| # | Service Name | Job ID | Status | Evaluation Started | Key Time |
+|---|---|---|---|---|---|
+| {n} | {serviceName} | {jobId} | {status} | {evaluationStarted} | {keyTime} |
+
+Reply with a number or Job ID to view the evaluation details.
+```
+
+Display rules:
+
+1. Number records sequentially and show the full Job ID.
+2. Use only the CLI-provided `Evidence preparation`, `Evaluating`, or `Decided` status.
+3. Use the CLI-provided evaluation-started and key-time values directly.
+4. Omit `Key Time` when every returned value is empty.
+5. Restrict selection to `nextAction[id=view_arbitration].params.allowedJobIds`.
+
+### Evaluation Details
+
+```markdown
+### Evaluation Details
+
+| Service Name | Job ID | Requested Refund | Buyer’s Reason | Status | Evaluation Started |
+|---|---|---|---|---|---|
+| {serviceName} | {jobId} | {requestedRefund} | {buyerReason} | {status} | {evaluationStarted} |
+```
+
+Display rules:
+
+1. Render only fresh `payload` fields returned by `arbitration-detail`.
+2. Preserve the full Job ID and the buyer-authored reason.
+3. Use only the CLI-provided evaluation status and formatted time.
+4. Omit unavailable optional values instead of inferring them.
+5. End after the table and keep transaction hashes internal.

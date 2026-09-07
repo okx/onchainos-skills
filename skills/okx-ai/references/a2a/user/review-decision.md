@@ -14,12 +14,11 @@ not submit a second completion, and wait for the authoritative terminal event.
 
 ## Reject
 
-- Blank reason → use `request_rejection_reason`, ask once, and keep the decision
-  active.
-- Non-blank reason → preserve the User's original wording and enter
-  `refund-prepare.md`.
-- Rejection does not itself authorize a refund write. Execute only a freshly
-  prepared Refund V2 action with its current context.
+For any unambiguous rejection, enter [`refund-prepare.md`](refund-prepare.md)
+and render the fresh Refund V2 confirmation. Preserve any User-authored wording
+verbatim as context, but treat the rejection only as authorization to open the
+confirmation flow. The refund write requires the submission intent and refund
+reason described in [`refund-confirm.md`](refund-confirm.md).
 
 An ambiguous, expired, already-handled, missing, or metadata-mismatched reply
 performs no task mutation. Re-render or report the exact returned recovery

@@ -332,7 +332,7 @@ pub enum Event {
     SubUserReject,
     /// ASP agreed to a refund/settlement on the subscription (notifies user + ASP).
     SubAspAgree,
-    /// Subscription dispute opened (notifies user + ASP).
+    /// Subscription evaluation opened (notifies user + ASP).
     SubAspDispute,
     /// Trial period rolled into the active period (notifies user).
     SubTrialIntoActive,
@@ -510,7 +510,7 @@ impl Event {
             Event::JobClosed => "close failed",
             Event::JobPaymentModeChanged => "payment mode switch failed",
             Event::RewardClaimed => "reward claim failed",
-            Event::DisputeApproved => "dispute initiation failed",
+            Event::DisputeApproved => "evaluation request failed",
             Event::JobProviderReject => "asp reject failed",
             Event::Staked => "staking failed",
             Event::UnstakeRequested => "unstake failed",
@@ -749,7 +749,9 @@ impl SubStatus {
                 SubStatus::Completed, // DM rules ASP wins
                 SubStatus::Failed,    // DM rules user wins
             ],
-            SubStatus::Completed | SubStatus::Failed | SubStatus::Closed | SubStatus::Expired => &[],
+            SubStatus::Completed | SubStatus::Failed | SubStatus::Closed | SubStatus::Expired => {
+                &[]
+            }
         }
     }
 

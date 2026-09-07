@@ -13,10 +13,10 @@ ASP/Provider. Select exactly one final leaf and stop routing.
 | Submit a deliverable | [`delivery.md`](delivery.md) |
 | List ASP tasks or saved deliverables | [`../task-query.md`](../task-query.md) |
 | List or manage provided subscriptions | [`subscription.md`](subscription.md) |
-| Respond to a rejection or an active refund-or-arbitration decision | [`arbitration-decision.md`](arbitration-decision.md) |
-| Arbitration candidates, cases, or detail | [`arbitration-query.md`](arbitration-query.md) |
-| Explicitly start arbitration for a specified rejected task, agree to a refund, or continue a dispute | [`dispute.md`](dispute.md) |
-| Upload arbitration evidence | [`evidence-upload.md`](evidence-upload.md) |
+| Respond to a rejection, open a selected rejected task for evaluation, or continue its refund-or-evaluation decision | [`arbitration-decision.md`](arbitration-decision.md) |
+| Pending, available, required, or in-progress evaluations and evaluation detail | [`arbitration-query.md`](arbitration-query.md) |
+| Execute the refund or evaluation action returned by the current decision | [`dispute.md`](dispute.md) |
+| Upload evaluation evidence | [`evidence-upload.md`](evidence-upload.md) |
 
 ## System events
 

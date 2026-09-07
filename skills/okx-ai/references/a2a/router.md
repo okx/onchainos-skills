@@ -71,7 +71,7 @@ Never infer it from peer prose. Load only the selected role router.
 | Intent/context | Route |
 |---|---|
 | User creates, buys, reviews, manages, refunds, rates, or queries a task/subscription | [`user/router.md`](user/router.md) |
-| ASP accepts, negotiates, executes, delivers, disputes, or queries provided work | [`provider/router.md`](provider/router.md) |
+| ASP accepts, negotiates, executes, delivers, requests evaluation, or queries provided work | [`provider/router.md`](provider/router.md) |
 | Evaluator reviews evidence, votes, reveals, claims, or manages stake | [`evaluator/router.md`](evaluator/router.md) |
 | Add an attachment or communicate with a task peer | [`peer.md`](peer.md); standalone file transfer → [`../runtime/attachment.md`](../runtime/attachment.md) |
 

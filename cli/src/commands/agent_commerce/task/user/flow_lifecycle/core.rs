@@ -1691,7 +1691,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
      File path: [<localPath>](<localPath>)\n\
      Payment: escrow\n\
      A. Approve → reply 'A'\n\
-     B. Reject (state reason; used as evidence if disputed) → reply 'B reason: …'\n\
+     B. Reject → reply 'B'\n\
      {review_deadline_line}\
      ```\n\n\
      ▸ deliverableType=text:\n\
@@ -1703,7 +1703,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
      ---End of deliverable---\n\
      Payment: escrow\n\
      A. Approve → reply 'A'\n\
-     B. Reject (state reason; used as evidence if disputed) → reply 'B reason: …'\n\
+     B. Reject → reply 'B'\n\
      {review_deadline_line}\
      ```\n\n\
      Push to user (localize `--user-content` and `--list-label` to user's language first):\n\n\
@@ -1740,23 +1740,13 @@ fn user_authored_rejection_reason(data: Option<&str>) -> Option<&str> {
 /// Current CLI-driver cards execute in the user conversation and do not enter here.
 pub(crate) async fn reject_review(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
-
-    let Some(reason) = user_authored_rejection_reason(ctx.data) else {
-        return super::super::v2::reject::reason_required_result(
-            job_id,
-            ctx.agent_id,
-            ctx.short_id,
-        )
-        .to_string();
-    };
-
-    let handoff = serde_json::json!({
-        "jobId": job_id,
-        "reason": reason,
-    });
+    let reason = user_authored_rejection_reason(ctx.data);
+    let reason_arg = reason
+        .map(|value| format!(" --reason {}", serde_json::to_string(value).unwrap()))
+        .unwrap_or_default();
     format!(
-        "[reject_review compatibility] The relayed B + reason is the user's final rejection confirmation. Continue through Refund V2 using this exact handoff: {handoff}\n\n\
-         Run the read-only `onchainos agent refund-prepare {job_id} --reason <exact user-authored reason above>`. When it returns `phase=refund_confirmation`, `decision=ready`, `reason=refund_request_confirmation_required`, and `nextAction.id=submit_refund_request`, immediately execute that action with its unchanged `jobId`, `refundContextId`, operation, reason, and `--confirm`. Any other preparation result is the authoritative outcome to present to the user.\n"
+        "[reject_review compatibility] The relayed rejection opens the Refund V2 confirmation flow.\n\n\
+         Run the read-only `onchainos agent refund-prepare {job_id}{reason_arg}` and render its `payload.display` with the Confirm Refund Request template. End the turn after presenting the card. The rejection itself authorizes no refund write. Continue only after the user provides clear `Submit refund request` intent and a refund reason; then rerun the fresh preparation with that verbatim reason and execute only its returned `submit_refund_request` action. Any other preparation result is the authoritative outcome to present to the user.\n"
     )
 }
 
@@ -1899,7 +1889,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reject_review_without_reason_blocks_before_broadcast() {
+    async fn reject_review_without_reason_opens_refund_confirmation() {
         let ctx = crate::commands::agent_commerce::task::user::flow::FlowContext {
             job_id: "0xabc",
             agent_id: "426",
@@ -1914,20 +1904,15 @@ mod tests {
         };
 
         let out = reject_review(&ctx).await;
-        let output: serde_json::Value = serde_json::from_str(&out).unwrap();
-        assert_eq!(output["decision"], "requires_user_input");
-        assert_eq!(output["reason"], "rejection_reason_required");
-        assert_eq!(output["nextAction"][0]["id"], "request_rejection_reason");
-        assert_eq!(
-            output["payload"]["requiredParams"],
-            serde_json::json!(["reason"])
-        );
-        assert!(!out.contains("did not meet acceptance criteria"));
-        assert!(!out.contains("cli_failed"));
+        assert!(out.contains("refund-prepare 0xabc"), "{out}");
+        assert!(out.contains("Confirm Refund Request template"), "{out}");
+        assert!(out.contains("authorizes no refund write"), "{out}");
+        assert!(out.contains("Submit refund request"), "{out}");
+        assert!(!out.contains("--reason"), "{out}");
     }
 
     #[tokio::test]
-    async fn legacy_reject_review_with_reason_executes_in_same_turn_after_fresh_prepare() {
+    async fn legacy_reject_review_with_reason_preserves_it_for_the_confirmation() {
         let ctx = crate::commands::agent_commerce::task::user::flow::FlowContext {
             job_id: "0xabc",
             agent_id: "426",
@@ -1942,13 +1927,20 @@ mod tests {
         };
 
         let out = reject_review(&ctx).await;
-        assert!(out.contains("final rejection confirmation"), "{out}");
-        assert!(out.contains("\"reason\":\"quality below SLA\""), "{out}");
-        assert!(out.contains("refund-prepare 0xabc"), "{out}");
+        assert!(
+            out.contains("opens the Refund V2 confirmation flow"),
+            "{out}"
+        );
+        assert!(
+            out.contains("refund-prepare 0xabc --reason \"quality below SLA\""),
+            "{out}"
+        );
         assert!(out.contains("submit_refund_request"), "{out}");
-        assert!(out.contains("immediately execute that action"), "{out}");
         assert!(out.contains("authoritative outcome"), "{out}");
-        assert!(out.contains("--confirm"), "{out}");
+        assert!(
+            out.contains("End the turn after presenting the card"),
+            "{out}"
+        );
         assert!(!out.contains("onchainos agent reject "), "{out}");
         assert!(!out.contains("broadcast"), "{out}");
     }
@@ -2572,10 +2564,7 @@ Part B continues
             "escrow card should append the Review reminder line; got:\n{out}"
         );
         assert!(out.contains("A. Approve → reply 'A'"), "{out}");
-        assert!(
-            out.contains("B. Reject (state reason; used as evidence if disputed)"),
-            "{out}"
-        );
+        assert!(out.contains("B. Reject → reply 'B'"), "{out}");
         assert!(!out.contains("Full refund request:"), "{out}");
     }
 

@@ -23,10 +23,10 @@
       "id": "review-rejection-refund-pending",
       "sessions": ["user-main", "user-task-sub", "asp-task-sub"],
       "steps": [
-        {"session": "user-main", "input": "B reason", "route": "decision-relay.md -> user/review-decision.md -> user/refund-prepare.md"},
-        {"session": "user-main", "input": "fresh submit_refund_request", "route": "user/refund-confirm.md -> user/refund-execute.md", "effect": "one request-refund broadcast"},
+        {"session": "user-main", "input": "B", "route": "decision-relay.md -> user/review-decision.md -> user/refund-prepare.md", "effect": "Confirm Refund Request card"},
+        {"session": "user-main", "input": "Submit refund request with a verbatim refund reason", "route": "user/refund-confirm.md -> user/refund-execute.md", "effect": "one request-refund broadcast"},
         {"session": "user-main", "input": "refund_request_broadcast_submitted", "route": "user/refund-execute.md", "effect": "pending notice; no automatic watch resume"},
-        {"session": "asp-task-sub", "input": "job_rejected", "route": "a2a/router.md -> provider/router.md -> arbitration-decision.md", "effect": "durable A/B card"}
+        {"session": "asp-task-sub", "input": "job_rejected", "route": "a2a/router.md -> provider/router.md -> arbitration-decision.md", "effect": "durable refund-or-evaluation decision card"}
       ]
     },
     {

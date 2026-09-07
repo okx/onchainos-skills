@@ -30,7 +30,7 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
     {
         Some(s) => s,
         None => return format!(
-            "[job_disputed] prefetched.provider_agent_id missing for job {job_id}; cannot fetch chat history for dispute evidence.\n\n\
+            "[job_disputed] prefetched.provider_agent_id missing for job {job_id}; cannot fetch chat history for evaluation evidence.\n\n\
              Enter through skills/okx-ai/SKILL.md, then see skills/okx-ai/references/runtime/recovery.md §2 — push `cli_failed` decision.\n"
         ),
     };
@@ -67,19 +67,19 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
      {chat_block}\n\
      ```\n\n\
      **Step 2 — Extract a `--text` body from the chat history above** (≤16 KB):\n\
-     Keep ONLY the key checkpoints — task-detail discussion / deliverable messages + both sides' key dispute points. Prepend `(key checkpoints extracted)` so the evaluator knows it was trimmed. If history is genuinely empty, pass a minimal placeholder like `(no chat history available)`.\n\n\
+     Keep ONLY the key checkpoints — task-detail discussion / deliverable messages + both sides' key evaluation points. Prepend `(key checkpoints extracted)` so the evaluator knows it was trimmed. If history is genuinely empty, pass a minimal placeholder like `(no chat history available)`.\n\n\
      **Step 3 — Upload (off-chain multipart):**\n\
      ```bash\n\
      onchainos agent dispute upload {job_id} --role user --agent-id {agent_id} --text \"<chat history block from Step 2>\"\n\
      ```\n\
-     The CLI auto-attaches every entry under `~/.onchainos/deliverables/user/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers all locally-saved deliverables / attachments. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 4 — the on-chain dispute will continue without off-chain evidence and the evaluator rules on what is available.\n\n\
+     The CLI auto-attaches every entry under `~/.onchainos/deliverables/user/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers all locally-saved deliverables / attachments. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 4 — the on-chain evaluation will continue with the available evidence.\n\n\
      **Step 4 — Notify the user via `onchainos agent user-notify` (after upload returns):**\n\
      **Localize first** — translate the content below into the user's language before sending.\n\
      ```bash\n\
      onchainos agent user-notify --content \"<localized content>\"\n\
      ```\n\
      Content:\n\
-     \x20\x20\x20\x20[Dispute opened] Evaluation for **{title_display}** (`{job_id}`) is on-chain. The system has automatically submitted your evidence (chat history + locally-saved deliverables). Awaiting the evaluator's verdict.\n\n\
+     \x20\x20\x20\x20[Evaluation opened] Evaluation for **{title_display}** (`{job_id}`) is on-chain. The system has automatically submitted your evidence (chat history + locally-saved deliverables). Awaiting the evaluator's verdict.\n\n\
      **Step 5 — End this turn.** Do NOT send any message to the ASP.\n\n\
 "
     )
@@ -138,7 +138,7 @@ pub(crate) fn dispute_resolved(
     };
     if !p.refund_request_provenance {
         return format!(
-            "[dispute_resolved] fresh terminal status has no durable local refund-request provenance for job {job_id}; do not treat an ordinary completion/failure as an arbitration verdict, rate, notify, or clean up. Run `onchainos agent refund-prepare {job_id}` to reconcile.\n"
+            "[dispute_resolved] fresh terminal status has no durable local refund-request provenance for job {job_id}; do not treat an ordinary completion/failure as an evaluation verdict, rate, notify, or clean up. Run `onchainos agent refund-prepare {job_id}` to reconcile.\n"
         );
     }
     let refund_evidence = user_won

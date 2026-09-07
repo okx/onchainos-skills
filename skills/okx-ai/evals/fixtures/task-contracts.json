@@ -112,7 +112,7 @@
     },
     {
       "id": "A30",
-      "input": "B plus verbatim reason",
+      "input": "Submit refund request with a verbatim reason, or provide the reason when prompted",
       "role": "user",
       "stateGate": "fresh Refund V2 prepare and matching context",
       "targetLeaf": "references/a2a/user/refund-confirm.md",
@@ -141,9 +141,9 @@
       "id": "A43",
       "input": "job_rejected/sub_user_reject",
       "role": "asp",
-      "stateGate": "durable A/B decision binding",
+      "stateGate": "fresh rejected task and current decision binding",
       "targetLeaf": "references/a2a/provider/arbitration-decision.md",
-      "sideEffectOwner": "pending-decisions-v2 and dispute action CLI",
+      "sideEffectOwner": "pending-decisions-v2 and combined evaluation action CLI",
       "sourceSymbols": ["task/arbitration.rs", "task/common/pending_v2.rs"]
     },
     {

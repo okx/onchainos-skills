@@ -7,10 +7,7 @@ use crate::commands::agent_commerce::task::common::{
 };
 use crate::commands::agent_commerce::task::signing;
 
-pub async fn handle_claim(
-    client: &mut TaskApiClient,
-    agent_id: &str,
-) -> Result<()> {
+pub async fn handle_claim(client: &mut TaskApiClient, agent_id: &str) -> Result<()> {
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
 
@@ -32,6 +29,6 @@ pub async fn handle_claim(
 
     println!("reward claim submitted (account={address})");
     println!("  txHash:   {tx_hash}");
-    println!("note: claims all rewards from settled disputes at once; settled amount will be notified after on-chain confirmation.");
+    println!("note: claims all rewards from settled evaluations at once; settled amount will be notified after on-chain confirmation.");
     Ok(())
 }

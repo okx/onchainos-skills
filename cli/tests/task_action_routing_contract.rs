@@ -1,9 +1,11 @@
 const ROUTER: &str = include_str!("../../skills/okx-ai/references/a2a/router.md");
 const USER_ROUTER: &str = include_str!("../../skills/okx-ai/references/a2a/user/router.md");
-const PROVIDER_ROUTER: &str =
-    include_str!("../../skills/okx-ai/references/a2a/provider/router.md");
+const TASK_QUERY: &str = include_str!("../../skills/okx-ai/references/a2a/task-query.md");
+const PROVIDER_ROUTER: &str = include_str!("../../skills/okx-ai/references/a2a/provider/router.md");
 const ARBITRATION_DECISION: &str =
     include_str!("../../skills/okx-ai/references/a2a/provider/arbitration-decision.md");
+const REFUND_CONFIRM: &str =
+    include_str!("../../skills/okx-ai/references/a2a/user/refund-confirm.md");
 const DISPUTE: &str = include_str!("../../skills/okx-ai/references/a2a/provider/dispute.md");
 const ARBITRATION_QUERY: &str =
     include_str!("../../skills/okx-ai/references/a2a/provider/arbitration-query.md");
@@ -27,6 +29,7 @@ const ASP_DISPUTE_RAISE_SOURCE: &str =
 const ASP_SUBSCRIPTION_SOURCE: &str =
     include_str!("../src/commands/agent_commerce/task/asp/subscription.rs");
 const ASP_FLOW_SOURCE: &str = include_str!("../src/commands/agent_commerce/task/asp/flow.rs");
+const REFUND_LIST_SOURCE: &str = include_str!("../src/commands/agent_commerce/task/refund_list.rs");
 
 #[test]
 fn action_ids_are_partitioned_by_domain_and_role() {
@@ -54,8 +57,9 @@ fn action_ids_are_partitioned_by_domain_and_role() {
 
 #[test]
 fn arbitration_decision_execution_and_query_are_separate() {
-    assert!(ARBITRATION_DECISION.contains("pending-decisions-v2 request-prompt"));
-    assert!(ARBITRATION_DECISION.contains("explicit instruction to arbitrate"));
+    assert!(ARBITRATION_DECISION.contains("For an event-created card"));
+    assert!(ARBITRATION_DECISION.contains("card opened directly"));
+    assert!(ARBITRATION_DECISION.contains("refund-detail"));
     for action in [
         "agree_refund",
         "raise_arbitration",
@@ -64,35 +68,46 @@ fn arbitration_decision_execution_and_query_are_separate() {
     ] {
         assert!(DISPUTE.contains(&format!("| `{action}` |")));
     }
-    assert!(DISPUTE.contains("## Start arbitration directly"));
-    let direct_flow = DISPUTE
-        .split_once("## Start arbitration directly")
-        .unwrap()
-        .1
-        .split_once("## Reason handoff")
-        .unwrap()
-        .0;
-    assert!(direct_flow.contains("onchainos agent dispute raise <jobId>"));
-    assert!(direct_flow.contains("onchainos agent subscribe-dispute <jobId>"));
-    assert!(!direct_flow.contains("pending-decisions-v2 request-prompt"));
-    assert!(ARBITRATION_QUERY.contains("tasks --status rejected"));
+    assert!(DISPUTE.contains("onchainos agent dispute raise <params.jobId>"));
+    assert!(DISPUTE.contains("onchainos agent subscribe-dispute <params.jobId>"));
+    assert!(DISPUTE.contains("approveAndCreateDispute"));
+    assert!(!DISPUTE.contains("dispute confirm"));
+    assert!(ARBITRATION_QUERY.contains("refund-list --role provider --scope requested"));
+    assert!(ARBITRATION_QUERY.contains("refund-detail <jobId> --role provider"));
     assert!(ARBITRATION_QUERY.contains("arbitration-list"));
     assert!(ARBITRATION_QUERY.contains("arbitration-detail"));
+}
+
+#[test]
+fn refund_and_evaluation_prompts_collect_inline_or_missing_reasons() {
+    assert!(REFUND_CONFIRM.contains("reply “Submit refund request” and include your refund reason"));
+    assert!(REFUND_CONFIRM.contains("both the submission intent and a refund reason"));
+    assert!(REFUND_CONFIRM.contains("clear submission intent without a reason"));
+
+    assert!(ARBITRATION_DECISION.contains("request platform evaluation"));
+    assert!(ARBITRATION_DECISION.contains("include your evaluation reason"));
+    assert!(ARBITRATION_DECISION.contains("both the intent and an evaluation reason"));
+    assert!(ARBITRATION_DECISION.contains("intent without a reason"));
+
+    assert!(PENDING_V2_SOURCE.contains("both the submission intent and a refund reason"));
+    assert!(PENDING_V2_SOURCE.contains("both the decision intent and any evaluation reason"));
+    assert!(PENDING_V2_SOURCE.contains("Request evaluation: <verbatim reason>"));
 }
 
 #[test]
 fn arbitration_reason_handoff_survives_leaf_split() {
     assert!(DISPUTE.contains("## Reason handoff"));
     assert!(DISPUTE.contains("[ARBITRATION_REASON_CONTEXT]"));
-    assert!(DISPUTE.contains("--reason-b64 <reasonB64>"));
-    assert!(DISPUTE.contains("resumeEvent=sub_asp_dispute"));
-    assert!(DISPUTE.contains("arbitration_reason_context_missing"));
+    assert!(DISPUTE.contains("\"reasonB64\":\"<URL-safe base64>\""));
+    assert!(DISPUTE.contains("\"resumeEvent\":\"job_disputed\""));
+    assert!(DISPUTE.contains("\"resumeEvent\":\"sub_asp_dispute\""));
     assert!(EVIDENCE_UPLOAD.contains("[ARBITRATION_REASON_CONTEXT]"));
-    assert!(EVIDENCE_UPLOAD.contains("taskType=subscription"));
+    assert!(EVIDENCE_UPLOAD.contains("task type"));
+    assert!(EVIDENCE_UPLOAD.contains("resume event"));
     assert!(EVIDENCE_UPLOAD.contains("arbitration_reason_context_missing"));
 
     assert!(ASP_DISPUTE_RAISE_SOURCE.contains("common::okx_a2a::session_send"));
-    assert!(ASP_DISPUTE_RAISE_SOURCE.contains("failed to hand off the arbitration reason"));
+    assert!(ASP_DISPUTE_RAISE_SOURCE.contains("failed to hand off the evaluation reason"));
     assert!(
         ASP_DISPUTE_RAISE_SOURCE
             .find("common::okx_a2a::session_send")
@@ -105,7 +120,10 @@ fn arbitration_reason_handoff_survives_leaf_split() {
     assert!(!ASP_DISPUTE_RAISE_SOURCE.contains("task_state_dir"));
 
     assert!(ASP_FLOW_SOURCE.contains("[ARBITRATION_REASON_CONTEXT]"));
-    assert!(ASP_FLOW_SOURCE.contains("--reason-b64"));
+    assert!(ASP_FLOW_SOURCE.contains("taskType` is `one_time`"));
+    assert!(ASP_FLOW_SOURCE.contains("taskType` is `subscription`"));
+    assert!(ASP_FLOW_SOURCE.contains("resumeEvent` is `job_disputed`"));
+    assert!(ASP_FLOW_SOURCE.contains("resumeEvent` is `sub_asp_dispute`"));
     assert!(ASP_FLOW_SOURCE.contains("arbitration_reason_context_missing"));
     assert!(!ASP_FLOW_SOURCE.contains("Use `--reason \"\"`"));
 
@@ -115,7 +133,7 @@ fn arbitration_reason_handoff_survives_leaf_split() {
         .1;
     assert!(subscription_dispute.contains("build_subscription_reason_handoff"));
     assert!(subscription_dispute.contains("common::okx_a2a::session_send"));
-    assert!(subscription_dispute.contains("failed to hand off the arbitration reason"));
+    assert!(subscription_dispute.contains("failed to hand off the evaluation reason"));
     assert!(
         subscription_dispute
             .find("common::okx_a2a::session_send")
@@ -135,25 +153,34 @@ fn arbitration_reason_handoff_survives_leaf_split() {
 }
 
 #[test]
-fn task_and_arbitration_query_intents_use_distinct_leaves() {
+fn task_and_evaluation_query_intents_use_distinct_leaves() {
     assert!(OKX_AI_SKILL.contains("references/a2a/router.md"));
     assert!(!USER_ROUTER.contains("../provider/"));
+    assert!(USER_ROUTER.contains("pending evaluations, or tasks the User rejected"));
+    assert!(TASK_QUERY.contains(
+        "onchainos agent refund-list --role buyer --scope available --agent-id <userAgentId>"
+    ));
+    assert!(TASK_QUERY.contains(
+        "onchainos agent refund-list --role buyer --scope requested --agent-id <userAgentId>"
+    ));
+    assert!(TASK_QUERY.contains("onchainos agent refund-detail <jobId> --role buyer"));
     assert!(PROVIDER_ROUTER.contains("List ASP tasks or saved deliverables"));
-    assert!(PROVIDER_ROUTER.contains("Arbitration candidates, cases, or detail"));
+    assert!(PROVIDER_ROUTER.contains("Pending, available, required, or in-progress evaluations"));
     assert!(PROVIDER_ROUTER.contains("arbitration-query.md"));
     assert!(ARBITRATION_QUERY.contains(
-        "onchainos agent tasks --status rejected --agent-id <aspAgentId> --page 1 --limit 20"
+        "onchainos agent refund-list --role provider --scope requested --agent-id <aspAgentId>"
     ));
-    assert!(ARBITRATION_QUERY
-        .contains("onchainos agent my-subscriptions --role provider --status rejected"));
+    assert!(ARBITRATION_QUERY.contains("onchainos agent refund-detail <jobId> --role provider"));
     assert!(ARBITRATION_QUERY.contains("onchainos agent arbitration-list --agent-id <aspAgentId>"));
     assert!(ARBITRATION_QUERY
         .contains("onchainos agent arbitration-detail <jobId> --agent-id <aspAgentId>"));
+    assert!(REFUND_LIST_SOURCE.contains("RefundListScope::Available.one_time_status()"));
+    assert!(REFUND_LIST_SOURCE.contains("RefundListScope::Requested.subscription_status()"));
 }
 
 #[test]
 fn cli_guidance_targets_role_scoped_skill_tree() {
-    let retired_prefix = ["skills/okx-ai-v2", "/references/"].concat();
+    let retired_prefix = ["skills/okx-ai-v", "2/references/"].concat();
     for source in [
         PENDING_V2_SOURCE,
         EVALUATOR_FLOW_SOURCE,
