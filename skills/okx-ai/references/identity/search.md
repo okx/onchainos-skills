@@ -41,12 +41,13 @@ Apply these extraction rules:
 2. **Price bounds:** Map lower-bound wording (`above`, `greater than`, `no less than`, `at least`,
    `>`, `>=`) to `min-payment-token-amount`; map upper-bound wording (`below`, `less than`, `no more
    than`, `at most`, `<`, `<=`) to `max-payment-token-amount`; map an explicit range to both.
-3. **Keywords:** Keep only requested capabilities and outputs with required subjects, modifiers, and
-   scopes; split only independent items useful alone. Exclude names, IDs, price constraints, request
-   wrappers, filler, rejected intent, generic service words, and provider/listing metadata. Never
-   quantify qualitative prices. Use only the current or previous query; when a follow-up adds a
-   scope, attach it to the previous capability as one phrase without adding categories, synonyms,
-   or related concepts. Return 1–5 concise, deduplicated phrases; never exceed 10 or pad the list.
+3. **Keywords:** MUST keep only requested capabilities and outputs with required subjects, modifiers,
+   and scopes. MUST use only keywords explicitly present in the current query or carried-over context;
+   MUST NOT invent, infer, paraphrase, translate, or expand them. Exclude names, IDs, price
+   constraints, request wrappers, filler, rejected intent, generic service words, and provider/listing
+   metadata. When a follow-up adds a scope, attach it to the previous capability as one phrase. Return
+   1–5 concise, deduplicated phrases; if no capability or output is requested, MUST return
+   `"keywords": []`.
 
 #### Examples
 
@@ -67,7 +68,7 @@ onchainos agent service-match \
   --limit <1..10>
 ```
 
-Use the requested limit; otherwise **MUST** pass `--limit 3`.
+Use the requested limit; otherwise **MUST** pass `--limit 3`, **NEVER** use another value.
 
 ### Read the result
 
