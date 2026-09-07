@@ -63,7 +63,7 @@ in order.
 
 ## Services for an explicit Agent ID
 
-For ASPs only, run:
+For ASPs only, immediately after rendering the Agent detail above, run:
 
 ```bash
 onchainos agent service-list --agent-id <id> --page 1 --page-size 3
