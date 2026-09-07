@@ -13,6 +13,36 @@ fn authoritative_title<'a>(ctx: &'a FlowContext<'_>) -> &'a str {
         .unwrap_or("Task title unavailable")
 }
 
+fn message_text(message: Option<&serde_json::Value>, key: &str) -> Option<String> {
+    message
+        .and_then(|value| value.get(key))
+        .and_then(|value| match value {
+            serde_json::Value::String(value) if !value.trim().is_empty() => {
+                Some(value.trim().to_string())
+            }
+            serde_json::Value::Number(value) => Some(value.to_string()),
+            _ => None,
+        })
+}
+
+fn message_i64(message: Option<&serde_json::Value>, key: &str) -> Option<i64> {
+    message.and_then(|value| value.get(key)).and_then(|value| {
+        value
+            .as_i64()
+            .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
+    })
+}
+
+fn service_name(ctx: &FlowContext<'_>, message: Option<&serde_json::Value>) -> String {
+    ctx.prefetched
+        .and_then(|value| value.service_name.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| message_text(message, "serviceName"))
+        .unwrap_or_else(|| authoritative_title(ctx).to_string())
+}
+
 fn final_refund_notice(
     ctx: &FlowContext<'_>,
     message: Option<&serde_json::Value>,
@@ -177,14 +207,21 @@ fn expired_terminal_result(ctx: &FlowContext<'_>, cause: &str) -> String {
     }
 
     let (content, complete) = final_refund_notice(ctx, None, true, 8);
-    notify_refund_result(ctx, &format!("{content}\n- Timeout result: {cause}"), complete)
+    notify_refund_result(
+        ctx,
+        &format!("{content}\n- Timeout result: {cause}"),
+        complete,
+    )
 }
 
 pub(crate) fn job_expired(ctx: &FlowContext<'_>) -> String {
     expired_terminal_result(ctx, "A task deadline elapsed")
 }
 
-pub(crate) fn job_asp_accept_expire(ctx: &FlowContext<'_>) -> String {
+pub(crate) fn job_asp_accept_expire(
+    ctx: &FlowContext<'_>,
+    message: Option<&serde_json::Value>,
+) -> String {
     let Some(detail) = ctx.prefetched else {
         let content = format!(
             "[ASP Acceptance Timeout Detail Incomplete] {} (`{}`): fresh authoritative task detail does not prove buyer-owned Expired(8). Do not report refund settlement and do not initiate any buyer-side refund claim or finalization.",
@@ -200,11 +237,11 @@ pub(crate) fn job_asp_accept_expire(ctx: &FlowContext<'_>) -> String {
         return notify_and_end(&content);
     }
 
-    let (task_type, is_trial) = match detail.job_type {
-        Some(0) => ("One-time task (0)", false),
+    let (is_subscription, is_trial) = match detail.job_type {
+        Some(0) => (false, false),
         Some(1) => match detail.trial_type {
-            Some(0) => ("Subscription (1)", false),
-            Some(1) => ("Subscription (1)", true),
+            Some(0) => (true, false),
+            Some(1) => (true, true),
             _ => {
                 let content = format!(
                     "[ASP Acceptance Timeout Detail Incomplete] {} (`{}`): fresh authoritative subscription detail is missing a supported trialType. Do not claim that refundable escrow was collected or returned.",
@@ -221,7 +258,7 @@ pub(crate) fn job_asp_accept_expire(ctx: &FlowContext<'_>) -> String {
             return notify_and_end(&content);
         }
     };
-    let title = detail.title.trim();
+    let service_name = service_name(ctx, message);
     let provider_name = detail
         .provider_name
         .as_deref()
@@ -249,23 +286,30 @@ pub(crate) fn job_asp_accept_expire(ctx: &FlowContext<'_>) -> String {
 
     let content = super::super::content::job_asp_accept_expire_user_notify(
         ctx.job_id,
-        if title.is_empty() { "Task title unavailable" } else { title },
-        task_type,
+        &service_name,
+        is_subscription,
         provider_name,
         provider_agent_id,
-        if amount.is_empty() { "unavailable" } else { amount },
+        if amount.is_empty() {
+            "unavailable"
+        } else {
+            amount
+        },
         if token_symbol.is_empty() || token_symbol == "?" {
             "token symbol unavailable"
         } else {
             token_symbol
         },
-        paid_refund_confirmed,
+        !zero_amount,
         is_trial,
     );
     notify_and_end_terminal(&content, &ctx.terminal_session_hint)
 }
 
-pub(crate) fn job_asp_reject_expire(ctx: &FlowContext<'_>) -> String {
+pub(crate) fn job_asp_reject_expire(
+    ctx: &FlowContext<'_>,
+    message: Option<&serde_json::Value>,
+) -> String {
     let authoritative_refund_complete = ctx.prefetched.is_some_and(|detail| {
         detail.status == Some(9)
             && detail.user_agent_id.as_deref() == Some(ctx.agent_id)
@@ -278,9 +322,28 @@ pub(crate) fn job_asp_reject_expire(ctx: &FlowContext<'_>) -> String {
         );
         return notify_and_end(&content);
     }
+    let detail = ctx.prefetched.expect("checked above");
+    let is_subscription = match detail.job_type {
+        Some(0) => false,
+        Some(1) => true,
+        _ => {
+            let content = format!(
+                "[Automatic Refund Detail Incomplete] {} (`{}`): fresh task detail is missing a supported jobType.",
+                authoritative_title(ctx), ctx.job_id
+            );
+            return notify_and_end(&content);
+        }
+    };
+    let amount = detail.token_amount.trim();
+    let token_symbol = detail.token_symbol.trim();
     let content = super::super::content::job_asp_reject_expire_user_notify(
         ctx.job_id,
-        authoritative_title(ctx),
+        &service_name(ctx, message),
+        amount,
+        token_symbol,
+        message_i64(message, "rejectWindowEndsAt"),
+        is_subscription,
+        !super::super::refund_v2::is_zero_decimal(amount),
     );
     notify_and_end_terminal(&content, &ctx.terminal_session_hint)
 }
@@ -289,7 +352,85 @@ pub(crate) fn job_asp_reject_closed(
     ctx: &FlowContext<'_>,
     message: Option<&serde_json::Value>,
 ) -> String {
-    closed_notice(ctx, message)
+    let Some(detail) = ctx.prefetched else {
+        let content = format!(
+            "[Job Close Detail Incomplete] {} (`{}`): fresh authoritative detail is unavailable.",
+            authoritative_title(ctx),
+            ctx.job_id
+        );
+        return notify_and_end(&content);
+    };
+    if detail.status != Some(7) || detail.user_agent_id.as_deref() != Some(ctx.agent_id) {
+        let content = format!(
+            "[Job Close Detail Incomplete] {} (`{}`): fresh authoritative detail does not prove Closed(7) ownership by the current User Agent.",
+            authoritative_title(ctx), ctx.job_id
+        );
+        return notify_and_end(&content);
+    }
+
+    let service_name = service_name(ctx, message);
+    let amount = detail.token_amount.trim();
+    let token_symbol = detail.token_symbol.trim();
+    let provider_name = detail
+        .provider_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("ASP");
+    let provider_agent_id = detail
+        .provider_agent_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("unavailable");
+    let reason = message_text(message, "aspRejectReason")
+        .or_else(|| message_text(message, "reason"))
+        .unwrap_or_else(|| "No reason provided".to_string());
+
+    let content = match detail.job_type {
+        Some(0) => super::super::content::regular_job_asp_reject_closed_user_notify(
+            &service_name,
+            ctx.job_id,
+            amount,
+            token_symbol,
+            provider_name,
+            provider_agent_id,
+            &reason,
+            !super::super::refund_v2::is_zero_decimal(amount),
+        ),
+        Some(1) => {
+            let trial_type = message_i64(message, "trialType").or(detail.trial_type);
+            let is_trial = match trial_type {
+                Some(0) => false,
+                Some(1) => true,
+                _ => {
+                    let content = format!(
+                        "[Job Close Detail Incomplete] {} (`{}`): subscription notification is missing a supported trialType.",
+                        authoritative_title(ctx), ctx.job_id
+                    );
+                    return notify_and_end(&content);
+                }
+            };
+            super::super::content::subscription_job_asp_reject_closed_user_notify(
+                &service_name,
+                ctx.job_id,
+                amount,
+                token_symbol,
+                provider_name,
+                provider_agent_id,
+                &reason,
+                is_trial,
+            )
+        }
+        _ => {
+            let content = format!(
+                "[Job Close Detail Incomplete] {} (`{}`): fresh task detail is missing a supported jobType.",
+                authoritative_title(ctx), ctx.job_id
+            );
+            return notify_and_end(&content);
+        }
+    };
+    notify_and_end_terminal(&content, &ctx.terminal_session_hint)
 }
 
 pub(crate) fn job_closed(ctx: &FlowContext<'_>, message: Option<&serde_json::Value>) -> String {
@@ -331,7 +472,10 @@ fn closed_notice(ctx: &FlowContext<'_>, message: Option<&serde_json::Value>) -> 
 // --- Timeouts / auto-completion ---------------------------------------
 
 pub(crate) async fn submit_expired(ctx: &FlowContext<'_>) -> String {
-    expired_terminal_result(ctx, "The ASP did not submit the deliverable before the deadline")
+    expired_terminal_result(
+        ctx,
+        "The ASP did not submit the deliverable before the deadline",
+    )
 }
 
 pub(crate) fn reject_expired(ctx: &FlowContext<'_>) -> String {

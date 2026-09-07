@@ -521,52 +521,43 @@ pub fn sub_user_reject_asp_decision_copy(
 
 /// `job_asp_accept_expire` — subscription-task copy.
 pub fn subscription_job_asp_accept_expire_asp_notify(
-    job_name: &str,
+    service_name: &str,
     job_id: &str,
     amount: &str,
     token_symbol: &str,
     is_trial: bool,
     is_paid: bool,
 ) -> String {
-    let payment = if is_trial {
-        "No refundable funds were collected during the trial, so no refund action is required."
-            .to_string()
-    } else if is_paid {
+    if is_trial {
         format!(
-            "Escrowed amount: {amount} {token_symbol}\nAuthoritative Expired(8) confirms that the backend completed the full refund and the funds have reached the Buyer. No client-side claim is required."
+            "[Job Expired] You did not process {service_name} within 3 hours, so the job expired.\n\n\
+             Job ID: {job_id}\n\
+             Job status: Expired\n\n\
+             Neither the subscription nor the free trial began. No further action is required."
         )
     } else {
-        "No refundable funds were collected, so no refund action is required.".to_string()
-    };
-    format!(
-        "[Assignment Expired] You did not accept {job_name} before the deadline.\n\
-         Job ID: {job_id}\n\
-         Job status: Expired (8)\n\
-         {payment}\n\
-         No further service delivery is required."
-    )
+        let payment = if is_paid {
+            format!(
+                " The escrowed amount of {amount} {token_symbol} will be returned to the User Agent’s wallet."
+            )
+        } else {
+            String::new()
+        };
+        format!(
+            "[Job Expired] You did not process {service_name} within 3 hours, so the job expired.\n\n\
+             Job ID: {job_id}\n\
+             Job status: Expired\n\n\
+             The subscription did not begin.{payment} No further action is required."
+        )
+    }
 }
 
 /// `job_asp_accept_expire` — ordinary-task copy, split by whether payment was made.
-pub fn regular_job_asp_accept_expire_asp_notify(
-    job_name: &str,
-    job_id: &str,
-    amount: &str,
-    token_symbol: &str,
-    is_paid: bool,
-) -> String {
-    let payment = if is_paid {
-        format!(
-            "\nEscrowed amount: {amount} {token_symbol}\nAuthoritative Expired(8) confirms that the backend completed the full refund and the funds have reached the Buyer. No client-side claim is required."
-        )
-    } else {
-        "\nNo refundable funds were collected, so no refund action is required.".to_string()
-    };
+pub fn regular_job_asp_accept_expire_asp_notify(service_name: &str, job_id: &str) -> String {
     format!(
-        "[Assignment Expired] You did not accept {job_name} before the deadline.\n\n\
+        "[Job Expired] You did not process {service_name} within 3 hours, so the job expired.\n\n\
          Job ID: {job_id}\n\
-         Job status: Expired (8){payment}\n\
-         No further service delivery is required."
+         Job status: Expired"
     )
 }
 
@@ -603,12 +594,12 @@ pub fn job_delivery_expire_asp_notify(
 
 /// `job_asp_reject_closed` — subscription-task copy.
 pub fn subscription_job_asp_reject_closed_asp_notify(
-    job_name: &str,
+    service_name: &str,
     job_id: &str,
     reason: &str,
 ) -> String {
     format!(
-        "[Task Declined] You have declined {job_name}.\n\
+        "[Task Declined] You have declined {service_name}.\n\
          Job ID: {job_id}\n\
          Reason: {reason}"
     )
@@ -616,12 +607,12 @@ pub fn subscription_job_asp_reject_closed_asp_notify(
 
 /// `job_asp_reject_closed` — ordinary-task copy (the price does not change it).
 pub fn regular_job_asp_reject_closed_asp_notify(
-    job_name: &str,
+    service_name: &str,
     job_id: &str,
     reason: &str,
 ) -> String {
     format!(
-        "[Job Declined] You have declined {job_name}.\n\n\
+        "[Job Declined] You have declined {service_name}.\n\n\
          Job ID: {job_id}\n\
          Reason: {reason}\n\
          Job status: Closed"
@@ -630,40 +621,45 @@ pub fn regular_job_asp_reject_closed_asp_notify(
 
 /// `job_asp_reject_expire` — subscription-task copy.
 pub fn subscription_job_asp_reject_expire_asp_notify(
-    job_name: &str,
+    service_name: &str,
     job_id: &str,
     amount: &str,
     token_symbol: &str,
+    reject_window_ends_at: Option<i64>,
 ) -> String {
+    let deadline = fmt_epoch(reject_window_ends_at).unwrap_or_else(|| "Unavailable".to_string());
     format!(
-        "[Refund Result Unverified] A refund-response-timeout notice was received for {job_name}. Fresh subscription status is Failed (9), but that status also covers charge or conversion failures; this caller-supplied event does not prove that {amount} {token_symbol} was refunded to the Buyer.\n\
+        "[Automatic Refund Processing] You did not respond to the refund request for {service_name} by the deadline. {amount} {token_symbol} will be returned to the User Agent’s wallet.\n\n\
          Job ID: {job_id}\n\
-         Job status: Failed (9)\n\
-         No further service delivery or refund response is required. Verify the authoritative settlement result before reporting refund completion."
+         Response deadline: {deadline}\n\
+         Job status: Failed\n\
+         No further service delivery is required."
     )
 }
 
 /// `job_asp_reject_expire` — ordinary-task copy, split by whether payment was made.
 pub fn regular_job_asp_reject_expire_asp_notify(
-    job_name: &str,
+    service_name: &str,
     job_id: &str,
     amount: &str,
     token_symbol: &str,
+    reject_window_ends_at: Option<i64>,
     is_paid: bool,
 ) -> String {
+    let deadline = fmt_epoch(reject_window_ends_at).unwrap_or_else(|| "Unavailable".to_string());
     if is_paid {
         format!(
-            "[Automatic Refund Completed] You did not process the refund request for {job_name} by the deadline. The backend completed the automatic full refund of {amount} {token_symbol} to the Buyer.\n\n\
+            "[Automatic Refund Processing] You did not respond to the refund request for {service_name} by the deadline. {amount} {token_symbol} will be returned to the User Agent’s wallet.\n\n\
              Job ID: {job_id}\n\
-             Job status: Failed (9)\n\
-             No further service delivery or refund response is required."
+             Response deadline: {deadline}\n\
+             Job status: Failed"
         )
     } else {
         format!(
-            "[Refund Response Expired] You did not process the refund request for {job_name} by the deadline. No paid amount needs to be returned.\n\n\
+            "[Refund Response Timed Out] You did not respond to the refund request for {service_name} by the deadline. No charges were incurred, so no refund is required.\n\n\
              Job ID: {job_id}\n\
-             Job status: Failed (9)\n\
-             No further service delivery or refund response is required."
+             Response deadline: {deadline}\n\
+             Job status: Failed"
         )
     }
 }
@@ -699,7 +695,18 @@ mod tests {
                 false,
                 true,
             ),
-            "[Assignment Expired] You did not accept BTC Signals before the deadline.\nJob ID: job-1\nJob status: Expired (8)\nEscrowed amount: 12.34 USDT\nAuthoritative Expired(8) confirms that the backend completed the full refund and the funds have reached the Buyer. No client-side claim is required.\nNo further service delivery is required."
+            "[Job Expired] You did not process BTC Signals within 3 hours, so the job expired.\n\nJob ID: job-1\nJob status: Expired\n\nThe subscription did not begin. The escrowed amount of 12.34 USDT will be returned to the User Agent’s wallet. No further action is required."
+        );
+        assert_eq!(
+            subscription_job_asp_accept_expire_asp_notify(
+                "BTC Signals",
+                "job-1",
+                "12.34",
+                "USDT",
+                true,
+                false,
+            ),
+            "[Job Expired] You did not process BTC Signals within 3 hours, so the job expired.\n\nJob ID: job-1\nJob status: Expired\n\nNeither the subscription nor the free trial began. No further action is required."
         );
         assert_eq!(
             subscription_job_asp_reject_closed_asp_notify(
@@ -715,8 +722,9 @@ mod tests {
                 "job-1",
                 "12.34",
                 "USDT",
+                Some(1_700_000_000),
             ),
-            "[Refund Result Unverified] A refund-response-timeout notice was received for BTC Signals. Fresh subscription status is Failed (9), but that status also covers charge or conversion failures; this caller-supplied event does not prove that 12.34 USDT was refunded to the Buyer.\nJob ID: job-1\nJob status: Failed (9)\nNo further service delivery or refund response is required. Verify the authoritative settlement result before reporting refund completion."
+            "[Automatic Refund Processing] You did not respond to the refund request for BTC Signals by the deadline. 12.34 USDT will be returned to the User Agent’s wallet.\n\nJob ID: job-1\nResponse deadline: 2023-11-14 22:13 UTC\nJob status: Failed\nNo further service delivery is required."
         );
         assert_eq!(
             sub_asp_claim_notify_asp_notify(
@@ -729,10 +737,8 @@ mod tests {
             "[Income Collected] The system has automatically collected subscription income of 12.34 USDT for BTC Signals. Please monitor your wallet balance.\n\nJob ID: job-1\nTransaction: 0xreceive"
         );
         assert_eq!(
-            regular_job_asp_accept_expire_asp_notify(
-                "One-off analysis", "job-2", "0", "USDT", false,
-            ),
-            "[Assignment Expired] You did not accept One-off analysis before the deadline.\n\nJob ID: job-2\nJob status: Expired (8)\nNo refundable funds were collected, so no refund action is required.\nNo further service delivery is required."
+            regular_job_asp_accept_expire_asp_notify("One-off analysis", "job-2"),
+            "[Job Expired] You did not process One-off analysis within 3 hours, so the job expired.\n\nJob ID: job-2\nJob status: Expired"
         );
         assert_eq!(
             regular_job_asp_reject_closed_asp_notify("One-off analysis", "job-2", "policy"),
@@ -740,15 +746,25 @@ mod tests {
         );
         assert_eq!(
             regular_job_asp_reject_expire_asp_notify(
-                "One-off analysis", "job-2", "5", "USDT", true,
+                "One-off analysis",
+                "job-2",
+                "5",
+                "USDT",
+                Some(1_700_000_000),
+                true,
             ),
-            "[Automatic Refund Completed] You did not process the refund request for One-off analysis by the deadline. The backend completed the automatic full refund of 5 USDT to the Buyer.\n\nJob ID: job-2\nJob status: Failed (9)\nNo further service delivery or refund response is required."
+            "[Automatic Refund Processing] You did not respond to the refund request for One-off analysis by the deadline. 5 USDT will be returned to the User Agent’s wallet.\n\nJob ID: job-2\nResponse deadline: 2023-11-14 22:13 UTC\nJob status: Failed"
         );
         assert_eq!(
             regular_job_asp_reject_expire_asp_notify(
-                "One-off analysis", "job-3", "0", "USDT", false,
+                "One-off analysis",
+                "job-3",
+                "0",
+                "USDT",
+                Some(1_700_000_000),
+                false,
             ),
-            "[Refund Response Expired] You did not process the refund request for One-off analysis by the deadline. No paid amount needs to be returned.\n\nJob ID: job-3\nJob status: Failed (9)\nNo further service delivery or refund response is required."
+            "[Refund Response Timed Out] You did not respond to the refund request for One-off analysis by the deadline. No charges were incurred, so no refund is required.\n\nJob ID: job-3\nResponse deadline: 2023-11-14 22:13 UTC\nJob status: Failed"
         );
     }
 

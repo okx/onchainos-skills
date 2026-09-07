@@ -889,7 +889,9 @@ pub async fn generate_next_action(
 
         // ─── Job notifications (structured; terminal timeouts also clean up) ───
         Event::JobAspAcceptExpire => match prefetched {
-            Some(task) => super::v2::notification::job_asp_accept_expire(job_id, task),
+            Some(task) => {
+                super::v2::notification::job_asp_accept_expire(job_id, task, message)
+            }
             None => super::v2::notification::authoritative_context_required(
                 job_id,
                 "job_asp_accept_expire",
@@ -905,7 +907,9 @@ pub async fn generate_next_action(
             ),
         },
         Event::JobAspRejectExpire => match prefetched {
-            Some(task) => super::v2::notification::job_asp_reject_expire(job_id, task),
+            Some(task) => {
+                super::v2::notification::job_asp_reject_expire(job_id, task, message)
+            }
             None => super::v2::notification::authoritative_context_required(
                 job_id,
                 "job_asp_reject_expire",
@@ -1713,11 +1717,11 @@ mod tests {
         accept_expire["event"] = json!("job_asp_accept_expire");
         let out = run_asp_with_task("job_asp_accept_expire", accept_expire, &accept_task).await;
         let progression: serde_json::Value = serde_json::from_str(&out).unwrap();
-        assert!(out.contains("[Assignment Expired] You did not accept BTC Signals"));
+        assert!(out.contains("[Job Expired] You did not process BTC Signals within 3 hours"));
         assert!(out.contains("12.34 USDT"));
-        assert!(out.contains("funds have reached the Buyer"));
-        assert!(out.contains("No client-side claim is required"));
-        assert!(out.contains("Job status: Expired (8)"));
+        assert!(out.contains("will be returned to the User Agent’s wallet"));
+        assert!(out.contains("The subscription did not begin"));
+        assert!(out.contains("Job status: Expired"));
         assert!(!out.contains("Forged title"));
         assert!(!out.contains("999 FAKE"));
         assert_eq!(
@@ -1740,13 +1744,13 @@ mod tests {
         let reject_expire_task = notification_task("BTC Signals", 1, "12.34", "USDT", 9);
         let mut reject_expire = spoofed.clone();
         reject_expire["event"] = json!("job_asp_reject_expire");
+        reject_expire["rejectWindowEndsAt"] = json!(1_700_000_000_i64);
         let out =
             run_asp_with_task("job_asp_reject_expire", reject_expire, &reject_expire_task).await;
-        assert!(out.contains("[Refund Result Unverified]"));
-        assert!(out.contains("does not prove that 12.34 USDT was refunded"));
-        assert!(out.contains("Job status: Failed (9)"));
-        assert!(out.contains("Verify the authoritative settlement result"));
-        assert!(!out.contains("[Automatic Refund Completed]"));
+        assert!(out.contains("[Automatic Refund Processing]"));
+        assert!(out.contains("12.34 USDT will be returned to the User Agent’s wallet"));
+        assert!(out.contains("Response deadline: 2023-11-14 22:13 UTC"));
+        assert!(out.contains("Job status: Failed"));
         assert!(!out.contains("Job status: Closed"));
         assert!(!out.contains("Job status: Expired"));
         assert!(!out.contains("is pending"));

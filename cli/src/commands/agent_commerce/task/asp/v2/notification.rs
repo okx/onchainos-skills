@@ -11,6 +11,14 @@ fn display_field(message: Option<&serde_json::Value>, key: &str) -> Option<Strin
         })
 }
 
+fn display_i64(message: Option<&serde_json::Value>, key: &str) -> Option<i64> {
+    message.and_then(|value| value.get(key)).and_then(|value| {
+        value
+            .as_i64()
+            .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
+    })
+}
+
 fn job_name(message: Option<&serde_json::Value>) -> String {
     ["jobTitle", "jobName"]
         .into_iter()
@@ -52,6 +60,16 @@ fn authoritative_task_kind(task: &PreFetchedTaskContext) -> Option<bool> {
     }
 }
 
+fn service_name(task: &PreFetchedTaskContext, message: Option<&serde_json::Value>) -> String {
+    task.service_name
+        .as_deref()
+        .and_then(authoritative_field)
+        .map(ToOwned::to_owned)
+        .or_else(|| display_field(message, "serviceName"))
+        .or_else(|| authoritative_field(&task.title).map(ToOwned::to_owned))
+        .unwrap_or_else(|| "Service unavailable".to_string())
+}
+
 fn notification_result(job_id: &str, event: &str, notification: String) -> String {
     serde_json::json!({
         "phase": "notification",
@@ -82,11 +100,7 @@ fn notification_result(job_id: &str, event: &str, notification: String) -> Strin
 /// Reuse the established ASP terminal-notification action contract. The action
 /// ID is legacy-named for subscriptions, but its payload is job-scoped and the
 /// consumer performs the required notify + session-cleanup sequence.
-fn terminal_notification_result(
-    job_id: &str,
-    event: &str,
-    notification: String,
-) -> String {
+fn terminal_notification_result(job_id: &str, event: &str, notification: String) -> String {
     serde_json::json!({
         "phase": "notification",
         "decision": "ready",
@@ -135,11 +149,15 @@ pub(crate) fn authoritative_context_required(
     .to_string()
 }
 
-pub(crate) fn job_asp_accept_expire(job_id: &str, task: &PreFetchedTaskContext) -> String {
+pub(crate) fn job_asp_accept_expire(
+    job_id: &str,
+    task: &PreFetchedTaskContext,
+    message: Option<&serde_json::Value>,
+) -> String {
     if task.status != Some(8) {
         return authoritative_context_required(job_id, "job_asp_accept_expire", &["status"]);
     }
-    let job_name = authoritative_field(&task.title).unwrap_or("Task title unavailable");
+    let service_name = service_name(task, message);
     let Some(is_subscription) = authoritative_task_kind(task) else {
         return authoritative_context_required(job_id, "job_asp_accept_expire", &["jobType"]);
     };
@@ -174,7 +192,7 @@ pub(crate) fn job_asp_accept_expire(job_id: &str, task: &PreFetchedTaskContext) 
     let token_symbol = authoritative_field(&task.token_symbol).unwrap_or("payment token");
     let notification = if is_subscription {
         content::subscription_job_asp_accept_expire_asp_notify(
-            job_name,
+            &service_name,
             job_id,
             amount,
             token_symbol,
@@ -182,13 +200,7 @@ pub(crate) fn job_asp_accept_expire(job_id: &str, task: &PreFetchedTaskContext) 
             paid,
         )
     } else {
-        content::regular_job_asp_accept_expire_asp_notify(
-            job_name,
-            job_id,
-            amount,
-            token_symbol,
-            paid,
-        )
+        content::regular_job_asp_accept_expire_asp_notify(&service_name, job_id)
     };
     terminal_notification_result(job_id, "job_asp_accept_expire", notification)
 }
@@ -241,9 +253,7 @@ pub(crate) fn job_asp_reject_closed(
     task: &PreFetchedTaskContext,
     message: Option<&serde_json::Value>,
 ) -> String {
-    let Some(job_name) = authoritative_field(&task.title) else {
-        return authoritative_context_required(job_id, "job_asp_reject_closed", &["title"]);
-    };
+    let service_name = service_name(task, message);
     let Some(is_subscription) = authoritative_task_kind(task) else {
         return authoritative_context_required(job_id, "job_asp_reject_closed", &["jobType"]);
     };
@@ -251,20 +261,22 @@ pub(crate) fn job_asp_reject_closed(
         .or_else(|| display_field(message, "reason"))
         .unwrap_or_else(|| "No reason provided".to_string());
     let notification = if is_subscription {
-        content::subscription_job_asp_reject_closed_asp_notify(job_name, job_id, &reason)
+        content::subscription_job_asp_reject_closed_asp_notify(&service_name, job_id, &reason)
     } else {
-        content::regular_job_asp_reject_closed_asp_notify(job_name, job_id, &reason)
+        content::regular_job_asp_reject_closed_asp_notify(&service_name, job_id, &reason)
     };
     notification_result(job_id, "job_asp_reject_closed", notification)
 }
 
-pub(crate) fn job_asp_reject_expire(job_id: &str, task: &PreFetchedTaskContext) -> String {
+pub(crate) fn job_asp_reject_expire(
+    job_id: &str,
+    task: &PreFetchedTaskContext,
+    message: Option<&serde_json::Value>,
+) -> String {
     if task.status != Some(9) {
         return authoritative_context_required(job_id, "job_asp_reject_expire", &["status"]);
     }
-    let Some(job_name) = authoritative_field(&task.title) else {
-        return authoritative_context_required(job_id, "job_asp_reject_expire", &["title"]);
-    };
+    let service_name = service_name(task, message);
     let Some(is_subscription) = authoritative_task_kind(task) else {
         return authoritative_context_required(job_id, "job_asp_reject_expire", &["jobType"]);
     };
@@ -278,17 +290,19 @@ pub(crate) fn job_asp_reject_expire(job_id: &str, task: &PreFetchedTaskContext) 
     }
     let notification = if is_subscription {
         content::subscription_job_asp_reject_expire_asp_notify(
-            job_name,
+            &service_name,
             job_id,
             amount,
             token_symbol,
+            display_i64(message, "rejectWindowEndsAt"),
         )
     } else {
         content::regular_job_asp_reject_expire_asp_notify(
-            job_name,
+            &service_name,
             job_id,
             amount,
             token_symbol,
+            display_i64(message, "rejectWindowEndsAt"),
             paid,
         )
     };
@@ -328,6 +342,7 @@ mod tests {
     ) -> PreFetchedTaskContext {
         let mut context = PreFetchedTaskContext::from_api_response(&json!({
             "title": title,
+            "serviceName": format!("{title} service"),
             "jobType": job_type,
             "paymentTokenAmount": token_amount,
             "tokenSymbol": token_symbol,
@@ -340,9 +355,9 @@ mod tests {
     }
 
     #[test]
-    fn regular_paid_accept_expiry_reports_arrival_and_uses_terminal_cleanup_action() {
+    fn regular_paid_accept_expiry_matches_spec_and_uses_terminal_cleanup_action() {
         let task = task_context("Audit", 0, "5", "USDT", 8);
-        let output = parse(job_asp_accept_expire("job-1", &task));
+        let output = parse(job_asp_accept_expire("job-1", &task, None));
 
         assert_eq!(output["phase"], "notification");
         assert_eq!(output["decision"], "ready");
@@ -355,11 +370,11 @@ mod tests {
         assert!(output["payload"]["notification"]["content"]
             .as_str()
             .unwrap()
-            .contains("Escrowed amount: 5 USDT"));
+            .contains("You did not process Audit service within 3 hours"));
         assert!(output["payload"]["notification"]["content"]
             .as_str()
             .unwrap()
-            .contains("funds have reached the Buyer"));
+            .contains("Job status: Expired"));
         assert_eq!(output["payload"]["cleanup"]["jobId"], "job-1");
     }
 
@@ -380,7 +395,7 @@ mod tests {
             .unwrap();
 
         assert!(content.contains("[Task Declined]"));
-        assert!(content.contains("Authoritative audit"));
+        assert!(content.contains("Authoritative audit service"));
         assert!(content.contains("Reason: capacity unavailable"));
         assert!(!content.contains("Forged title"));
     }
@@ -388,17 +403,18 @@ mod tests {
     #[test]
     fn reject_expire_uses_fresh_failed_authoritative_fields() {
         let task = task_context("Authoritative audit", 1, "5", "USDT", 9);
-        let output = parse(job_asp_reject_expire("job-1", &task));
+        let event = json!({ "rejectWindowEndsAt": 1_700_000_000 });
+        let output = parse(job_asp_reject_expire("job-1", &task, Some(&event)));
         let content = output["payload"]["notification"]["content"]
             .as_str()
             .unwrap();
 
-        assert!(content.contains("Authoritative audit"));
+        assert!(content.contains("Authoritative audit service"));
         assert!(content.contains("5 USDT"));
-        assert!(content.contains("Refund Result Unverified"));
-        assert!(content.contains("does not prove that 5 USDT was refunded"));
-        assert!(content.contains("Job status: Failed (9)"));
-        assert!(content.contains("Verify the authoritative settlement result"));
+        assert!(content.contains("Automatic Refund Processing"));
+        assert!(content.contains("will be returned to the User Agent’s wallet"));
+        assert!(content.contains("Response deadline: 2023-11-14 22:13 UTC"));
+        assert!(content.contains("Job status: Failed"));
         assert!(!content.contains("Job status: Closed"));
         assert!(!content.contains("Job status: Expired"));
         assert!(!content.contains("is pending"));
@@ -407,7 +423,7 @@ mod tests {
     #[test]
     fn unsupported_authoritative_job_type_blocks_notification() {
         let task = task_context("Audit", 2, "5", "USDT", 9);
-        let output = parse(job_asp_reject_expire("job-1", &task));
+        let output = parse(job_asp_reject_expire("job-1", &task, None));
 
         assert_eq!(output["decision"], "blocked");
         assert_eq!(output["reason"], "authoritative_task_context_required");
@@ -439,20 +455,21 @@ mod tests {
     fn trial_and_zero_subscription_expiry_are_terminal_without_refund_claim() {
         let mut trial = task_context("Trial signals", 1, "12.34", "USDT", 8);
         trial.trial_type = Some(1);
-        let trial = parse(job_asp_accept_expire("job-1", &trial));
+        let trial = parse(job_asp_accept_expire("job-1", &trial, None));
         let content = trial["payload"]["notification"]["content"]
             .as_str()
             .unwrap();
-        assert!(content.contains("No refundable funds were collected during the trial"));
+        assert!(content.contains("Neither the subscription nor the free trial began"));
         assert!(!content.contains("funds have reached the Buyer"));
-        assert_eq!(trial["nextAction"][0]["id"], "notify_and_cleanup_subscription");
+        assert_eq!(
+            trial["nextAction"][0]["id"],
+            "notify_and_cleanup_subscription"
+        );
 
         let zero = task_context("Free signals", 1, "0.000", "USDT", 8);
-        let zero = parse(job_asp_accept_expire("job-2", &zero));
-        let content = zero["payload"]["notification"]["content"]
-            .as_str()
-            .unwrap();
-        assert!(content.contains("No refundable funds were collected"));
+        let zero = parse(job_asp_accept_expire("job-2", &zero, None));
+        let content = zero["payload"]["notification"]["content"].as_str().unwrap();
+        assert!(content.contains("The subscription did not begin"));
         assert!(!content.contains("funds have reached the Buyer"));
     }
 
