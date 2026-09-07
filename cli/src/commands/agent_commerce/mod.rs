@@ -4433,29 +4433,9 @@ fn arbitration_decision_is_stale(
     }
 }
 
-/// Returns a warning text when inconsistent (used to prepend to the top of the script output).
-///
-/// Trigger scenarios: delayed system event, prior CLI operations have already advanced the status further;
 /// Most network failures degrade to no prefetch. Active-subscription startup
 /// notifications are stricter: they require authoritative detail and are blocked
 /// on fetch error.
-fn stale_state_warning(
-    job_id: &str,
-    event: &str,
-    expected: &str,
-    actual: &str,
-) -> String {
-    format!(
-        "🛑 **Stale state — playbook blocked** (next-action's event arg is inconsistent with the task's real status; not emitting steps to prevent on-chain action on a stale event).\n\n\
-         - You passed event = `{event}` (expected task status = `{expected}`)\n\
-         - But task {job_id} real statusStr = `{actual}`\n\n\
-         **MUST do**:\n\
-         - If the current inbound is a **system event**, ignore this stale notification and end the turn immediately.\n\
-         - If the current inbound is a **P2P message** (a2a-agent-chat), re-match only a protocol pseudo-event carried by the message content (for example, `[intent:deliver]` → `deliverable_received`).\n\n\
-         **MUST NOT**: do NOT rewrite the event to `{actual}`; do NOT call `next-action` again; do NOT call any task CLI or `user-notify`; do NOT replay terminal notification, rating, delivery intake, or cleanup.\n"
-    )
-}
-
 async fn check_status_freshness(
     job_id: &str,
     job_status_or_event: &str,
@@ -4877,47 +4857,6 @@ async fn check_status_freshness(
         return (None, Some(ctx));
     }
 
-    // Stop stale system events before any recovery or persistence. In
-    // particular, a delayed job_submitted event must not save the same
-    // deliverable again after the task has already completed.
-    if is_prefetch_only || is_subscription_event {
-        return (None, Some(ctx));
-    }
-    let actual = match resp
-        .get("status")
-        .and_then(|v| {
-            v.as_i64()
-                .or_else(|| v.as_str().and_then(|value| value.parse().ok()))
-        })
-        .and_then(|v| i32::try_from(v).ok())
-    {
-        Some(s) => Status::from_int(s),
-        None => return (None, Some(ctx)),
-    };
-    let actual_str = actual.as_str().to_string();
-    let dispute_resolved_ok = matches!(event, Event::DisputeResolved)
-        && matches!(actual, Status::Completed | Status::Failed);
-
-    if DEBUG_LOG {
-        eprintln!(
-            "[check-freshness] job_id={job_id}, event={job_status_or_event}, expected_status={}, actual_status={actual_str}, match={}",
-            expected.as_str(),
-            actual == expected || dispute_resolved_ok,
-        );
-    }
-
-    if actual != expected && !dispute_resolved_ok {
-        return (
-            Some(stale_state_warning(
-                job_id,
-                job_status_or_event,
-                expected.as_str(),
-                &actual_str,
-            )),
-            Some(ctx),
-        );
-    }
-
     // For job_submitted: prefer an unprocessed spool delivery over an existing
     // manifest. This event belongs to a one-time task; subscription deliveries
     // use their own event flow and must never be routed from this recovery path.
@@ -4971,7 +4910,51 @@ async fn check_status_freshness(
         }
     }
 
-    (None, Some(ctx))
+    let prefetched = Some(ctx);
+
+    // Pre-fetch-only events + display-class sub_* events: return data without freshness validation.
+    if is_prefetch_only || is_subscription_event {
+        return (None, prefetched);
+    }
+
+    // Freshness validation for chain events.
+    let actual = match resp
+        .get("status")
+        .and_then(|v| {
+            v.as_i64()
+                .or_else(|| v.as_str().and_then(|value| value.parse().ok()))
+        })
+        .and_then(|v| i32::try_from(v).ok())
+    {
+        Some(s) => Status::from_int(s),
+        None => return (None, prefetched),
+    };
+    let actual_str = actual.as_str().to_string();
+
+    let dispute_resolved_ok = matches!(event, Event::DisputeResolved)
+        && matches!(actual, Status::Completed | Status::Failed);
+
+    if DEBUG_LOG {
+        eprintln!(
+            "[check-freshness] job_id={job_id}, event={job_status_or_event}, expected_status={}, actual_status={actual_str}, match={}",
+            expected.as_str(),
+            actual == expected || dispute_resolved_ok,
+        );
+    }
+
+    if actual == expected || dispute_resolved_ok {
+        return (None, prefetched);
+    }
+    (Some(format!(
+        "🛑 **Stale state — playbook blocked** (next-action's event arg is inconsistent with the task's real status; not emitting steps to prevent on-chain action on a stale event).\n\n\
+         - You passed event = `{job_status_or_event}` (expected task status = `{expected_str}`)\n\
+         - But task {job_id} real statusStr = `{actual_str}`\n\n\
+         **MUST do** (pick one):\n\
+         1. If the current inbound is a **P2P message** (a2a-agent-chat) → you likely picked the wrong event. Re-match the pseudo-event from the message content (e.g. `[intent:deliver]` → `deliverable_received`; a natural-language quote → `negotiate_reply`). Pseudo-events are not freshness-gated.\n\
+         2. If the current inbound is a **system event** → re-run next-action with the `event` field in the `--message` JSON changed to `{actual_str}` (fetch the playbook matching the real status), or just ignore this stale notification and end the turn waiting for the next real chain event.\n\n\
+         **MUST NOT**: do NOT guess the next step; do NOT call any task CLI before getting a fresh playbook; do NOT push this warning to the user via `onchainos agent user-notify`.\n",
+        expected_str = expected.as_str(),
+    )), prefetched)
 }
 
 #[cfg(test)]

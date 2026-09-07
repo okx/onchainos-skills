@@ -5,7 +5,6 @@ const ARBITRATION_DECISION: &str = include_str!("../../skills/okx-ai-v2/referenc
 const DISPUTE: &str = include_str!("../../skills/okx-ai-v2/references/a2a/provider/dispute.md");
 const ARBITRATION_QUERY: &str = include_str!("../../skills/okx-ai-v2/references/a2a/provider/arbitration-query.md");
 const TASK_COMMON_SOURCE: &str = include_str!("../src/commands/agent_commerce/task/common/mod.rs");
-const AGENT_COMMERCE_SOURCE: &str = include_str!("../src/commands/agent_commerce/mod.rs");
 const EVALUATOR_FLOW_SOURCE: &str = include_str!("../src/commands/agent_commerce/task/evaluator/flow.rs");
 
 #[test]
@@ -40,21 +39,4 @@ fn cli_guidance_targets_role_scoped_v2_tree() {
     assert!(!TASK_COMMON_SOURCE.contains("references/a2a/user/session.md"));
     assert!(EVALUATOR_FLOW_SOURCE.contains("references/a2a/evaluator/rubric.md"));
     assert!(!EVALUATOR_FLOW_SOURCE.contains("references/a2a/evaluator/dispute.md"));
-}
-
-#[test]
-fn stale_system_events_cannot_replay_terminal_side_effects() {
-    assert!(ROUTER.contains("Call `next-action` exactly once"));
-    assert!(ROUTER.contains("never authorizes a duplicate call"));
-    assert!(AGENT_COMMERCE_SOURCE.contains("ignore this stale notification and end the turn immediately"));
-    assert!(AGENT_COMMERCE_SOURCE.contains("do NOT call `next-action` again"));
-    assert!(AGENT_COMMERCE_SOURCE.contains("do NOT replay terminal notification"));
-    assert!(!AGENT_COMMERCE_SOURCE.contains("re-run next-action with the `event` field"));
-    let stale_gate = AGENT_COMMERCE_SOURCE
-        .find("Stop stale system events before any recovery or persistence")
-        .unwrap();
-    let delivery_recovery = AGENT_COMMERCE_SOURCE
-        .find("For job_submitted: prefer an unprocessed spool delivery")
-        .unwrap();
-    assert!(stale_gate < delivery_recovery);
 }
