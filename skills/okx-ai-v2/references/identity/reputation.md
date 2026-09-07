@@ -8,8 +8,13 @@ onchainos agent feedback-list --agent-id <agentId>
 
 ## Display results
 
-**MUST** use the `Reputation list` in `output-templates.md` to render only
-returned `cells[]` in order.
+**MUST** use the template below to render only returned `cells[]` in order.
+
+```markdown
+| Reviewer | Comment | Date | Score |
+|---|---|---|---|
+| <reviewer> | <comment> | <date> | <score> |
+```
 
 ## Pagination
 

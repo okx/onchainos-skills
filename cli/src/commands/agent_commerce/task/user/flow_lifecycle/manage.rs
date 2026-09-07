@@ -63,7 +63,7 @@ otherwise preprocess or enrich the input or output.
 - `existingSubscription != null` → require top-level `duplicateSubscription`. A missing object is a hard stop. Do **not** call `service-list`, render the normal confirmation card, or continue to Steps 3.5–6. Do not query, list, or suggest the ASP's other services.
   - Render only `duplicateSubscription.userFacingPrompt`, translated faithfully to the user's language. Preserve the selected service name and `jobId` exactly. The duplicate result intentionally omits fee, trial, description, and readiness so these details cannot leak into the reply.
   - Offer only the actions in `nextAfterUserChoice`. ACTIVE includes only **Restore listening**; INIT / REJECTED / DISPUTED / unknown non-terminal ends after the duplicate warning with no follow-up action.
-  - If the user chooses **Restore listening**, keep `<jobId>` as the explicit current subscription and enter through `skills/okx-ai-v2/SKILL.md`, then follow its A2A User route to `skills/okx-ai-v2/references/a2a/user/playbook.md` §Signal-receipt watch entry. This is receipt restoration, not an execution-policy review, so its first authorization gate omits `--review-existing`.
+  - If the user chooses **Restore listening**, keep `<jobId>` as the explicit current subscription and enter through `skills/okx-ai-v2/SKILL.md`, then follow its A2A route to `skills/okx-ai-v2/references/a2a/user/subscription-manage.md` §Signal-receipt watch entry. This is receipt restoration, not an execution-policy review, so its first authorization gate omits `--review-existing`.
 
 **Service confirmation gate**:
 - Show Provider, Service, Type, Online, Price, Subscription/Trial summary, and Description.
@@ -374,7 +374,7 @@ onchainos agent create-task \\
 - `phase=funding_required`, `decision=blocked`, `reason=insufficient_balance`: enter `skills/okx-agentic-wallet/references/funding.md` immediately and render the shared balance/address/QR result. Do not save or replay the create command. END TURN; do not create again or Watch.
 - CLI error → relay to user, do NOT auto-modify → return to Step 5.
 - `reason=broadcast_submitted` means the UserOperation was submitted, not that `job_created` has arrived.
-- Route `nextAction.id=watch_task` through `skills/okx-ai-v2/SKILL.md` §Task progression and `skills/okx-ai-v2/references/shared/task-action-routing.md` immediately.
+- Route `nextAction.id=watch_task` through `skills/okx-ai-v2/SKILL.md` §Task progression and `skills/okx-ai-v2/references/a2a/router.md` immediately.
 
 Do not call `task-attach`, `set-payment-mode`, `confirm-accept`, `okx-a2a session create`, or `okx-a2a file upload` in this step. Attachments were saved locally by `create-task`; A2A forwarding starts only from the later `job_created` flow.",
         service_params = service_params_inference(),

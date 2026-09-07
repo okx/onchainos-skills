@@ -1,20 +1,49 @@
-# Runtime Backlog
+# Runtime Decision Backlog
 
-Owns one-time decision-list reads and replies. It does not start a long poll.
+Use this leaf for one-shot decision-list reads and replies. It never starts a
+long poll or schedules a wake. Message history/unread event requests instead
+use [`watch.md`](watch.md), which drains the event backlog before waiting.
 
-| Intent | Route |
-|---|---|
-| `decision list`, `show decision list`, or full pending-decision queue | Run `onchainos agent pending-decisions-v2 list --format markdown` and follow the returned playbook verbatim. |
-| Outstanding, unanswered, or unhandled decisions | Read [`watch-outdated-list.md`](watch-outdated-list.md). |
-| Message history, unread task messages, or catch-up | Read [`watch.md`](watch.md); its history entry drains the unread backlog before waiting. |
+## Durable CLI queue
 
-When the context contains an active `[USER_DECISION_REQUEST]`, the user's reply
-belongs to that card before any new free-text intent:
+For the full pending-decision queue, run:
 
-- For one visible card, run its pre-filled `resolve-prompt` command with the
-  user's reply verbatim.
-- For multiple cards, use an explicit Job ID or label to select the matching
-  block. Ask which task only when the reply remains ambiguous.
-- For a card originating from live Watch, follow
-  [`watch.md` §Handling the user reply](watch.md#handling-the-user-reply--concurrency-safe-llmcontent-execution),
-  including its claim and watch-resume rules.
+```text
+onchainos agent pending-decisions-v2 list --format markdown
+```
+
+With one active `[USER_DECISION_REQUEST]`, pass the reply verbatim to its
+pre-filled `resolve-prompt`. With multiple cards, select by explicit Job ID or
+label and ask only when still ambiguous.
+
+## Surfaced but unanswered watch decisions
+
+For “outstanding/pending/unhandled decisions”, run exactly, without pipes or
+redirects:
+
+```text
+okx-a2a user outdated-list --json
+```
+
+Filter only items whose `llmContent` contains exact retired source event
+`autotrade_consent` or `autotrade_config_required`: check those IDs and do not
+display or execute them. Do not apply the filter to other `autotrade_*` events.
+
+Render all remaining items in one message, numbered in order, with each
+`userContent` copied verbatim as a blockquote. Append once:
+
+```text
+💡 When replying, identify the item with either (1) list index + answer, e.g. "1 close" / "2: approve" / "3 — 956"; or (2) JobID prefix + answer, e.g. "JobID 0x49fa — 1" (first 6 jobId characters).
+```
+
+Localize the hint but preserve `JobID` and examples. End the turn without
+watching or scheduling a wake.
+
+## Reply binding
+
+Map a leading list index or `JobID <prefix>` to the rendered item. If only one
+item exists, an unqualified reply belongs to it. For multiple items, require a
+binding; an index without an answer asks for the answer.
+
+After binding, use [`decision-relay.md`](decision-relay.md). This list origin
+has no active-watch origin, so handling or deferring it never starts watch.

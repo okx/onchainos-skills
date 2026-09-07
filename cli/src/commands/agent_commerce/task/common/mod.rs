@@ -1391,9 +1391,7 @@ async fn build_context(
 
     // ── Role guide that must be loaded ───────────────────────────────────
     let role_reference = match role {
-        "user" => "references/a2a/user/session.md",
-        "asp" => "references/a2a/provider/router.md",
-        "evaluator" => "references/a2a/evaluator/router.md",
+        "user" | "asp" | "evaluator" => "references/a2a/router.md",
         _ => "",
     };
     if !role_reference.is_empty() {

@@ -304,7 +304,7 @@ pub enum Event {
     DeliverableReceived,
 
     // ── Negotiation relay events (user-local dispatch, no status change) ─
-    /// ASP's natural-language reply; `references/a2a/user/session.md` fallback routing → negotiate_reply.
+    /// ASP's natural-language reply; `references/a2a/peer.md` fallback routing → negotiate_reply.
     NegotiateReply,
 
     // ── Network / restart recovery events (pass-through, no status change) ─

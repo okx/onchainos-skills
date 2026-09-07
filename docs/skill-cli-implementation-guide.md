@@ -159,11 +159,14 @@ skills/okx-ai-v2/SKILL.md → references/identity/search.md
 task_create_prepare.rs
   只读校验，返回推进结果；不签名、不创建
 
-references/shared/task-action-routing.md
-  将 login、fund_account、open_create_playbook 等动作路由到对应流程
+references/a2a/router.md
+  A2A 入口路由，只识别消息类型与 User / ASP / Evaluator 角色
 
-references/shared/task-output-templates.md
-  将结果和 nextAction 渲染成跨平台文本、表格或 1/2/3 选项
+references/a2a/{user,provider,evaluator}/router.md
+  角色路由，将 nextAction 或事件选择到一个最终叶子文件
+
+references/a2a/user/create-prepare.md
+  解释只读预检结果；只有 all_checks_passed 才进入创建确认
 
 references/a2a/user/create.md
   收集 Guide/服务参数，生成确认信息，确认后执行创建
@@ -171,8 +174,14 @@ references/a2a/user/create.md
 create-subscribe
   签名、创建订阅并返回任务标识
 
-references/a2a/user/playbook.md / references/runtime/watch.md
-  处理创建后的通信、交付、监听、恢复和终态
+references/a2a/user/created.md / references/a2a/provider/assignment.md / references/a2a/provider/execution.md
+  处理创建事件、ASP 分配与任务执行
+
+references/a2a/provider/delivery.md / references/a2a/user/review.md / references/a2a/completion.md
+  处理交付、验收、评分通知与终态清理
+
+references/runtime/watch.md
+  处理创建后的长轮询监听、消息派发与恢复
 ```
 
 ### 5.3 结果示例

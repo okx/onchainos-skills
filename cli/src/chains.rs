@@ -550,6 +550,16 @@ mod tests {
 
     #[test]
     fn is_mainnet_chain_uses_registry_not_blacklist() {
+        // This test verifies the offline registry fallback. Isolate it from a
+        // developer's real chain_cache.json, which can legitimately contain
+        // Sepolia and would otherwise change the premise of the assertions.
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous_home = std::env::var_os("ONCHAINOS_HOME");
+        let temp_home = tempfile::tempdir().unwrap();
+        std::env::set_var("ONCHAINOS_HOME", temp_home.path());
+
         // Known mainnet chains in SUPPORTED_CHAIN_INDICES → mainnet.
         assert!(is_mainnet_chain("1"));
         assert!(is_mainnet_chain("8453"));
@@ -561,6 +571,11 @@ mod tests {
         assert!(!is_mainnet_chain("11155111"));
         assert!(!is_mainnet_chain("99999"));
         assert!(!is_mainnet_chain(""));
+
+        match previous_home {
+            Some(path) => std::env::set_var("ONCHAINOS_HOME", path),
+            None => std::env::remove_var("ONCHAINOS_HOME"),
+        }
     }
 
     #[test]

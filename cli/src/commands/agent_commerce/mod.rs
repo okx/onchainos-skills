@@ -622,7 +622,7 @@ pub enum AgentCommand {
     /// to current account). Wrapper over `agent get-agents --agent-ids` that flattens
     /// the `list[].agentList[]` nesting and returns the matched agent as a
     /// single flat object. Used for verifying peer / designated provider
-    /// identities (e.g. `references/a2a/user/session.md` Provider validation).
+    /// identities (e.g. `references/a2a/peer.md` Provider validation).
     ///
     /// `ok: false` when not found / agentId malformed; otherwise `data` is
     /// the agent object `{agentId, name, role, status, ownerAddress,
@@ -1186,7 +1186,7 @@ pub enum AgentCommand {
         #[arg(long)]
         vote: u8,
         /// Full verdict text produced by Step 5 per the Verdict template defined in
-        /// `skills/okx-ai-v2/references/a2a/evaluator/dispute.md` (whichever heading the user-customized
+        /// `skills/okx-ai-v2/references/a2a/evaluator/rubric.md` (whichever heading the user-customized
         /// rubric uses to define it; required). Sent to backend in the broadcast bizContext as
         /// `voteReport` — the human-readable on-chain audit trail; whatever fields the rubric's
         /// Verdict template prescribes. Flatten to a single line with `\n` / `\t` / `\r` / `\\` / `\"`
@@ -1417,9 +1417,9 @@ pub enum AgentCommand {
         agent_ids: Vec<String>,
     },
 
-    /// Terminal-state session cleanup: cancel pending decisions + output
-    /// `okx-a2a session delete` instructions. Replaces the multi-step
-    /// manual cleanup in terminal playbooks.
+    /// Terminal-state session cleanup: cancel pending decisions, clear cached
+    /// task prompts, and delete the internal `okx-a2a` conversation unless
+    /// KEEP_SESSION is enabled. Replaces manual terminal cleanup.
     #[command(name = "session-cleanup")]
     SessionCleanup {
         #[arg(long = "job-id")]
@@ -4355,9 +4355,6 @@ fn arbitration_decision_is_stale(
     }
 }
 
-/// Returns a warning text when inconsistent (used to prepend to the top of the script output).
-///
-/// Trigger scenarios: delayed system event, prior CLI operations have already advanced the status further;
 /// Most network failures degrade to no prefetch. Active-subscription startup
 /// notifications are stricter: they require authoritative detail and are blocked
 /// on fetch error.

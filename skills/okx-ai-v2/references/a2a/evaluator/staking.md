@@ -184,7 +184,7 @@ onchainos agent user-notify --content "<localized concise update>"
 
 Review selection, Commit/Reveal, ruling, reward, and penalty events enter
 [`router.md`](router.md). Evidence scoring and verdict writing use
-[`dispute.md`](dispute.md).
+[`rubric.md`](rubric.md).
 
 ## Output Templates
 

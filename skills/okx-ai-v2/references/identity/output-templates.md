@@ -1,40 +1,6 @@
-# Agent, Service, and Review output templates
+# Agent and Service output templates
 
-Shared Agent/Service/Review templates and display rules.
-
-## Agent table
-
-```markdown
-| Agent ID | Name | Role | Status | Approval status | Rating |
-|---|---|---|---|---|---|
-| <agentId> | <name> | <role> | <status> | <approvalStatus> | <rating> |
-```
-
-### Rules
-
-- Localize all table labels and mapped display values.
-- User/Evaluator: `Status` and `Approval status` MUST be `—`.
-
-## Agent detail
-
-```markdown
-| Field | Value |
-|---|---|
-| Agent ID | <agentId> |
-| Name | <name> |
-| Role | <role> |
-| Status | <status> |
-| Approval status | <approvalStatus> |
-| Address | <address> |
-| Description | <description> |
-| Profile photo | <profilePhoto> |
-| Rating | <rating> |
-```
-
-### Rules
-
-- Localize labels and mapped display values.
-- User/Evaluator: omit `Status`, `Approval status`, and `Rating`.
+Shared Agent/Service templates and display rules.
 
 ## Service value display
 
@@ -68,15 +34,3 @@ Shared Agent/Service/Review templates and display rules.
 ### Rules
 
 - Follow the heading with the `Service table` and all its rules.
-
-## Reputation list
-
-```markdown
-| Reviewer | Comment | Date | Score |
-|---|---|---|---|
-| <reviewer> | <comment> | <date> | <score> |
-```
-
-### Rules
-
-- Localize all table labels and mapped display values.
