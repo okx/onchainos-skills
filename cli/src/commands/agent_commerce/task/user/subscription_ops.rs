@@ -18,6 +18,7 @@ use std::time::Duration;
 use super::create::resolve_user_agent;
 use super::create_subscribe::SUBSCRIBE_API_PREFIX;
 use crate::audit;
+use crate::commands::agent_commerce::task::common;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::okx_a2a;
 use crate::commands::agent_commerce::task::common::query as common_query;
@@ -334,8 +335,13 @@ pub async fn handle_subscribe_detail(
     }
 
     if json_mode {
-        let enriched =
-            enrich_subscription_detail(resp, crate::device::id::get_cached_device_id(), is_buyer);
+        let display_facts = resolve_subscription_display_facts(&resp).await?;
+        let enriched = enrich_subscription_detail(
+            resp,
+            crate::device::id::get_cached_device_id(),
+            is_buyer,
+            &display_facts,
+        );
         crate::output::success(enriched);
         return Ok(());
     }
@@ -799,6 +805,179 @@ struct DeviceEnrichment {
     this_device_receives: bool,
 }
 
+#[derive(Debug, Default)]
+struct SubscriptionDisplayFacts {
+    provider_name: Option<String>,
+    token_symbol: Option<String>,
+    supports_trial: Option<bool>,
+    trial_hours: Option<i64>,
+}
+
+fn display_string(value: Option<&serde_json::Value>) -> Option<String> {
+    let value = value?;
+    value
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| value.as_i64().map(|value| value.to_string()))
+        .or_else(|| value.as_u64().map(|value| value.to_string()))
+}
+
+fn positive_trial_hours(value: Option<&serde_json::Value>) -> Option<i64> {
+    let hours = value
+        .and_then(|value| {
+            value
+                .as_i64()
+                .or_else(|| value.as_str()?.trim().parse::<i64>().ok())
+        })
+        .filter(|hours| *hours > 0)?;
+    Some(hours)
+}
+
+fn catalog_trial_facts(service: Option<&serde_json::Value>) -> (Option<bool>, Option<i64>) {
+    let Some(service) = service else {
+        return (None, None);
+    };
+    let trial_hours = positive_trial_hours(service.get("freeTrial")).or_else(|| {
+        positive_trial_hours(
+            service
+                .get("subscriptionInfo")
+                .and_then(|value| value.get("freeTrial")),
+        )
+    });
+    let explicit = service
+        .get("supportTrial")
+        .and_then(serde_json::Value::as_bool)
+        .or_else(|| {
+            service
+                .get("subscriptionInfo")
+                .and_then(|value| value.get("supportTrial"))
+                .and_then(serde_json::Value::as_bool)
+        });
+    (explicit.or(Some(trial_hours.is_some())), trial_hours)
+}
+
+async fn resolve_subscription_display_facts(
+    detail: &serde_json::Value,
+) -> Result<SubscriptionDisplayFacts> {
+    let provider_agent_id = display_string(detail.get("providerAgentId"));
+    let service_id = display_string(detail.get("serviceId"));
+    let catalog_service = match (provider_agent_id.as_deref(), service_id.as_deref()) {
+        (Some(provider_agent_id), Some(service_id)) => {
+            common::find_service(provider_agent_id, service_id).await?
+        }
+        _ => None,
+    };
+
+    let provider_name = ["providerAgentName", "aspAgentName", "providerName"]
+        .into_iter()
+        .find_map(|key| display_string(detail.get(key)))
+        .or_else(|| {
+            catalog_service
+                .as_ref()
+                .and_then(|service| display_string(service.get("providerAgentName")))
+        });
+    let provider_name = match (provider_name, provider_agent_id.as_deref()) {
+        (Some(name), _) => Some(name),
+        (None, Some(provider_agent_id)) => {
+            common::fetch_agent_profile(provider_agent_id).await.name
+        }
+        (None, None) => None,
+    };
+
+    let token_symbol = ["serviceTokenSymbol", "tokenSymbol", "paymentTokenSymbol"]
+        .into_iter()
+        .find_map(|key| display_string(detail.get(key)));
+    let token_symbol = match token_symbol {
+        Some(symbol) => Some(symbol),
+        None => {
+            let token_address = display_string(detail.get("serviceTokenAddress"));
+            match token_address.as_deref() {
+                Some(address) => Some(
+                    common::util::resolve_token_symbol_by_address(
+                        common::XLAYER_CHAIN_INDEX,
+                        address,
+                    )
+                    .await?,
+                ),
+                None => None,
+            }
+        }
+    };
+    let (catalog_supports_trial, catalog_trial_hours) =
+        catalog_trial_facts(catalog_service.as_ref());
+    let inline_trial_hours = positive_trial_hours(detail.get("freeTrial"));
+    let supports_trial = detail
+        .get("supportTrial")
+        .and_then(serde_json::Value::as_bool)
+        .or(catalog_supports_trial)
+        .or_else(|| {
+            (detail.get("trialType").and_then(serde_json::Value::as_i64) == Some(1))
+                .then_some(true)
+        });
+
+    Ok(SubscriptionDisplayFacts {
+        provider_name,
+        token_symbol,
+        supports_trial,
+        trial_hours: inline_trial_hours.or(catalog_trial_hours),
+    })
+}
+
+fn trial_duration_label(hours: i64) -> String {
+    if hours % 24 == 0 {
+        let days = hours / 24;
+        format!("{days}-day")
+    } else {
+        format!("{hours}-hour")
+    }
+}
+
+fn subscription_fee_label(amount: Option<&str>, symbol: Option<&str>) -> Option<String> {
+    let amount = amount.map(str::trim).filter(|value| !value.is_empty())?;
+    if super::refund_v2::is_zero_decimal(amount) {
+        return Some("Free".to_string());
+    }
+    let symbol = symbol.map(str::trim).filter(|value| !value.is_empty())?;
+    Some(format!("{amount} {symbol} / month"))
+}
+
+fn free_trial_label(
+    detail: &serde_json::Value,
+    facts: &SubscriptionDisplayFacts,
+) -> Option<String> {
+    match detail.get("trialType").and_then(serde_json::Value::as_i64) {
+        Some(1) => {
+            let (trial_start, trial_end) = trial_window(detail);
+            let derived_hours = (trial_start > 0 && trial_end > trial_start)
+                .then_some((trial_end - trial_start) / 3600)
+                .filter(|hours| *hours > 0);
+            let hours = facts.trial_hours.or(derived_hours)?;
+            let first_charge = common::deadline::format_utc_timestamp(trial_end)?;
+            let amount = detail
+                .get("serviceTokenAmount")
+                .and_then(serde_json::Value::as_str)?;
+            let symbol = facts.token_symbol.as_deref()?;
+            Some(format!(
+                "{} free trial. The first subscription fee of {} {} will be charged at {}.",
+                trial_duration_label(hours),
+                amount,
+                symbol,
+                first_charge,
+            ))
+        }
+        Some(0) if facts.supports_trial == Some(true) => Some(
+            "You have already used the free trial for this service. The subscription fee is charged directly."
+                .to_string(),
+        ),
+        Some(0) if facts.supports_trial == Some(false) => {
+            Some("Free trial is not supported.".to_string())
+        }
+        _ => None,
+    }
+}
+
 /// Derive the shared device-routing enrichment from the two (already tolerant-read)
 /// arrays and the client's this-device id. Pure: device-list `None` is preserved
 /// and means default-all only when `default_all_receives` is true; an explicit
@@ -825,6 +1004,7 @@ fn enrich_subscription_detail(
     mut detail: serde_json::Value,
     this_device_id: Option<&str>,
     default_all_receives: bool,
+    display_facts: &SubscriptionDisplayFacts,
 ) -> serde_json::Value {
     if let Some(obj) = detail.as_object_mut() {
         let code = obj.get("status").and_then(|v| v.as_i64()).unwrap_or(-1);
@@ -862,6 +1042,119 @@ fn enrich_subscription_detail(
         obj.insert(
             FIELD_THIS_DEVICE_NAME.to_string(),
             serde_json::Value::String(this_device_name().to_string()),
+        );
+        obj.insert(
+            "autoRenewLabel".to_string(),
+            serde_json::Value::String(
+                match obj.get("autoRenew").and_then(serde_json::Value::as_i64) {
+                    Some(1) => "Enabled",
+                    Some(0) => "Disabled",
+                    _ => "—",
+                }
+                .to_string(),
+            ),
+        );
+        let billing_period_label =
+            if obj.get("trialType").and_then(serde_json::Value::as_i64) == Some(1) {
+                "Trial Period".to_string()
+            } else {
+                obj.get("periodIndex")
+                    .and_then(serde_json::Value::as_i64)
+                    .filter(|period| *period > 0)
+                    .map(|period| format!("Billing Period {period}"))
+                    .unwrap_or_else(|| "—".to_string())
+            };
+        obj.insert(
+            "billingPeriodLabel".to_string(),
+            serde_json::Value::String(billing_period_label),
+        );
+        obj.insert(
+            "offlineMessageHandlingLabel".to_string(),
+            serde_json::Value::String(
+                match obj
+                    .get("offlineReceiveFlag")
+                    .and_then(serde_json::Value::as_i64)
+                {
+                    Some(1) => "Clear",
+                    Some(0) => "Resume delivery when back online",
+                    _ => "—",
+                }
+                .to_string(),
+            ),
+        );
+        obj.insert(
+            "receiveOnThisDeviceLabel".to_string(),
+            serde_json::Value::String(
+                if enrichment.this_device_receives {
+                    "Receive"
+                } else {
+                    "Do not receive"
+                }
+                .to_string(),
+            ),
+        );
+        obj.insert(
+            "providerName".to_string(),
+            display_facts
+                .provider_name
+                .clone()
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null),
+        );
+        let provider_label = display_facts.provider_name.as_deref().zip(
+            obj.get("providerAgentId")
+                .and_then(serde_json::Value::as_str),
+        )
+        .map(|(name, id)| format!("{name} ({id})"));
+        obj.insert(
+            "serviceProviderLabel".to_string(),
+            provider_label
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null),
+        );
+        obj.insert(
+            "feeTokenSymbol".to_string(),
+            display_facts
+                .token_symbol
+                .clone()
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null),
+        );
+        let fee_label = subscription_fee_label(
+            obj.get("serviceTokenAmount")
+                .and_then(serde_json::Value::as_str),
+            display_facts.token_symbol.as_deref(),
+        );
+        obj.insert(
+            "feeLabel".to_string(),
+            fee_label
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null),
+        );
+        let trial_label = free_trial_label(&serde_json::Value::Object(obj.clone()), display_facts);
+        obj.insert(
+            "freeTrialLabel".to_string(),
+            trial_label
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null),
+        );
+        let mut missing = Vec::new();
+        for (field, key) in [
+            ("Service Provider", "serviceProviderLabel"),
+            ("Free Trial", "freeTrialLabel"),
+            ("Fee", "feeLabel"),
+        ] {
+            if obj.get(key).is_none_or(serde_json::Value::is_null) {
+                missing.push(serde_json::Value::String(field.to_string()));
+            }
+        }
+        obj.insert(
+            "displayReady".to_string(),
+            serde_json::Value::Bool(missing.is_empty()),
+        );
+        obj.insert(
+            "displayMissingFields".to_string(),
+            serde_json::Value::Array(missing),
         );
     }
     detail
@@ -1716,28 +2009,82 @@ mod tests {
     fn detail_json_preserves_device_routing_tri_state() {
         let mut historical = detail_fixture();
         historical["deviceList"] = serde_json::Value::Null;
-        let historical = enrich_subscription_detail(historical, Some("d1"), true);
+        let historical = enrich_subscription_detail(
+            historical,
+            Some("d1"),
+            true,
+            &SubscriptionDisplayFacts::default(),
+        );
         assert_eq!(historical["deviceList"], serde_json::Value::Null);
         assert_eq!(historical["categoryCodes"], json!([]));
         assert_eq!(historical["thisDeviceReceives"], json!(true));
 
         let mut explicitly_none = detail_fixture();
         explicitly_none["deviceList"] = json!([]);
-        let explicitly_none = enrich_subscription_detail(explicitly_none, Some("d1"), true);
+        let explicitly_none = enrich_subscription_detail(
+            explicitly_none,
+            Some("d1"),
+            true,
+            &SubscriptionDisplayFacts::default(),
+        );
         assert_eq!(explicitly_none["deviceList"], json!([]));
         assert_eq!(explicitly_none["thisDeviceReceives"], json!(false));
 
         let mut selected = detail_fixture();
         selected["deviceList"] = json!(["d1"]);
-        let selected = enrich_subscription_detail(selected, Some("d1"), true);
+        let selected = enrich_subscription_detail(
+            selected,
+            Some("d1"),
+            true,
+            &SubscriptionDisplayFacts::default(),
+        );
         assert_eq!(selected["deviceList"], json!(["d1"]));
         assert_eq!(selected["thisDeviceReceives"], json!(true));
 
         let mut provider = detail_fixture();
         provider["deviceList"] = serde_json::Value::Null;
-        let provider = enrich_subscription_detail(provider, Some("d1"), false);
+        let provider = enrich_subscription_detail(
+            provider,
+            Some("d1"),
+            false,
+            &SubscriptionDisplayFacts::default(),
+        );
         assert_eq!(provider["deviceList"], serde_json::Value::Null);
         assert_eq!(provider["thisDeviceReceives"], json!(false));
+    }
+
+    #[test]
+    fn detail_json_adds_authoritative_display_labels() {
+        let mut detail = detail_fixture();
+        detail["trialType"] = json!(0);
+        detail["periodIndex"] = json!(2);
+        detail["autoRenew"] = json!(1);
+        detail["offlineReceiveFlag"] = json!(1);
+        detail["deviceList"] = json!(["d1"]);
+
+        let detail = enrich_subscription_detail(
+            detail,
+            Some("d1"),
+            true,
+            &SubscriptionDisplayFacts {
+                provider_name: Some("Provider".to_string()),
+                token_symbol: Some("USDT".to_string()),
+                supports_trial: Some(true),
+                trial_hours: Some(24),
+            },
+        );
+
+        assert_eq!(detail["autoRenewLabel"], "Enabled");
+        assert_eq!(detail["billingPeriodLabel"], "Billing Period 2");
+        assert_eq!(detail["offlineMessageHandlingLabel"], "Clear");
+        assert_eq!(detail["receiveOnThisDeviceLabel"], "Receive");
+        assert_eq!(detail["serviceProviderLabel"], "Provider (2002)");
+        assert_eq!(detail["feeLabel"], "10.500000 USDT / month");
+        assert_eq!(
+            detail["freeTrialLabel"],
+            "You have already used the free trial for this service. The subscription fee is charged directly."
+        );
+        assert_eq!(detail["displayReady"], true);
     }
 
     #[test]

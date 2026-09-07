@@ -1,8 +1,8 @@
-const WATCH: &str = include_str!("../../skills/okx-ai-v2/references/runtime/watch.md");
-const BACKLOG: &str = include_str!("../../skills/okx-ai-v2/references/runtime/backlog.md");
-const RELAY: &str = include_str!("../../skills/okx-ai-v2/references/runtime/decision-relay.md");
-const WAKE: &str = include_str!("../../skills/okx-ai-v2/references/runtime/watch-wake.md");
-const CREATE: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/create.md");
+const WATCH: &str = include_str!("../../skills/okx-ai/references/runtime/watch.md");
+const BACKLOG: &str = include_str!("../../skills/okx-ai/references/runtime/backlog.md");
+const RELAY: &str = include_str!("../../skills/okx-ai/references/runtime/decision-relay.md");
+const WAKE: &str = include_str!("../../skills/okx-ai/references/runtime/watch-wake.md");
+const CREATE: &str = include_str!("../../skills/okx-ai/references/a2a/user/create.md");
 
 #[test]
 fn watch_reenters_after_nonterminal_results() {

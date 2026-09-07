@@ -42,7 +42,7 @@ Step 2 -- Basic validation
 Step 3 -- Search-intent parsing and service selection
 ================================================
 
-For the initial search, enter through `skills/okx-ai-v2/SKILL.md`, follow its Identity route to `skills/okx-ai-v2/references/identity/search.md`, and pass the user's original utterance verbatim to that argument-extraction flow; then use its output unchanged as `<args>` in:
+For the initial search, enter through `skills/okx-ai/SKILL.md`, follow its Identity route to `skills/okx-ai/references/identity/search.md`, and pass the user's original utterance verbatim to that argument-extraction flow; then use its output unchanged as `<args>` in:
 
 ```bash
 onchainos agent task-service-select <args> --agentic-id <buyerAgentId> --sid <sid> --limit 1 --format json
@@ -63,7 +63,7 @@ otherwise preprocess or enrich the input or output.
 - `existingSubscription != null` → require top-level `duplicateSubscription`. A missing object is a hard stop. Do **not** call `service-list`, render the normal confirmation card, or continue to Steps 3.5–6. Do not query, list, or suggest the ASP's other services.
   - Render only `duplicateSubscription.userFacingPrompt`, translated faithfully to the user's language. Preserve the selected service name and `jobId` exactly. The duplicate result intentionally omits fee, trial, description, and readiness so these details cannot leak into the reply.
   - Offer only the actions in `nextAfterUserChoice`. ACTIVE includes only **Restore listening**; INIT / REJECTED / DISPUTED / unknown non-terminal ends after the duplicate warning with no follow-up action.
-  - If the user chooses **Restore listening**, keep `<jobId>` as the explicit current subscription and enter through `skills/okx-ai-v2/SKILL.md`, then follow its A2A route to `skills/okx-ai-v2/references/a2a/user/subscription-manage.md` §Signal-receipt watch entry. This is receipt restoration, not an execution-policy review, so its first authorization gate omits `--review-existing`.
+  - If the user chooses **Restore listening**, keep `<jobId>` as the explicit current subscription and read `skills/okx-ai/references/a2a/user/subscription-manage.md` §Signal-receipt watch entry directly. This is receipt restoration, not an execution-policy review, so its first authorization gate omits `--review-existing`.
 
 **Service confirmation gate**:
 - Show Provider, Service, Type, Online, Price, Subscription/Trial summary, and Description.
@@ -134,7 +134,7 @@ fn attachments_and_stop() -> String {
         "\
 **After create-task/create-subscribe + task-attach (if any), check CLI output for a `[Watch]` block:**
 0. If `phase=funding_required`, follow `skills/okx-agentic-wallet/references/funding.md`, render its shared balance/address/QR template immediately, then stop; do not Watch.
-1. `[Watch]` block present → follow its instructions: enter through `skills/okx-ai-v2/SKILL.md`, then read `skills/okx-ai-v2/references/runtime/watch.md` and enter its Watch generation. A returned notification, deliverable, or empty poll does **not** end the turn; dispatch and re-enter until `runtime/watch.md` says to stop or a decision requires the user's reply.
+1. `[Watch]` block present → follow its instructions: read `skills/okx-ai/references/runtime/watch.md` directly and enter its Watch generation. A returned notification, deliverable, or empty poll does **not** end the turn; dispatch and re-enter until `runtime/watch.md` says to stop or a decision requires the user's reply.
 2. No `[Watch]` block → **end this turn immediately**."
     } else {
         "**End this turn immediately.** Do NOT mention or ask about monitoring/watching task progress."
@@ -374,7 +374,7 @@ onchainos agent create-task \\
 - `phase=funding_required`, `decision=blocked`, `reason=insufficient_balance`: enter `skills/okx-agentic-wallet/references/funding.md` immediately and render the shared balance/address/QR result. Do not save or replay the create command. END TURN; do not create again or Watch.
 - CLI error → relay to user, do NOT auto-modify → return to Step 5.
 - `reason=broadcast_submitted` means the UserOperation was submitted, not that `job_created` has arrived.
-- Route `nextAction.id=watch_task` through `skills/okx-ai-v2/SKILL.md` §Task progression and `skills/okx-ai-v2/references/a2a/router.md` immediately.
+- Route `nextAction.id=watch_task` directly to `skills/okx-ai/references/runtime/watch.md` immediately; do not re-enter `SKILL.md` or the A2A router.
 
 Do not call `task-attach`, `set-payment-mode`, `confirm-accept`, `okx-a2a session create`, or `okx-a2a file upload` in this step. Attachments were saved locally by `create-task`; A2A forwarding starts only from the later `job_created` flow.",
         service_params = service_params_inference(),

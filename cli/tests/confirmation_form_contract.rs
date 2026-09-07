@@ -1,29 +1,35 @@
-const SKILL: &str = include_str!("../../skills/okx-ai-v2/SKILL.md");
-const ROUTER: &str = include_str!("../../skills/okx-ai-v2/references/a2a/router.md");
-const USER_ROUTER: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/router.md");
-const PROVIDER_ROUTER: &str = include_str!("../../skills/okx-ai-v2/references/a2a/provider/router.md");
-const EVALUATOR_ROUTER: &str = include_str!("../../skills/okx-ai-v2/references/a2a/evaluator/router.md");
-const PREPARE: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/create-prepare.md");
-const CREATE: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/create.md");
-const GUIDE: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/create-guide.md");
-const REFUND_PREPARE: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/refund-prepare.md");
-const REFUND_CONFIRM: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/refund-confirm.md");
-const REFUND_EXECUTE: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/refund-execute.md");
-const REFUND_CONTRACT: &str = include_str!("../../skills/okx-ai-v2/references/shared/refund-contract.md");
-const TASK_QUERY: &str = include_str!("../../skills/okx-ai-v2/references/a2a/task-query.md");
-const COMPLETION: &str = include_str!("../../skills/okx-ai-v2/references/a2a/completion.md");
-const FEEDBACK: &str = include_str!("../../skills/okx-ai-v2/references/a2a/feedback.md");
-const NOTIFY: &str = include_str!("../../skills/okx-ai-v2/references/a2a/notify.md");
-const INTAKE: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/intake.md");
-const RECOVERY: &str = include_str!("../../skills/okx-ai-v2/references/runtime/recovery.md");
+const SKILL: &str = include_str!("../../skills/okx-ai/SKILL.md");
+const ROUTER: &str = include_str!("../../skills/okx-ai/references/a2a/router.md");
+const USER_ROUTER: &str = include_str!("../../skills/okx-ai/references/a2a/user/router.md");
+const PROVIDER_ROUTER: &str = include_str!("../../skills/okx-ai/references/a2a/provider/router.md");
+const EVALUATOR_ROUTER: &str =
+    include_str!("../../skills/okx-ai/references/a2a/evaluator/router.md");
+const IDENTITY_SEARCH: &str = include_str!("../../skills/okx-ai/references/identity/search.md");
+const PREPARE: &str = include_str!("../../skills/okx-ai/references/a2a/user/create-prepare.md");
+const CREATE: &str = include_str!("../../skills/okx-ai/references/a2a/user/create.md");
+const GUIDE: &str = include_str!("../../skills/okx-ai/references/a2a/user/create-guide.md");
+const REFUND_PREPARE: &str =
+    include_str!("../../skills/okx-ai/references/a2a/user/refund-prepare.md");
+const REFUND_CONFIRM: &str =
+    include_str!("../../skills/okx-ai/references/a2a/user/refund-confirm.md");
+const REFUND_EXECUTE: &str =
+    include_str!("../../skills/okx-ai/references/a2a/user/refund-execute.md");
+const REFUND_CONTRACT: &str =
+    include_str!("../../skills/okx-ai/references/shared/refund-contract.md");
+const TASK_QUERY: &str = include_str!("../../skills/okx-ai/references/a2a/task-query.md");
+const COMPLETION: &str = include_str!("../../skills/okx-ai/references/a2a/completion.md");
+const FEEDBACK: &str = include_str!("../../skills/okx-ai/references/a2a/feedback.md");
+const NOTIFY: &str = include_str!("../../skills/okx-ai/references/a2a/notify.md");
+const INTAKE: &str = include_str!("../../skills/okx-ai/references/a2a/user/intake.md");
+const RECOVERY: &str = include_str!("../../skills/okx-ai/references/runtime/recovery.md");
 
 #[test]
 fn v2_uses_role_scoped_lazy_routing() {
     assert!(SKILL.contains("references/a2a/router.md"));
     assert!(SKILL.contains("Select exactly one row"));
-    assert!(SKILL.contains("shared files never route"));
-    assert!(SKILL.contains("Do not preload the A2A"));
-    assert!(SKILL.contains("identity search leaf's single handoff"));
+    assert!(SKILL.contains("re-enter this Skill or the A2A parent router"));
+    assert!(IDENTITY_SEARCH.contains("Do not load any A2A creation"));
+    assert!(IDENTITY_SEARCH.contains("../a2a/user/create-prepare.md"));
     assert!(ROUTER.contains("select exactly one role router"));
     assert!(ROUTER.contains("Never preload all role routers"));
     assert!(ROUTER.contains("user/router.md"));
@@ -32,7 +38,11 @@ fn v2_uses_role_scoped_lazy_routing() {
     assert!(USER_ROUTER.contains("Select exactly one final leaf"));
     assert!(PROVIDER_ROUTER.contains("Select exactly one final leaf"));
     assert!(EVALUATOR_ROUTER.contains("Select exactly one final leaf"));
-    for retired in ["a2a/core.md", "task-action-routing.md", "task-output-templates.md"] {
+    for retired in [
+        "a2a/core.md",
+        "task-action-routing.md",
+        "task-output-templates.md",
+    ] {
         assert!(!SKILL.contains(retired));
         assert!(!ROUTER.contains(retired));
     }
@@ -64,7 +74,11 @@ fn unknown_system_events_stop_before_cli_dispatch() {
 #[test]
 fn create_confirmation_excludes_execution_configuration() {
     let create = CREATE.split_whitespace().collect::<Vec<_>>().join(" ");
-    for forbidden in ["| Signal Execution |", "| Per-Signal Amount |", "| Trade Kit Environment |"] {
+    for forbidden in [
+        "| Signal Execution |",
+        "| Per-Signal Amount |",
+        "| Trade Kit Environment |",
+    ] {
         assert!(!CREATE.contains(forbidden));
     }
     assert!(CREATE.contains("List attachments below the table"));
@@ -76,17 +90,22 @@ fn refund_reason_and_write_are_freshly_bound() {
     for expected in ["User-authored", "non-blank", "preserved verbatim"] {
         assert!(REFUND_PREPARE.contains(expected));
     }
-    assert!(REFUND_CONFIRM.contains("final confirmation"));
+    assert!(REFUND_CONFIRM.contains("final input"));
     assert!(REFUND_CONFIRM.contains("submit_refund_request"));
     assert!(REFUND_EXECUTE.contains("refund-execute JOB_ID_ARG"));
     assert!(REFUND_EXECUTE.contains("--refund-context-id"));
     assert!(REFUND_EXECUTE.contains("--confirm"));
-    assert!(REFUND_CONFIRM.contains("Never combine fields across results"));
+    assert!(REFUND_CONFIRM.contains("bound to one latest preparation result"));
 }
 
 #[test]
 fn refund_finality_and_display_remain_exact() {
-    for fact in ["Expired(8)", "Failed(9)", "job_asp_reject_expire", "sub_failed_notify"] {
+    for fact in [
+        "Expired(8)",
+        "Failed(9)",
+        "job_asp_reject_expire",
+        "sub_failed_notify",
+    ] {
         assert!(REFUND_CONTRACT.contains(fact));
     }
     assert!(REFUND_CONTRACT.contains("A Tx Hash is optional audit metadata"));
@@ -117,7 +136,9 @@ fn deliverable_intake_spells_out_the_cli_contract() {
     assert!(intake.contains("never turn a system event into an A2A file"));
     assert!(intake.contains("Do not create a temporary file"));
     assert!(intake.contains("under the current `$TMPDIR`"));
-    assert!(intake.contains("--message '{\"event\":\"deliverable_received\",\"jobId\":\"<envelope.jobId>\"}'"));
+    assert!(intake.contains(
+        "--message '{\"event\":\"deliverable_received\",\"jobId\":\"<envelope.jobId>\"}'"
+    ));
     assert!(intake.contains("--a2a-file \"<0600 raw envelope path under $TMPDIR>\""));
     assert!(intake.contains("Both `--message` and `--a2a-file` are required"));
     assert!(intake.contains("Do not substitute `deliver`"));

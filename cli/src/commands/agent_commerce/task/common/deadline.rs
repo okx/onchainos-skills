@@ -6,7 +6,7 @@
 //! Keeping the ceiling-days math and the formatting here (instead of copy-pasted into
 //! each renderer) satisfies the no-duplication / cognitive-complexity constraint.
 
-use chrono::{Local, TimeZone};
+use chrono::{Local, TimeZone, Utc};
 
 /// Which decision card the reminder is for; selects the auto-resolution wording.
 #[derive(Clone, Copy)]
@@ -55,6 +55,19 @@ pub(crate) fn format_local_timestamp_with_offset(timestamp: i64) -> Option<Strin
         absolute / 3_600,
         (absolute % 3_600) / 60,
     ))
+}
+
+/// Format an authoritative unix timestamp to minute precision with an explicit
+/// UTC offset. Millisecond-scale values are tolerated because some legacy event
+/// envelopes used milliseconds while the current contract uses seconds.
+pub(crate) fn format_utc_timestamp(timestamp: i64) -> Option<String> {
+    let timestamp = if timestamp >= 1_000_000_000_000 {
+        timestamp / 1000
+    } else {
+        timestamp
+    };
+    chrono::DateTime::<Utc>::from_timestamp(timestamp, 0)
+        .map(|dt| dt.format("%Y-%m-%d %H:%M (UTC+00:00)").to_string())
 }
 
 /// Build the `⏰` reminder line for a decision card. `None` when no line should
@@ -137,6 +150,19 @@ mod tests {
     #[test]
     fn format_local_deadline_out_of_range_is_none() {
         assert!(format_local_deadline(i64::MAX).is_none());
+    }
+
+    #[test]
+    fn format_utc_timestamp_is_explicit_and_tolerates_milliseconds() {
+        assert_eq!(
+            format_utc_timestamp(1_700_000_000),
+            Some("2023-11-14 22:13 (UTC+00:00)".to_string())
+        );
+        assert_eq!(
+            format_utc_timestamp(1_700_000_000_000),
+            Some("2023-11-14 22:13 (UTC+00:00)".to_string())
+        );
+        assert!(format_utc_timestamp(i64::MAX).is_none());
     }
 
     // ── deadline_reminder_line ───────────────────────────────────────────

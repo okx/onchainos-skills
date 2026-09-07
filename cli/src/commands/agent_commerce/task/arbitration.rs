@@ -1,6 +1,7 @@
 //! Unified ASP arbitration domain: rejection decisions plus list/detail queries.
 
 use anyhow::{bail, Context, Result};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
@@ -9,6 +10,91 @@ use super::evaluator::dispute_status::DisputeStatusResponse;
 
 pub const JOB_REJECTED: &str = "job_rejected";
 pub const SUB_USER_REJECT: &str = "sub_user_reject";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RefundDisplayMetadata {
+    pub service_name: String,
+    pub task_type: String,
+    pub amount: String,
+    pub token_symbol: String,
+    pub response_deadline: i64,
+}
+
+impl RefundDisplayMetadata {
+    fn new(
+        source_event: &str,
+        service_name: Option<&str>,
+        amount: Option<&str>,
+        token_symbol: Option<&str>,
+        response_deadline: Option<i64>,
+    ) -> Option<Self> {
+        let service_name = service_name
+            .map(str::trim)
+            .filter(|value| !value.is_empty())?;
+        let amount = amount.map(str::trim).filter(|value| !value.is_empty())?;
+        if !super::user::refund_v2::validate_decimal(amount) {
+            return None;
+        }
+        let token_symbol = token_symbol
+            .map(str::trim)
+            .filter(|value| !value.is_empty())?;
+        let response_deadline = response_deadline.filter(|value| *value > 0)?;
+        super::common::deadline::format_utc_timestamp(response_deadline)?;
+        let task_type = match source_event {
+            JOB_REJECTED => "One-time",
+            SUB_USER_REJECT => "Subscription",
+            _ => return None,
+        };
+        Some(Self {
+            service_name: service_name.to_string(),
+            task_type: task_type.to_string(),
+            amount: amount.to_string(),
+            token_symbol: token_symbol.to_string(),
+            response_deadline,
+        })
+    }
+
+    pub fn encode(&self) -> Result<String> {
+        Ok(URL_SAFE_NO_PAD.encode(serde_json::to_vec(self)?))
+    }
+
+    pub fn decode(raw: &str) -> Result<Self> {
+        let bytes = URL_SAFE_NO_PAD
+            .decode(raw)
+            .context("invalid refund display metadata encoding")?;
+        let metadata: Self =
+            serde_json::from_slice(&bytes).context("invalid refund display metadata payload")?;
+        let expected_task_type = match metadata.task_type.as_str() {
+            "One-time" | "Subscription" => metadata.task_type.clone(),
+            _ => bail!("invalid refund display task type"),
+        };
+        Self::new(
+            if expected_task_type == "Subscription" {
+                SUB_USER_REJECT
+            } else {
+                JOB_REJECTED
+            },
+            Some(&metadata.service_name),
+            Some(&metadata.amount),
+            Some(&metadata.token_symbol),
+            Some(metadata.response_deadline),
+        )
+        .ok_or_else(|| anyhow::anyhow!("refund display metadata is incomplete"))
+    }
+
+    pub fn refund_amount_label(&self) -> String {
+        if super::user::refund_v2::is_zero_decimal(&self.amount) {
+            "No refund required".to_string()
+        } else {
+            format!("{} {}", self.amount, self.token_symbol)
+        }
+    }
+
+    pub fn response_deadline_label(&self) -> Option<String> {
+        super::common::deadline::format_utc_timestamp(self.response_deadline)
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -150,6 +236,9 @@ pub fn build_decision_result(
     } else {
         Value::Null
     };
+    let service_name = message
+        .and_then(|message| scalar_string(message.get("serviceName")))
+        .or_else(|| name.clone());
     let buyer_reason = message
         .map(|value| {
             value_from_keys(
@@ -158,13 +247,24 @@ pub fn build_decision_result(
             )
         })
         .unwrap_or(Value::Null);
-    let response_deadline = format_timestamp_value(message.and_then(|value| {
+    let response_deadline_timestamp = message.and_then(|value| {
         integer_from_keys(
             value,
             &["rejectWindowEndsAt", "responseDeadline", "expireTime"],
         )
-    }));
+    });
+    let response_deadline = format_timestamp_value(response_deadline_timestamp);
     let requested_refund = display_amount(amount.as_deref(), token_symbol.as_deref());
+    let response_deadline_label =
+        response_deadline_timestamp.and_then(super::common::deadline::format_utc_timestamp);
+    let refund_display_b64 = RefundDisplayMetadata::new(
+        source_event,
+        service_name.as_deref(),
+        amount.as_deref(),
+        token_symbol.as_deref(),
+        response_deadline_timestamp,
+    )
+    .and_then(|metadata| metadata.encode().ok());
     progression(
         "arbitration_decision",
         "requires_user_input",
@@ -175,13 +275,16 @@ pub fn build_decision_result(
             "decisionId": decision_id(source_event, job_id, message),
             "taskType": if is_subscription { "Subscription" } else { "One-time" },
             "name": name,
-            "serviceName": name,
+            "serviceName": service_name,
             "amount": amount,
             "tokenSymbol": token_symbol,
             "currentPeriod": current_period,
             "requestedRefund": requested_refund,
-            "buyerReason": buyer_reason,
+            "buyerReason": buyer_reason.clone(),
+            "refundReason": buyer_reason,
             "responseDeadline": response_deadline,
+            "responseDeadlineLabel": response_deadline_label,
+            "refundDisplayB64": refund_display_b64,
             "extraFields": extra_fields,
         }),
     )
@@ -446,6 +549,7 @@ fn deterministic_choice_key(reply: &str) -> Option<&'static str> {
         || lowered.starts_with("raise arbitration")
         || lowered.starts_with("request evaluation")
         || lowered.starts_with("start evaluation")
+        || lowered.starts_with("file for evaluation")
     {
         return Some("B");
     }
@@ -484,6 +588,8 @@ fn arbitration_reason(reply: &str) -> Option<String> {
             trimmed.get("request evaluation".len()..).unwrap_or("")
         } else if lower.starts_with("start evaluation") {
             trimmed.get("start evaluation".len()..).unwrap_or("")
+        } else if lower.starts_with("file for evaluation") {
+            trimmed.get("file for evaluation".len()..).unwrap_or("")
         } else {
             ""
         }
@@ -935,6 +1041,38 @@ mod tests {
     }
 
     #[test]
+    fn decision_result_exposes_refund_card_fields_when_event_supplies_them() {
+        let result = build_decision_result(
+            SUB_USER_REJECT,
+            "job-1",
+            Some("Task title".to_string()),
+            Some("1.25".to_string()),
+            Some("USDT".to_string()),
+            Some(&json!({
+                "serviceName": "Signal Service",
+                "refundReason": "Signals were not delivered",
+                "rejectWindowEndsAt": 1_700_000_000,
+            })),
+        );
+
+        assert_eq!(result["payload"]["serviceName"], "Signal Service");
+        assert_eq!(
+            result["payload"]["refundReason"],
+            "Signals were not delivered"
+        );
+        assert!(result["payload"]["responseDeadline"].is_string());
+        assert_eq!(
+            result["payload"]["responseDeadlineLabel"],
+            "2023-11-14 22:13 (UTC+00:00)"
+        );
+        let encoded = result["payload"]["refundDisplayB64"].as_str().unwrap();
+        let metadata = RefundDisplayMetadata::decode(encoded).unwrap();
+        assert_eq!(metadata.service_name, "Signal Service");
+        assert_eq!(metadata.task_type, "Subscription");
+        assert_eq!(metadata.refund_amount_label(), "1.25 USDT");
+    }
+
+    #[test]
     fn missing_card_facts_block_actions() {
         let result = build_decision_result(
             JOB_REJECTED,
@@ -952,6 +1090,20 @@ mod tests {
     #[test]
     fn deterministic_reply_maps_choice_and_requires_evaluation_reason() {
         let choices = default_choices(JOB_REJECTED, "job-1");
+        let approved = resolve_choice(JOB_REJECTED, &choices, "Approve refund").unwrap();
+        assert_eq!(approved.action_id, "agree_refund");
+        assert_eq!(
+            resolve_choice(JOB_REJECTED, &choices, "File for evaluation"),
+            Err(ChoiceError::MissingReason)
+        );
+        let evaluation = resolve_choice(
+            JOB_REJECTED,
+            &choices,
+            "File for evaluation: delivery was incomplete",
+        )
+        .unwrap();
+        assert_eq!(evaluation.action_id, "raise_arbitration");
+        assert_eq!(evaluation.params["reason"], "delivery was incomplete");
         let selected = resolve_choice(
             JOB_REJECTED,
             &choices,

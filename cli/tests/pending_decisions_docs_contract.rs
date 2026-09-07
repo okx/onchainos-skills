@@ -2,9 +2,9 @@ mod common;
 
 use common::onchainos;
 
-const REQUEST: &str = include_str!("../../skills/okx-ai-v2/references/runtime/decision-request.md");
-const RELAY: &str = include_str!("../../skills/okx-ai-v2/references/runtime/decision-relay.md");
-const BACKLOG: &str = include_str!("../../skills/okx-ai-v2/references/runtime/backlog.md");
+const REQUEST: &str = include_str!("../../skills/okx-ai/references/runtime/decision-request.md");
+const RELAY: &str = include_str!("../../skills/okx-ai/references/runtime/decision-relay.md");
+const BACKLOG: &str = include_str!("../../skills/okx-ai/references/runtime/backlog.md");
 
 fn help(args: &[&str]) -> String {
     let output = onchainos().args(args).output().expect("run help");

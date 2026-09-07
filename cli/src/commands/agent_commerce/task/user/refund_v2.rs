@@ -962,7 +962,7 @@ fn first_i64(values: &[(&Value, &[&str])]) -> Option<i64> {
     None
 }
 
-fn validate_decimal(value: &str) -> bool {
+pub(crate) fn validate_decimal(value: &str) -> bool {
     let mut parts = value.split('.');
     let whole = parts.next().unwrap_or_default();
     let fraction = parts.next();
@@ -1397,8 +1397,7 @@ impl RefundSnapshot {
             job_id: job_id.to_string(),
             job_type,
             status,
-            title: lookup(&["title", "jobTitle"], &["title", "jobTitle"])
-                .unwrap_or_default(),
+            title: lookup(&["title", "jobTitle"], &["title", "jobTitle"]).unwrap_or_default(),
             buyer_agent_id,
             provider_agent_id: lookup(
                 &["providerAgentId", "aspAgentId"],
@@ -1891,7 +1890,7 @@ impl RefundSnapshot {
         } else {
             "0"
         };
-        let display = self.display_payload(reason, refundable_amount);
+        let mut display = self.display_payload(reason, refundable_amount);
         let required_params = match plan.reason {
             "refund_reason_required" | "refund_reason_too_long" => json!(["reason"]),
             _ => json!([]),
@@ -1934,6 +1933,50 @@ impl RefundSnapshot {
         } else {
             Value::Null
         };
+        let current_period_label =
+            self.period_start_time
+                .zip(self.period_end_time)
+                .and_then(|(start, end)| {
+                    let start = common::deadline::format_utc_timestamp(start)?;
+                    let end = common::deadline::format_utc_timestamp(end)?;
+                    Some(format!("{start}–{end}"))
+                });
+        let refund_amount_label = if is_zero_decimal(&self.original_amount) {
+            Some("No refund required".to_string())
+        } else {
+            self.token_symbol
+                .as_deref()
+                .filter(|symbol| !symbol.trim().is_empty())
+                .map(|symbol| format!("{} {symbol}", self.original_amount))
+        };
+        let service_provider_label = self
+            .provider_name
+            .as_deref()
+            .zip(self.provider_agent_id.as_deref())
+            .map(|(name, agent_id)| format!("{name} (Agent ID : {agent_id})"));
+        let response_deadline_label = self
+            .response_deadline
+            .and_then(common::deadline::format_utc_timestamp);
+        display["taskTypeLabel"] = Value::String(
+            if self.is_subscription() {
+                "Subscription"
+            } else {
+                "One-time"
+            }
+            .to_string(),
+        );
+        display["serviceProviderLabel"] = service_provider_label
+            .map(Value::String)
+            .unwrap_or(Value::Null);
+        display["currentPeriodLabel"] = current_period_label
+            .map(Value::String)
+            .unwrap_or(Value::Null);
+        display["refundAmountLabel"] = refund_amount_label
+            .map(Value::String)
+            .unwrap_or(Value::Null);
+        display["responseDeadlineLabel"] = response_deadline_label
+            .map(Value::String)
+            .unwrap_or(Value::Null);
         json!({
             "schemaVersion": SCHEMA_VERSION,
             "refundContextId": self.context_id(reason),
@@ -2140,6 +2183,23 @@ async fn fetch_snapshot(
             snapshot.provider_name = common::fetch_agent_profile(provider_agent_id).await.name;
         }
     }
+    if snapshot.service_name.is_none() {
+        if let (Some(provider_agent_id), Some(service_id)) = (
+            snapshot.provider_agent_id.as_deref(),
+            snapshot.service_id.as_deref(),
+        ) {
+            snapshot.service_name = common::find_service(provider_agent_id, service_id)
+                .await?
+                .and_then(|service| {
+                    service
+                        .get("serviceName")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(ToOwned::to_owned)
+                });
+        }
+    }
     Ok(snapshot)
 }
 
@@ -2178,13 +2238,9 @@ pub(crate) async fn fetch_refund_list_item_for_identity(
     caller_agent_id: &str,
     require_buyer_ownership: bool,
 ) -> Result<RefundListItem> {
-    let mut snapshot = fetch_snapshot_for_identity(
-        client,
-        job_id,
-        caller_agent_id,
-        require_buyer_ownership,
-    )
-    .await?;
+    let mut snapshot =
+        fetch_snapshot_for_identity(client, job_id, caller_agent_id, require_buyer_ownership)
+            .await?;
     if snapshot.provider_name.is_none() {
         if let Some(provider_agent_id) = snapshot.provider_agent_id.as_deref() {
             snapshot.provider_name = common::fetch_agent_profile(provider_agent_id).await.name;
@@ -3376,6 +3432,29 @@ mod tests {
     }
 
     #[test]
+    fn refund_payload_adds_display_labels_from_authoritative_fields() {
+        let mut snapshot = snapshot(json!(1), json!(1), "10");
+        snapshot.response_deadline = Some(1_700_200_000);
+        let plan = snapshot.plan(Some("service not delivered"));
+        let payload = snapshot.payload(Some("service not delivered"), &plan);
+
+        assert_eq!(payload["display"]["taskTypeLabel"], "Subscription");
+        assert_eq!(
+            payload["display"]["serviceProviderLabel"],
+            "Example ASP (Agent ID : asp-1)"
+        );
+        assert_eq!(
+            payload["display"]["currentPeriodLabel"],
+            "2023-11-14 22:13 (UTC+00:00)–2023-11-16 02:00 (UTC+00:00)"
+        );
+        assert_eq!(payload["display"]["refundAmountLabel"], "10 USDT");
+        assert_eq!(
+            payload["display"]["responseDeadlineLabel"],
+            "2023-11-17 05:46 (UTC+00:00)"
+        );
+    }
+
+    #[test]
     fn final_status_does_not_offer_duplicate_refund() {
         let backend_confirmed = snapshot(json!(0), json!(9), "10").plan(None);
         assert_eq!(backend_confirmed.reason, "refund_confirmed");
@@ -4358,8 +4437,7 @@ mod tests {
         detail.as_object_mut().unwrap().remove("serviceName");
         detail["rejectReason"] = json!("The result missed the requested scope");
         detail["expireTime"] = json!(1_700_100_000);
-        let snapshot =
-            RefundSnapshot::from_details("job-1", &detail, None, "buyer-1").unwrap();
+        let snapshot = RefundSnapshot::from_details("job-1", &detail, None, "buyer-1").unwrap();
         let display = snapshot.display_payload(None, &snapshot.original_amount);
 
         assert_eq!(display["serviceName"], "Audit task");

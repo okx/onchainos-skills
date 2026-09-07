@@ -31,7 +31,7 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
         Some(s) => s,
         None => return format!(
             "[job_disputed] prefetched.provider_agent_id missing for job {job_id}; cannot fetch chat history for evaluation evidence.\n\n\
-             Enter through skills/okx-ai-v2/SKILL.md, then see skills/okx-ai-v2/references/runtime/recovery.md §2 — push `cli_failed` decision.\n"
+             Enter through skills/okx-ai/SKILL.md, then see skills/okx-ai/references/runtime/recovery.md §2 — push `cli_failed` decision.\n"
         ),
     };
     let chat_block = match okx_a2a::session_history(job_id, provider_id) {
@@ -46,7 +46,7 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
         Err(e) => {
             return format!(
                 "[job_disputed] `okx-a2a session history` failed: {e}\n\n\
-             Enter through skills/okx-ai-v2/SKILL.md, then see skills/okx-ai-v2/references/runtime/recovery.md §2 — push `cli_failed` decision.\n"
+             Enter through skills/okx-ai/SKILL.md, then see skills/okx-ai/references/runtime/recovery.md §2 — push `cli_failed` decision.\n"
             )
         }
     };
@@ -102,26 +102,26 @@ pub(crate) fn dispute_resolved(
         Some(p) => p,
         None => return format!(
             "[dispute_resolved] no prefetched task context for job {job_id}; cannot decide winner.\n\n\
-             Enter through skills/okx-ai-v2/SKILL.md, then see skills/okx-ai-v2/references/runtime/recovery.md §2 — push `cli_failed` decision.\n"
+             Enter through skills/okx-ai/SKILL.md, then see skills/okx-ai/references/runtime/recovery.md §2 — push `cli_failed` decision.\n"
         ),
     };
     if !matches!(p.job_type, Some(0 | 1)) {
         return format!(
             "[dispute_resolved] fresh detail has unsupported or missing jobType {:?} for job {job_id}; do not announce a verdict, rate, notify, or clean up.\n\n\
-             Enter through skills/okx-ai-v2/SKILL.md, then see skills/okx-ai-v2/references/runtime/recovery.md §2 — push `cli_failed` decision.\n",
+             Enter through skills/okx-ai/SKILL.md, then see skills/okx-ai/references/runtime/recovery.md §2 — push `cli_failed` decision.\n",
             p.job_type
         );
     }
     if event_job_type(message).is_some_and(|job_type| Some(job_type) != p.job_type) {
         return format!(
             "[dispute_resolved] event jobType conflicts with fresh composed detail for job {job_id}; do not announce a verdict, rate, notify, or clean up.\n\n\
-             Enter through skills/okx-ai-v2/SKILL.md, then see skills/okx-ai-v2/references/runtime/recovery.md §2 — push `cli_failed` decision.\n"
+             Enter through skills/okx-ai/SKILL.md, then see skills/okx-ai/references/runtime/recovery.md §2 — push `cli_failed` decision.\n"
         );
     }
     if p.user_agent_id.as_deref() != Some(agent_id) {
         return format!(
             "[dispute_resolved] fresh detail does not bind job {job_id} to User Agent {agent_id}; do not announce a verdict, rate, notify, or clean up.\n\n\
-             Enter through skills/okx-ai-v2/SKILL.md, then see skills/okx-ai-v2/references/runtime/recovery.md §2 — push `cli_failed` decision.\n"
+             Enter through skills/okx-ai/SKILL.md, then see skills/okx-ai/references/runtime/recovery.md §2 — push `cli_failed` decision.\n"
         );
     }
     let user_won = match p.status {
@@ -129,11 +129,11 @@ pub(crate) fn dispute_resolved(
         Some(6) => false,
         Some(other) => return format!(
             "[dispute_resolved] unexpected prefetched status {other} for job {job_id}; expected 6 (completed/ASP wins) or 9 (failed/user wins).\n\n\
-             Enter through skills/okx-ai-v2/SKILL.md, then see skills/okx-ai-v2/references/runtime/recovery.md §2 — push `cli_failed` decision.\n"
+             Enter through skills/okx-ai/SKILL.md, then see skills/okx-ai/references/runtime/recovery.md §2 — push `cli_failed` decision.\n"
         ),
         None => return format!(
             "[dispute_resolved] prefetched.status missing for job {job_id}; cannot decide winner.\n\n\
-             Enter through skills/okx-ai-v2/SKILL.md, then see skills/okx-ai-v2/references/runtime/recovery.md §2 — push `cli_failed` decision.\n"
+             Enter through skills/okx-ai/SKILL.md, then see skills/okx-ai/references/runtime/recovery.md §2 — push `cli_failed` decision.\n"
         ),
     };
     if !p.refund_request_provenance {
@@ -156,7 +156,7 @@ pub(crate) fn dispute_resolved(
         Some(s) => s,
         None => return format!(
             "[dispute_resolved] prefetched.provider_agent_id missing for job {job_id}; auto-rate cannot run.\n\n\
-             Enter through skills/okx-ai-v2/SKILL.md, then see skills/okx-ai-v2/references/runtime/recovery.md §2 — push `cli_failed` decision.\n"
+             Enter through skills/okx-ai/SKILL.md, then see skills/okx-ai/references/runtime/recovery.md §2 — push `cli_failed` decision.\n"
         ),
     };
     let title_display = p

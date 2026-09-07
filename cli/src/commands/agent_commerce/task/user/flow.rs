@@ -113,7 +113,7 @@ fn switch_asp_routing(job_id: &str, agent_id: &str, source_event: &str) -> Strin
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x20Then send SKILL_PREFETCH:\n\
                      \x20\x20\x20\x20```bash\n\
-                     \x20\x20\x20\x20okx-a2a session send --session-key <sessionKey from above> --content \"[SKILL_PREFETCH] Read the okx-ai skill through skills/okx-ai-v2/SKILL.md. Pre-load user role context.\" --json\n\
+                     \x20\x20\x20\x20okx-a2a session send --session-key <sessionKey from above> --content \"[SKILL_PREFETCH] Read the okx-ai skill through skills/okx-ai/SKILL.md. Pre-load user role context.\" --json\n\
                      \x20\x20\x20\x20```\n\
                      \x20\x20\x20\x207. **Upload pending attachments (if any):**\n\
                      \x20\x20\x20\x20```bash\n\
@@ -565,15 +565,15 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      **Semantic mapping** — decide which intent the user's reply means, then call the corresponding next-action.\n\n\
                      Two options:\n\
                      \x20\x20• **`approve_review`** — user accepts the deliverable (typical intents: A / 通过 / 同意 / 满意 / 接受 / 验收 / approve / accept / agree / OK / 行 / 可以 — anything meaning satisfaction with the deliverable).\n\
-                     \x20\x20• **`reject_review`** — compatibility route for a review reply already relayed to this task session. B with a non-blank reason is the user's final confirmation to submit the rejection/refund request on-chain. Preserve the reason verbatim; the compatibility handler runs fresh Refund V2 preparation and executes the returned `submit_refund_request` action in the same turn.\n\n\
-                     If the reply approves, or rejects with an explicit reason → call:\n\
+                     \x20\x20• **`reject_review`** — compatibility route for a review reply already relayed to this task session. B or any unambiguous rejection opens a fresh, read-only Refund V2 confirmation. Preserve any user-authored wording verbatim as context.\n\n\
+                     If the reply approves or rejects → call:\n\
                      ```bash\n\
                      # For approve_review (no extra args needed):\n\
                      onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"approve_review\",\"jobId\":\"{job_id}\"}}'\n\
-                     # For reject_review with an explicit reason — pass only that user-authored reason verbatim via message.data:\n\
+                     # For reject_review, include user-authored wording verbatim via message.data when present:\n\
                      onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"reject_review\",\"jobId\":\"{job_id}\",\"data\":\"<verbatim user-authored reason, JSON-escaped>\"}}'\n\
                      ```\n\
-                     If the user rejects without an explicit reason, do not call `reject_review`. Run `{rejection_reason_request}`, appending the incoming relay's `--to-agent-id` when present, then end the turn.\n\
+                     For a rejection without extra wording, omit `data`. Render the returned Confirm Refund Request card and end the turn. Continue the refund only after the user provides clear `Submit refund request` intent and a refund reason.\n\
                      If the reply is **truly ambiguous** (e.g. non-committal `hmm` / `got it` / unrelated chitchat): re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` as the incoming relay's `[to: …]` header (or none, if it says `[to: backup]` / you run in a backup sub — NEVER your own agentId) and `--source-event {source}`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=approve  B=reject\".\n"
                 ),
                 "cli_failed" => format!(
@@ -851,7 +851,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      ```\n\
                      Then send SKILL_PREFETCH:\n\
                      ```bash\n\
-                     okx-a2a session send --session-key <sessionKey from above> --content \"[SKILL_PREFETCH] Read the okx-ai skill through skills/okx-ai-v2/SKILL.md. Pre-load user role context.\" --json\n\
+                     okx-a2a session send --session-key <sessionKey from above> --content \"[SKILL_PREFETCH] Read the okx-ai skill through skills/okx-ai/SKILL.md. Pre-load user role context.\" --json\n\
                      ```\n\
                      5. **Upload pending attachments (if any):**\n\
                      ```bash\n\
@@ -1021,23 +1021,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reject_review_without_reason_returns_only_structured_progression() {
+    async fn reject_review_without_reason_opens_refund_confirmation() {
         let output = run(
             "reject_review",
             json!({ "event": "reject_review", "jobId": JOB_ID }),
         )
         .await;
-        let progression: serde_json::Value = serde_json::from_str(&output).unwrap();
-
-        assert_eq!(progression["decision"], "requires_user_input");
-        assert_eq!(
-            progression["nextAction"][0]["id"],
-            "request_rejection_reason"
-        );
+        assert!(output.contains("refund-prepare"), "{output}");
+        assert!(output.contains("Confirm Refund Request"), "{output}");
+        assert!(output.contains("Submit refund request"), "{output}");
     }
 
     #[tokio::test]
-    async fn reject_without_reason_requests_a_dedicated_reason() {
+    async fn reject_without_reason_opens_refund_confirmation() {
         let out = run_with_data(
             "user_decision_job_submitted",
             Some("B"),
@@ -1045,12 +1041,10 @@ mod tests {
         )
         .await;
 
-        assert!(out.contains("--source-event reject_reason_required"));
-        assert!(out.contains("--job-id 0xsub01 --role user --agent-id 864"));
-        assert!(out.contains("--user-content \"Please provide the rejection reason.\""));
-        assert!(out.contains("--list-label \"[Reject 0xsub01] rejection reason\""));
-        assert!(out.contains("do not call `reject_review`"));
-        assert!(!out.contains("handler falls back to a default"));
+        assert!(out.contains("reject_review"));
+        assert!(out.contains("without extra wording"));
+        assert!(out.contains("Confirm Refund Request card"));
+        assert!(out.contains("Submit refund request"));
     }
 
     #[tokio::test]
