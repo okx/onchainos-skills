@@ -74,7 +74,7 @@ fn write_guide_direct_fixture(home: &std::path::Path, delivery_id: &str) -> std:
         &home.join("autotrade/guide/job1.md"),
         "guide",
         &json!({
-            "version": 2,
+            "version": 1,
             "jobId": "job1",
             "serviceId": "svc-guide",
             "sourceHash": source_hash,
@@ -116,6 +116,18 @@ fn guide_direct_claim_requires_active_guide_consent_and_finalizes_once() {
     let (_guard, home) = fresh_home("cli_autotrade_direct_execution");
     let delivery_id = "delivery-direct";
     let saved_path = write_guide_direct_fixture(&home, delivery_id);
+    // This retired routing preference must not be re-evaluated at claim time.
+    // The final gate is the active local Guide + Consent contract.
+    write_json(
+        &home.join("autotrade/subscription-config/8315/svc-guide.json"),
+        &json!({
+            "version": 1,
+            "userAgentId": "8315",
+            "serviceId": "svc-guide",
+            "executionMode": "signal_only",
+            "updatedAtMs": 1,
+        }),
+    );
     assert!(!fs::read_to_string(&saved_path)
         .unwrap()
         .trim_start()
@@ -130,11 +142,14 @@ fn guide_direct_claim_requires_active_guide_consent_and_finalizes_once() {
             "job1",
             "--delivery-id",
             delivery_id,
-            "--amount",
-            "2.5",
         ],
     );
-    assert!(claimed.status.success());
+    assert!(
+        claimed.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&claimed.stdout),
+        String::from_utf8_lossy(&claimed.stderr)
+    );
     assert_eq!(parse_stdout_json(&claimed)["data"]["status"], "claimed");
 
     let finalized = run(
@@ -166,8 +181,6 @@ fn guide_direct_claim_requires_active_guide_consent_and_finalizes_once() {
             "job1",
             "--delivery-id",
             delivery_id,
-            "--amount",
-            "2.5",
         ],
     );
     assert!(duplicate.status.success());
@@ -189,8 +202,6 @@ fn guide_direct_claim_requires_saved_signal_and_active_consent() {
             "job1",
             "--delivery-id",
             delivery_id,
-            "--amount",
-            "2.5",
         ],
     );
     assert!(!missing_signal_claim.status.success());
@@ -218,8 +229,6 @@ fn guide_direct_claim_requires_saved_signal_and_active_consent() {
             "job1",
             "--delivery-id",
             paused_delivery_id,
-            "--amount",
-            "2.5",
         ],
     );
     assert!(!paused_claim.status.success());
