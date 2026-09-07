@@ -267,10 +267,10 @@ fn create_sub_session(job_id: &str, agent_id: &str, provider_id: &str) -> String
         return format!("[sub_open] session create failed: {e}\n");
     }
 
-    let prefetch = "[SKILL_PREFETCH] Read the okx-ai skill through skills/okx-ai-v2/SKILL.md. Pre-load user role context. \
+    let prefetch = "[SKILL_PREFETCH] Read the okx-ai skill through skills/okx-ai/SKILL.md. Pre-load user role context. \
         This prefetch message itself requires no action — but when the NEXT inbound message arrives \
-        (same turn or later turn), you MUST re-enter through that SKILL.md and process it normally via references/a2a/router.md \
-        §Peer Message Routing (#1–#6). Do NOT carry over \"no action\" to business messages.";
+        (same turn or later turn), you MUST re-enter through that SKILL.md and follow its Top-level routing \
+        for the exact envelope shape. Do NOT carry over \"no action\" to business messages.";
     if let Err(e) = okx_a2a::session_send(job_id, Some(provider_id), prefetch) {
         return format!("[sub_open] session send (SKILL_PREFETCH) failed: {e}\n");
     }
@@ -374,7 +374,7 @@ pub(crate) fn sub_asp_dispute(
             return format!(
                 "[sub_asp_dispute] prefetched.provider_agent_id missing for job {job_id}; \
              cannot fetch chat history for dispute evidence.\n\n\
-             Enter through `skills/okx-ai-v2/SKILL.md`, then see `skills/okx-ai-v2/references/runtime/recovery.md` §2 — push `cli_failed` decision.\n"
+             Enter through `skills/okx-ai/SKILL.md`, then see `skills/okx-ai/references/runtime/recovery.md` §2 — push `cli_failed` decision.\n"
             )
         }
     };
@@ -390,7 +390,7 @@ pub(crate) fn sub_asp_dispute(
         Err(e) => {
             return format!(
                 "[sub_asp_dispute] `okx-a2a session history` failed: {e}\n\n\
-             Enter through `skills/okx-ai-v2/SKILL.md`, then see `skills/okx-ai-v2/references/runtime/recovery.md` §2 — push `cli_failed` decision.\n"
+             Enter through `skills/okx-ai/SKILL.md`, then see `skills/okx-ai/references/runtime/recovery.md` §2 — push `cli_failed` decision.\n"
             )
         }
     };

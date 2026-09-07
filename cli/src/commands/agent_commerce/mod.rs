@@ -1186,7 +1186,7 @@ pub enum AgentCommand {
         #[arg(long)]
         vote: u8,
         /// Full verdict text produced by Step 5 per the Verdict template defined in
-        /// `skills/okx-ai-v2/references/a2a/evaluator/rubric.md` (whichever heading the user-customized
+        /// `skills/okx-ai/references/a2a/evaluator/rubric.md` (whichever heading the user-customized
         /// rubric uses to define it; required). Sent to backend in the broadcast bizContext as
         /// `voteReport` — the human-readable on-chain audit trail; whatever fields the rubric's
         /// Verdict template prescribes. Flatten to a single line with `\n` / `\t` / `\r` / `\\` / `\"`

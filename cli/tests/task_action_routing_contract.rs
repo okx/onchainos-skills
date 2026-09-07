@@ -1,16 +1,16 @@
-const ROUTER: &str = include_str!("../../skills/okx-ai-v2/references/a2a/router.md");
-const USER_ROUTER: &str = include_str!("../../skills/okx-ai-v2/references/a2a/user/router.md");
+const ROUTER: &str = include_str!("../../skills/okx-ai/references/a2a/router.md");
+const USER_ROUTER: &str = include_str!("../../skills/okx-ai/references/a2a/user/router.md");
 const PROVIDER_ROUTER: &str =
-    include_str!("../../skills/okx-ai-v2/references/a2a/provider/router.md");
+    include_str!("../../skills/okx-ai/references/a2a/provider/router.md");
 const ARBITRATION_DECISION: &str =
-    include_str!("../../skills/okx-ai-v2/references/a2a/provider/arbitration-decision.md");
-const DISPUTE: &str = include_str!("../../skills/okx-ai-v2/references/a2a/provider/dispute.md");
+    include_str!("../../skills/okx-ai/references/a2a/provider/arbitration-decision.md");
+const DISPUTE: &str = include_str!("../../skills/okx-ai/references/a2a/provider/dispute.md");
 const ARBITRATION_QUERY: &str =
-    include_str!("../../skills/okx-ai-v2/references/a2a/provider/arbitration-query.md");
+    include_str!("../../skills/okx-ai/references/a2a/provider/arbitration-query.md");
 const EVIDENCE_UPLOAD: &str =
-    include_str!("../../skills/okx-ai-v2/references/a2a/provider/evidence-upload.md");
-const NOTIFY: &str = include_str!("../../skills/okx-ai-v2/references/a2a/notify.md");
-const OKX_AI_SKILL: &str = include_str!("../../skills/okx-ai-v2/SKILL.md");
+    include_str!("../../skills/okx-ai/references/a2a/provider/evidence-upload.md");
+const NOTIFY: &str = include_str!("../../skills/okx-ai/references/a2a/notify.md");
+const OKX_AI_SKILL: &str = include_str!("../../skills/okx-ai/SKILL.md");
 const TASK_COMMON_SOURCE: &str = include_str!("../src/commands/agent_commerce/task/common/mod.rs");
 const EVALUATOR_FLOW_SOURCE: &str =
     include_str!("../src/commands/agent_commerce/task/evaluator/flow.rs");
@@ -18,6 +18,8 @@ const EVALUATOR_INFO_SOURCE: &str =
     include_str!("../src/commands/agent_commerce/task/evaluator/info.rs");
 const DISPUTE_LIFECYCLE_SOURCE: &str =
     include_str!("../src/commands/agent_commerce/task/user/flow_lifecycle/dispute.rs");
+const USER_MANAGE_SOURCE: &str =
+    include_str!("../src/commands/agent_commerce/task/user/flow_lifecycle/manage.rs");
 const PENDING_V2_SOURCE: &str =
     include_str!("../src/commands/agent_commerce/task/common/pending_v2.rs");
 const ASP_DISPUTE_RAISE_SOURCE: &str =
@@ -150,8 +152,8 @@ fn task_and_arbitration_query_intents_use_distinct_leaves() {
 }
 
 #[test]
-fn cli_guidance_targets_role_scoped_v2_tree() {
-    let legacy_prefix = ["skills/okx-ai", "/references/"].concat();
+fn cli_guidance_targets_role_scoped_skill_tree() {
+    let retired_prefix = ["skills/okx-ai-v2", "/references/"].concat();
     for source in [
         PENDING_V2_SOURCE,
         EVALUATOR_FLOW_SOURCE,
@@ -160,14 +162,26 @@ fn cli_guidance_targets_role_scoped_v2_tree() {
         TASK_COMMON_SOURCE,
     ] {
         assert!(
-            !source.contains(&legacy_prefix),
-            "CLI guidance references the legacy skill tree"
+            !source.contains(&retired_prefix),
+            "CLI guidance references the retired skill tree"
         );
     }
-    assert!(PENDING_V2_SOURCE.contains("skills/okx-ai-v2/SKILL.md"));
-    assert!(TASK_COMMON_SOURCE.contains("references/a2a/router.md"));
+    assert!(PENDING_V2_SOURCE.contains("skills/okx-ai/SKILL.md"));
+    assert!(TASK_COMMON_SOURCE.contains("references/a2a/user/router.md"));
+    assert!(TASK_COMMON_SOURCE.contains("references/a2a/provider/router.md"));
+    assert!(TASK_COMMON_SOURCE.contains("references/a2a/evaluator/router.md"));
+    assert!(!TASK_COMMON_SOURCE.contains("=> \"references/a2a/router.md\""));
     assert!(!TASK_COMMON_SOURCE.contains("references/a2a/user/session.md"));
+    assert!(USER_MANAGE_SOURCE.contains(
+        "read `skills/okx-ai/references/a2a/user/subscription-manage.md` §Signal-receipt watch entry directly"
+    ));
+    assert!(USER_MANAGE_SOURCE.contains(
+        "Route `nextAction.id=watch_task` directly to `skills/okx-ai/references/runtime/watch.md`"
+    ));
     assert!(EVALUATOR_FLOW_SOURCE.contains("references/a2a/evaluator/rubric.md"));
+    assert!(EVALUATOR_FLOW_SOURCE
+        .contains("Step 3 — Read `skills/okx-ai/references/a2a/evaluator/rubric.md` directly"));
+    assert!(!EVALUATOR_FLOW_SOURCE.contains("Step 3 — Enter through `skills/okx-ai/SKILL.md`"));
     assert!(!EVALUATOR_FLOW_SOURCE.contains("references/a2a/evaluator/dispute.md"));
     assert!(DISPUTE_LIFECYCLE_SOURCE.contains("references/runtime/recovery.md"));
 }

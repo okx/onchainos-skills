@@ -220,11 +220,11 @@ fn asset_class_is_required_and_aliases_are_rejected_before_probe() {
 #[test]
 fn signal_playbook_uses_guide_direct_lifecycle() {
     let playbook =
-        include_str!("../../skills/okx-ai-v2/references/a2a/user/execution-policy.md");
-    assert!(playbook.contains("The raw Signal may be plain text, Markdown, or JSON."));
+        include_str!("../../skills/okx-ai/references/a2a/user/execution-policy.md");
+    assert!(playbook.contains("Signal: `savedPath`"));
     assert!(!playbook.contains("autotrade-guide-intent-resolve"));
     assert!(playbook.contains("autotrade-direct-claim"));
     assert!(playbook.contains("autotrade-direct-finalize"));
-    assert!(playbook.contains("Never call `autotrade-execute`"));
-    assert!(playbook.contains("`subscription-route-set`"));
+    assert!(playbook.contains("autotrade-delivery-report"));
+    assert!(playbook.contains("registered command or tool"));
 }
