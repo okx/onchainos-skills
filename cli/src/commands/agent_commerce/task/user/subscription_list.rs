@@ -9,9 +9,11 @@ use anyhow::{anyhow, bail, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 
+use super::device_routing;
 use super::subscription_ops::enrich_buyer_subscription_page;
-use super::{content, device_routing};
+use crate::commands::agent_commerce::task::common;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::query as common_query;
 use crate::commands::agent_commerce::task::common::AGENT_ROLE_USER;
@@ -112,11 +114,7 @@ fn parse_page(value: Value, stage: CursorStage) -> Result<SubscriptionPage> {
 }
 
 fn add_display_fields(object: &mut serde_json::Map<String, Value>, stage: CursorStage) {
-    let amount = object
-        .get("serviceTokenAmount")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    object.insert("feeLabel".to_string(), Value::String(amount.to_string()));
+    object.insert("feeLabel".to_string(), Value::Null);
 
     let auto_renew = object.get("autoRenew").and_then(Value::as_i64);
     object.insert(
@@ -147,7 +145,12 @@ fn add_display_fields(object: &mut serde_json::Map<String, Value>, stage: Cursor
     );
 
     let next_charge = if stage == CursorStage::Active && auto_renew == Some(1) {
-        content::fmt_epoch(object.get("subEndTime").and_then(Value::as_i64))
+        common::deadline::format_utc_timestamp(
+            object
+                .get("subEndTime")
+                .and_then(Value::as_i64)
+                .unwrap_or_default(),
+        )
     } else {
         None
     };
@@ -170,6 +173,108 @@ fn add_display_fields(object: &mut serde_json::Map<String, Value>, stage: Cursor
     object.insert(
         "hasNoReceivingDevices".to_string(),
         Value::Bool(no_receivers),
+    );
+}
+
+async fn attach_fee_labels(output: &mut Value) {
+    let Some(payload) = output.get_mut("payload").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let Some(items) = payload.get_mut("items").and_then(Value::as_array_mut) else {
+        return;
+    };
+
+    let mut symbols = HashMap::<String, Option<String>>::new();
+    for item in items.iter() {
+        let has_inline_symbol = [
+            "serviceTokenSymbol",
+            "tokenSymbol",
+            "paymentTokenSymbol",
+        ]
+        .into_iter()
+        .any(|key| {
+            item.get(key)
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.trim().is_empty())
+        });
+        if has_inline_symbol {
+            continue;
+        }
+        let Some(address) = item
+            .get("serviceTokenAddress")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        if symbols.contains_key(address) {
+            continue;
+        }
+        let symbol =
+            common::util::resolve_token_symbol_by_address(common::XLAYER_CHAIN_INDEX, address)
+                .await
+                .ok();
+        symbols.insert(address.to_string(), symbol);
+    }
+
+    for item in items.iter_mut() {
+        let Some(object) = item.as_object_mut() else {
+            continue;
+        };
+        let inline_symbol = ["serviceTokenSymbol", "tokenSymbol", "paymentTokenSymbol"]
+            .into_iter()
+            .find_map(|key| object.get(key).and_then(Value::as_str))
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
+        let resolved_symbol = object
+            .get("serviceTokenAddress")
+            .and_then(Value::as_str)
+            .and_then(|address| symbols.get(address.trim()))
+            .and_then(Option::as_deref)
+            .map(ToOwned::to_owned);
+        let symbol = inline_symbol.or(resolved_symbol);
+        set_fee_label(object, symbol.as_deref());
+    }
+    let missing_job_ids = items
+        .iter()
+        .filter(|item| item.get("feeDisplayReady").and_then(Value::as_bool) != Some(true))
+        .filter_map(|item| item.get("jobId").and_then(Value::as_str))
+        .map(|job_id| Value::String(job_id.to_string()))
+        .collect::<Vec<_>>();
+    payload.insert(
+        "displayReady".to_string(),
+        Value::Bool(missing_job_ids.is_empty()),
+    );
+    payload.insert(
+        "displayMissingFeeJobIds".to_string(),
+        Value::Array(missing_job_ids),
+    );
+}
+
+fn set_fee_label(object: &mut serde_json::Map<String, Value>, symbol: Option<&str>) {
+    let amount = object
+        .get("serviceTokenAmount")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let fee_label = amount
+        .zip(symbol)
+        .map(|(amount, symbol)| format!("{amount} {symbol} / month"));
+    object.insert(
+        "feeTokenSymbol".to_string(),
+        symbol
+            .map(|symbol| Value::String(symbol.to_string()))
+            .unwrap_or(Value::Null),
+    );
+    object.insert(
+        "feeLabel".to_string(),
+        fee_label.clone().map(Value::String).unwrap_or(Value::Null),
+    );
+    object.insert(
+        "feeDisplayReady".to_string(),
+        Value::Bool(fee_label.is_some()),
     );
 }
 
@@ -498,6 +603,7 @@ pub async fn handle_subscription_list(cursor_raw: Option<&str>, page_size: u32) 
         }
         None => initial_page(&agent_id, page_size).await?,
     };
+    attach_fee_labels(&mut output).await;
     let mut device_client = TaskApiClient::new();
     let device_snapshot =
         device_routing::fetch_device_list_snapshot(&mut device_client, &agent_id, 1, 100)
@@ -591,11 +697,14 @@ mod tests {
             ("deviceList".to_string(), json!([])),
         ]);
         add_display_fields(&mut item, CursorStage::Active);
-        assert_eq!(item["feeLabel"], "10");
+        set_fee_label(&mut item, Some("USDT"));
+        assert_eq!(item["feeLabel"], "10 USDT / month");
+        assert_eq!(item["feeTokenSymbol"], "USDT");
+        assert_eq!(item["feeDisplayReady"], true);
         assert_eq!(item["autoRenewLabel"], "Enabled");
         assert_eq!(item["billingPeriodLabel"], "Billing Period 2");
-        assert_eq!(item["nextChargeAt"], "2023-11-14 22:13 UTC");
-        assert_eq!(item["nextChargeLabel"], "2023-11-14 22:13 UTC");
+        assert_eq!(item["nextChargeAt"], "2023-11-14 22:13 (UTC+00:00)");
+        assert_eq!(item["nextChargeLabel"], "2023-11-14 22:13 (UTC+00:00)");
         assert_eq!(item["hasNoReceivingDevices"], true);
     }
 

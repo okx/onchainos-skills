@@ -13,8 +13,29 @@ wait. Never select from conversation recency.
 onchainos agent status <jobId> --agent-id <currentAgentId>
 ```
 
-Render only fresh returned facts. A task status is not a substitute for Refund
-V2 settlement provenance.
+For a one-time task, render this exact card from fresh returned facts:
+
+scene: One-time task details
+
+display template:
+
+```markdown
+### One-time Job Details
+
+| Job Name | Job ID | Service Provider | Fee | Status | Job Description |
+|---|---|---|---|---|---|
+| {title} | {jobId} | Agent ID {providerAgentId} | {Fee} | {status} | {description} |
+```
+
+display rules:
+
+1. Display the complete `jobId`; never shorten it.
+2. Render Fee as `{tokenAmount} {tokenSymbol}`. Render `Free` when the exact
+   amount is zero.
+3. Use only the status name rendered by the CLI.
+4. Preserve the returned Job Description without rewriting it.
+
+A task status is not a substitute for Refund V2 settlement provenance.
 
 ## User tasks
 
@@ -22,6 +43,35 @@ Use the CLI command matching the explicit one-time/subscription and
 active/ended filters. Preserve returned pagination and sections. For an
 unfiltered “my tasks” request, render the CLI's unified response; do not merge
 independently fetched pages or silently omit empty requested sections.
+
+For an explicit one-time list, run:
+
+```bash
+onchainos agent my-tasks --task-type one-time --status-type <0|1|2> \
+  --page <page> --page-size <pageSize>
+```
+
+scene: One-time task list
+
+display template:
+
+```markdown
+### One-time Jobs
+
+| # | Job Name | Job ID | Service Provider | Fee | Status |
+|---|---|---|---|---|---|
+| {n} | {title} | {jobId} | Agent ID {providerAgentId} | {Fee} | {statusName} |
+```
+
+display rules:
+
+1. Render only the current `oneTimeTasks.list` page in CLI order and number it
+   from 1.
+2. Display every `jobId` in full.
+3. Render Fee as `{tokenAmount} {tokenSymbol}`. Render `Free` when the exact
+   amount is zero.
+4. Use only the CLI-normalized `statusName`.
+5. Preserve the returned pagination; do not merge pages.
 
 ## ASP tasks
 

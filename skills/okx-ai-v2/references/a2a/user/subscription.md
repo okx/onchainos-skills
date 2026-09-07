@@ -12,56 +12,65 @@ Browse my subscription task lists or details.
 
 ## List
 
-Render only the current `payload.items` page. Keep CLI order. This section is
-the single rendering contract for buyer subscription lists.
+scene: Active subscription list
 
-### how to render list
-This is a mandatory, exact rendering contract.
-For every subscription-list result, render this structure in full.
-Never summarize, shorten, reorder.
-#### template
+display template:
+
 ```markdown
 #### Active Subscriptions ({payload.summary.activeCount})
 
-| # | Job Name | Service Provider | Status | Fee / Month | Next Charge | Auto-renewal | Billing Period | {payload.deviceColumns[].label} |
+| # | Job Name | Service Provider ID | Status | Subscription Fee | Next Charge | Auto-renewal | Billing Period | {payload.deviceColumns[].label} |
 |---|---|---|---|---|---|---|---|---|
-| {n} | {title} | Agent#{providerAgentId} | {statusName} | {feeLabel} | {nextChargeLabel} | {autoRenewLabel} | {billingPeriodLabel} | {deviceReceiptCells[column.key]} |
+| {n} | {title} | {providerAgentId} | {statusName} | {feeLabel} | {nextChargeLabel} | {autoRenewLabel} | {billingPeriodLabel} | {deviceReceiptCells[column.key]} |
 
 #### Ended Subscriptions ({payload.summary.endedCount})
 
-| # | Job Name | Service Provider | Status | Fee / Month | Billing Period |
+| # | Job Name | Service Provider ID | Status | Subscription Fee | Billing Period |
 |---|---|---|---|---|---|
-| {n} | {title} | Agent#{providerAgentId} | {statusName} | {feeLabel} | {billingPeriodLabel} |
+| {n} | {title} | {providerAgentId} | {statusName} | {feeLabel} | {billingPeriodLabel} |
 
 {No Receiver Warning}
 
-{Rendered nextAction list}
+You can ask me to view subscription details, adjust receiving devices, or cancel a subscription.
 ```
-#### template rules
-1. Group rows by `listStatus`, preserving CLI order.
-2. For Active rows, render the returned `payload.deviceColumns` in order and
-   use each row's `deviceReceiptCells[column.key]` directly. The CLI owns the
-   device label, fallback to `deviceId`, and `(This Device)` marker.
-3. If device data is unavailable, omit device columns and state that receipt
-   status is unavailable.
-4. Warn for each Active row with `hasNoReceivingDevices=true`.
 
-### Constraints
+display rules:
 
-- Use `nextCursor` unchanged to continue the list.
-- The query and rendered recommendations are read-only. Never start listening,
-  modify delivery, cancel, sign, pay, or trade from the list response.
+1. Render the list only when `payload.displayReady=true`. Otherwise state the exact `payload.displayMissingFeeJobIds` and do not infer a Fee.
+2. Group rows by `listStatus`, preserving CLI order.
+3. Number the current page from 1. Use the full returned Service Provider ID.
+4. Use `feeLabel`, `nextChargeLabel`, `autoRenewLabel`, and `billingPeriodLabel` directly. Do not recalculate them.
+5. For Active rows, render `payload.deviceColumns` in order and use `deviceReceiptCells[column.key]` directly.
+6. Omit device columns when there are no Active rows. If device data is unavailable, omit them and state that receipt status is unavailable.
+7. Warn for every Active row with `hasNoReceivingDevices=true` that it has no receiving device and will not receive subscription messages.
+8. Use `nextCursor` unchanged to continue the list.
+9. Recommendations are read-only until the User selects an exact Job ID and action. Never modify delivery or cancel from the list response alone.
 
 ## Detail
 
-Render current fields only: `title`, `jobId`, status, buyer, provider,
-`serviceTokenAmount`, period, `autoRenew`, trial window when present,
-`offlineReceiveFlag`, `deviceList`, and `thisDeviceReceives`.
+scene: Subscription details
 
-Preserve `deviceList`: `null` means all logged-in devices by default, `[]`
-means none, and a non-empty array is an explicit allowlist.
+display template:
 
-### Constraints
+```markdown
+### Subscription Details
 
-- Never infer a `jobId` from a title or prior context.
-- Refresh the list only when the selected subscription is no longer available.
+| Job Name | Job ID | Status | User | Service Provider | Free Trial | Fee | Auto-renewal | Billing Period | Offline Message Handling | Receive on This Device |
+|---|---|---|---|---|---|---|---|---|---|---|
+| {title} | {jobId} | {statusName} | {buyerAgentId} | {serviceProviderLabel} | {freeTrialLabel} | {feeLabel} | {autoRenewLabel} | {billingPeriodLabel} | {offlineMessageHandlingLabel} | {receiveOnThisDeviceLabel} |
+
+Subscription messages are delivered to the background process first.
+
+{Next Action}
+```
+
+display rules:
+
+1. Render only when `displayReady=true`. If false, state the exact `displayMissingFields` and do not infer them.
+2. Preserve the full Job ID, User Agent ID, and Service Provider ID. Use `serviceProviderLabel` directly.
+3. Use all CLI-provided labels directly. Do not infer trial eligibility, calculate the first charge time, resolve token symbols, or derive device state in the Skill.
+4. Preserve `deviceList`: `null` means all logged-in devices by default, `[]` means none, and a non-empty array is an explicit allowlist.
+5. If this conversation is not currently listening for the selected subscription, render: `To receive subscription messages in this conversation, ask me to start listening.`
+6. If the selected subscription is already being listened to in this conversation, render: `To view the latest signals, ask me to show the latest subscription messages.`
+7. If `copyTrade=1`, append: `To view copy-trade status, ask me to show the current copy-trade status.`
+8. Never infer a Job ID from a title or prior context. Refresh the list only when the selected subscription is unavailable.
