@@ -1,7 +1,12 @@
 # Task Parameter Clarification
 
-This leaf owns the designated-provider `NEED_PARAMS` exchange. It is a
-collaboration subflow inside Created state, not a new task status.
+This leaf owns the designated-provider `NEED_PARAMS` exchange for single tasks
+only. It is a collaboration subflow inside Created state, not a new task status.
+Subscriptions must never enter this leaf or call `service-param-update`; the ASP
+must decline a subscription with a concrete reason when required input is absent.
+If an older CLI playbook routes a subscription here, treat that route as stale:
+do not send `task_params_request`, do not update the backend, and return to
+[`provider/assignment.md`](provider/assignment.md) for `ACCEPT` or `REJECT`.
 
 ## ASP request
 
