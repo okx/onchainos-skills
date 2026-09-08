@@ -943,6 +943,21 @@ fn first_string(values: &[(&Value, &[&str])]) -> Option<String> {
     None
 }
 
+fn first_exact_string(values: &[(&Value, &[&str])]) -> Option<String> {
+    for (value, keys) in values {
+        for key in *keys {
+            if let Some(result) = value
+                .get(*key)
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+            {
+                return Some(result.to_string());
+            }
+        }
+    }
+    None
+}
+
 fn scalar_i64(value: Option<&Value>) -> Option<i64> {
     let value = value?;
     value
@@ -1431,10 +1446,19 @@ impl RefundSnapshot {
                 &["refundRequestedAt", "rejectTime"],
                 &["refundRequestedAt", "rejectTime"],
             ),
-            recorded_refund_reason: lookup(
-                &["refundReason", "rejectReason", "userReason"],
-                &["refundReason", "rejectReason", "userReason"],
-            ),
+            recorded_refund_reason: {
+                let mut values = Vec::new();
+                if let Some(subscription) = subscription {
+                    values.push((
+                        subscription,
+                        &["rejectReason", "refundReason", "userReason"][..],
+                    ));
+                }
+                // One-time task detail formally returns `rejectReason`; the
+                // remaining names are retained for older response snapshots.
+                values.push((task, &["rejectReason", "refundReason", "userReason"][..]));
+                first_exact_string(&values)
+            },
             // Tx Hash is optional display/audit metadata. The authoritative
             // task status is projected only after the backend consumes the
             // corresponding on-chain event, so it can prove settlement even
@@ -1953,7 +1977,7 @@ impl RefundSnapshot {
             .provider_name
             .as_deref()
             .zip(self.provider_agent_id.as_deref())
-            .map(|(name, agent_id)| format!("{name} (Agent ID : {agent_id})"));
+            .map(|(name, agent_id)| format!("{name} (Agent ID: {agent_id})"));
         let response_deadline_label = self
             .response_deadline
             .and_then(common::deadline::format_utc_timestamp);
@@ -3441,7 +3465,7 @@ mod tests {
         assert_eq!(payload["display"]["taskTypeLabel"], "Subscription");
         assert_eq!(
             payload["display"]["serviceProviderLabel"],
-            "Example ASP (Agent ID : asp-1)"
+            "Example ASP (Agent ID: asp-1)"
         );
         assert_eq!(
             payload["display"]["currentPeriodLabel"],
@@ -4435,7 +4459,7 @@ mod tests {
     fn refund_display_is_english_display_ready_and_omits_transaction_hashes() {
         let mut detail = task(json!(0), json!(3), "1.25");
         detail.as_object_mut().unwrap().remove("serviceName");
-        detail["rejectReason"] = json!("The result missed the requested scope");
+        detail["rejectReason"] = json!(" The result missed the requested scope.\nKeep spacing ");
         detail["expireTime"] = json!(1_700_100_000);
         let snapshot = RefundSnapshot::from_details("job-1", &detail, None, "buyer-1").unwrap();
         let display = snapshot.display_payload(None, &snapshot.original_amount);
@@ -4445,7 +4469,7 @@ mod tests {
         assert_eq!(display["refundAmount"], "1.25 USDT");
         assert_eq!(
             display["reasonForRefund"],
-            "The result missed the requested scope"
+            " The result missed the requested scope.\nKeep spacing "
         );
         assert!(display["resultDeadline"].as_str().is_some());
         assert!(display.get("txHash").is_none());

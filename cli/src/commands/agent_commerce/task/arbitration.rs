@@ -11,6 +11,41 @@ use super::evaluator::dispute_status::DisputeStatusResponse;
 pub const JOB_REJECTED: &str = "job_rejected";
 pub const SUB_USER_REJECT: &str = "sub_user_reject";
 
+fn encode_decision_text(value: &str) -> String {
+    URL_SAFE_NO_PAD.encode(value.as_bytes())
+}
+
+fn refund_request_card(
+    service_name: &str,
+    job_id: &str,
+    task_type: &str,
+    current_period: &str,
+    refund_amount: &str,
+    refund_reason: &str,
+    response_deadline: &str,
+) -> (String, String) {
+    let table = if task_type == "Subscription" {
+        format!(
+            "| Service Name | Job ID | Task Type | Current Period | Requested Refund | Buyer’s Reason | Response Deadline |\n\
+             |---|---|---|---|---|---|---|\n\
+             | {service_name} | {job_id} | {task_type} | {current_period} | {refund_amount} | {refund_reason} | {response_deadline} |"
+        )
+    } else {
+        format!(
+            "| Service Name | Job ID | Task Type | Requested Refund | Buyer’s Reason | Response Deadline |\n\
+             |---|---|---|---|---|---|\n\
+             | {service_name} | {job_id} | {task_type} | {refund_amount} | {refund_reason} | {response_deadline} |"
+        )
+    };
+    let card = format!(
+        "### Buyer Refund Request\n\n{table}\n\n\
+         Please respond by the deadline. Otherwise, a full refund will be issued automatically.\n\n\
+         To refund the buyer, reply “Approve refund.” To dispute the request, reply “Request evaluation” and provide your reason."
+    );
+    let label = format!("{service_name} — {refund_amount}");
+    (encode_decision_text(&card), encode_decision_text(&label))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RefundDisplayMetadata {
@@ -36,9 +71,13 @@ impl RefundDisplayMetadata {
         if !super::user::refund_v2::validate_decimal(amount) {
             return None;
         }
-        let token_symbol = token_symbol
-            .map(str::trim)
-            .filter(|value| !value.is_empty())?;
+        let token_symbol = if super::user::refund_v2::is_zero_decimal(amount) {
+            token_symbol.map(str::trim).unwrap_or("")
+        } else {
+            token_symbol
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?
+        };
         let response_deadline = response_deadline.filter(|value| *value > 0)?;
         super::common::deadline::format_utc_timestamp(response_deadline)?;
         let task_type = match source_event {
@@ -175,19 +214,61 @@ pub fn build_decision_result(
     token_symbol: Option<String>,
     message: Option<&Value>,
 ) -> Value {
-    let missing = [
-        ("name", name.as_deref()),
-        ("amount", amount.as_deref()),
-        ("tokenSymbol", token_symbol.as_deref()),
-    ]
-    .into_iter()
-    .filter_map(|(key, value)| {
-        value
-            .filter(|v| !v.trim().is_empty())
-            .is_none()
-            .then_some(key)
-    })
-    .collect::<Vec<_>>();
+    let is_subscription = source_event == SUB_USER_REJECT;
+    let service_name = message
+        .and_then(|value| scalar_string(value.get("serviceName")))
+        .or_else(|| name.clone());
+    let refund_reason = message.and_then(|value| {
+        let keys: &[&str] = if is_subscription {
+            &["rejectReason", "refundReason", "userReason"]
+        } else {
+            // `job_rejected` formally exposes `rejectReason`; keep the older
+            // aliases as read-only compatibility fallbacks.
+            &["rejectReason", "refundReason", "userReason", "reason"]
+        };
+        keys.iter()
+            .find_map(|key| exact_nonempty_string(value.get(*key)))
+    });
+    let period_start = is_subscription
+        .then(|| {
+            message.and_then(|value| integer_from_keys(value, &["subStartTime", "periodStartTime"]))
+        })
+        .flatten();
+    let period_end = is_subscription
+        .then(|| {
+            message.and_then(|value| integer_from_keys(value, &["subEndTime", "periodEndTime"]))
+        })
+        .flatten();
+    let current_period = display_period(period_start, period_end);
+    let current_period_label = current_period.as_str().map(ToOwned::to_owned);
+    let response_deadline_timestamp = message.and_then(|value| {
+        let keys: &[&str] = if is_subscription {
+            &["rejectWindowEndsAt"]
+        } else {
+            &["rejectWindowEndsAt", "responseDeadline", "expireTime"]
+        };
+        integer_from_keys(value, keys)
+    });
+    let response_deadline = format_timestamp_value(response_deadline_timestamp);
+    let response_deadline_label =
+        response_deadline_timestamp.and_then(super::common::deadline::format_utc_timestamp);
+    let requested_refund = display_amount(amount.as_deref(), token_symbol.as_deref());
+    let refund_amount_label = requested_refund.as_str().map(ToOwned::to_owned);
+
+    let mut required = vec![
+        ("serviceName", service_name.is_some()),
+        ("amount", refund_amount_label.is_some()),
+        ("rejectReason", refund_reason.is_some()),
+        ("responseDeadline", response_deadline_label.is_some()),
+    ];
+    if is_subscription {
+        required.push(("periodStart", period_start.is_some()));
+        required.push(("periodEnd", period_end.is_some()));
+    }
+    let missing = required
+        .into_iter()
+        .filter_map(|(key, present)| (!present).then_some(key))
+        .collect::<Vec<_>>();
 
     if !missing.is_empty() {
         return progression(
@@ -226,37 +307,36 @@ pub fn build_decision_result(
         })
         .collect::<Vec<_>>();
     let extra_fields = optional_fields(message);
-    let is_subscription = source_event == SUB_USER_REJECT;
-    let current_period = if is_subscription {
-        display_period(
-            message
-                .and_then(|value| integer_from_keys(value, &["subStartTime", "periodStartTime"])),
-            message.and_then(|value| integer_from_keys(value, &["subEndTime", "periodEndTime"])),
-        )
-    } else {
-        Value::Null
-    };
-    let service_name = message
-        .and_then(|message| scalar_string(message.get("serviceName")))
-        .or_else(|| name.clone());
-    let buyer_reason = message
-        .map(|value| {
-            value_from_keys(
-                value,
-                &["refundReason", "rejectReason", "userReason", "reason"],
-            )
-        })
+    let buyer_reason = refund_reason
+        .as_ref()
+        .map(|value| Value::String(value.clone()))
         .unwrap_or(Value::Null);
-    let response_deadline_timestamp = message.and_then(|value| {
-        integer_from_keys(
-            value,
-            &["rejectWindowEndsAt", "responseDeadline", "expireTime"],
-        )
-    });
-    let response_deadline = format_timestamp_value(response_deadline_timestamp);
-    let requested_refund = display_amount(amount.as_deref(), token_symbol.as_deref());
-    let response_deadline_label =
-        response_deadline_timestamp.and_then(super::common::deadline::format_utc_timestamp);
+    let task_type = if is_subscription {
+        "Subscription"
+    } else {
+        "One-time"
+    };
+    let encoded_card = service_name
+        .as_deref()
+        .zip(refund_amount_label.as_deref())
+        .zip(refund_reason.as_deref())
+        .zip(response_deadline_label.as_deref())
+        .map(
+            |(((service_name, refund_amount), refund_reason), deadline)| {
+                refund_request_card(
+                    service_name,
+                    job_id,
+                    task_type,
+                    current_period_label.as_deref().unwrap_or(""),
+                    refund_amount,
+                    refund_reason,
+                    deadline,
+                )
+            },
+        );
+    let (user_content_b64, list_label_b64) = encoded_card
+        .map(|(content, label)| (Some(content), Some(label)))
+        .unwrap_or((None, None));
     let refund_display_b64 = RefundDisplayMetadata::new(
         source_event,
         service_name.as_deref(),
@@ -273,7 +353,7 @@ pub fn build_decision_result(
         json!({
             "jobId": job_id,
             "decisionId": decision_id(source_event, job_id, message),
-            "taskType": if is_subscription { "Subscription" } else { "One-time" },
+            "taskType": task_type,
             "name": name,
             "serviceName": service_name,
             "amount": amount,
@@ -281,9 +361,13 @@ pub fn build_decision_result(
             "currentPeriod": current_period,
             "requestedRefund": requested_refund,
             "buyerReason": buyer_reason.clone(),
-            "refundReason": buyer_reason,
+            "rejectReason": refund_reason.clone(),
+            "refundReason": refund_reason,
             "responseDeadline": response_deadline,
             "responseDeadlineLabel": response_deadline_label,
+            "responseDeadlineTimestamp": response_deadline_timestamp,
+            "userContentB64": user_content_b64,
+            "listLabelB64": list_label_b64,
             "refundDisplayB64": refund_display_b64,
             "extraFields": extra_fields,
         }),
@@ -431,6 +515,13 @@ pub fn scalar_string(value: Option<&Value>) -> Option<String> {
         .map(ToOwned::to_owned)
         .or_else(|| value.as_i64().map(|value| value.to_string()))
         .or_else(|| value.as_u64().map(|value| value.to_string()))
+}
+
+fn exact_nonempty_string(value: Option<&Value>) -> Option<String> {
+    value?
+        .as_str()
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn progression(
@@ -1025,19 +1116,64 @@ mod tests {
     #[test]
     fn decision_result_uses_one_shared_shape_for_both_task_types() {
         for source in [JOB_REJECTED, SUB_USER_REJECT] {
+            let message = if source == SUB_USER_REJECT {
+                json!({
+                    "periodIndex": 2,
+                    "serviceName": "Signal Service",
+                    "rejectReason": "Signals were not delivered",
+                    "subStartTime": 1_700_000_000,
+                    "subEndTime": 1_700_500_000,
+                    "rejectWindowEndsAt": 1_700_600_000,
+                })
+            } else {
+                json!({
+                    "periodIndex": 2,
+                    "rejectReason": "The result was incomplete",
+                    "expireTime": 1_700_600_000,
+                })
+            };
             let result = build_decision_result(
                 source,
                 "job-1",
                 Some("Service".to_string()),
                 Some("1.25".to_string()),
                 Some("USDT".to_string()),
-                Some(&json!({"periodIndex": 2})),
+                Some(&message),
             );
             assert_eq!(result["phase"], "arbitration_decision");
             assert_eq!(result["decision"], "requires_user_input");
             assert_eq!(result["nextAction"].as_array().map(Vec::len), Some(2));
             assert_eq!(result["payload"]["name"], "Service");
         }
+    }
+
+    #[test]
+    fn one_time_job_rejected_uses_contract_reject_reason_verbatim() {
+        let reason = " The result was incomplete.\nKeep this exact | reason ";
+        let result = build_decision_result(
+            JOB_REJECTED,
+            "0xfull-one-time-job-id",
+            Some("Audit task".to_string()),
+            Some("2.5".to_string()),
+            Some("USDT".to_string()),
+            Some(&json!({
+                "serviceName": "Audit Service",
+                "rejectReason": reason,
+                "expireTime": 1_700_600_000,
+            })),
+        );
+
+        assert_eq!(result["decision"], "requires_user_input");
+        assert_eq!(result["payload"]["buyerReason"], reason);
+        assert_eq!(result["payload"]["rejectReason"], reason);
+        assert_eq!(result["payload"]["refundReason"], reason);
+        let content = URL_SAFE_NO_PAD
+            .decode(result["payload"]["userContentB64"].as_str().unwrap())
+            .unwrap();
+        let content = String::from_utf8(content).unwrap();
+        assert!(content.contains("0xfull-one-time-job-id"));
+        assert!(content.contains(reason));
+        assert!(!content.contains("| Current Period |"));
     }
 
     #[test]
@@ -1050,26 +1186,107 @@ mod tests {
             Some("USDT".to_string()),
             Some(&json!({
                 "serviceName": "Signal Service",
-                "refundReason": "Signals were not delivered",
-                "rejectWindowEndsAt": 1_700_000_000,
+                "rejectReason": " Signals were not delivered. 详情保持原样 ",
+                "subStartTime": 1_700_000_000,
+                "subEndTime": 1_700_500_000,
+                "rejectWindowEndsAt": 1_700_600_000,
             })),
         );
 
         assert_eq!(result["payload"]["serviceName"], "Signal Service");
         assert_eq!(
             result["payload"]["refundReason"],
-            "Signals were not delivered"
+            " Signals were not delivered. 详情保持原样 "
         );
         assert!(result["payload"]["responseDeadline"].is_string());
         assert_eq!(
+            result["payload"]["responseDeadlineTimestamp"],
+            1_700_600_000i64
+        );
+        assert_eq!(
             result["payload"]["responseDeadlineLabel"],
-            "2023-11-14 22:13 (UTC+00:00)"
+            "2023-11-21 20:53 (UTC+00:00)"
         );
         let encoded = result["payload"]["refundDisplayB64"].as_str().unwrap();
         let metadata = RefundDisplayMetadata::decode(encoded).unwrap();
         assert_eq!(metadata.service_name, "Signal Service");
         assert_eq!(metadata.task_type, "Subscription");
         assert_eq!(metadata.refund_amount_label(), "1.25 USDT");
+    }
+
+    #[test]
+    fn subscription_decision_requires_documented_notice_fields() {
+        let result = build_decision_result(
+            SUB_USER_REJECT,
+            "job-1",
+            Some("Task title".to_string()),
+            Some("1".to_string()),
+            Some("USDT".to_string()),
+            Some(&json!({
+                "serviceName": "Signal Service",
+                "subStartTime": 1_700_000_000,
+                "subEndTime": 1_700_500_000,
+                "expireTime": 1_700_600_000,
+            })),
+        );
+
+        assert_eq!(result["decision"], "blocked");
+        assert_eq!(result["reason"], "missing_required_facts");
+        assert_eq!(
+            result["payload"]["missingFields"],
+            json!(["rejectReason", "responseDeadline"])
+        );
+        assert_eq!(result["nextAction"], json!([]));
+    }
+
+    #[test]
+    fn subscription_refund_card_is_encoded_without_rewriting_buyer_reason() {
+        let reason = "Oli's result `must` stay.\nSecond line | exact";
+        let result = build_decision_result(
+            SUB_USER_REJECT,
+            "0xfull-job-id",
+            Some("Task title".to_string()),
+            Some("1.25".to_string()),
+            Some("USDT".to_string()),
+            Some(&json!({
+                "serviceName": "Signal Service",
+                "rejectReason": reason,
+                "subStartTime": 1_700_000_000,
+                "subEndTime": 1_700_500_000,
+                "rejectWindowEndsAt": 1_700_600_000,
+            })),
+        );
+
+        let content = URL_SAFE_NO_PAD
+            .decode(result["payload"]["userContentB64"].as_str().unwrap())
+            .unwrap();
+        let content = String::from_utf8(content).unwrap();
+        assert!(content.contains("### Buyer Refund Request"));
+        assert!(content.contains("0xfull-job-id"));
+        assert!(content.contains(reason));
+        assert!(content.contains("Approve refund"));
+        assert!(content.contains("Request evaluation"));
+    }
+
+    #[test]
+    fn subscription_zero_refund_uses_authoritative_label() {
+        let result = build_decision_result(
+            SUB_USER_REJECT,
+            "job-1",
+            Some("Task title".to_string()),
+            Some("0".to_string()),
+            None,
+            Some(&json!({
+                "serviceName": "Signal Service",
+                "rejectReason": "No service was delivered",
+                "subStartTime": 1_700_000_000,
+                "subEndTime": 1_700_500_000,
+                "rejectWindowEndsAt": 1_700_600_000,
+            })),
+        );
+
+        assert_eq!(result["payload"]["requestedRefund"], "No refund required");
+        assert!(result["payload"]["userContentB64"].is_string());
     }
 
     #[test]
@@ -1233,7 +1450,14 @@ mod tests {
             Some("Service".to_string()),
             Some("1".to_string()),
             Some("USDT".to_string()),
-            Some(&json!({"periodIndex": 2})),
+            Some(&json!({
+                "periodIndex": 2,
+                "serviceName": "Signal Service",
+                "rejectReason": "Signals were not delivered",
+                "subStartTime": 1_700_000_000,
+                "subEndTime": 1_700_500_000,
+                "rejectWindowEndsAt": 1_700_600_000,
+            })),
         );
         for action in result["nextAction"].as_array().unwrap() {
             assert_eq!(action["params"]["decisionBindingKey"], "periodIndex");

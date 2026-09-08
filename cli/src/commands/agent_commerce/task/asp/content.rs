@@ -477,46 +477,6 @@ pub fn sub_failed_notify_asp_notify(
     )
 }
 
-/// `sub_user_reject` ASP-side decision copy: the buyer rejected the current period; the ASP
-/// must confirm the refund or request evaluation before the response deadline, else a full refund
-/// is issued automatically. Rendered as the canonical body pushed through the pending-decisions
-/// relay (A/B decision included). Slots degrade per sibling pattern; a missing deadline falls
-/// back to the approximate "within about 1 day" window rather than an empty slot.
-pub fn sub_user_reject_asp_decision_copy(
-    service_name: &str,
-    period_start: Option<i64>,
-    period_end: Option<i64>,
-    reject_window_ends_at: Option<i64>,
-    amount: Option<&str>,
-    token_symbol: Option<&str>,
-) -> String {
-    let mut out = format!(
-        "[Action Needed: User Rejection] The user has rejected \"{service_name}\"'s current period"
-    );
-    if let (Some(s), Some(e)) = (fmt_epoch(period_start), fmt_epoch(period_end)) {
-        out.push_str(&format!(" ({s}\u{2013}{e})"));
-    }
-    out.push('.');
-    match fmt_epoch(reject_window_ends_at) {
-        Some(d) => out.push_str(&format!(
-            " Please confirm the refund or request evaluation by {d}"
-        )),
-        None => out.push_str(" Please confirm the refund or request evaluation within about 1 day"),
-    }
-    out.push_str(" — otherwise a full refund");
-    match (amount, token_symbol) {
-        (Some(a), Some(sym)) => out.push_str(&format!(" of {a} {sym}")),
-        (Some(a), None) => out.push_str(&format!(" of {a}")),
-        _ => {}
-    }
-    out.push_str(" will be issued to the user automatically.\n");
-    out.push_str("  To refund the buyer, reply 'Approve refund'.\n");
-    out.push_str(
-        "  To request platform evaluation, reply 'Request evaluation' and include your evaluation reason.",
-    );
-    out
-}
-
 // ── Job notification events ────────────────────────────────────────
 
 /// `job_asp_accept_expire` — subscription-task copy.

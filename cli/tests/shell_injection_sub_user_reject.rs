@@ -1,21 +1,17 @@
-//! Real Shell-interpreter regression for the A2A stored-title RCE, scoped to the
-//! ASP `sub_user_reject` decision card.
+//! Real shell-interpreter regressions for the ASP `sub_user_reject` decision
+//! card's legacy placeholder path and current full-card Base64 path.
 //!
 //! ─── Why this test exists ────────────────────────────────────────────────────
-//! The in-crate unit tests (`pending_v2::shared_encoding_shell_safety_tests`,
-//! `asp::flow::sub_user_reject_*`) prove two halves separately: the real
-//! `sub_user_reject` renderer emits the reserved `{{__OKX_TASK_TITLE__}}` /
-//! `{{__OKX_TASK_LABEL_TITLE__}}` placeholders plus a shell-safe Base64
-//! `--template-vars-b64` payload (raw title provably OFF the emitted line), and
-//! the decode+render round-trip reconstructs the title in-process. What they do
-//! NOT do is execute the vulnerable boundary — a real shell parsing the emitted
-//! command against the real `onchainos` binary. This integration test closes that
-//! gap end-to-end:
+//! The current renderer returns a fully rendered card and list label as URL-safe
+//! Base64. The CLI decodes them only after shell argument parsing. The retained
+//! placeholder protocol remains covered for backwards compatibility. These
+//! tests execute both paths through a real shell and the real test-built
+//! `onchainos` binary.
 //!
-//!   real SubUserReject-shaped command (placeholders + Base64)
+//!   SubUserReject-shaped command (full-card Base64 or legacy placeholders)
 //!     → zsh -f / bash parses it
 //!       → the real test-built `onchainos` request-prompt runs
-//!         → in-process template substitution (after clap parse, before any push)
+//!         → in-process decode/substitution (after clap parse, before any push)
 //!           → fake `okx-a2a` records the final decision-card argv
 //!
 //! Hermetic and offline (proc-hermetic-cli-test-onchainos-home,
@@ -24,19 +20,16 @@
 //! `ONCHAINOS_SKIP_A2A_PREFLIGHT=1`. No real backend / A2A daemon / MCP / wallet /
 //! signing / transaction / network call.
 //!
-//! NOTE: this crate is a bin-only package (no `lib`), so an integration test can
-//! only invoke the binary — it cannot call `generate_next_action` directly. The
-//! command it runs is therefore assembled in the exact shape the `sub_user_reject`
-//! renderer emits (verified against that renderer by the in-crate asp/flow tests):
-//! `--user-content` carrying `{{__OKX_TASK_TITLE__}}`, `--list-label` carrying
-//! `{{__OKX_TASK_LABEL_TITLE__}}`, `--source-event sub_user_reject`, and
-//! `--template-vars-b64 "<Base64(JSON)>"`.
+//! NOTE: this crate is a bin-only package (no `lib`), so this integration test
+//! invokes the CLI boundary directly. Unit and contract tests separately verify
+//! that the renderer supplies the matching encoded fields.
 
 mod common;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use common::fresh_home;
 
 /// A hostile title payload. In zsh, `${(e)}` forces
@@ -202,6 +195,75 @@ fn run_emitted_command(
         .unwrap_or_default();
     let okx_a2a_calls = std::fs::read_to_string(&call_file)
         .map(|s| s.lines().filter(|l| !l.is_empty()).count())
+        .unwrap_or(0);
+
+    ShellRun {
+        status_code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        okx_a2a_argv,
+        okx_a2a_calls,
+        program,
+    }
+}
+
+/// Run the current `sub_user_reject` command shape. The complete rendered card
+/// and queue label cross the shell only as URL-safe, unpadded Base64 and are
+/// decoded by `onchainos` after argument parsing.
+fn run_encoded_command(
+    home: &Path,
+    shell_bin: &str,
+    shell_flags: &[&str],
+    user_content: &str,
+    list_label: &str,
+    cli_mode: bool,
+    tag: &str,
+) -> ShellRun {
+    let bin_dir = home.join("fakebin");
+    write_fake_okx_a2a(&bin_dir);
+    let argv_file = home.join(format!("okx_a2a_argv_{tag}.bin"));
+    let call_file = home.join(format!("okx_a2a_calls_{tag}.log"));
+    let _ = std::fs::remove_file(&argv_file);
+    let _ = std::fs::remove_file(&call_file);
+
+    let user_content_b64 = URL_SAFE_NO_PAD.encode(user_content.as_bytes());
+    let list_label_b64 = URL_SAFE_NO_PAD.encode(list_label.as_bytes());
+    let program = format!(
+        "\"{bin}\" agent pending-decisions-v2 request-prompt \\\n\
+         \x20\x20--job-id 0xsub02 --role asp --agent-id 864 \\\n\
+         \x20\x20--user-content-b64 \"{user_content_b64}\" \\\n\
+         \x20\x20--list-label-b64 \"{list_label_b64}\" \\\n\
+         \x20\x20--source-event sub_user_reject\n",
+        bin = onchainos_bin(),
+    );
+
+    let prog_file = home.join(format!("emitted_{tag}.sh"));
+    std::fs::write(&prog_file, &program).expect("write shell program");
+    let output = Command::new(shell_bin)
+        .args(shell_flags)
+        .arg(&prog_file)
+        .env_clear()
+        .env("HOME", home)
+        .env("ONCHAINOS_HOME", home)
+        .env("PATH", format!("{}:/usr/bin:/bin", bin_dir.display()))
+        .env("ONCHAINOS_SKIP_A2A_PREFLIGHT", "1")
+        .envs(cli_mode.then_some(("CLAUDECODE", "1")))
+        .env("OKX_A2A_ARGV_FILE", &argv_file)
+        .env("OKX_A2A_CALL_FILE", &call_file)
+        .output()
+        .unwrap_or_else(|e| panic!("failed to run {shell_bin}: {e}"));
+
+    let okx_a2a_argv = std::fs::read(&argv_file)
+        .map(|bytes| {
+            bytes
+                .split(|&b| b == 0)
+                .filter(|s| !s.is_empty())
+                .map(|s| String::from_utf8_lossy(s).into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    let okx_a2a_calls = std::fs::read_to_string(&call_file)
+        .map(|s| s.lines().filter(|line| !line.is_empty()).count())
         .unwrap_or(0);
 
     ShellRun {
@@ -400,6 +462,61 @@ fn hostile_payload_never_reaches_the_shell_and_argv_is_byte_exact() {
         !redir_sentinel.exists(),
         "redirection sentinel must never be created across the whole corpus"
     );
+}
+
+#[test]
+fn full_refund_card_base64_path_preserves_exact_reason_across_real_shells() {
+    let (guard, home) = fresh_home("shell_injection_sub_user_reject_full_card_b64");
+    let _ = &guard;
+    let reason = format!(" Keep literal \\n and newline.\n{HOSTILE_ZSH_TITLE} ");
+    let user_content = format!(
+        "### Buyer Refund Request\n\n| Service Name | Job ID | Task Type | Current Period | Requested Refund | Buyer’s Reason | Response Deadline |\n|---|---|---|---|---|---|---|\n| Audit | 0xsub02 | Subscription | 2026-09-01 – 2026-09-30 | 10 USDT | {reason} | 2026-09-08 12:00 (UTC+08:00) |\n\nPlease respond by the deadline. Otherwise, a full refund will be issued automatically.\n\nTo refund the buyer, reply “Approve refund.” To dispute the request, reply “Request evaluation” and provide your reason."
+    );
+    let list_label = format!("Audit — 10 USDT — {HOSTILE_ZSH_TITLE}");
+
+    for (shell_bin, shell_flags) in available_shells() {
+        let tag = format!("{shell_bin}_full_card_b64");
+        let run = run_encoded_command(
+            &home,
+            shell_bin,
+            &shell_flags,
+            &user_content,
+            &list_label,
+            true,
+            &tag,
+        );
+        assert!(!run.program.contains(&reason));
+        assert!(!run.program.contains(HOSTILE_ZSH_TITLE));
+        assert_eq!(
+            run.status_code,
+            Some(0),
+            "[{tag}] stdout={} stderr={}",
+            run.stdout,
+            run.stderr
+        );
+        assert_eq!(run.okx_a2a_calls, 1);
+        assert_eq!(
+            argv_value(&run.okx_a2a_argv, "--user-content").as_deref(),
+            Some(user_content.as_str())
+        );
+
+        let queue_tag = format!("{tag}_queue");
+        let queue_run = run_encoded_command(
+            &home,
+            shell_bin,
+            &shell_flags,
+            &user_content,
+            &list_label,
+            false,
+            &queue_tag,
+        );
+        assert_eq!(queue_run.status_code, Some(0));
+        assert_eq!(
+            persisted_list_label(&home).as_deref(),
+            Some(list_label.as_str())
+        );
+        assert!(!run.stdout.contains("uid=") && !run.stderr.contains("uid="));
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════

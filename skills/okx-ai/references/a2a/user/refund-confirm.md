@@ -66,13 +66,13 @@ Use `payload.display` from the latest `refund-prepare` result.
 |---|---|---|---|---|---|---|
 | {serviceName} | {jobId} | {serviceProviderName} (Agent ID: {agentId}) | {taskType} | {currentPeriod} | {refundAmount} | {reasonForRefund} |
 
-If everything is correct, reply “Submit refund request” and include your refund reason. To make changes, describe what you want to update.
+If everything is correct, reply “Submit refund request.” and provide your reason.
 ```
 
 Display rules:
 
 1. Show the full Job ID.
 2. Show `Current Period` only for a subscription.
-3. Show `Reason for Refund` only when the CLI returns a non-empty value.
-4. Preserve the original reason verbatim.
+3. Keep the `Reason for Refund` column. Leave its cell empty when the CLI has not returned a reason; do not invent one.
+4. Preserve a returned reason verbatim.
 5. Use the CLI-provided service-name fallback, task type, amount, and formatted timestamps directly.

@@ -33,6 +33,18 @@ use crate::commands::agent_commerce::task::arbitration::{
 const DEFAULT_TTL_DAYS: u64 = 7;
 const TTL_ENV_VAR: &str = "ONCHAINOS_PENDING_DECISIONS_TTL_DAYS";
 const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_DECISION_TEXT_BYTES: usize = 64 * 1024;
+
+fn decode_decision_text(raw: &str, field: &str) -> Result<String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(raw.trim())
+        .map_err(|_| anyhow::anyhow!("{field} is not valid URL-safe Base64"))?;
+    if bytes.is_empty() || bytes.len() > MAX_DECISION_TEXT_BYTES {
+        bail!("{field} decoded length is invalid");
+    }
+    String::from_utf8(bytes).map_err(|_| anyhow::anyhow!("{field} is not valid UTF-8"))
+}
 
 /// Defer vocabulary embedded in the generated user-session instructions.
 /// The CLI does not parse these values itself. A defer reply keeps the decision
@@ -108,6 +120,11 @@ mod refund_list_tests {
         assert_eq!(output["items"][0]["jobId"], "job-full-sooner-123456");
         assert_eq!(output["items"][0]["refundAmount"], "No refund required");
         assert_eq!(output["items"][1]["jobId"], "job-full-later-123456");
+        let markdown = render_refund_list_markdown(&queue);
+        assert!(markdown.contains("refund requests from buyers awaiting your decision"));
+        assert!(markdown.contains("| # | Service Name | Job ID | Task Type | Requested Refund |"));
+        assert!(markdown.contains("A full refund will be issued automatically"));
+        assert!(markdown.contains("Reply with a number or Job ID to view the request."));
     }
 
     #[test]
@@ -118,6 +135,27 @@ mod refund_list_tests {
             entries: vec![incomplete]
         })
         .is_err());
+    }
+}
+
+#[cfg(test)]
+mod encoded_decision_text_tests {
+    use super::decode_decision_text;
+    use base64::Engine;
+
+    #[test]
+    fn urlsafe_text_round_trip_preserves_shell_metacharacters_and_literal_slashes() {
+        let exact = "Oli's `result` $(ignored) \\n stays literal\nnext | row";
+        let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(exact.as_bytes());
+        assert_eq!(
+            decode_decision_text(&encoded, "user-content-b64").unwrap(),
+            exact
+        );
+    }
+
+    #[test]
+    fn malformed_encoded_text_is_rejected() {
+        assert!(decode_decision_text("not*base64", "user-content-b64").is_err());
     }
 }
 
@@ -616,12 +654,38 @@ pub enum PendingDecisionsV2Command {
         agent_id: String,
         #[arg(long = "to-agent-id")]
         to_agent_id: Option<String>,
-        #[arg(long = "user-content", required_unless_present = "user_content_file")]
+        #[arg(
+            long = "user-content",
+            required_unless_present_any = ["user_content_file", "user_content_b64"],
+            conflicts_with_all = ["user_content_file", "user_content_b64"]
+        )]
         user_content: Option<String>,
-        #[arg(long = "user-content-file", conflicts_with = "user_content")]
+        #[arg(
+            long = "user-content-file",
+            required_unless_present_any = ["user_content", "user_content_b64"],
+            conflicts_with_all = ["user_content", "user_content_b64"]
+        )]
         user_content_file: Option<String>,
-        #[arg(long = "list-label")]
-        list_label: String,
+        /// URL-safe Base64 UTF-8 card body emitted by trusted CLI normalization.
+        #[arg(
+            long = "user-content-b64",
+            required_unless_present_any = ["user_content", "user_content_file"],
+            conflicts_with_all = ["user_content", "user_content_file"]
+        )]
+        user_content_b64: Option<String>,
+        #[arg(
+            long = "list-label",
+            required_unless_present = "list_label_b64",
+            conflicts_with = "list_label_b64"
+        )]
+        list_label: Option<String>,
+        /// URL-safe Base64 UTF-8 list label emitted by trusted CLI normalization.
+        #[arg(
+            long = "list-label-b64",
+            required_unless_present = "list_label",
+            conflicts_with = "list_label"
+        )]
+        list_label_b64: Option<String>,
         #[arg(long = "llm-content")]
         llm_content: Option<String>,
         #[arg(long = "source-event")]
@@ -806,7 +870,9 @@ pub async fn run(cmd: PendingDecisionsV2Command) -> Result<()> {
             to_agent_id,
             user_content,
             user_content_file,
+            user_content_b64,
             list_label,
+            list_label_b64,
             llm_content,
             source_event,
             decision_id,
@@ -815,12 +881,24 @@ pub async fn run(cmd: PendingDecisionsV2Command) -> Result<()> {
             template_vars_b64,
             refund_display_b64,
         } => {
-            let resolved_content = match (user_content, user_content_file) {
-                (Some(c), _) => c,
-                (None, Some(path)) => std::fs::read_to_string(&path).map_err(|e| {
-                    anyhow::anyhow!("failed to read --user-content-file {path}: {e}")
-                })?,
-                (None, None) => bail!("either --user-content or --user-content-file is required"),
+            let (resolved_content, unescape_newlines) =
+                match (user_content, user_content_file, user_content_b64) {
+                    (Some(c), None, None) => (c, true),
+                    (None, Some(path), None) => (
+                        std::fs::read_to_string(&path).map_err(|e| {
+                            anyhow::anyhow!("failed to read --user-content-file {path}: {e}")
+                        })?,
+                        true,
+                    ),
+                    (None, None, Some(encoded)) => {
+                        (decode_decision_text(&encoded, "user-content-b64")?, false)
+                    }
+                    _ => bail!("provide exactly one decision-card content source"),
+                };
+            let resolved_label = match (list_label, list_label_b64) {
+                (Some(label), None) => label,
+                (None, Some(encoded)) => decode_decision_text(&encoded, "list-label-b64")?,
+                _ => bail!("provide exactly one decision-card list label source"),
             };
             let metadata = decision_metadata(
                 &job_id,
@@ -836,11 +914,12 @@ pub async fn run(cmd: PendingDecisionsV2Command) -> Result<()> {
                 agent_id,
                 to_agent_id,
                 resolved_content,
-                list_label,
+                resolved_label,
                 llm_content,
                 source_event,
                 metadata,
                 template_vars_b64,
+                unescape_newlines,
             )
         }
         PendingDecisionsV2Command::Resolve { user_reply } => handle_resolve(user_reply),
@@ -916,6 +995,7 @@ fn handle_request_prompt(
     source_event: Option<String>,
     metadata: DecisionMetadata,
     template_vars_b64: Option<String>,
+    unescape_newlines: bool,
 ) -> Result<()> {
     request_prompt_inner(
         job_id,
@@ -928,6 +1008,7 @@ fn handle_request_prompt(
         source_event,
         metadata,
         template_vars_b64,
+        unescape_newlines,
         true,
     )
 }
@@ -959,6 +1040,7 @@ pub(crate) fn push_decision_direct(
         Some(source_event.to_string()),
         DecisionMetadata::default(),
         None,
+        true,
         false,
     )
 }
@@ -1148,6 +1230,7 @@ fn request_prompt_inner(
     source_event: Option<String>,
     metadata: DecisionMetadata,
     template_vars_b64: Option<String>,
+    unescape_newlines: bool,
     print_ok: bool,
 ) -> Result<()> {
     if crate::commands::agent_commerce::task::common::autotrade::is_retired_mode_configuration_decision(
@@ -1161,7 +1244,11 @@ fn request_prompt_inner(
         return Ok(());
     }
     let to_agent_id = sanitize_to_agent(to_agent_id, &agent_id);
-    let user_content = user_content.replace("\\n", "\n");
+    let user_content = if unescape_newlines {
+        user_content.replace("\\n", "\n")
+    } else {
+        user_content
+    };
 
     // Template-variable substitution (fail-closed / default-deny).
     // Runs AFTER clap parse and BEFORE `is_cli_mode`, any queue/file write, card
@@ -1344,10 +1431,8 @@ fn handle_request(
     source_event: Option<String>,
     metadata: DecisionMetadata,
 ) -> Result<()> {
-    // Ordinary `request` never carries the untrusted-title template payload — the
-    // `sub_user_reject` path emits its own `request-prompt` block. Pass `None` so
-    // the shared implementation runs the legacy
-    // (no-substitution) path for every other decision flow.
+    // Ordinary `request` never carries a template-variable payload. Pass `None`
+    // so the shared implementation runs the no-substitution path.
     handle_request_prompt(
         job_id,
         role,
@@ -1359,6 +1444,7 @@ fn handle_request(
         source_event,
         metadata,
         None,
+        true,
     )
 }
 
@@ -2262,8 +2348,8 @@ fn refund_list_json(q: &Queue) -> Value {
 
 fn render_refund_list_markdown(q: &Queue) -> String {
     let mut output = format!(
-        "You have {} refund requests awaiting a decision:\n\n\
-         | # | Service name | Job ID | Task Type | Refund Amount | Response Deadline |\n\
+        "You have {} refund requests from buyers awaiting your decision:\n\n\
+         | # | Service Name | Job ID | Task Type | Requested Refund | Response Deadline |\n\
          |---|---|---|---|---|---|\n",
         q.entries.len()
     );
@@ -2285,7 +2371,9 @@ fn render_refund_list_markdown(q: &Queue) -> String {
         ));
     }
     if !q.entries.is_empty() {
-        output.push_str("\nReply with the number or Job ID to view and process a request.\n");
+        output.push_str(
+            "\nA full refund will be issued automatically if no action is taken by the deadline. Reply with a number or Job ID to view the request.\n",
+        );
     }
     output
 }
@@ -3062,12 +3150,8 @@ mod template_var_emitter_tests {
     use super::encode_title_vars;
     use crate::commands::agent_commerce::task::common::template_vars;
 
-    // encode_title_vars is the shared emitter primitive used by the retained
-    // `sub_user_reject` renderer; both keys must round-trip through the decode
-    // path so the pushed card body equals the original titles. (The ordinary
-    // `request_command_block` no longer takes a template payload — the raw-title
-    // → request-prompt output is exercised by the asp/flow.rs `sub_user_reject`
-    // renderer tests and the cli/tests shell-injection integration test.)
+    // The template-variable protocol remains supported for compatible callers;
+    // both keys must round-trip through its decode path.
     #[test]
     fn encode_title_vars_round_trips_through_decode() {
         for title in [
@@ -3109,8 +3193,7 @@ mod request_prompt_fail_closed_tests {
     const LABEL_PH: &str = "[Decision 0xjob] {{__OKX_TASK_LABEL_TITLE__}} decision";
     const PLAIN: &str = "no reserved placeholder here";
 
-    // Drive `request_prompt_inner` exactly as the real `sub_user_reject` emitter
-    // does (`print_ok=false`, `source_event=Some`), with an explicit flag choice.
+    // Drive the retained template-variable path with an explicit flag choice.
     // Returns the downcast `CodedError` — obtaining one is itself proof that the
     // call aborted BEFORE any side effect: the substitution stage runs before
     // `is_cli_mode`, before every queue/file write, and before
@@ -3129,6 +3212,7 @@ mod request_prompt_fail_closed_tests {
             Some("sub_user_reject".to_string()),
             Default::default(),
             flag.map(str::to_string),
+            true,
             false,
         )
         .expect_err("fail-closed: request_prompt_inner must return Err before any push");
@@ -3208,8 +3292,8 @@ mod request_prompt_fail_closed_tests {
     }
 }
 
-// Shell-safety proof for the shared encoding, scoped to the retained
-// `sub_user_reject` site. A real zsh/Bash process-spawn harness is
+// Shell-safety proof for the retained shared template-variable encoding. A real
+// zsh/Bash process-spawn harness is
 // deliberately NOT used here: the security invariant is that the dangerous bytes
 // are provably absent from the emitted command line, so a shell that later runs
 // the block is a no-op w.r.t. injection — and the title reaches the `okx-a2a`
@@ -3621,6 +3705,7 @@ mod sanitize_tests {
             Some("autotrade_consent".to_string()),
             Default::default(),
             None,
+            true,
             false,
         )
         .unwrap();
@@ -3635,6 +3720,7 @@ mod sanitize_tests {
             Some("autotrade_config_required".to_string()),
             Default::default(),
             None,
+            true,
             false,
         )
         .unwrap();
