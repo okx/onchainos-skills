@@ -8,6 +8,8 @@ const IDENTITY_SEARCH: &str = include_str!("../../skills/okx-ai/references/ident
 const PREPARE: &str = include_str!("../../skills/okx-ai/references/a2a/user/create-prepare.md");
 const CREATE: &str = include_str!("../../skills/okx-ai/references/a2a/user/create.md");
 const GUIDE: &str = include_str!("../../skills/okx-ai/references/a2a/user/create-guide.md");
+const SUBSCRIPTION_CREATE: &str =
+    include_str!("../../skills/okx-ai/references/a2a/user/subscription-create.md");
 const REFUND_PREPARE: &str =
     include_str!("../../skills/okx-ai/references/a2a/user/refund-prepare.md");
 const REFUND_CONFIRM: &str =
@@ -76,8 +78,13 @@ fn unknown_system_events_stop_before_cli_dispatch() {
 }
 
 #[test]
-fn create_confirmation_excludes_execution_configuration() {
+fn create_confirmation_combines_guide_task_and_payment() {
     let create = CREATE.split_whitespace().collect::<Vec<_>>().join(" ");
+    let guide = GUIDE.split_whitespace().collect::<Vec<_>>().join(" ");
+    let subscription_create = SUBSCRIPTION_CREATE
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     for forbidden in [
         "| Signal Execution |",
         "| Per-Signal Amount |",
@@ -86,7 +93,25 @@ fn create_confirmation_excludes_execution_configuration() {
         assert!(!CREATE.contains(forbidden));
     }
     assert!(CREATE.contains("List attachments below the table"));
-    assert!(create.contains("Guide Consent was confirmed separately"));
+    assert!(CREATE.contains("| Service Guide Consent | {guideConsent} |"));
+    assert!(create.contains("displayed payment, and exact Guide Consent"));
+    assert!(guide.contains("Do not render a standalone Guide confirmation"));
+    assert!(guide.contains("single final confirmation card"));
+    assert!(!GUIDE.contains("independent from the final task/payment confirmation"));
+    assert!(!CREATE.contains("Guide Consent was confirmed separately"));
+    assert!(subscription_create.contains("without asking for a separate confirmation"));
+    assert!(subscription_create.contains("one explicit final confirmation"));
+}
+
+#[test]
+fn one_time_task_details_use_a_vertical_field_value_card() {
+    assert!(TASK_QUERY.contains("### One-time Job Details"));
+    assert!(TASK_QUERY.contains("| Field | Value |"));
+    assert!(TASK_QUERY.contains("| Job ID | {jobId} |"));
+    assert!(TASK_QUERY.contains("| Job Description | {description} |"));
+    assert!(!TASK_QUERY.contains(
+        "| Job Name | Job ID | Service Provider | Fee | Status | Job Description |"
+    ));
 }
 
 #[test]

@@ -5,10 +5,12 @@ subscription. Complete `create-guide.md` when a non-blank Guide is present.
 
 ## Execution mode
 
-Separately confirm `signal_only` or `guide_direct`, then end the turn.
-`guide_direct` requires the exact Guide and confirmed Guide Consent; an absent
-Guide permits only `signal_only`. Do not default the mode or store it in
-`serviceParams` or Guide Consent.
+Collect the User's choice of `signal_only` or `guide_direct` without asking for
+a separate confirmation. `guide_direct` requires the exact Guide and collected
+Guide Consent; an absent Guide permits only `signal_only`. Do not default the
+mode or store it in `serviceParams` or Guide Consent. The final card below owns
+the one confirmation for the execution mode, Guide Consent, subscription, and
+payment together.
 
 ## Business data and confirmation
 
@@ -25,9 +27,14 @@ disables it. Render only:
 | Service Price | exact subscription fee, token, and interval |
 | Trial | exact supported positive duration, otherwise No |
 | Auto-Renew | On or Off |
+| Execution Mode | collected `signal_only` or `guide_direct` |
+| Service Guide Consent | complete collected Guide Consent when the Guide is non-blank |
 
-Guide Consent remains a separate confirmation. Continue only after explicit
-final confirmation and the one-time communication check defined by `create.md`.
+Omit the Service Guide Consent row when the Guide is blank. Do not show a
+standalone Guide, execution-mode, or payment confirmation. Continue only after
+one explicit final confirmation of the complete card and the one-time
+communication check defined by `create.md`. Any edit to a displayed fact
+invalidates that confirmation and requires the complete updated card again.
 
 ## Persist mode and create
 

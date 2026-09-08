@@ -21,9 +21,14 @@ display template:
 ```markdown
 ### One-time Job Details
 
-| Job Name | Job ID | Service Provider | Fee | Status | Job Description |
-|---|---|---|---|---|---|
-| {title} | {jobId} | Agent ID {providerAgentId} | {Fee} | {status} | {description} |
+| Field | Value |
+|---|---|
+| Job Name | {title} |
+| Job ID | {jobId} |
+| Service Provider | Agent ID {providerAgentId} |
+| Fee | {Fee} |
+| Status | {status} |
+| Job Description | {description} |
 ```
 
 display rules:
