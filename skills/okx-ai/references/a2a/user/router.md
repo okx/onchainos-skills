@@ -11,6 +11,7 @@ User/Buyer. Select exactly one final leaf and stop routing.
 | Create a one-time task or answer its Guide | [`create.md`](create.md); Guide-only step → [`create-guide.md`](create-guide.md) |
 | Create a subscription | [`subscription-create.md`](subscription-create.md) |
 | List, inspect, or manage a subscription | [`subscription.md`](subscription.md) or [`subscription-manage.md`](subscription-manage.md) |
+| Query local follow-trade results for a subscription Signal by `jobId` or `deliveryId` | [`subscription-trade-records.md`](subscription-trade-records.md) |
 | List or inspect tasks, saved deliverables, pending evaluations, or tasks the User rejected | [`../task-query.md`](../task-query.md); its existing single-task status call type-gates one-time versus subscription rendering without a probe request |
 | Change task visibility | [`visibility.md`](visibility.md) |
 | Review a deliverable or continue approval/rejection | [`review.md`](review.md) or [`review-decision.md`](review-decision.md) |

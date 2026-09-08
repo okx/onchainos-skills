@@ -15,7 +15,7 @@ not submit a second completion, and wait for the authoritative terminal event.
 ## Reject
 
 For any unambiguous rejection, enter [`refund-prepare.md`](refund-prepare.md)
-and render the fresh Refund V2 confirmation. Preserve any User-authored wording
+and render the fresh Refund confirmation. Preserve any User-authored wording
 verbatim as context, but treat the rejection only as authorization to open the
 confirmation flow. The refund write requires the submission intent and refund
 reason described in [`refund-confirm.md`](refund-confirm.md).

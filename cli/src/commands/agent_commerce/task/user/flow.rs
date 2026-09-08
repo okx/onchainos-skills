@@ -245,11 +245,11 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
         ],
         Status::Failed => vec![
             next_action("job_refunded"),
-            "Run Refund V2 against fresh task detail. For a one-time task, Failed(9) is the backend's post-chain refund result and may confirm completion even when no Tx Hash is exposed. Subscription Failed(9) remains cause-ambiguous.".to_string(),
+            "Run Refund against fresh task detail. For a one-time task, Failed(9) is the backend's post-chain refund result and may confirm completion even when no Tx Hash is exposed. Subscription Failed(9) remains cause-ambiguous.".to_string(),
             format!("  onchainos agent refund-prepare {job_id}  # Reconcile the lifecycle result and original-token refund"),
         ],
         Status::Close => vec![
-            "Task is Closed(7). Refund V2 distinguishes a zero-price close, a paid one-time escrow refund, and a subscription close; a Tx Hash is optional display metadata.".to_string(),
+            "Task is Closed(7). Refund distinguishes a zero-price close, a paid one-time escrow refund, and a subscription close; a Tx Hash is optional display metadata.".to_string(),
             format!("  onchainos agent refund-prepare {job_id}  # Reconcile the authoritative close result"),
         ],
         Status::Expired => vec![
@@ -370,7 +370,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                 Event::JobDisputed => "okx-a2a session history → dispute upload (auto-submit chat history + manifest deliverables) → onchainos agent user-notify (notify)",
                 Event::DisputeResolved => "onchainos agent user-notify (notify evaluation result)",
                 Event::JobRefunded => "onchainos agent user-notify (notify refund complete)",
-                Event::JobAutoRefunded => "onchainos agent user-notify (backend/Refund V2 settlement receipt)",
+                Event::JobAutoRefunded => "onchainos agent user-notify (backend/Refund settlement receipt)",
                 Event::JobAspAcceptExpire =>
                     "fresh Expired(8) details → terminal refund result (or terminal no-funds result for trial/zero amount)",
                 Event::JobAspRejectExpire =>
@@ -565,7 +565,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      **Semantic mapping** — decide which intent the user's reply means, then call the corresponding next-action.\n\n\
                      Two options:\n\
                      \x20\x20• **`approve_review`** — user accepts the deliverable (typical intents: A / 通过 / 同意 / 满意 / 接受 / 验收 / approve / accept / agree / OK / 行 / 可以 — anything meaning satisfaction with the deliverable).\n\
-                     \x20\x20• **`reject_review`** — compatibility route for a review reply already relayed to this task session. B or any unambiguous rejection opens a fresh, read-only Refund V2 confirmation. Preserve any user-authored wording verbatim as context.\n\n\
+                     \x20\x20• **`reject_review`** — compatibility route for a review reply already relayed to this task session. B or any unambiguous rejection opens a fresh, read-only Refund confirmation. Preserve any user-authored wording verbatim as context.\n\n\
                      If the reply approves or rejects → call:\n\
                      ```bash\n\
                      # For approve_review (no extra args needed):\n\
@@ -967,7 +967,7 @@ mod tests {
                     "tokenAddress": "0xtoken",
                 }),
             );
-        // Optional transaction metadata established by Refund V2's local
+        // Optional transaction metadata established by Refund's local
         // order reconciliation. The fresh backend lifecycle establishes the
         // one-time refund outcome even when this field is absent.
         context.verified_transaction_hash = Some(format!("0x{}", "ab".repeat(32)));
@@ -996,7 +996,7 @@ mod tests {
             );
         // Optional transaction metadata is display-only. Subscription refund
         // completion is disambiguated by fresh buyer-owned Failed(9) plus the
-        // durable local Refund V2 request receipt, never by this hash alone.
+        // durable local Refund request receipt, never by this hash alone.
         context.verified_transaction_hash = Some(format!("0x{}", "ab".repeat(32)));
         context.refund_request_provenance = true;
         context
@@ -1358,7 +1358,7 @@ mod tests {
     async fn subscription_refund_events_require_authoritative_terminal_handling() {
         // V2 sub_complete_notify owns its own authoritative fetch and
         // structured finalization. Refund-related Failed(9) notifications do
-        // not bypass Refund V2 finality or clean up a session by themselves.
+        // not bypass Refund finality or clean up a session by themselves.
         let mut ambiguous_failed = subscription_refund_prefetched(9, "12.34");
         ambiguous_failed.refund_request_provenance = false;
         let failed = run_with_prefetched(
@@ -1371,21 +1371,24 @@ mod tests {
         assert!(failed.contains("refund-prepare"), "{failed}");
         assert!(!failed.contains("session-cleanup"), "{failed}");
         assert!(!failed.contains(TERMINAL_NOTIFICATION_MARKER), "{failed}");
-        // `sub_cancel` only changes future conversion/renewal. Both a trial
-        // (trialType=1) and a formal current period continue, so neither branch
-        // is terminal or carries a cleanup hint.
+        // A successful trial cancellation revokes that trial, while formal
+        // cancellation only disables future renewal.
         let trial_cancel = run(
             "sub_cancel",
             json!({ "event": "sub_cancel", "jobId": JOB_ID, "cancelResult": "success", "trialType": 1 }),
         )
         .await;
         assert!(
-            trial_cancel.contains("continues unaffected"),
+            trial_cancel.contains("access ends immediately"),
             "{trial_cancel}"
         );
         assert!(
-            !trial_cancel.contains("session-cleanup"),
-            "sub_cancel trialType=1 keeps the trial live → NO cleanup hint"
+            trial_cancel.contains(TERMINAL_NOTIFICATION_MARKER),
+            "sub_cancel trialType=1 must be terminal"
+        );
+        assert!(
+            trial_cancel.contains("session-cleanup"),
+            "sub_cancel trialType=1 must clean up its scoped session"
         );
         let formal_cancel = run(
             "sub_cancel",

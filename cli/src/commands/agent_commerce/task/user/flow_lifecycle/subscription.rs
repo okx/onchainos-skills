@@ -83,7 +83,7 @@ fn incomplete_subscription_refund_notice(
          - Service: {}\n\
          - Refund amount: {}\n\
          - Tx Hash: unavailable\n\
-         The subscription lifecycle result or refund cause is incomplete or ambiguous. Do not report the refund as complete; refresh Refund V2 status.",
+         The subscription lifecycle result or refund cause is incomplete or ambiguous. Do not report the refund as complete; refresh Refund status.",
         title,
         ctx.job_id,
         refund_provider(ctx),
@@ -284,8 +284,6 @@ pub(crate) fn sub_cancel(ctx: &FlowContext<'_>, message: Option<&serde_json::Val
         extract_str(message, "failReason").or_else(|| extract_str(message, "failReasopn"));
     let trial_type = extract_i64(message, "trialType");
     let svc = service_name(message, ctx);
-    let trial_ends_at =
-        extract_i64(message, "trialEndTime").or_else(|| extract_i64(message, "trailEndTime"));
     let sub_end = extract_i64(message, "subEndTime");
     let content = super::super::content::sub_cancel_user_notify(
         cancel_result,
@@ -293,14 +291,15 @@ pub(crate) fn sub_cancel(ctx: &FlowContext<'_>, message: Option<&serde_json::Val
         trial_type,
         svc,
         ctx.job_id,
-        trial_ends_at,
         sub_end,
     );
-    // Cancelling trial-to-paid conversion does not end the trial: the copy
-    // explicitly promises that service continues until trialEndTime. Formal
-    // cancellation likewise affects only future renewal. Neither branch may
-    // emit a terminal marker or clean up the active User task session.
-    notify_and_end(&content)
+    // A successful trial cancellation revokes the trial. A formal-period
+    // cancellation only disables the next renewal and remains non-terminal.
+    if cancel_result != Some("fail") && trial_type == Some(1) {
+        notify_and_end_terminal(&content, &ctx.terminal_session_hint)
+    } else {
+        notify_and_end(&content)
+    }
 }
 
 pub(crate) fn sub_user_reject(
@@ -324,7 +323,7 @@ pub(crate) fn sub_asp_agree(ctx: &FlowContext<'_>, message: Option<&serde_json::
     {
         return reason;
     }
-    let Ok(evidence) = super::super::refund_v2::verify_final_refund_event(
+    let Ok(evidence) = super::super::refund::verify_final_refund_event(
         message,
         ctx.prefetched,
         9,
@@ -631,14 +630,14 @@ pub(crate) fn sub_reject_refund_notify(
 ) -> String {
     // The backend owns this timeout refund, so the client never calls
     // claim-auto-refund. The notification is terminal only when the event and
-    // fresh Failed(9) detail carry an authoritative Refund V2 refund result. A
+    // fresh Failed(9) detail carry an authoritative Refund refund result. A
     // transaction hash is optional display metadata once settlement is proven.
     if let Some(reason) =
         subscription_terminal_context_block_reason(ctx, message, "sub_reject_refund_notify")
     {
         return reason;
     }
-    let Ok(evidence) = super::super::refund_v2::verify_final_refund_event(
+    let Ok(evidence) = super::super::refund::verify_final_refund_event(
         message,
         ctx.prefetched,
         9,
@@ -688,13 +687,13 @@ pub(crate) fn sub_failed_notify(
     }
 
     // Failed(9) is shared by refund completion and charge/conversion failure
-    // in the unchanged backend. A durable local Refund V2 request receipt wins
+    // in the unchanged backend. A durable local Refund request receipt wins
     // over the generic event label, but the absence of that receipt does not
     // prove the opposite cause: caller-provided inbound events have no trusted
     // system provenance. Both branches therefore remain read-only.
     if detail.refund_request_provenance {
         let content = format!(
-            "{}\n\n[Refund reconciliation pending] This device has a durable Refund V2 request receipt for the subscription, so `sub_failed_notify` cannot be treated as a generic charge failure. Do not report either refund completion or charge failure from this event. Run `onchainos agent refund-prepare {}` and follow its returned status/watch action.",
+            "{}\n\n[Refund reconciliation pending] This device has a durable Refund request receipt for the subscription, so `sub_failed_notify` cannot be treated as a generic charge failure. Do not report either refund completion or charge failure from this event. Run `onchainos agent refund-prepare {}` and follow its returned status/watch action.",
             incomplete_subscription_refund_notice(ctx, message),
             ctx.job_id,
         );
@@ -1015,20 +1014,21 @@ mod tests {
     }
 
     #[test]
-    fn sub_cancel_trial_success_keeps_trial_session_live() {
+    fn sub_cancel_trial_success_revokes_trial_and_cleans_up_session() {
         let ctx = ctx_with_hint();
         let msg = serde_json::json!({
             "jobTitle": "My Sub", "cancelResult": "success", "trialType": 1
         });
         let out = sub_cancel(&ctx, Some(&msg));
         assert!(
-            out.contains("Auto-conversion for the \"My Sub\" free trial has been cancelled"),
-            "trial cancel shows trial-unaffected copy: {out}"
+            out.contains(
+                "free trial for \"My Sub\" has been cancelled and access ends immediately"
+            ),
+            "trial cancellation copy: {out}"
         );
-        assert!(out.contains("continues unaffected"), "{out}");
         assert!(
-            !out.contains(HINT_MARKER),
-            "trial continues, so cancellation must not append session cleanup: {out}"
+            out.contains(HINT_MARKER),
+            "revoked trial must append session cleanup: {out}"
         );
     }
 
@@ -1087,49 +1087,6 @@ mod tests {
         assert!(
             !out.contains(HINT_MARKER),
             "formal-period fail stays non-terminal: {out}"
-        );
-    }
-
-    #[test]
-    fn sub_cancel_trial_end_time_new_name_wins() {
-        let ctx = ctx_with_hint();
-        let ts = 1_700_000_000i64;
-        let only_new = serde_json::json!({ "trialType": 1, "trialEndTime": ts });
-        let out = sub_cancel(&ctx, Some(&only_new));
-        assert!(
-            out.contains("until "),
-            "trialEndTime read into the trial-window clause: {out}"
-        );
-        let both = serde_json::json!({ "trialType": 1, "trialEndTime": ts, "trailEndTime": 1_600_000_000i64 });
-        let only_legacy_other =
-            serde_json::json!({ "trialType": 1, "trailEndTime": 1_600_000_000i64 });
-        assert_eq!(
-            sub_cancel(&ctx, Some(&both)),
-            out,
-            "trialEndTime takes precedence over trailEndTime when both present"
-        );
-        assert_ne!(
-            sub_cancel(&ctx, Some(&both)),
-            sub_cancel(&ctx, Some(&only_legacy_other)),
-            "the legacy value is not used when the new name is present"
-        );
-    }
-
-    #[test]
-    fn sub_cancel_trail_end_time_legacy_fallback() {
-        let ctx = ctx_with_hint();
-        let ts = 1_700_000_000i64;
-        let only_new = serde_json::json!({ "trialType": 1, "trialEndTime": ts });
-        let only_legacy = serde_json::json!({ "trialType": 1, "trailEndTime": ts });
-        let out_new = sub_cancel(&ctx, Some(&only_new));
-        let out_legacy = sub_cancel(&ctx, Some(&only_legacy));
-        assert!(
-            out_legacy.contains("until "),
-            "legacy trailEndTime fallback still read: {out_legacy}"
-        );
-        assert_eq!(
-            out_new, out_legacy,
-            "legacy fallback renders identically to the canonical spelling"
         );
     }
 

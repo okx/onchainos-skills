@@ -201,7 +201,7 @@ pub enum AgentCommand {
     #[command(name = "start-autorenew")]
     StartAutorenew { sub_id: String },
 
-    /// Disabled legacy subscription rejection. Use Refund V2 preparation.
+    /// Disabled legacy subscription rejection. Use Refund preparation.
     #[command(name = "subscribe-reject")]
     SubscribeReject {
         sub_id: String,
@@ -528,14 +528,14 @@ pub enum AgentCommand {
     /// Client confirms task complete and releases payment
     Complete { job_id: String },
 
-    /// Disabled legacy rejection. Use Refund V2 preparation.
+    /// Disabled legacy rejection. Use Refund preparation.
     Reject {
         job_id: String,
         #[arg(long)]
         reason: String,
     },
 
-    /// Read-only Refund V2 eligibility and next-action preparation
+    /// Read-only Refund eligibility and next-action preparation
     #[command(name = "refund-prepare")]
     RefundPrepare {
         job_id: String,
@@ -544,12 +544,12 @@ pub enum AgentCommand {
         reason: Option<String>,
     },
 
-    /// Execute an explicitly confirmed Refund V2 operation
+    /// Execute an explicitly confirmed Refund operation
     #[command(name = "refund-execute")]
     RefundExecute {
         job_id: String,
         #[arg(long, value_enum)]
-        operation: task::user::refund_v2::RefundOperation,
+        operation: task::user::refund::RefundOperation,
         #[arg(long = "refund-context-id")]
         refund_context_id: String,
         /// Exact user-authored reason returned through refund-prepare.
@@ -560,7 +560,7 @@ pub enum AgentCommand {
         confirm: bool,
     },
 
-    /// Disabled legacy close. Use Refund V2 preparation.
+    /// Disabled legacy close. Use Refund preparation.
     Close {
         job_id: String,
         #[arg(long = "agent-id")]
@@ -1039,7 +1039,7 @@ pub enum AgentCommand {
     },
 
     /// Disabled legacy write command. Use `refund-prepare`; a cause-specific
-    /// timeout claim requires a backend Refund V2 contract.
+    /// timeout claim requires a backend Refund contract.
     #[command(name = "claim-auto-refund")]
     ClaimAutoRefund { job_id: String },
 
@@ -4145,7 +4145,7 @@ fn refund_event_status_policy(event: &str) -> Option<(i64, bool)> {
     }
 }
 
-/// Refund V2 composes task/subscription detail and enforces buyer ownership.
+/// Refund composes task/subscription detail and enforces buyer ownership.
 /// Applying that policy with an ASP agentId would reject legitimate provider
 /// notifications before their display-only handler runs.
 fn buyer_refund_event_status_policy(role: &str, event: &str) -> Option<(i64, bool)> {
@@ -4230,12 +4230,12 @@ fn refund_final_context_ready(
 
     if closed_refund_event
         && context.job_type == Some(0)
-        && task::user::refund_v2::is_zero_decimal(context.token_amount.trim())
+        && task::user::refund::is_zero_decimal(context.token_amount.trim())
     {
         return true;
     }
 
-    task::user::refund_v2::refund_event_settlement_confirmed(context, expected_status, event)
+    task::user::refund::refund_event_settlement_confirmed(context, expected_status, event)
 }
 
 /// Whether the outer freshness retry has enough authoritative context to hand
@@ -4273,7 +4273,7 @@ fn buyer_refund_freshness_ready(
 /// notification, and cleanup side effects only after a fresh composed
 /// task/subscription read binds the job to the current buyer. Subscription
 /// Failed(9) is ambiguous in the legacy backend, so it additionally needs the
-/// durable Refund V2 request provenance consumed by
+/// durable Refund request provenance consumed by
 /// `refund_event_settlement_confirmed`.
 fn dispute_result_context_block_reason(
     context: &task::common::PreFetchedTaskContext,
@@ -4299,7 +4299,7 @@ fn dispute_result_context_block_reason(
     match context.status {
         Some(6) => None,
         Some(9)
-            if task::user::refund_v2::refund_event_settlement_confirmed(
+            if task::user::refund::refund_event_settlement_confirmed(
                 context,
                 9,
                 "dispute_resolved",
@@ -4486,7 +4486,7 @@ async fn check_status_freshness(
         return (None, None);
     }
 
-    // Refund lifecycle events use Refund V2's exact task/subscription parser
+    // Refund lifecycle events use Refund's exact task/subscription parser
     // and buyer-ownership checks. A short bounded re-read absorbs the common
     // race where the event arrives just before lifecycle/order reconciliation.
     // Acceptance and delivery timeout remain at Expired(8). After a fresh
@@ -4505,7 +4505,7 @@ async fn check_status_freshness(
         let mut latest_context = None;
         let mut latest_error = None;
         for attempt in 0..=REFUND_RETRY_DELAYS_MS.len() {
-            match task::user::refund_v2::fetch_authoritative_refund_context(
+            match task::user::refund::fetch_authoritative_refund_context(
                 &mut c, job_id, agent_id,
             )
             .await
@@ -4543,14 +4543,14 @@ async fn check_status_freshness(
     }
 
     // Failed(9) does not identify the failure cause in the unchanged backend.
-    // Fetch the same composed facts as Refund V2 so the handler can render a
+    // Fetch the same composed facts as Refund so the handler can render a
     // read-only reconciliation notice without trusting the event's claimed
     // task type, owner, or failure/refund semantics.
     if role == "user" && job_status_or_event == "sub_failed_notify" {
         let mut latest_context = None;
         let mut latest_error = None;
         for attempt in 0..=REFUND_RETRY_DELAYS_MS.len() {
-            match task::user::refund_v2::fetch_authoritative_refund_context(
+            match task::user::refund::fetch_authoritative_refund_context(
                 &mut c, job_id, agent_id,
             )
             .await
@@ -4592,7 +4592,7 @@ async fn check_status_freshness(
         let mut latest_context = None;
         let mut latest_error = None;
         for attempt in 0..=REFUND_RETRY_DELAYS_MS.len() {
-            match task::user::refund_v2::fetch_authoritative_refund_context(
+            match task::user::refund::fetch_authoritative_refund_context(
                 &mut c, job_id, agent_id,
             )
             .await
@@ -4624,7 +4624,7 @@ async fn check_status_freshness(
                 .unwrap_or_else(|| "authoritative refund detail unavailable".to_string());
             return (
                 Some(format!(
-                    "[next-action blocked] Cannot fetch the Refund V2 authoritative detail for {job_status_or_event}: {diagnostic}. Run `onchainos agent refund-prepare {job_id}` before processing this refund lifecycle notice."
+                    "[next-action blocked] Cannot fetch the Refund authoritative detail for {job_status_or_event}: {diagnostic}. Run `onchainos agent refund-prepare {job_id}` before processing this refund lifecycle notice."
                 )),
                 None,
             );
@@ -4634,7 +4634,7 @@ async fn check_status_freshness(
         {
             return (
                 Some(format!(
-                    "[next-action blocked] The {job_status_or_event} event does not match fresh buyer-owned Refund V2 status {:?}; expected {expected_status}. Run `onchainos agent refund-prepare {job_id}` to reconcile and do not report completion.",
+                    "[next-action blocked] The {job_status_or_event} event does not match fresh buyer-owned Refund status {:?}; expected {expected_status}. Run `onchainos agent refund-prepare {job_id}` to reconcile and do not report completion.",
                     context.status
                 )),
                 Some(context),
@@ -4652,7 +4652,7 @@ async fn check_status_freshness(
             let mut latest_context = None;
             let mut latest_error = None;
             for attempt in 0..=REFUND_RETRY_DELAYS_MS.len() {
-                match task::user::refund_v2::fetch_authoritative_refund_context_for_provider(
+                match task::user::refund::fetch_authoritative_refund_context_for_provider(
                     &mut c, job_id, agent_id,
                 )
                 .await
@@ -5097,7 +5097,7 @@ mod authoritative_detail_path_tests {
     }
 
     #[test]
-    fn shared_v2_refund_events_have_explicit_status_and_finality_policy() {
+    fn shared_refund_events_have_explicit_status_and_finality_policy() {
         for event in ["job_expired", "submit_expired", "job_asp_accept_expire"] {
             assert!(expired_timeout_uses_authoritative_status(event));
         }

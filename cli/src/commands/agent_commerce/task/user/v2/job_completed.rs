@@ -81,7 +81,10 @@ fn result_from_task_detail(
         }],
         "payload": {
             "jobId": job_id,
-            "notification": completion_notification(job_id, &task),
+            "notification": {
+                "content": completion_notification(job_id, &task),
+                "localize": true,
+            },
             "ratingResultNotification": super::super::content::rating_submitted_user_notify(
                 job_id,
                 title(&task),
@@ -191,15 +194,16 @@ mod tests {
             output["payload"]["rating"]["taskParameters"],
             "{\"chain\":\"xlayer\"}"
         );
-        assert!(output["payload"]["notification"]
+        assert_eq!(output["payload"]["notification"]["localize"], true);
+        assert!(output["payload"]["notification"]["content"]
             .as_str()
             .unwrap()
             .starts_with(TERMINAL_NOTIFICATION_MARKER));
-        assert!(output["payload"]["notification"]
+        assert!(output["payload"]["notification"]["content"]
             .as_str()
             .unwrap()
             .contains("Audit report"));
-        assert!(output["payload"]["notification"]
+        assert!(output["payload"]["notification"]["content"]
             .as_str()
             .unwrap()
             .contains("reply \"Rate job\""));
@@ -224,7 +228,7 @@ mod tests {
 
         assert_eq!(output["reason"], "notification_required");
         assert_eq!(output["payload"]["rating"]["required"], false);
-        assert!(output["payload"]["notification"]
+        assert!(output["payload"]["notification"]["content"]
             .as_str()
             .unwrap()
             .starts_with(TERMINAL_NOTIFICATION_MARKER));

@@ -27,7 +27,7 @@ not delay the initial watch or `sub_open` event.
 | Intent | Command/boundary |
 |---|---|
 | Enable auto-renew | `onchainos agent start-autorenew <jobId>`; use the CLI confirmation/signing flow. |
-| Cancel trial conversion or formal auto-renew | `onchainos agent subscribe-cancel <jobId>`; cancellation does not end the live trial/current period and is not a refund. |
+| Cancel a trial subscription or formal auto-renew | `onchainos agent subscribe-cancel <jobId>`; cancelling a trial revokes it immediately, while cancelling a formal subscription only stops future auto-renew. It is not a refund. |
 | Active subscription cost | `onchainos agent subscribe-cost` |
 | Replay offline deliverables | Fresh-read; when changed, `subscribe-offline-update --job-id <jobId> --flag 0`, then reread. |
 | Discard offline deliverables | Fresh-read; when changed, use flag 1, then reread and report support state. |

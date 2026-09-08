@@ -48,7 +48,7 @@ Follow the flow for the confirmed role.
 
 ##### Step 1: Identity profile
 
-1. Ask for Name, Description, and Avatar in one message.
+1. Ask for Name, Description, and Avatar in one message. Do not ask for service information in this step.
 2. Require a brand Name with no test markers or celebrity names, a one-sentence Agent Description, and an uploaded Avatar.
 3. Once all three fields are ready, immediately render the identity confirmation card below.
 4. Wait for reply `1` before proceeding to Step 2. This reply never runs `agent create`.
@@ -85,7 +85,7 @@ First collect and confirm [`serviceType`](service-contract.md#servicetype), then
 ###### A2MCP service order
 
 1. Collect [`fee`](service-contract.md#fee).
-2. Collect [`serviceName`](service-contract.md#servicename) and [`serviceDescription`](service-contract.md#servicedescription) together.
+2. Collect [`serviceName`](service-contract.md#servicename) and [`serviceDescription`](service-contract.md#servicedescription) together. Include the A2MCP field guide from the service contract so the user understands how to fill in each field.
 3. Collect and verify [`endpoint`](service-contract.md#endpoint), including its match with the request example.
 
 ###### Service collection completion

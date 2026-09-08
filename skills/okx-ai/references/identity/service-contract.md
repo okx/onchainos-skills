@@ -37,12 +37,20 @@ A2MCP differences:
 
   1. `[Service Description]` — purpose.
   2. `[Parameter Spec]` — `;`-separated key parameters formatted as `name(type, required/optional): meaning`, including optional defaults. Keep only key parameters if needed to fit; normalize malformed specs.
-  3. `[Request Method]` — HTTP verb or bare MCP tool. Remove URL/path text; map an unambiguous path-only value to `POST`.
+  3. `[Request Method]` — HTTP request method only, such as `GET`, `POST`, `PUT`, or `DELETE`. Remove URL/path text; map an unambiguous path-only value to `POST`.
   4. `[Request Example]` — runnable `curl` with the real `endpoint` and realistic inputs; reject placeholders and mismatched hosts.
 
 #### Collection behavior
 
-- For A2MCP, request the four-line format above and confirm parameter-spec normalization or non-curl example conversion. Request Method cleanup needs no separate confirmation; show the stored result on the final card.
+- For A2MCP, provide the following concise field guide:
+
+  > Provide the service name (5–30 characters, different from the agent name, without a price), a deployed public HTTPS endpoint, and exactly these four description lines:
+  > `1. [Service Description]` What the service does and what result it returns.
+  > `2. [Parameter Spec]` Key parameters as `name(type, required/optional): meaning`, separated by `;`.
+  > `3. [Request Method]` HTTP request method only, such as `GET` or `POST`; do not include a URL/path.
+  > `4. [Request Example]` Runnable `curl` using the real endpoint and realistic values; no placeholders.
+
+  Normalize malformed parameter specs and non-curl examples before storing. The endpoint must match the curl example.
 
 ### serviceGuide
 

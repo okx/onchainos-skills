@@ -144,16 +144,18 @@ fn add_display_fields(object: &mut serde_json::Map<String, Value>, stage: Cursor
         Value::String(billing_period),
     );
 
-    let next_charge = if stage == CursorStage::Active && auto_renew == Some(1) {
-        common::deadline::format_utc_timestamp(
-            object
-                .get("subEndTime")
-                .and_then(Value::as_i64)
-                .unwrap_or_default(),
-        )
-    } else {
-        None
-    };
+    let awaiting_acceptance = object.get("status").and_then(Value::as_i64) == Some(0);
+    let next_charge =
+        if stage == CursorStage::Active && auto_renew == Some(1) && !awaiting_acceptance {
+            common::deadline::format_utc_timestamp(
+                object
+                    .get("subEndTime")
+                    .and_then(Value::as_i64)
+                    .unwrap_or_default(),
+            )
+        } else {
+            None
+        };
     object.insert(
         "nextChargeAt".to_string(),
         next_charge
@@ -163,7 +165,13 @@ fn add_display_fields(object: &mut serde_json::Map<String, Value>, stage: Cursor
     );
     object.insert(
         "nextChargeLabel".to_string(),
-        Value::String(next_charge.unwrap_or_else(|| "—".to_string())),
+        Value::String(next_charge.unwrap_or_else(|| {
+            if awaiting_acceptance {
+                "Pending acceptance".to_string()
+            } else {
+                "—".to_string()
+            }
+        })),
     );
 
     let no_receivers = object
@@ -723,6 +731,18 @@ mod tests {
         assert!(item["nextChargeAt"].is_null());
         assert_eq!(item["nextChargeLabel"], "—");
         assert_eq!(item["hasNoReceivingDevices"], false);
+    }
+
+    #[test]
+    fn created_subscription_shows_pending_acceptance_instead_of_epoch() {
+        let mut item = serde_json::Map::from_iter([
+            ("status".to_string(), json!(0)),
+            ("autoRenew".to_string(), json!(1)),
+            ("subEndTime".to_string(), json!(0)),
+        ]);
+        add_display_fields(&mut item, CursorStage::Active);
+        assert!(item["nextChargeAt"].is_null());
+        assert_eq!(item["nextChargeLabel"], "Pending acceptance");
     }
 
     #[test]

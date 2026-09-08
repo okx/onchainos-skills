@@ -84,7 +84,10 @@ fn result_from_task_detail(
         }],
         "payload": {
             "jobId": job_id,
-            "notification": completion_notification(job_id, &task),
+            "notification": {
+                "content": completion_notification(job_id, &task),
+                "localize": true,
+            },
             "ratingResultNotification": rating_notification(job_id, &task),
             "rating": {
                 "required": rating_required,
@@ -164,14 +167,15 @@ mod tests {
             "Audit the contract"
         );
         assert_eq!(
-            output["payload"]["notification"],
+            output["payload"]["notification"]["content"],
             "[onchainos:task-terminal] [💰 Job Completed] Job job-1 (Audit report) — approved by the User Agent; funds received.\n      - Income: 12 USDT\n      - User Agent: user-1\n    \n    This job is complete.\n\n    To rate the User Agent, reply \"Rate User Agent\". Your rating for Job ID `job-1` replaces the AI-generated rating."
         );
+        assert_eq!(output["payload"]["notification"]["localize"], true);
         assert!(output["payload"]["ratingResultNotification"]
             .as_str()
             .unwrap()
             .contains("<score>"));
-        assert!(output["payload"]["notification"]
+        assert!(output["payload"]["notification"]["content"]
             .as_str()
             .unwrap()
             .contains("reply \"Rate User Agent\""));
@@ -212,7 +216,7 @@ mod tests {
 
         assert_eq!(output["reason"], "notification_required");
         assert_eq!(output["payload"]["rating"]["required"], false);
-        assert!(output["payload"]["notification"]
+        assert!(output["payload"]["notification"]["content"]
             .as_str()
             .unwrap()
             .starts_with(TERMINAL_NOTIFICATION_MARKER));

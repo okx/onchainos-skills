@@ -38,17 +38,17 @@ Always respond and render all user-facing content in the language currently used
 {When activeRows is non-empty}
 #### Active Subscriptions ({payload.summary.activeCount})
 
-| # | Job Name | Service Provider | Status | Fee / Month | Next Charge | Auto-renewal | Billing Period | {payload.deviceColumns[].label} |
-|---|---|---|---|---|---|---|---|---|
-| {n} | {title} | Agent#{providerAgentId} | {statusName} | {feeLabel} | {nextChargeLabel} | {autoRenewLabel} | {billingPeriodLabel} | {deviceReceiptCells[column.key]} |
+| # | Job Name | Job ID | Service Provider | Status | Fee / Month | Next Charge | Auto-renewal | Billing Period | {payload.deviceColumns[].label} |
+|---|---|---|---|---|---|---|---|---|---|
+| {n} | {title} | {jobId} | Agent#{providerAgentId} | {statusName} | {feeLabel} | {nextChargeLabel} | {autoRenewLabel} | {billingPeriodLabel} | {deviceReceiptCells[column.key]} |
 {End when activeRows is non-empty}
 
 {When endedRows is non-empty}
 #### Ended Subscriptions ({payload.summary.endedCount})
 
-| # | Job Name | Service Provider | Status | Fee / Month | Billing Period |
-|---|---|---|---|---|---|
-| {n} | {title} | Agent#{providerAgentId} | {statusName} | {feeLabel} | {billingPeriodLabel} |
+| # | Job Name | Job ID | Service Provider | Status | Fee / Month | Billing Period |
+|---|---|---|---|---|---|---|
+| {n} | {title} | {jobId} | Agent#{providerAgentId} | {statusName} | {feeLabel} | {billingPeriodLabel} |
 {End when endedRows is non-empty}
 
 {When both activeRows and endedRows are empty}
@@ -71,6 +71,7 @@ No subscriptions found.
 4. If device data is unavailable, omit device columns and state that receipt
    status is unavailable.
 5. Warn for each Active row with `hasNoReceivingDevices=true`.
+6. When `statusName=CREATED`, render `nextChargeLabel=Pending acceptance` in User's language.
 
 ### Constraints
 
@@ -89,5 +90,4 @@ means none, and a non-empty array is an explicit allowlist.
 
 ### Constraints
 
-- Never infer a `jobId` from a title or prior context.
 - Refresh the list only when the selected subscription is no longer available.

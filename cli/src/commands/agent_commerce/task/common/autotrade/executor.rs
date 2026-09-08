@@ -492,9 +492,50 @@ fn terminal_reconciliation_complete(outcome: &ExecutionOutcome) -> bool {
     if sync_notice_ref(outcome).is_err() {
         return false;
     }
-    super::delivery_queue::contains_delivery(&outcome.job_id, &outcome.delivery_id)
+    if !super::delivery_queue::contains_delivery(&outcome.job_id, &outcome.delivery_id)
         .map(|present| !present)
         .unwrap_or(false)
+    {
+        return false;
+    }
+    sync_a2a_trade_record(outcome).is_ok()
+}
+
+fn sync_a2a_trade_record(outcome: &ExecutionOutcome) -> Result<()> {
+    let context = consent::load_delivery_context(&outcome.job_id, &outcome.delivery_id)
+        .context("trusted delivery context is unavailable for trade record")?;
+    let status = serde_json::to_value(outcome.status)?;
+    record_signal_status(
+        &outcome.job_id,
+        &outcome.delivery_id,
+        status.as_str().unwrap_or("unknown"),
+        outcome.reason.as_deref().unwrap_or(""),
+        &context.saved_path,
+    )
+}
+
+/// Write the current processing state of an A2A subscription Signal to the
+/// local trade-record store. `extra` is the original Signal JSON itself, not a
+/// nested wrapper, so its fields remain directly queryable. Plain-text Signals
+/// use `extra.content` so they are recorded as well.
+pub fn record_signal_status(
+    job_id: &str,
+    delivery_id: &str,
+    status: &str,
+    reason: &str,
+    saved_path: &str,
+) -> Result<()> {
+    let raw_signal = std::fs::read_to_string(saved_path)
+        .context("saved subscription Signal is unavailable for trade record")?;
+    let extra = serde_json::from_str(&raw_signal)
+        .unwrap_or_else(|_| serde_json::json!({ "content": raw_signal }));
+    okx_a2a::trade_records_insert(&serde_json::json!([{
+        "jobId": job_id,
+        "deliveryId": delivery_id,
+        "status": status,
+        "reason": reason,
+        "extra": extra,
+    }]))
 }
 
 fn parse_command(venue: &str, command_json: &str) -> Result<(PathBuf, Vec<String>)> {
@@ -1636,14 +1677,19 @@ pub fn claim_guide_direct(
             reason: Some("an earlier Guide-driven execution may have started; do not retry".to_string()),
         });
     }
-    Ok(DirectClaimResult {
+    let result = DirectClaimResult {
         allowed: true,
         status: "claimed".to_string(),
         job_id: job_id.to_string(),
         delivery_id: delivery_id.to_string(),
         amount: None,
         reason: None,
-    })
+    };
+    // Do not reverse a successfully persisted execution reservation when the
+    // auxiliary local trade-record store is temporarily unavailable. The
+    // `received` record remains until a later terminal update replaces it.
+    let _ = record_signal_status(job_id, delivery_id, &result.status, "", &context.saved_path);
+    Ok(result)
 }
 
 /// Persist a selected Skill/tool's documented terminal result. The coordinator

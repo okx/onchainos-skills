@@ -12,6 +12,7 @@ const ARBITRATION_QUERY: &str =
 const EVIDENCE_UPLOAD: &str =
     include_str!("../../skills/okx-ai/references/a2a/provider/evidence-upload.md");
 const NOTIFY: &str = include_str!("../../skills/okx-ai/references/a2a/notify.md");
+const USER_REVIEW: &str = include_str!("../../skills/okx-ai/references/a2a/user/review.md");
 const OKX_AI_SKILL: &str = include_str!("../../skills/okx-ai/SKILL.md");
 const TASK_COMMON_SOURCE: &str = include_str!("../src/commands/agent_commerce/task/common/mod.rs");
 const EVALUATOR_FLOW_SOURCE: &str =
@@ -179,6 +180,24 @@ fn task_and_evaluation_query_intents_use_distinct_leaves() {
 }
 
 #[test]
+fn submitted_one_time_status_recovers_and_displays_the_review_card_directly() {
+    assert!(TASK_QUERY.contains("Task type: one_time"));
+    assert!(TASK_QUERY.contains("Task status: submitted"));
+    assert!(!TASK_QUERY.contains("onchainos agent next-action"));
+    assert!(
+        TASK_QUERY.contains("onchainos agent task-deliverable-list --job-id <jobId> --role user")
+    );
+    assert!(TASK_QUERY.contains("onchainos agent pending-decisions-v2 request"));
+    assert!(TASK_QUERY.contains("buyer-review:<jobId>:job_submitted"));
+    assert!(TASK_QUERY.contains("immediately append the exact same localized"));
+    assert!(TASK_QUERY.contains("`okx-a2a user list`, `outdated-list`, or `watch`"));
+
+    assert!(USER_REVIEW.contains("okx-a2a user list --job-id <jobId> --all-providers --json"));
+    assert!(USER_REVIEW.contains("idempotencyKey` exactly"));
+    assert!(USER_REVIEW.contains("okx-a2a user check --todo-ids <id> --json"));
+}
+
+#[test]
 fn cli_guidance_targets_role_scoped_skill_tree() {
     let retired_prefix = ["skills/okx-ai-v", "2/references/"].concat();
     for source in [
@@ -233,7 +252,7 @@ fn notification_and_refund_actions_are_registered() {
     ] {
         assert!(
             USER_ROUTER.contains(&format!("`{action}`")),
-            "missing Refund V2 action {action}"
+            "missing Refund action {action}"
         );
     }
     assert!(ROUTER.contains("payload.schemaVersion=2"));
