@@ -19,7 +19,9 @@ onchainos agent user-notify --content "<localized payload.notification.content>"
 For a completion rating that succeeded with a non-empty transaction hash,
 replace `<score>` and `<description>` in the returned
 `ratingResultNotification` and append it after two blank lines. Otherwise send
-only the base notification.
+only the base notification. The base completion notification includes the
+role-owned `Rate job` or `Rate User Agent` invitation; preserve and localize it
+with the rest of the content rather than removing it after AI feedback succeeds.
 
 For `notify_and_cleanup_subscription`, notify once, then use
 [`../runtime/cleanup.md`](../runtime/cleanup.md). This compatibility action may

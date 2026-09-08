@@ -15,7 +15,7 @@ User/Buyer. Select exactly one final leaf and stop routing.
 | Change task visibility | [`visibility.md`](visibility.md) |
 | Review a deliverable or continue approval/rejection | [`review.md`](review.md) or [`review-decision.md`](review-decision.md) |
 | Refund, close, or inspect refund status | [`refund-prepare.md`](refund-prepare.md) |
-| Rate an active subscription | [`rating.md`](rating.md) |
+| Rate an Active subscription or a Completed one-time task/subscription | [`rating.md`](rating.md) |
 | View or configure subscription receipt devices | [`receipt.md`](receipt.md) |
 | Continue an active subscription signal | [`subscription-signal.md`](subscription-signal.md) |
 

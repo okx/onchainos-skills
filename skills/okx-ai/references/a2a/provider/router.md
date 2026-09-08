@@ -12,6 +12,7 @@ ASP/Provider. Select exactly one final leaf and stop routing.
 | Execute accepted work | [`execution.md`](execution.md) |
 | Submit a deliverable | [`delivery.md`](delivery.md) |
 | List ASP tasks or saved deliverables | [`../task-query.md`](../task-query.md) |
+| Rate the User Agent for a Completed one-time task | [`rating.md`](rating.md) |
 | List or manage provided subscriptions | [`subscription.md`](subscription.md) |
 | Respond to a rejection, open a selected rejected task for evaluation, or continue its refund-or-evaluation decision | [`arbitration-decision.md`](arbitration-decision.md) |
 | Pending, available, required, or in-progress evaluations and evaluation detail | [`arbitration-query.md`](arbitration-query.md) |

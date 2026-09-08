@@ -1,23 +1,42 @@
-# Active Subscription Rating
+# User Task Rating
 
-Use this flow when a Buyer rates or reviews an Active subscription. Viewing an
-Agent's existing reviews or reputation remains an Identity query.
+Use this flow when a Buyer provides their own rating for an Active subscription
+or a Completed A2A one-time task/subscription. A user-authored rating is keyed by
+the selected `jobId` and replaces any AI-generated rating for that same Job.
+Viewing an Agent's existing reviews or reputation remains an Identity query.
 
-## Select the subscription
+Never use this flow for A2MCP. Never rate a one-time task before it is Completed.
+
+## Select the Job
+
+Build the eligible set from these queries:
 
 ```bash
 onchainos agent my-tasks --task-type subscription --status-type 1 --page 1
+onchainos agent my-tasks --task-type subscription --status-type 2 --page 1
+onchainos agent my-tasks --task-type one-time --status-type 2 --page 1
 ```
 
-- A `jobId` in the current request must match a returned row exactly. Continue
-  pagination only while `hasNext=true`.
-- Confirm a `jobId` carried only by earlier conversation context before using it.
-- Without a confirmed `jobId`, show the localized equivalent of `I found the
-  following unreviewed orders. Please select the order you want to review.`,
-  then render this compact table and wait. Preserve pagination, continuing only
-  while `hasNext=true`:
+- Keep every returned Active subscription.
+- From both ended lists, keep only rows whose authoritative status is Completed.
+  Exclude Rejected, Refunded, Closed, Expired, Failed, and every other status.
+- A `jobId` in the current request must match an eligible returned row exactly.
+  A `jobId` carried only by earlier completion context must be revalidated against
+  these results before use. Continue pagination only while `hasNext=true`, and
+  stop once the exact row is found.
+- Without a confirmed `jobId`, continue all three eligible-list queries through
+  their available pages. For every eligible row, run the `task-feedback` lookup
+  from **Inspect an existing rating**, binding that row's `buyerAgentId` and
+  `jobId`. Keep only rows whose lookup succeeds with an empty `data[]`; these are
+  the unreviewed candidates. If any lookup fails, report that the unreviewed list
+  could not be verified and stop instead of showing an incomplete or unfiltered
+  list.
+- If the unreviewed set is empty, say that no unreviewed A2A jobs were found and
+  stop. Otherwise, show the localized equivalent of `I found the following
+  unreviewed A2A jobs. Please select the job you want to rate.`, then render this
+  compact table and wait:
 
-  | # | Task | Provider | Status | Job ID |
+  | # | Job | Provider | Status | Job ID |
   |---|---|---|---|---|
   | 1 | `<title>` | `Agent#<providerAgentId>` | `<statusName>` | `<jobId>` |
 
@@ -27,7 +46,7 @@ if the row or either Agent ID is missing. Do not substitute detail, status,
 device, or task-session data. Do not add fee, renewal, device, or billing fields
 to the selection table.
 
-## Check for an existing rating
+## Inspect an existing rating
 
 ```bash
 onchainos agent task-feedback \
@@ -35,9 +54,12 @@ onchainos agent task-feedback \
   --task-id JOB_ID_ARG
 ```
 
-Bind both arguments to the selected row. A non-empty `data[]` means the Buyer
-already rated this subscription: show that result and stop. Continue only when
-`data[]` is empty.
+Bind both arguments to the selected row. If `data[]` is non-empty, tell the User
+that submitting the new score and review will replace the existing rating for
+this `jobId`. Do not stop or require a separate overwrite confirmation. An empty
+`data[]` means this is the first rating for the Job. Do not repeat this lookup
+after the User selects a row from the already verified unreviewed candidate
+table.
 
 ## Collect the rating
 
@@ -65,8 +87,9 @@ onchainos agent feedback-submit \
 ```
 
 Bind Agent and task IDs to the selected row. Pass the User's score and review
-verbatim, with each dynamic value as one literal argv value. Submit once; never
-retry an unknown result automatically.
+verbatim, with each dynamic value as one literal argv value. The backend keys
+the rating by `jobId`; this submission replaces an existing AI-generated rating
+for the same Job. Submit once; never retry an unknown result automatically.
 
 ## Result
 
