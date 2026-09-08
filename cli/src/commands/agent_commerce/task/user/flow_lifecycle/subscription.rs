@@ -194,6 +194,7 @@ pub(crate) fn sub_created(ctx: &FlowContext<'_>, message: Option<&serde_json::Va
         .filter(|value| !value.is_empty() && *value != "?");
     let content = if extract_i64(message, "trialType") == Some(1) {
         super::super::content::sub_created_trial_user_notify(
+            ctx.job_id,
             token_amount,
             token_symbol,
             // Wire has not finished the trail*→trial* field rename; keep the
