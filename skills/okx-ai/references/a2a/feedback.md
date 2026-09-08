@@ -29,3 +29,8 @@ creator. Keep the same score and comment limits.
 Do not submit a rating when `required=false`. Preserve the exact score and
 comment for the result notification; a failed or hash-less submission is not a
 successful rating and must not be announced as one.
+
+This helper owns AI-generated completion feedback only. A later human-authored
+rating follows the receiving role's rating leaf and replaces that role's AI
+rating for the same `jobId`. AI completion feedback must not overwrite an
+existing rating.

@@ -26,6 +26,8 @@ const PROVIDER_ARBITRATION_DECISION: &str =
 const COMPLETION: &str = include_str!("../../skills/okx-ai/references/a2a/completion.md");
 const FEEDBACK: &str = include_str!("../../skills/okx-ai/references/a2a/feedback.md");
 const NOTIFY: &str = include_str!("../../skills/okx-ai/references/a2a/notify.md");
+const RATING: &str = include_str!("../../skills/okx-ai/references/a2a/user/rating.md");
+const PROVIDER_RATING: &str = include_str!("../../skills/okx-ai/references/a2a/provider/rating.md");
 const INTAKE: &str = include_str!("../../skills/okx-ai/references/a2a/user/intake.md");
 const RECOVERY: &str = include_str!("../../skills/okx-ai/references/runtime/recovery.md");
 
@@ -202,6 +204,15 @@ fn completion_orders_feedback_notification_and_cleanup() {
     assert!(FEEDBACK.contains("`required=false`"));
     assert!(NOTIFY.contains("[onchainos:task-terminal]"));
     assert!(NOTIFY.contains("byte-for-byte"));
+    assert!(COMPLETION.contains("says `Rate job`"));
+    assert!(COMPLETION.contains("says `Rate User Agent`"));
+    assert!(RATING.contains("Never rate a one-time task before it is Completed"));
+    assert!(RATING.contains("replaces any AI-generated rating"));
+    assert!(RATING.contains("Do not stop or require a separate overwrite confirmation"));
+    assert!(RATING.contains("Keep only rows whose lookup succeeds with an empty `data[]`"));
+    assert!(RATING.contains("no unreviewed A2A jobs were found"));
+    assert!(PROVIDER_RATING.contains("replaces the AI-generated rating"));
+    assert!(PROVIDER_RATING.contains("Do not stop or request a separate"));
 }
 
 #[test]

@@ -551,8 +551,8 @@ pub struct FeedbackListArgs {
 /// INITIATOR) left for a specific task. Read-only; hits `GET /agent/task-feedback`.
 /// Returns the backend `data` array verbatim. When the rater already reviewed the
 /// task it holds one review row (the echoed `agentId`, `taskId` and `chainIndex`
-/// plus `feedbackId` and `comment`); otherwise it is empty, which also serves as
-/// the duplicate-review guard before `feedback-submit`.
+/// plus `feedbackId` and `comment`); otherwise it is empty. Callers may use this
+/// to disclose that a user-authored rating will replace an existing AI rating.
 #[derive(Args, Clone, Debug)]
 pub struct TaskFeedbackArgs {
     /// The rater's agent id — the review INITIATOR (backend `feedBackAgentId`),

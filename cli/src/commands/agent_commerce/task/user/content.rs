@@ -147,7 +147,8 @@ pub fn job_completed_escrow_user_notify(
     format!(
         "[Job Completed] {title} (`{job_id}`) — approved by the User Agent; funds released to the ASP.\n\
          - Spent: {token_amount} {token_symbol}\n\
-         - Payment: escrow"
+         - Payment: escrow\n\n\
+         To rate this job, reply \"Rate job\". Your rating for Job ID `{job_id}` replaces the AI-generated rating."
     )
 }
 
@@ -563,6 +564,9 @@ pub fn sub_created_user_notify(
         out.push_str(" Auto-renew is off");
     }
     out.push('.');
+    out.push_str(&format!(
+        "\n\nTo rate this job, reply \"Rate job\". Your rating for Job ID `{job_id}` replaces the AI-generated rating."
+    ));
     out
 }
 
@@ -573,6 +577,7 @@ pub fn sub_created_user_notify(
 /// The duration label slot (`{trialDisplay}`) has no envelope source, so only the
 /// date range renders; the charge sentence needs an amount and degrades away without one.
 pub fn sub_created_trial_user_notify(
+    job_id: &str,
     token_amount: Option<&str>,
     token_symbol: Option<&str>,
     trial_start: Option<i64>,
@@ -595,6 +600,9 @@ pub fn sub_created_trial_user_notify(
             " to convert to a paid subscription (attempted once, within the final hour before the trial ends \u{2014} it will not retry if missed).",
         );
     }
+    out.push_str(&format!(
+        "\n\nTo rate this job, reply \"Rate job\". Your rating for Job ID `{job_id}` replaces the AI-generated rating."
+    ));
     out
 }
 
@@ -821,7 +829,9 @@ pub fn sub_complete_notify_user_notify(
     if let Some(e) = fmt_epoch(period_end) {
         out.push_str(&format!(" at {e}"));
     }
-    out.push_str(" with no further renewal.");
+    out.push_str(&format!(
+        " with no further renewal.\n\nTo rate this job, reply \"Rate job\". Your rating for Job ID `{job_id}` replaces the AI-generated rating."
+    ));
     out
 }
 
@@ -1298,6 +1308,8 @@ mod tests {
             "amount rendered verbatim: {out}"
         );
         assert!(out.contains("Auto-renew is on"));
+        assert!(out.contains("reply \"Rate job\""));
+        assert!(out.contains("Job ID `job-1`"));
         assert!(
             out.contains("next charge date:"),
             "nextChargeAt = subEndTime → clause present: {out}"
@@ -1371,6 +1383,7 @@ mod tests {
     #[test]
     fn sub_created_trial_renders_trial_started_no_charge() {
         let out = sub_created_trial_user_notify(
+            "job-1",
             Some("1.500000"),
             Some("USDT"),
             Some(1_700_000_000),
@@ -1393,16 +1406,19 @@ mod tests {
             !out.contains("First charge") && !out.contains("completed"),
             "trial start must not claim a completed charge: {out}"
         );
+        assert!(out.contains("reply \"Rate job\""));
+        assert!(out.contains("Job ID `job-1`"));
     }
 
     #[test]
     fn sub_created_trial_degrades_without_amount_or_dates() {
-        let bare = sub_created_trial_user_notify(None, None, None, None);
-        assert_eq!(
-            bare, "[Trial Started] Your free trial is active.",
-            "no amount → whole conversion sentence omitted; no dates → no range"
+        let bare = sub_created_trial_user_notify("job-1", None, None, None, None);
+        assert!(
+            bare.starts_with("[Trial Started] Your free trial is active."),
+            "no amount → whole conversion sentence omitted; no dates → no range: {bare}"
         );
-        let no_dates = sub_created_trial_user_notify(Some("1.5"), None, None, None);
+        assert!(bare.contains("reply \"Rate job\""));
+        let no_dates = sub_created_trial_user_notify("job-1", Some("1.5"), None, None, None);
         assert!(
             no_dates.contains("After it ends, 1.5 will be auto-charged to convert"),
             "amount without symbol/date still announces conversion: {no_dates}"
@@ -1715,6 +1731,8 @@ mod tests {
         assert!(out.contains("\"My Sub\" has completed all scheduled renewals"));
         assert!(out.contains("Job job-1 status: Completed"));
         assert!(out.contains("service ends normally at"));
+        assert!(out.contains("reply \"Rate job\""));
+        assert!(out.contains("replaces the AI-generated rating"));
     }
 
     #[test]
