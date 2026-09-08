@@ -1,4 +1,4 @@
-//! Buyer refund orchestration following the Skill/CLI progression contract.
+//! Buyer refund orchestration following the Skill/CLI v2 progression contract.
 //!
 //! `refund-prepare` is read-only. `refund-execute` accepts only a plan produced
 //! by prepare, re-reads authoritative state, requires explicit confirmation,
@@ -99,6 +99,10 @@ pub(crate) struct RefundListItem {
     pub(crate) deadline: Option<i64>,
     pub(crate) job_type: i64,
     pub(crate) status: i64,
+    pub(crate) reason: &'static str,
+    /// Completed(6) is an evaluation verdict only when a buyer refund request
+    /// was durably reconciled first; otherwise it may be a normal completion.
+    pub(crate) refund_request_provenance: bool,
     pub(crate) refund_request_available: bool,
 }
 
@@ -127,7 +131,7 @@ struct Plan {
 struct PendingRefundMutation {
     schema_version: i64,
     /// Local reconciliation format. This is intentionally separate from the
-    /// public Refund payload schema version. Journals written before the
+    /// public Refund V2 payload schema version. Journals written before the
     /// request-provenance upgrade omit this field and deserialize as v2.
     #[serde(default = "legacy_journal_revision")]
     journal_revision: i64,
@@ -192,14 +196,7 @@ enum RefundOrderStatus {
 fn pending_state_path(job_id: &str, user_agent_id: &str) -> Result<PathBuf> {
     let digest = Sha256::digest(format!("{user_agent_id}\0{job_id}").as_bytes());
     Ok(crate::home::onchainos_home()?
-        .join("refund")
-        .join(format!("{}.json", hex::encode(digest))))
-}
-
-fn legacy_pending_state_path(job_id: &str, user_agent_id: &str) -> Result<PathBuf> {
-    let digest = Sha256::digest(format!("{user_agent_id}\0{job_id}").as_bytes());
-    Ok(crate::home::onchainos_home()?
-        .join(concat!("refund", "-v2"))
+        .join("refund-v2")
         .join(format!("{}.json", hex::encode(digest))))
 }
 
@@ -207,29 +204,25 @@ fn read_pending_mutation(
     job_id: &str,
     user_agent_id: &str,
 ) -> Result<Option<PendingRefundMutation>> {
-    let current_path = pending_state_path(job_id, user_agent_id)?;
-    let legacy_path = legacy_pending_state_path(job_id, user_agent_id)?;
-    let path = if current_path.exists() {
-        current_path
-    } else {
-        legacy_path
-    };
+    let path = pending_state_path(job_id, user_agent_id)?;
     match fs::read(&path) {
         Ok(bytes) => {
-            let state: PendingRefundMutation = serde_json::from_slice(&bytes)
-                .with_context(|| format!("parse Refund reconciliation state {}", path.display()))?;
+            let state: PendingRefundMutation =
+                serde_json::from_slice(&bytes).with_context(|| {
+                    format!("parse Refund V2 reconciliation state {}", path.display())
+                })?;
             if state.schema_version != SCHEMA_VERSION
                 || !matches!(state.journal_revision, 2 | JOURNAL_REVISION)
                 || state.job_id != job_id
                 || state.user_agent_id != user_agent_id
             {
-                bail!("Refund reconciliation state does not match this task and identity");
+                bail!("Refund V2 reconciliation state does not match this task and identity");
             }
             Ok(Some(state))
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error)
-            .with_context(|| format!("read Refund reconciliation state {}", path.display())),
+            .with_context(|| format!("read Refund V2 reconciliation state {}", path.display())),
     }
 }
 
@@ -318,12 +311,12 @@ async fn query_refund_order_status(state: &PendingRefundMutation) -> Result<Refu
         .account_id
         .as_deref()
         .or_else(|| resolved_wallet.as_ref().map(|wallet| wallet.0.as_str()))
-        .ok_or_else(|| anyhow::anyhow!("Refund journal is missing the broadcast account"))?;
+        .ok_or_else(|| anyhow::anyhow!("Refund V2 journal is missing the broadcast account"))?;
     let address = state
         .address
         .as_deref()
         .or_else(|| resolved_wallet.as_ref().map(|wallet| wallet.1.as_str()))
-        .ok_or_else(|| anyhow::anyhow!("Refund journal is missing the broadcast address"))?;
+        .ok_or_else(|| anyhow::anyhow!("Refund V2 journal is missing the broadcast address"))?;
     let access_token = ensure_tokens_refreshed().await?;
     let chain_index = state
         .chain_index
@@ -350,7 +343,7 @@ async fn query_refund_order_status(state: &PendingRefundMutation) -> Result<Refu
             &query,
         )
         .await
-        .context("query Refund broadcast order status")?;
+        .context("query Refund V2 broadcast order status")?;
     validate_refund_order_detail_binding(&detail, state)?;
     Ok(parse_refund_order_status(&detail, state.tx_hash.as_deref()))
 }
@@ -752,7 +745,9 @@ async fn reconcile_pending_mutation_locked(
                 state.updated_at = chrono::Utc::now().timestamp();
                 write_pending_mutation(&state)?;
                 if state.tx_hash.is_some() && !apply_confirmed_direct_refund(snapshot, &state) {
-                    bail!("confirmed Refund order no longer matches its direct-refund provenance");
+                    bail!(
+                        "confirmed Refund V2 order no longer matches its direct-refund provenance"
+                    );
                 }
                 return Ok(None);
             }
@@ -788,7 +783,7 @@ fn acquire_pending_lock(job_id: &str, user_agent_id: &str) -> Result<File> {
     let state_path = pending_state_path(job_id, user_agent_id)?;
     let root = state_path
         .parent()
-        .ok_or_else(|| anyhow::anyhow!("Refund state path has no parent"))?;
+        .ok_or_else(|| anyhow::anyhow!("Refund V2 state path has no parent"))?;
     crate::home::ensure_dir_0700(root)?;
     let lock_path = state_path.with_extension("lock");
     let lock = OpenOptions::new()
@@ -796,9 +791,9 @@ fn acquire_pending_lock(job_id: &str, user_agent_id: &str) -> Result<File> {
         .read(true)
         .write(true)
         .open(&lock_path)
-        .with_context(|| format!("open Refund reconciliation lock {}", lock_path.display()))?;
+        .with_context(|| format!("open Refund V2 reconciliation lock {}", lock_path.display()))?;
     lock.lock_exclusive()
-        .context("lock Refund reconciliation state")?;
+        .context("lock Refund V2 reconciliation state")?;
     Ok(lock)
 }
 
@@ -829,23 +824,23 @@ async fn reconcile_without_downgrading_confirmed_settlement(
 fn write_pending_mutation(state: &PendingRefundMutation) -> Result<()> {
     let path = pending_state_path(&state.job_id, &state.user_agent_id)?;
     crate::home::atomic_write(&path, &serde_json::to_vec_pretty(state)?, true)
-        .with_context(|| format!("write Refund reconciliation state {}", path.display()))?;
+        .with_context(|| format!("write Refund V2 reconciliation state {}", path.display()))?;
 
     // This journal is the pre-mutation replay guard, so ordinary atomic rename
     // is not enough: make both the file data and directory entry durable before
     // allowing a remote funds mutation to begin.
     File::open(&path)
         .and_then(|file| file.sync_all())
-        .with_context(|| format!("sync Refund reconciliation state {}", path.display()))?;
+        .with_context(|| format!("sync Refund V2 reconciliation state {}", path.display()))?;
     #[cfg(unix)]
     File::open(
         path.parent()
-            .ok_or_else(|| anyhow::anyhow!("Refund state path has no parent"))?,
+            .ok_or_else(|| anyhow::anyhow!("Refund V2 state path has no parent"))?,
     )
     .and_then(|directory| directory.sync_all())
     .with_context(|| {
         format!(
-            "sync Refund reconciliation directory for {}",
+            "sync Refund V2 reconciliation directory for {}",
             path.display()
         )
     })?;
@@ -853,21 +848,13 @@ fn write_pending_mutation(state: &PendingRefundMutation) -> Result<()> {
 }
 
 fn remove_pending_mutation(job_id: &str, user_agent_id: &str) -> Result<()> {
-    for path in [
-        pending_state_path(job_id, user_agent_id)?,
-        legacy_pending_state_path(job_id, user_agent_id)?,
-    ] {
-        match fs::remove_file(&path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!("remove Refund reconciliation state {}", path.display())
-                });
-            }
-        }
+    let path = pending_state_path(job_id, user_agent_id)?;
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error)
+            .with_context(|| format!("remove Refund V2 reconciliation state {}", path.display())),
     }
-    Ok(())
 }
 
 fn is_definitive_api_rejection(error: &anyhow::Error) -> bool {
@@ -960,21 +947,6 @@ fn first_string(values: &[(&Value, &[&str])]) -> Option<String> {
     None
 }
 
-fn first_exact_string(values: &[(&Value, &[&str])]) -> Option<String> {
-    for (value, keys) in values {
-        for key in *keys {
-            if let Some(result) = value
-                .get(*key)
-                .and_then(Value::as_str)
-                .filter(|value| !value.trim().is_empty())
-            {
-                return Some(result.to_string());
-            }
-        }
-    }
-    None
-}
-
 fn scalar_i64(value: Option<&Value>) -> Option<i64> {
     let value = value?;
     value
@@ -1048,11 +1020,9 @@ pub(crate) struct RefundSettlementEvidence {
 /// Whether fresh authoritative task facts prove refund settlement.
 ///
 /// The backend lifecycle contract defines paid Expired(8), paid one-time escrow
-/// Closed(7), and one-time Failed(9) as states projected after the corresponding
-/// on-chain refund result. A wallet-order Tx Hash may enrich that conclusion,
-/// but never creates it by itself. Subscription Failed(9) still needs an
-/// established semantic refund event plus request provenance because legacy
-/// subscription notifications also use status 9 for non-refund failure copy.
+/// Closed(7), and paid Failed(9) as states projected after the corresponding
+/// refund result. For a formal subscription, Failed(9) is the documented
+/// refunded terminal state.
 pub(crate) fn authoritative_refund_settlement_confirmed(
     detail: &common::PreFetchedTaskContext,
     expected_status: i64,
@@ -1069,51 +1039,27 @@ pub(crate) fn authoritative_refund_settlement_confirmed(
                 _ => false,
             };
     }
-    detail.job_type == Some(0)
-        && !detail.token_amount.trim().is_empty()
-        && !is_zero_decimal(detail.token_amount.trim())
-        && (expected_status == 9 || (expected_status == 7 && detail.payment_mode == Some(1)))
+    let has_positive_payment = validate_decimal(detail.token_amount.trim())
+        && !is_zero_decimal(detail.token_amount.trim());
+    match expected_status {
+        9 => {
+            has_positive_payment
+                && (detail.job_type == Some(0)
+                    || (detail.job_type == Some(1) && detail.trial_type != Some(1)))
+        }
+        7 => detail.job_type == Some(0) && detail.payment_mode == Some(1) && has_positive_payment,
+        _ => false,
+    }
 }
 
-/// Whether the legacy backend event contract disambiguates a subscription
-/// Failed(9) row as a completed refund.
-///
-/// These are existing chain-result notifications, not Refund additions:
-/// ASP agreement, backend timeout refund, buyer claim result, and a
-/// user-winning dispute all settle the current subscription period before the
-/// backend projects status 9. Generic `sub_failed_notify` is deliberately not
-/// accepted because it also represents charge/conversion failure.
-fn subscription_refund_completion_event(event: &str) -> bool {
-    matches!(
-        event,
-        "sub_asp_agree"
-            | "sub_reject_refund_notify"
-            | "job_auto_refunded"
-            | "job_refunded"
-            | "dispute_resolved"
-    )
-}
-
-/// Combine fresh lifecycle state, an established semantic event, and the
-/// durable Refund request binding. A caller-supplied event is routing input
-/// only and cannot turn an unrelated subscription charge failure into refund
-/// settlement proof.
+/// Read the refund result from fresh lifecycle state. The event identifies why
+/// the query ran; the latest status carries the settlement meaning.
 pub(crate) fn refund_event_settlement_confirmed(
     detail: &common::PreFetchedTaskContext,
     expected_status: i64,
-    event: &str,
+    _event: &str,
 ) -> bool {
-    if authoritative_refund_settlement_confirmed(detail, expected_status) {
-        return true;
-    }
-
-    expected_status == 9
-        && detail.status == Some(9)
-        && detail.job_type == Some(1)
-        && detail.refund_request_provenance
-        && validate_decimal(detail.token_amount.trim())
-        && !is_zero_decimal(detail.token_amount.trim())
-        && subscription_refund_completion_event(event)
+    authoritative_refund_settlement_confirmed(detail, expected_status)
 }
 
 /// Verify a refund lifecycle event against fresh authoritative task facts.
@@ -1306,6 +1252,82 @@ fn status_name(job_type: i64, status: i64) -> String {
     }
 }
 
+fn refund_status_label(job_type: i64, status: i64, reason: &str) -> String {
+    match reason {
+        "refund_confirmed" => return "Refund completed".to_string(),
+        "provider_response_pending" => return "Awaiting ASP decision".to_string(),
+        "arbitration_in_progress" => return "Refund under evaluation".to_string(),
+        "refund_not_approved_or_task_completed" => return "Refund not issued".to_string(),
+        "trial_subscription_closed_without_refund" | "task_closed_no_new_refund_action" => {
+            return "Closed without refund".to_string();
+        }
+        "expired_without_refundable_payment"
+        | "zero_amount_task_closed"
+        | "zero_amount_subscription_not_refundable" => {
+            return "No refund required".to_string();
+        }
+        "refund_settlement_details_incomplete" => {
+            return "Refund result unavailable".to_string();
+        }
+        _ => {}
+    }
+    if job_type != 1 {
+        return super::super::common::query::task_status_label(status).to_string();
+    }
+    match status {
+        -1 => "Initializing",
+        0 => "Created",
+        1 => "Active",
+        3 => "Awaiting refund decision",
+        4 => "Evaluation in progress",
+        6 => "Completed",
+        7 => "Closed",
+        8 => "Expired",
+        9 => "Refund completed",
+        _ => "Status unavailable",
+    }
+    .to_string()
+}
+
+fn refund_status_description(job_type: i64, status: i64, reason: &str) -> String {
+    match reason {
+        "refund_confirmed" => return "The refund completed successfully.".to_string(),
+        "provider_response_pending" => {
+            return "The refund request is waiting for the ASP's decision.".to_string();
+        }
+        "arbitration_in_progress" => {
+            return "The refund result will be determined by the Evaluation.".to_string();
+        }
+        "refund_not_approved_or_task_completed" => {
+            return "The task completed without a refund.".to_string();
+        }
+        "trial_subscription_closed_without_refund" | "task_closed_no_new_refund_action" => {
+            return "The task is closed and no refund was issued.".to_string();
+        }
+        "expired_without_refundable_payment"
+        | "zero_amount_task_closed"
+        | "zero_amount_subscription_not_refundable" => {
+            return "This task has no refundable payment.".to_string();
+        }
+        "refund_settlement_details_incomplete" => {
+            return "The current response does not contain a complete refund result.".to_string();
+        }
+        _ => {}
+    }
+    if job_type != 1 {
+        return super::super::common::query::task_status_description(status).to_string();
+    }
+    match status {
+        3 => "The refund request is waiting for the ASP's decision.",
+        4 => "The refund request is in Evaluation.",
+        6 => "The subscription completed without a refund.",
+        7 => "The subscription is closed.",
+        9 => "The refund completed successfully.",
+        _ => "The refund status follows the current subscription state.",
+    }
+    .to_string()
+}
+
 impl RefundSnapshot {
     fn from_details(
         job_id: &str,
@@ -1456,26 +1478,31 @@ impl RefundSnapshot {
             payment_mode,
             original_amount,
             response_deadline: lookup_i64(
-                &["rejectWindowEndsAt", "responseDeadline", "expireTime"],
-                &["rejectWindowEndsAt", "responseDeadline", "expireTime"],
+                // `rejectDeadline` is the absolute ASP-response deadline on a
+                // rejected task. Do not read `expireConfig.rejectDeadline`:
+                // that nested value is a configured duration (for example
+                // 1200), not a Unix timestamp suitable for display.
+                &[
+                    "rejectDeadline",
+                    "rejectWindowEndsAt",
+                    "responseDeadline",
+                    "expireTime",
+                ],
+                &[
+                    "rejectDeadline",
+                    "rejectWindowEndsAt",
+                    "responseDeadline",
+                    "expireTime",
+                ],
             ),
             requested_at: lookup_i64(
                 &["refundRequestedAt", "rejectTime"],
                 &["refundRequestedAt", "rejectTime"],
             ),
-            recorded_refund_reason: {
-                let mut values = Vec::new();
-                if let Some(subscription) = subscription {
-                    values.push((
-                        subscription,
-                        &["rejectReason", "refundReason", "userReason"][..],
-                    ));
-                }
-                // One-time task detail formally returns `rejectReason`; the
-                // remaining names are retained for older response snapshots.
-                values.push((task, &["rejectReason", "refundReason", "userReason"][..]));
-                first_exact_string(&values)
-            },
+            recorded_refund_reason: lookup(
+                &["refundReason", "rejectReason", "userReason"],
+                &["refundReason", "rejectReason", "userReason"],
+            ),
             // Tx Hash is optional display/audit metadata. The authoritative
             // task status is projected only after the backend consumes the
             // corresponding on-chain event, so it can prove settlement even
@@ -1506,7 +1533,11 @@ impl RefundSnapshot {
         let paid_one_time_final = snapshot.job_type == 0
             && !is_zero_decimal(&snapshot.original_amount)
             && (snapshot.status == 9 || (snapshot.status == 7 && snapshot.payment_mode == Some(1)));
-        if paid_expired || paid_one_time_final {
+        let paid_subscription_refund_final = snapshot.job_type == 1
+            && snapshot.trial_type == Some(0)
+            && snapshot.status == 9
+            && !is_zero_decimal(&snapshot.original_amount);
+        if paid_expired || paid_one_time_final || paid_subscription_refund_final {
             snapshot.settlement_confirmed = true;
         }
 
@@ -1932,6 +1963,10 @@ impl RefundSnapshot {
             "0"
         };
         let mut display = self.display_payload(reason, refundable_amount);
+        let status_label = refund_status_label(self.job_type, self.status, plan.reason);
+        let status_description = refund_status_description(self.job_type, self.status, plan.reason);
+        display["statusLabel"] = Value::String(status_label.clone());
+        display["statusDescription"] = Value::String(status_description.clone());
         let required_params = match plan.reason {
             "refund_reason_required" | "refund_reason_too_long" => json!(["reason"]),
             _ => json!([]),
@@ -1994,7 +2029,7 @@ impl RefundSnapshot {
             .provider_name
             .as_deref()
             .zip(self.provider_agent_id.as_deref())
-            .map(|(name, agent_id)| format!("{name} (Agent ID: {agent_id})"));
+            .map(|(name, agent_id)| format!("{name} (Agent ID : {agent_id})"));
         let response_deadline_label = self
             .response_deadline
             .and_then(common::deadline::format_utc_timestamp);
@@ -2030,6 +2065,8 @@ impl RefundSnapshot {
                 "refundState": self.refund_state(),
                 "rawStatus": self.status,
                 "statusName": status_name(self.job_type, self.status),
+                "statusLabel": status_label,
+                "statusDescription": status_description,
                 "buyerAgentId": self.buyer_agent_id,
                 "providerAgentId": self.provider_agent_id,
                 "providerName": self.provider_name,
@@ -2287,23 +2324,40 @@ pub(crate) async fn fetch_refund_list_item_for_identity(
             snapshot.provider_name = common::fetch_agent_profile(provider_agent_id).await.name;
         }
     }
-    let refund_request_available = snapshot.plan(None).reason == "refund_reason_required";
+    Ok(refund_list_item(snapshot))
+}
+
+fn refund_list_item(snapshot: RefundSnapshot) -> RefundListItem {
+    let plan = snapshot.plan(None);
+    let refund_request_available = plan.reason == "refund_reason_required";
     let deadline = snapshot.response_deadline.or_else(|| {
         (snapshot.is_subscription() && snapshot.status == 1)
             .then_some(snapshot.period_end_time)
             .flatten()
     });
     let mut display = snapshot.display_payload(None, &snapshot.original_amount);
+    display["statusLabel"] = Value::String(refund_status_label(
+        snapshot.job_type,
+        snapshot.status,
+        plan.reason,
+    ));
+    display["statusDescription"] = Value::String(refund_status_description(
+        snapshot.job_type,
+        snapshot.status,
+        plan.reason,
+    ));
     display["requestedRefund"] = display["refundAmount"].clone();
     display["buyerReason"] = display["reasonForRefund"].clone();
     display["responseDeadline"] = display["resultDeadline"].clone();
-    Ok(RefundListItem {
+    RefundListItem {
         display,
         deadline,
         job_type: snapshot.job_type,
         status: snapshot.status,
+        reason: plan.reason,
+        refund_request_provenance: snapshot.refund_request_provenance,
         refund_request_available,
-    })
+    }
 }
 
 impl From<RefundSnapshot> for common::PreFetchedTaskContext {
@@ -2327,18 +2381,21 @@ impl From<RefundSnapshot> for common::PreFetchedTaskContext {
             service_token_address: None,
             service_token_amount: None,
             service_params: None,
+            refund_reason: snapshot.recorded_refund_reason,
+            period_start_time: snapshot.period_start_time,
+            period_end_time: snapshot.period_end_time,
             user_agent_address: None,
             token_address: snapshot.token_address,
             verified_transaction_hash: snapshot.settlement_tx_hash,
             refund_request_provenance: snapshot.refund_request_provenance,
-            expire_time: None,
+            expire_time: snapshot.response_deadline,
             test_flag: false,
         }
     }
 }
 
 /// Final lifecycle events must use the exact same task/subscription
-/// composition and ownership checks as the interactive Refund commands.
+/// composition and ownership checks as the interactive Refund V2 commands.
 pub(crate) async fn fetch_authoritative_refund_context(
     client: &mut TaskApiClient,
     job_id: &str,
@@ -2458,7 +2515,7 @@ fn validate_lifecycle_preflight(uop_data: &Value) -> Result<()> {
         // Legacy task lifecycle responses never required an explicit `true`.
         // The shared signer has always treated only an explicit boolean false
         // as a backend preflight rejection; preserve that wire contract for
-        // Refund because the backend response shape did not change.
+        // Refund V2 because the backend response shape did not change.
         _ => Ok(()),
     }
 }
@@ -2694,7 +2751,7 @@ pub async fn handle_execute(
         Err(error) => {
             audit::log(
                 "cli",
-                "user/refund_wallet_preflight_failed",
+                "user/refund_v2_wallet_preflight_failed",
                 false,
                 std::time::Duration::default(),
                 Some(vec![format!("jobId={job_id}")]),
@@ -2875,7 +2932,7 @@ pub async fn handle_execute(
             let _ = write_pending_mutation(&pending);
             audit::log(
                 "cli",
-                "user/refund_outcome_unknown",
+                "user/refund_v2_outcome_unknown",
                 false,
                 started.elapsed(),
                 Some(vec![
@@ -2913,7 +2970,7 @@ pub async fn handle_execute(
         // operation as ready or perform any local lifecycle cleanup.
         audit::log(
             "cli",
-            "user/refund_receipt_persist_failed",
+            "user/refund_v2_receipt_persist_failed",
             false,
             started.elapsed(),
             Some(vec![
@@ -2948,7 +3005,7 @@ pub async fn handle_execute(
 
     audit::log(
         "cli",
-        "user/refund_broadcast_submitted",
+        "user/refund_v2_broadcast_submitted",
         true,
         started.elapsed(),
         Some(vec![
@@ -3207,6 +3264,25 @@ mod tests {
             snapshot.plan(Some("not what I ordered")).reason,
             "refund_request_confirmation_required"
         );
+    }
+
+    #[test]
+    fn missing_reason_still_exposes_complete_refund_confirmation_display() {
+        let snapshot = snapshot(json!(0), json!(2), "2.5");
+        let plan = snapshot.plan(None);
+        let payload = snapshot.payload(None, &plan);
+        let actions = plan_actions(&snapshot, &plan, None);
+
+        assert_eq!(payload["display"]["serviceName"], json!("Audit"));
+        assert_eq!(payload["display"]["jobId"], json!("job-1"));
+        assert_eq!(
+            payload["display"]["serviceProviderName"],
+            json!("Example ASP")
+        );
+        assert_eq!(payload["display"]["taskType"], json!("One-time"));
+        assert_eq!(payload["display"]["refundAmount"], json!("2.5 USDT"));
+        assert!(payload["display"]["reasonForRefund"].is_null());
+        assert_eq!(actions[0]["id"], json!("provide_refund_reason"));
     }
 
     #[test]
@@ -3482,7 +3558,7 @@ mod tests {
         assert_eq!(payload["display"]["taskTypeLabel"], "Subscription");
         assert_eq!(
             payload["display"]["serviceProviderLabel"],
-            "Example ASP (Agent ID: asp-1)"
+            "Example ASP (Agent ID : asp-1)"
         );
         assert_eq!(
             payload["display"]["currentPeriodLabel"],
@@ -3504,6 +3580,14 @@ mod tests {
             snapshot(json!(0), json!(9), "10").settlement_state(),
             "confirmed"
         );
+        let confirmed_snapshot = snapshot(json!(0), json!(9), "10");
+        let confirmed_payload = confirmed_snapshot.payload(None, &confirmed_snapshot.plan(None));
+        assert_eq!(confirmed_payload["job"]["statusName"], "failed");
+        assert_eq!(confirmed_payload["job"]["statusLabel"], "Refund completed");
+        assert_eq!(
+            confirmed_payload["display"]["statusDescription"],
+            "The refund completed successfully."
+        );
 
         let mut failed_without_payment_mode = task(json!(0), json!(9), "10");
         failed_without_payment_mode
@@ -3519,11 +3603,14 @@ mod tests {
         );
         assert!(failed_without_payment_mode.settlement_tx_hash.is_none());
 
-        let mut ambiguous_subscription = snapshot(json!(1), json!(9), "10");
-        ambiguous_subscription.settlement_tx_hash = Some(format!("0x{}", "ef".repeat(32)));
+        let subscription_refund = snapshot(json!(1), json!(9), "10");
+        assert_eq!(subscription_refund.plan(None).reason, "refund_confirmed");
+        assert_eq!(subscription_refund.settlement_state(), "confirmed");
+        let subscription_payload =
+            subscription_refund.payload(None, &subscription_refund.plan(None));
         assert_eq!(
-            ambiguous_subscription.plan(None).reason,
-            "refund_settlement_details_incomplete"
+            subscription_payload["display"]["statusLabel"],
+            "Refund completed"
         );
 
         let mut refunded_task = task(json!(0), json!(9), "10");
@@ -3566,6 +3653,33 @@ mod tests {
         let lost = snapshot(json!(0), json!(6), "10").plan(None);
         assert_eq!(lost.reason, "refund_not_approved_or_task_completed");
         assert_eq!(lost.operation, None);
+    }
+
+    #[test]
+    fn refund_detail_display_describes_pending_and_terminal_results() {
+        for (status, expected_label) in [
+            (3, "Awaiting ASP decision"),
+            (4, "Refund under evaluation"),
+            (6, "Refund not issued"),
+            (9, "Refund completed"),
+        ] {
+            let item = refund_list_item(snapshot(json!(0), json!(status), "10"));
+            assert_eq!(
+                item.display["statusLabel"], expected_label,
+                "unexpected refund label for task status {status}"
+            );
+            assert!(item.display["statusDescription"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty()));
+        }
+
+        let subscription = refund_list_item(snapshot(json!(1), json!(9), "10"));
+        assert_eq!(subscription.reason, "refund_confirmed");
+        assert_eq!(subscription.display["statusLabel"], "Refund completed");
+        assert_eq!(
+            subscription.display["statusDescription"],
+            "The refund completed successfully."
+        );
     }
 
     #[test]
@@ -3791,7 +3905,7 @@ mod tests {
         let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join("test_tmp")
-            .join("refund_request_provenance");
+            .join("refund_v2_request_provenance");
         if home.exists() {
             fs::remove_dir_all(&home).unwrap();
         }
@@ -3845,50 +3959,11 @@ mod tests {
             9,
             "sub_asp_agree"
         ));
-        assert!(!refund_event_settlement_confirmed(
+        assert!(refund_event_settlement_confirmed(
             &context,
             9,
             "sub_failed_notify"
         ));
-
-        if let Some(previous_home) = previous_home {
-            std::env::set_var("ONCHAINOS_HOME", previous_home);
-        } else {
-            std::env::remove_var("ONCHAINOS_HOME");
-        }
-        fs::remove_dir_all(&home).unwrap();
-    }
-
-    #[test]
-    fn legacy_state_directory_is_read_and_removed() {
-        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
-        let previous_home = std::env::var_os("ONCHAINOS_HOME");
-        let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join("test_tmp")
-            .join("refund_legacy_state_directory");
-        if home.exists() {
-            fs::remove_dir_all(&home).unwrap();
-        }
-        fs::create_dir_all(&home).unwrap();
-        std::env::set_var("ONCHAINOS_HOME", &home);
-
-        let active = snapshot(json!(1), json!(1), "10");
-        let state = submitted_request_refund(&active);
-        let legacy_path = legacy_pending_state_path(&state.job_id, &state.user_agent_id).unwrap();
-        fs::create_dir_all(legacy_path.parent().unwrap()).unwrap();
-        fs::write(&legacy_path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
-
-        let restored = read_pending_mutation(&state.job_id, &state.user_agent_id)
-            .unwrap()
-            .unwrap();
-        assert_eq!(restored.job_id, state.job_id);
-        assert_eq!(restored.user_agent_id, state.user_agent_id);
-        assert_eq!(restored.snapshot_id, state.snapshot_id);
-        assert_eq!(restored.operation, state.operation);
-        assert_eq!(restored.state, state.state);
-        remove_pending_mutation(&state.job_id, &state.user_agent_id).unwrap();
-        assert!(!legacy_path.exists());
 
         if let Some(previous_home) = previous_home {
             std::env::set_var("ONCHAINOS_HOME", previous_home);
@@ -3905,14 +3980,14 @@ mod tests {
         let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join("test_tmp")
-            .join("refund_legacy_request_migration");
+            .join("refund_v2_legacy_request_migration");
         if home.exists() {
             fs::remove_dir_all(&home).unwrap();
         }
         fs::create_dir_all(&home).unwrap();
         std::env::set_var("ONCHAINOS_HOME", &home);
 
-        // Literal journal shape written by the already-shipped Refund:
+        // Literal journal shape written by the already-shipped Refund V2:
         // no journalRevision, jobType, trialType, or billing-period fields.
         let legacy: PendingRefundMutation = serde_json::from_value(json!({
             "schemaVersion": 2,
@@ -4105,7 +4180,7 @@ mod tests {
         let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join("test_tmp")
-            .join("refund_durable_marker");
+            .join("refund_v2_durable_marker");
         if home.exists() {
             fs::remove_dir_all(&home).unwrap();
         }
@@ -4198,7 +4273,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_subscription_refund_events_disambiguate_failed_status() {
+    fn formal_subscription_failed_status_is_the_refunded_terminal_state() {
         let mut detail = common::PreFetchedTaskContext::from_api_response(&json!({
             "jobType": 1,
             "status": 9,
@@ -4210,10 +4285,11 @@ mod tests {
             "paymentTokenAddress": "0xtoken",
         }));
 
-        let forged_event = json!({"event": "sub_asp_agree", "code": 0});
+        let status_query_event = json!({"event": "sub_asp_agree", "code": 0});
         assert!(
-            verify_final_refund_event(Some(&forged_event), Some(&detail), 9, "buyer-1").is_err(),
-            "caller-supplied event names cannot replace durable Refund request provenance"
+            verify_final_refund_event(Some(&status_query_event), Some(&detail), 9, "buyer-1")
+                .is_ok(),
+            "fresh formal-subscription status 9 proves the documented refund result"
         );
         detail.refund_request_provenance = true;
 
@@ -4233,7 +4309,8 @@ mod tests {
 
         let generic_failure = json!({"event": "sub_failed_notify", "code": 0});
         assert!(
-            verify_final_refund_event(Some(&generic_failure), Some(&detail), 9, "buyer-1").is_err()
+            verify_final_refund_event(Some(&generic_failure), Some(&detail), 9, "buyer-1").is_ok(),
+            "fresh formal-subscription status 9 carries the documented refunded meaning"
         );
         assert_eq!(
             RefundSnapshot::from_details(
@@ -4255,8 +4332,8 @@ mod tests {
             .unwrap()
             .plan(None)
             .reason,
-            "refund_settlement_details_incomplete",
-            "bare status polling has no semantic event and remains fail-closed"
+            "refund_confirmed",
+            "formal subscription Failed(9) is the documented refunded terminal state"
         );
     }
 
@@ -4515,7 +4592,7 @@ mod tests {
     fn refund_display_is_english_display_ready_and_omits_transaction_hashes() {
         let mut detail = task(json!(0), json!(3), "1.25");
         detail.as_object_mut().unwrap().remove("serviceName");
-        detail["rejectReason"] = json!(" The result missed the requested scope.\nKeep spacing ");
+        detail["rejectReason"] = json!("The result missed the requested scope");
         detail["expireTime"] = json!(1_700_100_000);
         let snapshot = RefundSnapshot::from_details("job-1", &detail, None, "buyer-1").unwrap();
         let display = snapshot.display_payload(None, &snapshot.original_amount);
@@ -4525,10 +4602,27 @@ mod tests {
         assert_eq!(display["refundAmount"], "1.25 USDT");
         assert_eq!(
             display["reasonForRefund"],
-            " The result missed the requested scope.\nKeep spacing "
+            "The result missed the requested scope"
         );
         assert!(display["resultDeadline"].as_str().is_some());
         assert!(display.get("txHash").is_none());
+    }
+
+    #[test]
+    fn pending_refund_uses_top_level_reject_deadline_not_expiry_config_duration() {
+        let mut detail = task(json!(0), json!(3), "1.25");
+        detail["rejectDeadline"] = json!(1_788_861_865i64);
+        detail["expireTime"] = json!(1_700_100_000i64);
+        detail["expireConfig"] = json!({"rejectDeadline": 1200});
+
+        let snapshot = RefundSnapshot::from_details("job-1", &detail, None, "buyer-1").unwrap();
+        assert_eq!(snapshot.response_deadline, Some(1_788_861_865));
+        assert_eq!(
+            snapshot.display_payload(None, &snapshot.original_amount)["resultDeadline"],
+            common::deadline::format_local_timestamp_with_offset(1_788_861_865)
+                .map(Value::String)
+                .unwrap_or(Value::Null)
+        );
     }
 
     #[test]

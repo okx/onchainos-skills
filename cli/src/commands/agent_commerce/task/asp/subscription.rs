@@ -434,7 +434,7 @@ pub async fn handle_agree_refund(
 
     println!("✓ Full refund for this subscription period submitted");
     println!("  Progress will update in this task.");
-    println!("  Check: onchainos agent status {job_id} --agent-id {agent_id}");
+    println!("  Ask me to view this task's details for the refund result.");
     Ok(())
 }
 
@@ -574,7 +574,7 @@ pub async fn handle_dispute(
 
     println!("✓ Evaluation request submitted");
     println!("  Progress will update in this task.");
-    println!("  Check: onchainos agent arbitration-detail {job_id} --agent-id {agent_id}");
+    println!("  Ask me to view this task's details for the evaluation result.");
     Ok(())
 }
 

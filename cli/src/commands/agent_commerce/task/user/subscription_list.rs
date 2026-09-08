@@ -194,17 +194,13 @@ async fn attach_fee_labels(output: &mut Value) {
 
     let mut symbols = HashMap::<String, Option<String>>::new();
     for item in items.iter() {
-        let has_inline_symbol = [
-            "serviceTokenSymbol",
-            "tokenSymbol",
-            "paymentTokenSymbol",
-        ]
-        .into_iter()
-        .any(|key| {
-            item.get(key)
-                .and_then(Value::as_str)
-                .is_some_and(|value| !value.trim().is_empty())
-        });
+        let has_inline_symbol = ["serviceTokenSymbol", "tokenSymbol", "paymentTokenSymbol"]
+            .into_iter()
+            .any(|key| {
+                item.get(key)
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| !value.trim().is_empty())
+            });
         if has_inline_symbol {
             continue;
         }
@@ -358,7 +354,10 @@ fn attach_device_receipts(output: &mut Value, device_snapshot: Option<&Value>) {
             })
             .collect();
         object.insert("deviceReceipts".to_string(), Value::Array(receipts));
-        object.insert("deviceReceiptCells".to_string(), Value::Object(receipt_cells));
+        object.insert(
+            "deviceReceiptCells".to_string(),
+            Value::Object(receipt_cells),
+        );
     }
 }
 

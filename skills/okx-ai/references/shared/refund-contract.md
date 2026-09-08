@@ -29,8 +29,7 @@ Always use a fresh read. History or caller events cannot prove settlement.
 | Trial subscription or exact-zero task at Expired(8) | `expired_without_refundable_payment`; settlement not required. |
 | One-time at Closed(7), positive original amount, `paymentMode=1` | `refund_confirmed`; close returned escrow. |
 | One-time at Failed(9), matching Buyer and exact positive original payment | `refund_confirmed`. |
-| Formal subscription at Failed(9), matching durable `request-refund` provenance plus fresh Buyer/type/payment/token facts | `refund_confirmed`. |
-| Subscription at bare or event-only Failed(9), including unproven `sub_failed_notify` | `refund_settlement_details_incomplete`; no terminal claim or cleanup. |
+| Formal subscription at Failed(9), matching fresh Buyer/type and exact positive original payment | `refund_confirmed`; render `Refund completed`. |
 | Subscription at Closed(7) | `task_closed_no_new_refund_action`; Closed alone proves no refund. |
 
 Both Expired(8) outcomes require `job.refundState=resolved` and

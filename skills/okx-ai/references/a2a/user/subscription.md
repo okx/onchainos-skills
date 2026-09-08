@@ -2,19 +2,6 @@
 
 Browse my subscription task lists or details.
 
-## Status-query handoff
-
-Enter here from [`../task-query.md`](../task-query.md) only when its single
-existing `agent status` call identifies `Task type: subscription` or structured
-`payload.jobType=1`. Consume that same result; do not call `subscription-list`
-or `subscribe-detail` again merely to answer the status query.
-
-Render the returned title, full Job ID, provider, fee, status, and description
-as a subscription status card. Use the CLI-normalized subscription status
-verbatim. End after the read-only result; missing subscription-management facts
-such as billing period, auto-renewal, or receipt devices are omitted rather
-than fetched or inferred.
-
 ## Commands
 
 | Intent | Reference |
@@ -38,17 +25,17 @@ Always respond and render all user-facing content in the language currently used
 {When activeRows is non-empty}
 #### Active Subscriptions ({payload.summary.activeCount})
 
-| # | Job Name | Job ID | Service Provider | Status | Fee / Month | Next Charge | Auto-renewal | Billing Period | {payload.deviceColumns[].label} |
-|---|---|---|---|---|---|---|---|---|---|
-| {n} | {title} | {jobId} | Agent#{providerAgentId} | {statusName} | {feeLabel} | {nextChargeLabel} | {autoRenewLabel} | {billingPeriodLabel} | {deviceReceiptCells[column.key]} |
+| # | Job Name | Service Provider | Status | Fee / Month | Next Charge | Auto-renewal | Billing Period | {payload.deviceColumns[].label} |
+|---|---|---|---|---|---|---|---|---|
+| {n} | {title} | Agent#{providerAgentId} | {localizedStatusLabel} | {feeLabel} | {nextChargeLabel} | {autoRenewLabel} | {billingPeriodLabel} | {deviceReceiptCells[column.key]} |
 {End when activeRows is non-empty}
 
 {When endedRows is non-empty}
 #### Ended Subscriptions ({payload.summary.endedCount})
 
-| # | Job Name | Job ID | Service Provider | Status | Fee / Month | Billing Period |
-|---|---|---|---|---|---|---|
-| {n} | {title} | {jobId} | Agent#{providerAgentId} | {statusName} | {feeLabel} | {billingPeriodLabel} |
+| # | Job Name | Service Provider | Status | Fee / Month | Billing Period |
+|---|---|---|---|---|---|
+| {n} | {title} | Agent#{providerAgentId} | {localizedStatusLabel} | {feeLabel} | {billingPeriodLabel} |
 {End when endedRows is non-empty}
 
 {When both activeRows and endedRows are empty}
@@ -71,7 +58,7 @@ No subscriptions found.
 4. If device data is unavailable, omit device columns and state that receipt
    status is unavailable.
 5. Warn for each Active row with `hasNoReceivingDevices=true`.
-6. When `statusName=CREATED`, render `nextChargeLabel=Pending acceptance` in User's language.
+6. Translate each row's CLI-provided `statusLabel` into the user's language.
 
 ### Constraints
 
@@ -81,13 +68,35 @@ No subscriptions found.
 
 ## Detail
 
-Render current fields only: `title`, `jobId`, status, buyer, provider,
-`serviceTokenAmount`, period, `autoRenew`, trial window when present,
-`offlineReceiveFlag`, `deviceList`, and `thisDeviceReceives`.
+Render current fields only as a single-record field list:
 
-Preserve `deviceList`: `null` means all logged-in devices by default, `[]`
-means none, and a non-empty array is an explicit allowlist.
+```markdown
+### Subscription Details
+
+- Job Name: {title}
+- Job ID: {jobId}
+- Status: {localizedStatusLabel}
+- Status Description: {localizedStatusDescription}
+- Buyer: Agent#{buyerAgentId}
+- Service Provider: Agent#{providerAgentId}
+- Fee: {serviceTokenAmount}
+- Current Period: {currentPeriod}
+- Auto-Renewal: {autoRenewLabel}
+- Trial Window: {trialWindow}
+- Offline Receipt: {offlineReceiveFlag}
+- Receiving Devices: {deviceList}
+- This Device Receives: {thisDeviceReceives}
+```
+
+Render available optional items. Preserve `deviceList`: `null` means all
+logged-in devices by default, `[]` means none, and a non-empty array is an
+explicit allowlist.
+
+Translate `statusLabel` and `statusDescription` into the conversation language.
+For status code `9`, use `Refund completed` and its matching success
+description before translating both.
 
 ### Constraints
 
+- Never infer a `jobId` from a title or prior context.
 - Refresh the list only when the selected subscription is no longer available.

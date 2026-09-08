@@ -13,7 +13,8 @@ Actions:
 
 Rules:
 
-1. Display localized User / ASP / Evaluator labels. In Chinese, use 用户 / 服务提供商 / 评审员. Never expose raw enums, legacy role names, or bilingual labels.
+1. Translate User / ASP / Evaluator labels into the user's language. Never
+   expose raw enums, legacy role names, or bilingual labels.
 
 ### 2. Pre-check
 

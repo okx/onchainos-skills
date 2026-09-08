@@ -249,16 +249,17 @@ default. Then **END THIS TURN**. A reply confirming Step 4.5 never also answers 
 Step 5 -- Subscription confirmation form
 ================================================
 
-Read `skills/okx-ai/references/a2a/user/subscription-create.md` and render its exact
-`Subscription job creation confirmation` scene. That scene is the only source
-for the English display template, field order, optional Service Parameters
-column, Provider and Fee format, Trial text, Auto-renewal label, and Recommend
-action. Bind it from the retained User-confirmed values and the selected
-Service payload. Do not keep or invent a second confirmation template here.
+The confirmation form has exactly the seven product-facing field items below. Guide Consent values belong only in the separately confirmed Step 4.5 review. Never append, merge, or render them as items in this product-facing subscription confirmation form. Continue retaining the user-authored values for the Step 6 `--guide-consent-json` argument.
 
-Guide Consent values belong only in the separately confirmed Step 4.5 review.
-Never append, merge, or render them in this product-facing subscription
-confirmation. Continue retaining the user-authored values for the Step 6 `--guide-consent-json` argument.
+- Title: <short title, <=30 chars>
+- Description: <full content> (if <=200 chars inline; if >200 write `see below` and render below)
+- Provider: Agent <providerAgentId>(<providerAgentName>) — degrade to Agent <providerAgentId> when name empty/absent
+- Service params: <serviceParams readable display, or \"None\">
+- Service price: <subscriptionInfo.feeAmount> <feeTokenSymbol> / month
+- Trial: Yes (<subscriptionInfo.freeTrial> hours free) / No (based on `subscriptionInfo.supportTrial`)
+- Auto-renew: On / Off
+
+> Confirm? Once confirmed, the subscription will be created on-chain.
 
 → **End this turn**; wait for the user's reply.
 
@@ -331,15 +332,13 @@ Step 5 -- Regular confirmation form
 
 Never add execution mode, per-signal amount, per-signal cap, quote currency, Trade Kit environment, margin mode, order policy, or any other execution setting to this or any other confirmation form.
 
-| Field | Value |
-|---|---|
-| Title | <short title, <=30 chars> |
-| Description | <full content> (if <=200 chars in table; if >200 write `see below` and render below) |
-| ASP | Agent <providerAgentId>(<providerAgentName>) — degrade to Agent <providerAgentId> when name empty/absent |
-| Service params | <serviceParams readable display, or \"None\"> |
-| Service price | <localized Free when feeAmount is zero; otherwise feeAmount + feeTokenSymbol> (only show this row if feeAmount has a value) |
+- Title: <short title, <=30 chars>
+- Description: <full content> (if <=200 chars inline; if >200 write `see below` and render below)
+- ASP: Agent <providerAgentId>(<providerAgentName>) — degrade to Agent <providerAgentId> when name empty/absent
+- Service params: <serviceParams readable display, or \"None\">
+- Service price: <localized Free when feeAmount is zero; otherwise feeAmount + feeTokenSymbol> (only show this item if feeAmount has a value)
 
-Payment mode is always `escrow` for this Task playbook; do not ask the user or show it as a card row.
+Payment mode is always `escrow` for this Task playbook; do not ask the user or show it as a card item.
 
 > Confirm and publish?
 
@@ -541,7 +540,9 @@ mod tests {
             .expect("confirmation gate must exist");
         assert!(duplicate_gate < confirmation_gate);
         assert!(out.contains("services[0].existingSubscription"));
-        assert!(out.contains("COMPLETED / CLOSED / EXPIRED / FAILED historical subscriptions do not block"));
+        assert!(out.contains(
+            "COMPLETED / CLOSED / EXPIRED / FAILED historical subscriptions do not block"
+        ));
         assert!(out.contains("require top-level `duplicateSubscription`"));
         assert!(out.contains("duplicateSubscription.userFacingPrompt"));
         assert!(out.contains("intentionally omits fee, trial, description, and readiness"));
@@ -558,24 +559,34 @@ mod tests {
         assert!(out.contains("The Guide is the only contract for Consent and Signal"));
         assert!(out.contains("--guide-consent-json"));
         assert!(out.contains("Guide Consent values belong only"));
-        assert!(out.contains("skills/okx-ai/references/a2a/user/subscription-create.md"));
-        assert!(out.contains("Subscription job creation confirmation"));
-        assert!(out.contains("the only source\nfor the English display template"));
-        assert!(out.contains("optional Service Parameters\ncolumn"));
-        assert!(out.contains(
-            "Provider and Fee format, Trial text, Auto-renewal label, and Recommend\naction"
-        ));
-        for retired_inline_row in [
-            "| Title | <short title",
-            "| Service params | <serviceParams",
-            "| Trial | Yes",
-            "> Confirm? Once confirmed",
+        assert!(out.contains("exactly the seven product-facing field items below"));
+        for expected_item in [
+            "- Title:",
+            "- Description:",
+            "- Provider:",
+            "- Service params:",
+            "- Service price:",
+            "- Trial:",
+            "- Auto-renew:",
         ] {
             assert!(
-                !out.contains(retired_inline_row),
-                "retired inline confirmation template remains: {retired_inline_row}"
+                out.contains(expected_item),
+                "missing confirmation item {expected_item}"
             );
         }
+        let form = out
+            .split("Step 5 -- Subscription confirmation form")
+            .nth(1)
+            .expect("subscription confirmation section")
+            .split("> Confirm?")
+            .next()
+            .expect("subscription confirmation field list");
+        assert_eq!(
+            form.lines().filter(|line| line.starts_with("- ")).count(),
+            7,
+            "confirmation must contain exactly seven product field items"
+        );
+        assert!(!form.contains("| Field | Value |"));
         assert!(out.contains(
             "Continue retaining the user-authored values for the Step 6 `--guide-consent-json` argument"
         ));
@@ -666,6 +677,9 @@ mod tests {
         assert!(out.contains(
             "Never add execution mode, per-signal amount, per-signal cap, quote currency, Trade Kit environment, margin mode, order policy, or any other execution setting to this or any other confirmation form"
         ));
+        assert!(out.contains("- Title: <short title, <=30 chars>"));
+        assert!(out.contains("- Service price:"));
+        assert!(!out.contains("| Field | Value |"));
     }
 
     #[test]
@@ -688,9 +702,7 @@ mod tests {
         assert!(out.contains("`phase=funding_required`"));
         assert!(out.contains("`decision=blocked`"));
         assert!(out.contains("`reason=insufficient_balance`"));
-        assert!(out.contains(
-            "enter `skills/okx-agentic-wallet/references/funding.md` immediately"
-        ));
+        assert!(out.contains("enter `skills/okx-agentic-wallet/references/funding.md` immediately"));
         assert!(out.contains("Do not save or replay the create command"));
         assert!(out.contains("do not create again or Watch"));
     }

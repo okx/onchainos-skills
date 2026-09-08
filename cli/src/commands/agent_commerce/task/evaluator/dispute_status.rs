@@ -125,17 +125,30 @@ pub async fn precheck_round_gate(
     println!("evaluation status (jobId={})", s.job_id);
     println!("  currentRound : {}", fmt_opt(s.current_round));
     println!(
-        "  taskStatus   : {} ({})",
-        s.task_status,
-        task_status.as_str()
+        "  Task status: {}",
+        crate::commands::agent_commerce::task::common::query::task_status_label(i64::from(
+            s.task_status
+        ))
     );
     println!(
-        "  dispute_round_status: {} ({})",
-        fmt_opt_i32(s.dispute_round_status),
+        "  Status description: {}",
+        crate::commands::agent_commerce::task::common::query::task_status_description(i64::from(
+            s.task_status
+        ))
+    );
+    println!(
+        "  Evaluation round status: {}",
         dispute_round_status
             .as_ref()
-            .map(DisputeRoundStatus::as_str)
-            .unwrap_or("null"),
+            .map(DisputeRoundStatus::display_label)
+            .unwrap_or("Round status unavailable"),
+    );
+    println!(
+        "  Evaluation round description: {}",
+        dispute_round_status
+            .as_ref()
+            .map(DisputeRoundStatus::display_description)
+            .unwrap_or("The evaluation round status is currently unavailable."),
     );
     println!(
         "  selectedVoter: {}",

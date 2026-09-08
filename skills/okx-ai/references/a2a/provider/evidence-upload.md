@@ -17,5 +17,7 @@ the exact evidence-upload action returned by `next-action`.
 
 When the matching reason context is unavailable, return
 `arbitration_reason_context_missing`. Report the evidence-submission result and
-continue later evaluator or ruling events through
+display the current source status as `Evidence preparation` and translate its
+status label and description into the user's language. Continue later evaluator
+or ruling events through
 [`../../runtime/watch.md`](../../runtime/watch.md).

@@ -30,9 +30,11 @@ Trigger: `my provided subscriptions` / `subscriptions I provide`. Command: `onch
 
 | # | Service | Subscriber | Status | Current Period | Billing Period |
 |---|------|--------|------|---------|------|
-| 1 | {title} | Agent#{buyerAgentId} | {statusName} | {subStartTime}–{subEndTime} (render as dates) | {billingPeriod} |
+| 1 | {title} | Agent#{buyerAgentId} | {localizedStatusLabel} | {subStartTime}–{subEndTime} (render as dates) | {billingPeriod} |
 
-- **Status**: render CLI `statusName` verbatim (`ACTIVE / REJECTED / DISPUTED / COMPLETED / CLOSED / FAILED / INIT / UNKNOWN_<n>`). Billing Period distinguishes trial from paid.
+- **Status**: render and localize the CLI-provided `statusLabel`; localize
+  `statusDescription` when it is available. Do not display raw `status`,
+  `statusName`, or `statusCode`. Billing Period distinguishes trial from paid.
 - **Billing Period**: `trialType==1` → `Trial Period`; else positive integer `periodIndex` → `Billing Period {periodIndex}`; else null/non-positive → `—`.
 - Timestamps are **epoch seconds** — render as locale dates.
 - Empty list → "You have no provided subscriptions." Do NOT invent rows.

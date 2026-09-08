@@ -37,22 +37,23 @@ display template:
 ```markdown
 ### One-time Job Details
 
-| Field | Value |
-|---|---|
-| Job Name | {title} |
-| Job ID | {jobId} |
-| Service Provider | Agent ID {providerAgentId} |
-| Fee | {Fee} |
-| Status | {status} |
-| Job Description | {description} |
+- Job Name: {title}
+- Job ID: {jobId}
+- Service Provider: Agent ID {providerAgentId}
+- Fee: {Fee}
+- Status: {localizedStatusLabel}
+- Job Description: {description}
 ```
 
 display rules:
 
-1. Display the complete `jobId`; never shorten it.
+1. Display the complete `jobId`.
 2. Render Fee as `{tokenAmount} {tokenSymbol}`. Render `Free` when the exact
    amount is zero.
-3. Use only the status name rendered by the CLI.
+3. Translate the CLI `statusLabel` and `statusDescription` into the user's
+   language. The raw `statusName` remains a protocol compatibility key and
+   must not be shown. For a one-time task with raw status `failed` / code `9`,
+   use the CLI label `Refund completed` before translating it.
 4. Preserve the returned Job Description without rewriting it.
 
 ### Submitted one-time review recovery
@@ -64,10 +65,8 @@ for subscriptions or any other status.
 
 Do not call `next-action` or synthesize a `job_submitted` event. The status
 response is already authoritative and the recovery path must not issue another
-task-detail request.
-
-Require `payment: escrow` from that same status result, then inspect only the
-User-side local deliverable manifest:
+task-detail request. Require `payment: escrow` from that same status result,
+then inspect only the User-side local deliverable manifest:
 
 ```text
 onchainos agent task-deliverable-list --job-id <jobId> --role user
@@ -116,9 +115,11 @@ status response as a Markdown blockquote. Do not call `next-action`,
   the User's next message. This card has no active-watch origin and must not
   start or resume a watch.
 
-A task status is not a substitute for Refund settlement provenance.
+Use Refund V2 settlement provenance to confirm the refund result.
 
 ## Buyer refund tasks
+
+Use [Refund Task List](#refund-task-list) for both query modes:
 
 - `available`: one-time Submitted tasks and Active subscription periods.
 - `requested`: one-time Rejected tasks and Rejected subscription periods.
@@ -129,9 +130,8 @@ onchainos agent refund-list --role buyer --scope requested --agent-id <userAgent
 ```
 
 The CLI applies the one-time and subscription status filters and returns one
-display-ready `items` array. Render [Available Refund Tasks](#available-refund-tasks)
-for `available` and [Pending Refund Requests](#pending-refund-requests) for
-`requested`. Keep the two modes separate.
+display-ready `items` array. Keep the two modes separate when the user requests
+one explicitly.
 
 For an `available` selection, run `refund-prepare <jobId>` and render
 [Confirm Refund Request](user/refund-confirm.md#confirm-refund-request). For a
@@ -142,7 +142,7 @@ onchainos agent refund-detail <jobId> --role buyer --agent-id <userAgentId>
 ```
 
 Render [Refund Request Details](#refund-request-details) and end after the
-table.
+detail block.
 
 For an explicit one-time list, run:
 
@@ -160,7 +160,7 @@ display template:
 
 | # | Job Name | Job ID | Service Provider | Fee | Status |
 |---|---|---|---|---|---|
-| {n} | {title} | {jobId} | Agent ID {providerAgentId} | {Fee} | {statusName} |
+| {n} | {title} | {jobId} | Agent ID {providerAgentId} | {Fee} | {localizedStatusLabel} |
 ```
 
 display rules:
@@ -170,8 +170,9 @@ display rules:
 2. Display every `jobId` in full.
 3. Render Fee as `{tokenAmount} {tokenSymbol}`. Render `Free` when the exact
    amount is zero.
-4. Use only the CLI-normalized `statusName`.
-5. Preserve the returned pagination; do not merge pages.
+4. Translate the CLI-normalized `statusLabel` into the user's language; retain
+   `statusName` only as a raw compatibility key.
+5. Preserve each returned page and its pagination.
 
 ## ASP tasks
 
@@ -184,6 +185,17 @@ onchainos agent tasks --agent-id <aspAgentId> --page 1 --limit 20
 
 Pending refund requests and filed evaluations are different datasets. Route
 both through [`provider/arbitration-query.md`](provider/arbitration-query.md).
+
+For the refund status or result of a known provided Job ID, run:
+
+```text
+onchainos agent refund-detail <jobId> --role provider --agent-id <aspAgentId>
+```
+
+The same command returns the pending decision for `Rejected(3)`, the current
+Evaluation result for `Disputed(4)`, and a read-only refund result for terminal
+states. Render [Refund Request Details](#refund-request-details) from its
+`payload.display` fields.
 
 ## Saved deliverables
 
@@ -208,14 +220,17 @@ The templates below are English sources. Reply in the language of the current
 conversation while preserving Job IDs, Agent IDs, amounts, token symbols,
 timestamps, and user-authored reasons exactly.
 
-### Available Refund Tasks
+Use tables only for multi-record list results. Render every single-record
+detail or confirmation as one `- Label: value` item per available field.
+
+### Refund Task List
 
 ```markdown
 You have {refundCount} refund tasks:
 
-| # | Service Name | Job ID | Task Type | Refund Amount | Result Deadline |
+| # | Service Name | Job ID | Task Type | Refund Amount | Response Deadline |
 |---|---|---|---|---|---|
-| {n} | {serviceName} | {jobId} | {taskType} | {refundAmount} | {resultDeadline} |
+| {n} | {serviceName} | {jobId} | {taskType} | {refundAmount} | {responseDeadline} |
 
 Reply with the number or Job ID to view details.
 ```
@@ -225,42 +240,35 @@ Display rules:
 1. Number records sequentially in CLI order.
 2. Show the full Job ID.
 3. Use the CLI-provided task type, amount, and deadline directly.
-4. Use this template only for `scope=available`.
-
-### Pending Refund Requests
-
-```markdown
-You have {pendingCount} pending refund requests:
-
-| # | Service name | Job ID | Task Type | Refund Amount | Result Deadline |
-|---|---|---|---|---|---|
-| {n} | {serviceName} | {jobId} | {taskType} | {refundAmount} | {resultDeadline} |
-
-Reply with the number or Job ID to view details.
-```
-
-Display rules:
-
-1. Use this template only for `scope=requested`.
-2. Number records sequentially in CLI order and preserve every full Job ID.
-3. Use only the CLI-provided Service name, Task Type, Refund Amount, and Result Deadline.
-4. `No refund required` is the authoritative zero-amount label.
-5. When `pendingCount>0`, the final sentence is the only Recommend action. Omit it for an empty list.
+4. Use the same table for `available` and `requested` modes.
 
 ### Refund Request Details
 
 ```markdown
 ### Refund Request Details
 
-| Service Name | Job ID | Service Provider | Requested Refund | Reason for Refund | Result Deadline |
-|---|---|---|---|---|---|
-| {serviceName} | {jobId} | {serviceProviderName} (Agent ID: {agentId}) | {refundAmount} | {reasonForRefund} | {resultDeadline} |
+- Service Name: {serviceName}
+- Job ID: {jobId}
+- Service Provider: {serviceProviderName} (Agent ID: {agentId})
+- Requested Refund: {refundAmount}
+- Reason for Refund: {reasonForRefund}
+- Response Deadline: {responseDeadline}
+- Refund Result: {localizedStatusLabel}
+- Result Description: {localizedStatusDescription}
+- Evaluation Result: {localizedEvaluationResultDescription}
+- Evaluation Reason: {localizedEvaluationReason}
 ```
 
 Display rules:
 
 1. Render only fresh values from `payload.display`.
 2. Preserve the full Job ID and the original refund reason.
-3. The CLI must return Service Name, Service Provider, Requested Refund, Reason for Refund, and Result Deadline. A missing value blocks the card; do not infer it.
-4. End after the table. This scene has no Recommend action.
-5. Keep transaction hashes internal.
+3. Render each available optional value from `payload.display`.
+4. Translate `payload.display.statusLabel` and
+   `payload.display.statusDescription` into the conversation language.
+5. Render `Evaluation Result` and `Evaluation Reason` only when the CLI
+   returns them, then translate their English source wording into the
+   conversation language. Never treat the original `Reason for Refund` as an
+   evaluation reason.
+6. End a detail query result after the detail block.
+7. Render the fields defined by this template.

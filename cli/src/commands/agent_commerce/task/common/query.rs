@@ -180,11 +180,6 @@ pub async fn handle_status(
             return Ok(());
         }
     };
-    let job_type = resp["jobType"].as_i64().or_else(|| {
-        resp["jobType"]
-            .as_str()
-            .and_then(|value| value.parse().ok())
-    });
     let status_code = resp["status"].as_i64();
     let dispute = match status_code {
         Some(4) => Some(
@@ -207,13 +202,15 @@ pub async fn handle_status(
     } else {
         let t = &resp;
         let token_sym = t["tokenSymbol"].as_str().unwrap_or("?");
-        println!("Task type: {}", task_type_name(job_type));
+        let code = t["status"].as_i64();
         println!(
             "Task status: {}",
-            t["status"]
-                .as_i64()
-                .map(|status| task_status_name(job_type, status))
-                .unwrap_or("?")
+            code.map(task_status_label).unwrap_or("Status unavailable")
+        );
+        println!(
+            "Status detail: {}",
+            code.map(task_status_description)
+                .unwrap_or("The task status is currently unavailable.")
         );
         println!("  jobId:    {job_id}");
         println!("  title:    {}", t["title"].as_str().unwrap_or("?"));
@@ -229,32 +226,6 @@ pub async fn handle_status(
         println!("  user:    {}", t["buyerAgentId"].as_str().unwrap_or("?"));
         if let Some(pid) = t["providerAgentId"].as_str() {
             println!("  asp: {pid}");
-        }
-        if job_type == Some(0) && status_code == Some(2) {
-            let review = super::PreFetchedTaskContext::from_api_response(t);
-            println!(
-                "  payment: {}",
-                match review.payment_mode {
-                    Some(1) => "escrow",
-                    Some(3) => "x402",
-                    _ => "unknown",
-                }
-            );
-            let exact_expire_time = t["expireTime"]
-                .as_i64()
-                .or_else(|| {
-                    t["expireTime"]
-                        .as_str()
-                        .and_then(|value| value.parse().ok())
-                })
-                .filter(|value| *value > 0);
-            if let Some(line) = super::deadline::deadline_reminder_line(
-                exact_expire_time,
-                chrono::Local::now().timestamp(),
-                super::deadline::DeadlineKind::Review,
-            ) {
-                println!("  review: {line}");
-            }
         }
     }
     Ok(())
@@ -306,9 +277,12 @@ pub async fn handle_list(
     println!("Task list ({total} total, page {page}):");
     for t in &tasks {
         let sym = t["tokenSymbol"].as_str().unwrap_or("?");
+        let status_code = t["status"].as_i64();
         println!(
             "  [{}] {} — {} {}",
-            t["status"].as_i64().map(status_name).unwrap_or("?"),
+            status_code
+                .map(task_status_label)
+                .unwrap_or("Status unavailable"),
             t["jobId"].as_str().unwrap_or("?"),
             t["tokenAmount"].as_str().unwrap_or("?"),
             sym,
@@ -336,29 +310,41 @@ pub fn status_name(code: i64) -> &'static str {
     }
 }
 
-fn task_type_name(job_type: Option<i64>) -> &'static str {
-    match job_type {
-        Some(0) => "one_time",
-        Some(1) => "subscription",
-        _ => "unknown",
+/// User-facing one-time task status. The backend key remains available through
+/// `status_name`; this label carries the business meaning shown in templates.
+pub fn task_status_label(code: i64) -> &'static str {
+    match code {
+        -1 => "Initializing",
+        0 => "Awaiting ASP acceptance",
+        1 => "In progress",
+        2 => "Awaiting buyer review",
+        3 => "Awaiting refund decision",
+        4 => "Evaluation in progress",
+        5 => "Stopped by platform",
+        6 => "Completed",
+        7 => "Closed",
+        8 => "Expired",
+        // For one-time tasks, backend Failed(9) is the canonical terminal
+        // projection after the buyer refund path succeeds.
+        9 => "Refund completed",
+        _ => "Status unavailable",
     }
 }
 
-fn task_status_name(job_type: Option<i64>, code: i64) -> &'static str {
-    if job_type != Some(1) {
-        return status_name(code);
-    }
+pub fn task_status_description(code: i64) -> &'static str {
     match code {
-        -1 => "init",
-        0 => "created",
-        1 => "active",
-        3 => "rejected",
-        4 => "disputed",
-        6 => "completed",
-        7 => "closed",
-        8 => "expired",
-        9 => "failed",
-        _ => "unknown",
+        -1 => "The task is being initialized.",
+        0 => "The task is waiting for an ASP to accept it.",
+        1 => "The ASP accepted the task and is working on it.",
+        2 => "The ASP submitted the deliverable and is waiting for buyer review.",
+        3 => "The buyer rejected the deliverable and the refund request awaits an ASP decision.",
+        4 => "The refund request is in Evaluation.",
+        5 => "The platform stopped the task.",
+        6 => "The task completed and funds were released to the ASP.",
+        7 => "The task is closed.",
+        8 => "The task expired.",
+        9 => "The refund completed and the task is closed.",
+        _ => "The task status is currently unavailable.",
     }
 }
 
@@ -493,6 +479,8 @@ pub async fn handle_active_tasks(
                 "jobId":               job_id,
                 "shortJobId":          short_job_id(job_id),
                 "status":               status_name(status_code),
+                "statusLabel":          task_status_label(status_code),
+                "statusDescription":    task_status_description(status_code),
                 "statusCode":           status_code,
                 "title":                t.get("title").and_then(|v| v.as_str()).unwrap_or(""),
                 "tokenAmount":          t.get("tokenAmount").and_then(|v| v.as_str()).unwrap_or(""),
@@ -528,22 +516,6 @@ mod tests {
 
     fn agent(id: &str, role: i64) -> Value {
         json!({ "agentId": id, "role": role })
-    }
-
-    #[test]
-    fn task_type_name_maps_backend_job_type() {
-        assert_eq!(task_type_name(Some(0)), "one_time");
-        assert_eq!(task_type_name(Some(1)), "subscription");
-        assert_eq!(task_type_name(None), "unknown");
-        assert_eq!(task_type_name(Some(2)), "unknown");
-    }
-
-    #[test]
-    fn task_status_name_uses_subscription_lifecycle() {
-        assert_eq!(task_status_name(Some(0), 1), "accepted");
-        assert_eq!(task_status_name(Some(1), 1), "active");
-        assert_eq!(task_status_name(Some(1), 7), "closed");
-        assert_eq!(task_status_name(Some(1), 2), "unknown");
     }
 
     // ─── R5 / ambiguity builder ──────────────────────────────────────────
@@ -639,6 +611,16 @@ mod tests {
         for code in [1, 2, 3, 0, 99] {
             assert_eq!(role_label(code), role_name(code));
         }
+    }
+
+    #[test]
+    fn one_time_failed_backend_status_has_refund_business_label() {
+        assert_eq!(status_name(9), "failed");
+        assert_eq!(task_status_label(9), "Refund completed");
+        assert_eq!(
+            task_status_description(9),
+            "The refund completed and the task is closed."
+        );
     }
 
     // ─── R1 verbatim passthrough (no identity lookup) ────────────────────

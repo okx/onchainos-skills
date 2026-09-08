@@ -5,8 +5,10 @@ Use this leaf for `dispute_resolved`, `round_failed`, `reward_claimed`, and
 
 ## Ruling
 
-For `dispute_resolved`, use fresh `hasCommit`, `hasReveal`, `vote`, and
-`jobStatus`. `complete` means Provider won; `failed` means Client won.
+For `dispute_resolved`, use fresh `hasCommit`, `hasReveal`, `vote`, and the
+CLI-provided readable result fields. `jobStatus` is a protocol key only: never
+show `complete` or `failed` to the user. Use the CLI result/victory description
+for the displayed outcome, translated into the conversation language.
 
 - No Commit or Reveal: report the missed phase and returned timeout terms, then
   run [`../../runtime/cleanup.md`](../../runtime/cleanup.md).
@@ -29,3 +31,6 @@ For `dispute_resolved`, use fresh `hasCommit`, `hasReveal`, `vote`, and
 The aligned-vote branch remains active until its reward loop closes. Ordinary
 updates may be localized and sent once with `user-notify`; preserve all IDs,
 amounts, deadlines, and stable markers exactly.
+
+Translate every user-facing English status label and description in this leaf
+into the user's language.

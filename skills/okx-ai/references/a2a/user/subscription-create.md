@@ -3,54 +3,47 @@
 Enter from `create-prepare.md` only when the authoritative payload supports a
 subscription. Complete `create-guide.md` when a non-blank Guide is present.
 
-## Business data
+## Execution mode
+
+Separately confirm `signal_only` or `guide_direct`, then end the turn.
+`guide_direct` requires the exact Guide and confirmed Guide Consent; an absent
+Guide permits only `signal_only`. Do not default the mode or store it in
+`serviceParams` or Guide Consent.
+
+## Business data and confirmation
 
 Collect `title` (≤30 characters), Description (≤4096 characters), explicit
-Service inputs, attachments, and the User's explicit `autoRenew` choice. Do not
-default `autoRenew`.
-
-## Final confirmation
-
-scene: Subscription job creation confirmation
-
-display template:
+Service inputs, and attachments. Use `autoRenew=1` unless the User explicitly
+disables it. Render this single-subscription confirmation as a field list:
 
 ```markdown
-### Subscription Job Creation Confirmation
+### Subscription Creation Confirmation
 
-| Field | Value |
-|---|---|
-| Job Name | {title} |
-| Job Description | {Description} |
-| Service Provider | {providerAgentName}（Agent {providerAgentId}） |
-| Service Parameters | {serviceParams} |
-| Fee | {feeAmount} {feeTokenSymbol}/{interval} |
-| Trial | {Trial} |
-| Auto-renewal | {Auto-renewal} |
-| Service Guide Consent | {guideConsent} |
-
-{Next Action}
+- Task Name: {title}
+- Task Description: {confirmedDescription}
+- Provider: {providerAgent}
+- Service Parameters: {serviceParams}
+- Service Price: {feeAmount} {feeTokenSymbol} / {interval}
+- Trial: {trialDurationOrNo}
+- Auto-Renew: {OnOrOff}
 ```
 
-display rules:
+Render the Service Parameters item for confirmed parameters. Render attachments
+below the field list.
 
-1. Preserve the User-confirmed Job Name, Job Description, and Service Parameters.
-2. Render the Service Provider as `{providerAgentName}（Agent {providerAgentId}）`. Require both values; do not infer either one.
-3. Omit the entire Service Parameters row when the User confirmed no parameters. Never render `None` or another empty-value label.
-4. Render Fee from the exact `subscriptionInfo.feeAmount`, `feeTokenSymbol`, and `subscriptionInfo.interval` returned by the CLI.
-5. When `subscriptionInfo.supportTrial` is `true` and `subscriptionInfo.freeTrial` is positive, render Trial as `{freeTrial} hours free`. Otherwise render `Free trial is not supported.`
-6. Render Auto-renewal as `On` for the confirmed value `1` and `Off` for `0`.
-7. For a supported positive trial, replace `{Next Action}` with `The trial will start after the Service Provider accepts the job. Once accepted, your job will appear in the Task Center at https://www.okx.ai/tasks. Confirm publication?`
-8. Otherwise replace `{Next Action}` with `The subscription will start after the Service Provider accepts the job. Once accepted, your job will appear in the Task Center at https://www.okx.ai/tasks. Confirm publication?`
-9. List attachments below the table, not as another table field.
-10. Omit the Service Guide Consent row when the Guide is blank. Otherwise preserve every collected Guide field and User-authored value without rewriting them. Do not add execution settings to this confirmation.
-11. Do not show an earlier standalone Guide, execution-mode, or payment confirmation. This card is the only explicit final confirmation for creation.
-12. Treat an explicit affirmative reply as final confirmation only for the complete current card, including the displayed payment and Guide Consent. Apply any edit and render the whole card again.
+Guide Consent remains a separate confirmation. Continue only after explicit
+final confirmation and the one-time communication check defined by `create.md`.
 
-Continue only after explicit final confirmation and the one-time communication
-check defined by `create.md`.
+## Persist mode and create
 
-## Create subscription
+```bash
+onchainos agent subscription-execution-config-set \
+  --service-id <payload.serviceId> \
+  --execution-mode <guide_direct|signal_only>
+```
+
+Changing an existing mode requires another confirmation and `--replace`.
+Failure blocks creation.
 
 ```bash
 onchainos agent create-subscribe \

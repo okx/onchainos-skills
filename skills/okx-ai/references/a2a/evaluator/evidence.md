@@ -45,3 +45,8 @@ For `vote_committed`, state that Commit succeeded and keep the vote secret.
 For a deadline warning, show local deadline, remaining time, timeout adjustment
 and cooldown when returned, then continue the active Commit promptly.
 Route reveal events to [`reveal.md`](reveal.md).
+
+Translate every returned English status label and description into the user's
+language.
+
+Preserve the raw keys and codes returned by `evidence-info`.

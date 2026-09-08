@@ -12,7 +12,10 @@ Relevant signals include `job_closed`, `job_refunded`, `job_auto_refunded`,
 ## Result families
 
 - `refund_confirmed`: render the full original-token refund as terminal only
-  after the finality matrix passes.
+  after the finality matrix passes. Translate `Refund completed` into the
+  user's language. Raw `statusName=failed` and `rawStatus=9` remain
+  backend lifecycle keys; the displayed business result is the localized
+  `statusLabel` and `statusDescription`.
 - `expired_without_refundable_payment`: render terminal
   `settlement.state=not_required`; never claim funds moved.
 - `refund_operation_pending_reconciliation` or `refund_outcome_unknown`: stay

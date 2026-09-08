@@ -1,6 +1,6 @@
 # Buyer Refund Confirmation
 
-Use this leaf only for a fresh Refund confirmation flow.
+Use this leaf only for a fresh Refund V2 confirmation flow.
 
 ## Delivered-task rejection
 
@@ -10,19 +10,25 @@ After the user rejects a delivered result, run:
 onchainos agent refund-prepare <jobId>
 ```
 
-Render [Confirm Refund Request](#confirm-refund-request) and wait for
-`Submit refund request` or an unambiguous localized equivalent.
+Render the complete [Confirm Refund Request](#confirm-refund-request) Template
+6.1 from `payload.display`. The preceding `B` or rejection enters this
+confirmation. Start refund submission when the user replies `Submit refund
+request` or an unambiguous localized equivalent.
 
 Analyze the reply for both the submission intent and a refund reason.
 
 - When the reply contains clear submission intent and a non-blank reason,
   preserve the reason verbatim and continue immediately.
 - When the reply contains clear submission intent without a reason, ask only
-  for the refund reason and keep the Job ID and latest Refund context active.
-- During that reason follow-up, treat the next non-blank user-authored reply as
-  the reason and preserve it verbatim.
+  for the refund reason and keep the Job ID, latest Refund V2 context, and that
+  explicit submission intent active. Treat the next non-blank User-authored
+  reply as the verbatim reason and continue immediately.
+- When the reply provides a reason while the confirmation is waiting for
+  submission intent, preserve it as a draft reason, rerun `refund-prepare` with
+  that reason, re-render Template 6.1, and continue waiting for `Submit refund
+  request`.
 
-After obtaining the reason, rerun:
+After both submission intent and the reason are present, rerun:
 
 ```text
 onchainos agent refund-prepare <jobId> --reason <verbatimReason>
@@ -32,8 +38,7 @@ Continue only when the fresh result has `payload.schemaVersion=2`,
 `phase=refund_confirmation`, `decision=ready`,
 `reason=refund_request_confirmation_required`, and exactly one
 `nextAction[id=submit_refund_request]`. Execute that action immediately through
-[`refund-execute.md`](refund-execute.md). The collected reason is the final
-input and immediately authorizes the returned action.
+[`refund-execute.md`](refund-execute.md).
 
 ## Other refund confirmations
 
@@ -42,12 +47,9 @@ For `zero_amount_close_confirmation_required` or
 [Output Templates](#output-templates) and execute only the action selected from
 that result.
 
-Wait for an explicit selection of the current write action. An initial refund
-request or a confirmation from an earlier proposal does not authorize a fresh
-write.
-
-A blocked, stale, or malformed result remains read-only. Keep every action
-bound to one latest preparation result.
+Bind each write to an explicit action selected from the latest preparation
+result. Render the returned recovery guidance for a blocked, stale, or malformed
+result.
 
 ## Output Templates
 
@@ -62,17 +64,21 @@ Use `payload.display` from the latest `refund-prepare` result.
 ```markdown
 ### Confirm Refund Request
 
-| Service Name | Job ID | Service Provider | Task Type | Current Period | Refund Amount | Reason for Refund |
-|---|---|---|---|---|---|---|
-| {serviceName} | {jobId} | {serviceProviderName} (Agent ID: {agentId}) | {taskType} | {currentPeriod} | {refundAmount} | {reasonForRefund} |
+- Service Name: {serviceName}
+- Job ID: {jobId}
+- Service Provider: {serviceProviderName} (Agent ID: {agentId})
+- Task Type: {taskType}
+- Current Period: {currentPeriod}
+- Refund Amount: {refundAmount}
+- Reason for Refund: {reasonForRefund}
 
-If everything is correct, reply “Submit refund request.” and provide your reason.
+If everything is correct, reply “Submit refund request” and include your refund reason. To make changes, describe what you want to update.
 ```
 
 Display rules:
 
 1. Show the full Job ID.
 2. Show `Current Period` only for a subscription.
-3. Keep the `Reason for Refund` column. Leave its cell empty when the CLI has not returned a reason; do not invent one.
-4. Preserve a returned reason verbatim.
+3. Show `Reason for Refund` only when the CLI returns a non-empty value.
+4. Preserve the original reason verbatim.
 5. Use the CLI-provided service-name fallback, task type, amount, and formatted timestamps directly.

@@ -277,8 +277,8 @@ pub async fn handle_create(client: &mut TaskApiClient, params: CreateTaskParams)
         .parse::<f64>()
         .context("--payment-token-amount is outside the supported numeric range")?;
     if let Err(error) = common::ensure_sufficient_balance(required, &validated.token_symbol).await {
-        if let Some(insufficient) = error
-            .downcast_ref::<common::deposit_qr::InsufficientBalanceError>()
+        if let Some(insufficient) =
+            error.downcast_ref::<common::deposit_qr::InsufficientBalanceError>()
         {
             let deposit = common::deposit_qr::resolve_current_deposit_info(&user_agent_id)
                 .await

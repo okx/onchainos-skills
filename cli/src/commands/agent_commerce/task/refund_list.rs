@@ -8,7 +8,8 @@ use serde_json::{json, Value};
 
 use super::common::network::task_api_client::TaskApiClient;
 use super::common::{self, query};
-use super::user::refund;
+use super::evaluator::dispute_status::{self, DisputeStatusResponse};
+use super::user::refund_v2;
 use super::user::subscription_ops::{self, SubscriptionRole};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -74,6 +75,15 @@ impl RefundListScope {
 #[derive(Debug)]
 struct Candidate {
     job_id: String,
+    response_deadline: Option<i64>,
+}
+
+fn integer_from_key(row: &Value, key: &str) -> Option<i64> {
+    row.get(key).and_then(|value| {
+        value
+            .as_i64()
+            .or_else(|| value.as_str().and_then(|raw| raw.trim().parse().ok()))
+    })
 }
 
 fn collect_candidates(one_time: &Value, subscriptions: &Value) -> Vec<Candidate> {
@@ -103,6 +113,10 @@ fn collect_candidates(one_time: &Value, subscriptions: &Value) -> Vec<Candidate>
         if seen.insert(job_id.to_string()) {
             candidates.push(Candidate {
                 job_id: job_id.to_string(),
+                // `rejectDeadline` belongs to the pending refund-review list,
+                // not to a filed evaluation. Preserve it before task-detail
+                // enrichment, which may not repeat this list-only field.
+                response_deadline: integer_from_key(row, "rejectDeadline"),
             });
         }
     }
@@ -113,42 +127,6 @@ fn sort_rows(rows: &mut [(Value, Option<i64>)], role: RefundListRole) {
     if role == RefundListRole::Provider {
         rows.sort_by_key(|(_, deadline)| deadline.unwrap_or(i64::MAX));
     }
-}
-
-fn require_display_string(display: &Value, key: &str, job_id: &str) -> Result<()> {
-    if display
-        .get(key)
-        .and_then(Value::as_str)
-        .is_some_and(|value| !value.trim().is_empty())
-    {
-        return Ok(());
-    }
-    bail!("refund display for {job_id} is missing {key}")
-}
-
-fn validate_list_display(display: &Value, job_id: &str) -> Result<()> {
-    for key in [
-        "serviceName",
-        "jobId",
-        "taskType",
-        "refundAmount",
-        "resultDeadline",
-    ] {
-        require_display_string(display, key, job_id)?;
-    }
-    Ok(())
-}
-
-fn validate_detail_display(display: &Value, job_id: &str, role: RefundListRole) -> Result<()> {
-    validate_list_display(display, job_id)?;
-    require_display_string(display, "reasonForRefund", job_id)?;
-    if role == RefundListRole::Buyer {
-        require_display_string(display, "serviceProviderName", job_id)?;
-        require_display_string(display, "agentId", job_id)?;
-    } else if display.get("taskType").and_then(Value::as_str) == Some("Subscription") {
-        require_display_string(display, "currentPeriod", job_id)?;
-    }
-    Ok(())
 }
 
 pub async fn handle_refund_list(
@@ -179,7 +157,7 @@ pub async fn handle_refund_list(
 
     let mut rows = Vec::new();
     for candidate in collect_candidates(&one_time, &subscriptions) {
-        let item = refund::fetch_refund_list_item_for_identity(
+        let item = refund_v2::fetch_refund_list_item_for_identity(
             client,
             &candidate.job_id,
             &agent_id,
@@ -191,10 +169,20 @@ pub async fn handle_refund_list(
         {
             continue;
         }
-        if scope == RefundListScope::Requested {
-            validate_list_display(&item.display, &candidate.job_id)?;
+        let deadline = if role == RefundListRole::Provider && scope == RefundListScope::Requested {
+            candidate.response_deadline.or(item.deadline)
+        } else {
+            item.deadline
+        };
+        let mut display = item.display;
+        if let Some(response_deadline) = candidate.response_deadline {
+            display["responseDeadlineTimestamp"] = json!(response_deadline);
+            display["responseDeadline"] =
+                common::deadline::format_local_timestamp_with_offset(response_deadline)
+                    .map(Value::String)
+                    .unwrap_or(Value::Null);
         }
-        rows.push((item.display, item.deadline));
+        rows.push((display, deadline));
     }
     sort_rows(&mut rows, role);
     let items = rows
@@ -206,7 +194,6 @@ pub async fn handle_refund_list(
         "role": role.as_str(),
         "scope": scope.as_str(),
         "total": items.len(),
-        "pendingCount": items.len(),
         "items": items,
     }));
     Ok(())
@@ -219,21 +206,42 @@ pub async fn handle_refund_detail(
     agent_id: &str,
 ) -> Result<()> {
     let agent_id = query::resolve_agent_id_or_error(agent_id, role.agent_role()).await?;
-    let item = refund::fetch_refund_list_item_for_identity(
+    let item = refund_v2::fetch_refund_list_item_for_identity(
         client,
         job_id,
         &agent_id,
         role == RefundListRole::Buyer,
     )
     .await?;
-    if item.status != 3 {
-        bail!(
-            "refund-detail requires a rejected task; current status is {}",
-            item.status
-        );
-    }
-    validate_detail_display(&item.display, job_id, role)?;
-    let next_action = if role == RefundListRole::Provider {
+    // Completed(6) alone can be an ordinary successful task.  Enrich only a
+    // buyer-owned, durably recorded refund request when dispute/status also
+    // confirms Completed(6); a failed optional read must not hide Refund V2.
+    let terminal_evaluation =
+        if role == RefundListRole::Buyer && item.status == 6 && item.refund_request_provenance {
+            dispute_status::get_dispute_status(client, job_id, &agent_id)
+                .await
+                .ok()
+                .filter(|status| status.task_status == 6)
+        } else {
+            None
+        };
+    crate::output::success(build_refund_detail_result(
+        job_id,
+        role,
+        &item,
+        terminal_evaluation.as_ref(),
+    ));
+    Ok(())
+}
+
+fn build_refund_detail_result(
+    job_id: &str,
+    role: RefundListRole,
+    item: &refund_v2::RefundListItem,
+    terminal_evaluation: Option<&DisputeStatusResponse>,
+) -> Value {
+    let provider_decision_required = role == RefundListRole::Provider && item.status == 3;
+    let next_action = if provider_decision_required {
         let (refund_action, evaluation_action) = if item.job_type == 1 {
             ("sub_agree_refund", "raise_subscription_arbitration")
         } else {
@@ -246,14 +254,26 @@ pub async fn handle_refund_detail(
     } else {
         json!([])
     };
-    crate::output::success(json!({
-        "phase": "refund_request_detail",
-        "decision": if role == RefundListRole::Provider { "requires_user_input" } else { "ready" },
-        "reason": "refund_request_found",
+    let mut display = item.display.clone();
+    if terminal_evaluation.is_some() {
+        // The documented dispute/status response establishes the outcome but
+        // does not contain voteReportSummaries or a decision-rationale field.
+        // Do not mislabel the buyer's refund reason as the evaluator's reason.
+        display["evaluationResult"] = json!("asp_won");
+        display["evaluationResultLabel"] = json!("ASP won; refund not issued");
+        display["evaluationResultDescription"] = json!(
+            "The Evaluation concluded in favor of the ASP. The task funds were released to the ASP and no refund was issued."
+        );
+        display["evaluationReason"] =
+            json!("The Evaluation service did not return a specific evaluator rationale.");
+    }
+    json!({
+        "phase": if item.status == 3 { "refund_request_detail" } else { "refund_status_detail" },
+        "decision": if provider_decision_required { "requires_user_input" } else { "ready" },
+        "reason": item.reason,
         "nextAction": next_action,
-        "payload": {"display": item.display},
-    }));
-    Ok(())
+        "payload": {"display": display},
+    })
 }
 
 #[cfg(test)]
@@ -285,31 +305,90 @@ mod tests {
 
     #[test]
     fn candidates_are_deduplicated_without_shortening_job_ids() {
-        let one_time = json!({"list":[{"jobId":"job-one"},{"jobId":"same"}]});
+        let one_time = json!({"list":[
+            {"jobId":"job-one", "rejectDeadline": 1_700_000_000_000i64},
+            {"jobId":"same"}
+        ]});
         let subscriptions = json!({"list":[{"jobId":"same"},{"jobId":"job-sub"}]});
         let ids = collect_candidates(&one_time, &subscriptions)
             .into_iter()
             .map(|candidate| candidate.job_id)
             .collect::<Vec<_>>();
         assert_eq!(ids, vec!["job-one", "same", "job-sub"]);
+        assert_eq!(
+            collect_candidates(&one_time, &subscriptions)[0].response_deadline,
+            Some(1_700_000_000_000i64)
+        );
     }
 
     #[test]
-    fn detail_display_fails_closed_when_reason_is_unavailable() {
-        let display = json!({
-            "serviceName": "Audit",
-            "jobId": "job-full-id",
-            "serviceProviderName": "Example ASP",
-            "agentId": "asp-1",
-            "taskType": "One-time",
-            "currentPeriod": null,
-            "refundAmount": "1 USDT",
-            "reasonForRefund": null,
-            "resultDeadline": "2026-09-08 12:00 (UTC+08:00)",
-        });
-        let error = validate_detail_display(&display, "job-full-id", RefundListRole::Buyer)
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains("reasonForRefund"));
+    fn provider_terminal_refund_detail_reports_result_without_decision_actions() {
+        let item = refund_v2::RefundListItem {
+            display: json!({
+                "jobId": "job-refunded",
+                "statusLabel": "Refund completed",
+                "statusDescription": "The refund completed successfully."
+            }),
+            deadline: None,
+            job_type: 1,
+            status: 9,
+            reason: "refund_confirmed",
+            refund_request_provenance: true,
+            refund_request_available: false,
+        };
+        let result =
+            build_refund_detail_result("job-refunded", RefundListRole::Provider, &item, None);
+        assert_eq!(result["phase"], "refund_status_detail");
+        assert_eq!(result["decision"], "ready");
+        assert_eq!(result["reason"], "refund_confirmed");
+        assert_eq!(
+            result["payload"]["display"]["statusLabel"],
+            "Refund completed"
+        );
+        assert_eq!(result["nextAction"], json!([]));
+    }
+
+    #[test]
+    fn buyer_terminal_evaluation_explains_asp_win_without_fabricating_a_reason() {
+        let item = refund_v2::RefundListItem {
+            display: json!({"statusLabel": "Refund not issued"}),
+            deadline: None,
+            job_type: 0,
+            status: 6,
+            reason: "refund_not_approved_or_task_completed",
+            refund_request_provenance: true,
+            refund_request_available: false,
+        };
+        let evaluation = DisputeStatusResponse {
+            job_id: "job-evaluation".to_string(),
+            job_type: Some(0),
+            current_round: None,
+            selected_voter: None,
+            task_status: 6,
+            dispute_round_status: None,
+            prepare_end_time: None,
+            round_end_time: None,
+            token_amount: None,
+            token_symbol: None,
+        };
+        let result = build_refund_detail_result(
+            "job-evaluation",
+            RefundListRole::Buyer,
+            &item,
+            Some(&evaluation),
+        );
+        let display = &result["payload"]["display"];
+        assert_eq!(display["evaluationResult"], "asp_won");
+        assert_eq!(
+            display["evaluationResultLabel"],
+            "ASP won; refund not issued"
+        );
+        assert!(display["evaluationResultDescription"]
+            .as_str()
+            .is_some_and(|text| text.contains("released to the ASP")));
+        assert_eq!(
+            display["evaluationReason"],
+            "The Evaluation service did not return a specific evaluator rationale."
+        );
     }
 }

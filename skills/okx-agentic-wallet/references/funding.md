@@ -133,13 +133,15 @@ verification is blocked and wait. On a later explicit request to check again,
 rerun the same read-only `funding-check` from the latest Funding payload; do not
 infer success, reuse an old address, or resume the interrupted business.
 
-## Address and QR constraints
+## Address and QR output
 
-- Display the full receive address byte-for-byte from the latest CLI result.
-- Common QR encodes only those bare address bytes.
-- Address and QR are one block; the QR immediately follows its address.
-- QR failure degrades to the address; do not claim a QR was produced.
-- Consume `sameNetworkRequired` and `gasFree` only as structured facts.
+1. Read the complete `receiveAddress` from the latest CLI result.
+2. Render the localized receive-address label and the original address on one
+   plain-text line. In a Chinese conversation, render
+   `收款地址：{receiveAddress}` or
+   `收款地址：{fundingTarget.receiveAddress}`.
+3. Render the QR for that address immediately after the address.
+4. Render the network notices from `sameNetworkRequired` and `gasFree`.
 
 ## Output templates
 

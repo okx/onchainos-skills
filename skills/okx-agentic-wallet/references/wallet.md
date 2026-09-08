@@ -6,15 +6,27 @@ Wallet lifecycle: authentication, balance, addresses, token transfers, transacti
 
 Run `wallet balance`, `wallet send`, `wallet contract-call`, `wallet history`, and `wallet sign-message` directly. If a command reports that login is required, follow the login flow below.
 
-1. **Log in** — orchestrate `init` → auto-poll:
-   a. **Get the link.** Run `wallet login --phase init` — it returns `{ loginUrl, authSessionId, opened, nextSteps }` immediately and best-effort opens the browser. `nextSteps.completeLogin` is the exact poll command with `authSessionId` interpolated; when `opened == false`, `nextSteps.openLoginUrl` (equal to `loginUrl`) is the URL to open first. Keep `authSessionId` for the poll.
-   b. **Show the link + reminder** (translate to the user's language; keep the structure, substitute `authSessionId` and `loginUrl`):
+1. **Log in** — orchestrate one continuous `init` → display link → `poll` flow:
+   a. **Generate the link and open the page.** Run `wallet login --phase init`.
+      It creates the login session, opens `loginUrl` in the browser, and returns
+      `{ loginUrl, authSessionId, opened, nextSteps }`. Keep `authSessionId` for
+      the later poll.
+   b. **Show the link + reminder in the Agent conversation.** After `init`
+      returns, send this block as a visible Agent commentary message and
+      complete that message before invoking `poll` (translate to the user's
+      language; keep the structure,
+      substitute `authSessionId` and `loginUrl`):
       > Your login link is ready — I'll open it in your browser.
       > • Session ID (session_id): `<authSessionId>`
-      > • Login link (if the browser didn't open, click to open it manually): `<loginUrl>`
+      > • Login link (you can also click it manually): `<loginUrl>`
       >
       > Fetching the login result will block your other operations for up to 5 minutes.
-   c. **Auto-poll.** Immediately run `wallet login --phase poll --session-id <authSessionId>` (the id from step a) — don't wait for the user. On timeout / no result, tell the user you couldn't get it yet: finish login on the already-open page and tell you to re-check (same id), or start over from `--phase init` (new id); don't guess whether a previous session is still valid.
+   c. **Auto-poll after the visible message is sent.** Run
+      `wallet login --phase poll --session-id <authSessionId>` using the id from
+      step a immediately after sending the login block. Follow
+      `nextSteps.requiredOrder`: `displayLoginUrl`, then `completeLogin`. On a
+      timeout or empty result, ask the user to finish login on the open page and
+      choose either a new poll with the same id or a new `--phase init` session.
 2. **After login — post-login display (fixed order).** After a successful `poll`, run `wallet status`, then render these blocks in **this exact order**, **omitting any block whose data is absent** — never fabricate a value and never issue an extra CLI call to fill a gap:
    1. **Wallet info** — the Account Info template (below), from the `poll` response.
    2. **Product intro** — On OKX.AI, you can search for a service to help you, swap tokens, or explore DApps.

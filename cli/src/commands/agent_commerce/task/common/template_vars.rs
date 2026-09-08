@@ -1,9 +1,9 @@
 //! Template-variable decode / validate / render — the in-process substitution
 //! that severs the untrusted-title → shell-source data flow.
 //!
-//! `next-action` emitters no longer interpolate a raw task title into the emitted
-//! `--user-content` / `--list-label`. Instead they emit the fixed placeholder
-//! [`TITLE_PLACEHOLDER`] plus a `--template-vars-b64 "<Base64 JSON>"` line. This
+//! `next-action` emitters no longer interpolate raw user/backend display values
+//! into emitted `--user-content` / `--list-label` shell arguments. Instead they
+//! emit fixed placeholders plus a `--template-vars-b64 "<Base64 JSON>"` line. This
 //! module decodes + validates that Base64 payload and performs a single-pass,
 //! non-recursive, literal substitution of each `{{KEY}}` placeholder — entirely
 //! in-process, after clap parse and before any card is pushed — so the shell never
@@ -26,16 +26,25 @@ use serde::Deserialize;
 /// Compile-time whitelist of permitted template-var keys. Adding a key is a
 /// deliberate, reviewed change.
 ///
-/// Two keys, because the `sub_user_reject` renderer resolves the visible title
-/// from two independent base sources that can legitimately differ:
+/// The two legacy title keys keep the `sub_user_reject` title sources distinct:
 ///   * `__OKX_TASK_TITLE__`       — the decision-copy title
 ///     (`message.jobTitle` → `message.title` → `title_display`).
 ///   * `__OKX_TASK_LABEL_TITLE__` — the list-label title (`title_display`, which
 ///     itself falls back to the literal `<title>`).
 ///
-/// They are carried as separate whitelisted variables so the two base values are
-/// never collapsed into one `resolved_title`.
-pub const TEMPLATE_VAR_WHITELIST: &[&str] = &["__OKX_TASK_TITLE__", "__OKX_TASK_LABEL_TITLE__"];
+/// The refund keys carry every dynamic Template 6.4 value so service names and
+/// buyer-authored reasons also stay out of emitted shell source.
+pub const TEMPLATE_VAR_WHITELIST: &[&str] = &[
+    "__OKX_TASK_TITLE__",
+    "__OKX_TASK_LABEL_TITLE__",
+    "__OKX_REFUND_SERVICE_NAME__",
+    "__OKX_REFUND_JOB_ID__",
+    "__OKX_REFUND_TASK_TYPE__",
+    "__OKX_REFUND_CURRENT_PERIOD__",
+    "__OKX_REFUND_AMOUNT__",
+    "__OKX_REFUND_BUYER_REASON__",
+    "__OKX_REFUND_RESPONSE_DEADLINE__",
+];
 
 /// Placeholder delimiters. A placeholder for key `K` is the literal `{{K}}`.
 pub const PLACEHOLDER_OPEN: &str = "{{";
@@ -54,20 +63,22 @@ pub const TITLE_PLACEHOLDER: &str = "{{__OKX_TASK_TITLE__}}";
 /// `placeholder_for("__OKX_TASK_LABEL_TITLE__")`.
 pub const LABEL_TITLE_PLACEHOLDER: &str = "{{__OKX_TASK_LABEL_TITLE__}}";
 
+pub const REFUND_SERVICE_NAME_PLACEHOLDER: &str = "{{__OKX_REFUND_SERVICE_NAME__}}";
+pub const REFUND_JOB_ID_PLACEHOLDER: &str = "{{__OKX_REFUND_JOB_ID__}}";
+pub const REFUND_TASK_TYPE_PLACEHOLDER: &str = "{{__OKX_REFUND_TASK_TYPE__}}";
+pub const REFUND_CURRENT_PERIOD_PLACEHOLDER: &str = "{{__OKX_REFUND_CURRENT_PERIOD__}}";
+pub const REFUND_AMOUNT_PLACEHOLDER: &str = "{{__OKX_REFUND_AMOUNT__}}";
+pub const REFUND_BUYER_REASON_PLACEHOLDER: &str = "{{__OKX_REFUND_BUYER_REASON__}}";
+pub const REFUND_RESPONSE_DEADLINE_PLACEHOLDER: &str = "{{__OKX_REFUND_RESPONSE_DEADLINE__}}";
+
 /// Per-value cap on a decoded template value, in bytes.
 ///
-/// Design note: there is no single shared `MAX_TITLE_LEN` constant in the tree —
-/// the two existing title
-/// caps are the private, char-based `MAX_TITLE_CHARS` (30 in `task/user/create.rs`,
-/// 64 in `task/user/create_subscribe.rs`). A byte cap of 256 comfortably covers
-/// the largest (a 64-char title is ≤ 256 bytes even in 4-byte UTF-8), so 256 is
-/// used rather than importing a divergent private char count. This is
-/// defense-in-depth; the real bound is
-/// [`MAX_TEMPLATE_PAYLOAD_BYTES`].
-pub const MAX_TEMPLATE_VALUE_LEN: usize = 256;
+/// This covers the existing title limits and the 512-character user-authored
+/// Evaluation/refund reason while retaining a bounded in-process payload.
+pub const MAX_TEMPLATE_VALUE_LEN: usize = 4 * 1024;
 
 /// Hard cap on the total decoded Base64 payload (bytes), independent of key count.
-pub const MAX_TEMPLATE_PAYLOAD_BYTES: usize = 8 * 1024;
+pub const MAX_TEMPLATE_PAYLOAD_BYTES: usize = 16 * 1024;
 
 /// Stable, machine-readable error codes surfaced via `output::error_coded`.
 pub const CODE_VARS_INVALID: &str = "TEMPLATE_VARS_INVALID";

@@ -121,8 +121,8 @@ None.
     "agentCode": "",
     "checkList": [
       {
-        "type": "冒充官方",
-        "zh": "官方",
+        "type": "impersonates_official_source",
+        "localizedLabel": "official",
         "en": "Official"
       }
     ]

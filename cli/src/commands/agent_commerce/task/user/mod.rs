@@ -31,14 +31,17 @@ pub(crate) mod my_tasks;
 pub(crate) mod negotiate;
 mod query;
 pub(crate) mod refund;
+// Keep internal callers compiled while the upstream module rename from
+// `refund_v2` to `refund` is adopted incrementally across A2A flows.
+pub(crate) use refund as refund_v2;
 mod reject_apply;
 mod service_detail;
 pub(crate) mod service_param_update;
 pub(crate) mod subscription_list;
 pub(crate) mod subscription_ops;
-pub(crate) mod visibility;
 mod task_create_prepare;
 mod v2;
+pub(crate) mod visibility;
 
 use anyhow::Result;
 use clap::{Args, Subcommand};
@@ -418,9 +421,7 @@ fn active_subscription_count(subscriptions: &serde_json::Value) -> u64 {
         .unwrap_or(0)
 }
 
-fn compose_post_login_subscriptions(
-    subscriptions: serde_json::Value,
-) -> Option<serde_json::Value> {
+fn compose_post_login_subscriptions(subscriptions: serde_json::Value) -> Option<serde_json::Value> {
     let active_count = active_subscription_count(&subscriptions);
     if active_count == 0 {
         return None;
@@ -1620,11 +1621,140 @@ pub(crate) async fn resolve_post_login_agentic_id() -> Result<String> {
         .map(|(agent_id, _)| agent_id)
 }
 
+/// State captured before the login heartbeat registers this machine. It keeps
+/// existing device routing intact while allowing a newly registered device to
+/// receive the active subscription routes after the heartbeat succeeds.
+pub(crate) struct PostLoginSubscriptionsPreparation {
+    agent_id: String,
+    current_device_id: String,
+    routing_api_base_url: String,
+    current_device_was_registered: bool,
+    current_device_needs_default_routing: bool,
+    pre_registration_devices: serde_json::Value,
+}
+
+fn device_snapshot_contains(devices: &serde_json::Value, device_id: &str) -> Option<bool> {
+    let list = devices.get("list")?.as_array()?;
+    Some(
+        list.iter()
+            .any(|row| row.get("deviceId").and_then(serde_json::Value::as_str) == Some(device_id)),
+    )
+}
+
+fn device_needs_default_routing(was_registered: bool, already_pending: bool) -> bool {
+    already_pending || !was_registered
+}
+
+/// Capture device routing state before the login heartbeat. Failure here is
+/// optional: wallet login still completes and the next login can retry setup.
+pub(crate) async fn prepare_post_login_subscriptions(
+    agentic_id: &str,
+) -> Option<PostLoginSubscriptionsPreparation> {
+    let agent_id = select_subscription_agent_id(agentic_id, "").ok()?;
+    let mut client = TaskApiClient::new();
+    let current_device_id = crate::device::id::get_cached_device_id()?.to_string();
+    let devices = device_routing::fetch_device_list_snapshot(&mut client, &agent_id, 1, 20)
+        .await
+        .ok()?;
+    let current_device_was_registered = device_snapshot_contains(&devices, &current_device_id)?;
+    let already_pending = device_routing::new_device_routing_is_pending(
+        &client.base_url,
+        &agent_id,
+        &current_device_id,
+    )
+    .ok()?;
+    let current_device_needs_default_routing =
+        device_needs_default_routing(current_device_was_registered, already_pending);
+    if !current_device_was_registered && !already_pending {
+        device_routing::mark_new_device_routing_pending(
+            &client.base_url,
+            &agent_id,
+            &current_device_id,
+        )
+        .ok()?;
+    } else if current_device_was_registered && !already_pending {
+        let _ = device_routing::clear_new_device_routing_state(
+            &client.base_url,
+            &agent_id,
+            &current_device_id,
+        );
+    }
+    Some(PostLoginSubscriptionsPreparation {
+        agent_id,
+        current_device_id,
+        routing_api_base_url: client.base_url.clone(),
+        current_device_was_registered,
+        current_device_needs_default_routing,
+        pre_registration_devices: devices,
+    })
+}
+
+/// Finish the optional new-device subscription routing after the login
+/// heartbeat, then return the same compact login subscription summary.
+pub(crate) async fn finalize_post_login_subscriptions(
+    prepared: PostLoginSubscriptionsPreparation,
+    device_registration_succeeded: bool,
+) -> Option<serde_json::Value> {
+    let mut client = TaskApiClient::new();
+    let snapshot = subscription_ops::fetch_my_subscriptions_snapshot_for_agent(
+        &mut client,
+        subscription_ops::SubscriptionRole::Buyer,
+        None,
+        prepared.agent_id.clone(),
+    )
+    .await
+    .ok()?;
+    if snapshot.is_empty {
+        if prepared.current_device_needs_default_routing
+            && (prepared.current_device_was_registered || device_registration_succeeded)
+        {
+            device_routing::mark_new_device_routing_completed(
+                &prepared.routing_api_base_url,
+                &prepared.agent_id,
+                &prepared.current_device_id,
+            )
+            .ok()?;
+            let _ = device_routing::clear_new_device_routing_state(
+                &prepared.routing_api_base_url,
+                &prepared.agent_id,
+                &prepared.current_device_id,
+            );
+        }
+        return None;
+    }
+    if prepared.current_device_needs_default_routing
+        && !prepared.current_device_was_registered
+        && !device_registration_succeeded
+    {
+        return None;
+    }
+    let mut subscriptions = snapshot.data;
+    if prepared.current_device_needs_default_routing {
+        device_routing::add_new_device_to_all_subscriptions(
+            &mut client,
+            &prepared.routing_api_base_url,
+            &prepared.agent_id,
+            &mut subscriptions,
+            &prepared.current_device_id,
+        )
+        .await
+        .ok()?;
+        let _ = device_routing::clear_new_device_routing_state(
+            &prepared.routing_api_base_url,
+            &prepared.agent_id,
+            &prepared.current_device_id,
+        );
+        // Re-read is not needed for the compact count-only summary; retaining
+        // this snapshot does preserve the pre-registration distinction above.
+        let _ = prepared.pre_registration_devices;
+    }
+    add_post_login_autotrade_prechecks(&mut client, &mut subscriptions, &prepared.agent_id).await;
+    compose_post_login_subscriptions(subscriptions)
+}
+
 /// Fetch the active-subscription count shown after login. This path is
 /// independent from device discovery and subscription receive routing.
-pub(crate) async fn fetch_post_login_subscriptions(
-    agentic_id: &str,
-) -> Option<serde_json::Value> {
+pub(crate) async fn fetch_post_login_subscriptions(agentic_id: &str) -> Option<serde_json::Value> {
     let agent_id = match select_subscription_agent_id(agentic_id, "") {
         Ok(agent_id) => agent_id,
         Err(e) => {

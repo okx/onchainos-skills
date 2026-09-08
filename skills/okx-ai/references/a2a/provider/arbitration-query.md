@@ -6,7 +6,8 @@ details.
 ## Pending refund requests
 
 Pending evaluation, evaluable-task, and required-evaluation intents all mean
-the current rejected-task set:
+the current rejected-task set, rather than the filed-evaluation list. Query it
+first:
 
 ```text
 onchainos agent refund-list --role provider --scope requested --agent-id <aspAgentId> --page 1 --page-size 20
@@ -45,6 +46,12 @@ The templates below are English sources. Reply in the language of the current
 conversation while preserving Job IDs, amounts, token symbols, timestamps, and
 user-authored reasons exactly.
 
+Use tables only for multi-record list results. Render a selected single-record
+detail as one `- Label: value` item per available field.
+
+Translate each list title and every table header into the user's language.
+The English templates below are the source wording and field order only.
+
 ### Pending Refund Requests
 
 ```markdown
@@ -54,7 +61,7 @@ You have {pendingCount} refund requests from buyers awaiting your decision:
 |---|---|---|---|---|---|
 | {n} | {serviceName} | {jobId} | {taskType} | {requestedRefund} | {responseDeadline} |
 
-A full refund will be issued automatically if no action is taken by the deadline. Reply with a number or Job ID to view the request.
+Reply with the number or Job ID to view details, then select "Approve Refund" or "Request Review". A full refund will be issued automatically if no action is taken by the deadline.
 ```
 
 Display rules:
@@ -63,7 +70,10 @@ Display rules:
 2. Number records sequentially and preserve the full Job ID.
 3. Preserve CLI order after its response-deadline sort.
 4. Use the CLI-provided service name, task type, amount, and formatted deadline.
-5. When `pendingCount>0`, the final sentence is the only Recommend action. Omit it for an empty list; selecting a request does not approve or dispute it.
+   The deadline is `rejectDeadline` from this pending-list row, formatted with
+   the same minute precision and UTC offset as other task times.
+5. Translate the English recommendation in the template into the user's
+   language without changing its actions or deadline consequence.
 
 ### Evaluation Records
 
@@ -72,7 +82,7 @@ You have {evaluationCount} evaluation records:
 
 | # | Service Name | Job ID | Status | Evaluation Started | Key Time |
 |---|---|---|---|---|---|
-| {n} | {serviceName} | {jobId} | {status} | {evaluationStarted} | {keyTime} |
+| {n} | {serviceName} | {jobId} | {localizedStatusLabel} | {evaluationStarted} | {keyTime} |
 
 Reply with a number or Job ID to view the evaluation details.
 ```
@@ -80,9 +90,10 @@ Reply with a number or Job ID to view the evaluation details.
 Display rules:
 
 1. Number records sequentially and show the full Job ID.
-2. Use only the CLI-provided `Evidence preparation`, `Evaluating`, or `Decided` status.
+2. Render and translate the CLI `statusLabel`; `evaluationStatus` is the
+   stable machine key.
 3. Use the CLI-provided evaluation-started and key-time values directly.
-4. Omit `Key Time` when every returned value is empty.
+4. Render `Key Time` when at least one returned value is present.
 5. Restrict selection to `nextAction[id=view_arbitration].params.allowedJobIds`.
 
 ### Evaluation Details
@@ -90,15 +101,24 @@ Display rules:
 ```markdown
 ### Evaluation Details
 
-| Service Name | Job ID | Requested Refund | Buyer’s Reason | Status | Evaluation Started |
-|---|---|---|---|---|---|
-| {serviceName} | {jobId} | {requestedRefund} | {buyerReason} | {status} | {evaluationStarted} |
+- Service Name: {serviceName}
+- Job ID: {jobId}
+- Requested Refund: {requestedRefund}
+- Buyer’s Reason: {buyerReason}
+- Evaluation Status: {localizedStatusLabel}
+- Status Description: {localizedStatusDescription}
+- Evaluation Result: {localizedVerdictDescription}
+- Evaluation Started: {evaluationStarted}
 ```
 
 Display rules:
 
 1. Render only fresh `payload` fields returned by `arbitration-detail`.
 2. Preserve the full Job ID and the buyer-authored reason.
-3. Use only the CLI-provided evaluation status and formatted time.
-4. Omit unavailable optional values instead of inferring them.
-5. End after the table and keep transaction hashes internal.
+3. Translate `statusLabel`, `statusDescription`, and `verdictDescription`
+   into the conversation language.
+4. Render `Evaluation Result` from `verdictDescription` when it is available.
+   The CLI derives these descriptions from `taskStatus`, `arbitrationPhase`,
+   and `verdict`; keep those raw fields as protocol keys.
+5. Use the CLI-provided formatted time directly.
+6. Render each available optional value and end after the detail block.

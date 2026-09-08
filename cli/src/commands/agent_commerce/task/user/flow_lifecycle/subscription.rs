@@ -323,12 +323,9 @@ pub(crate) fn sub_asp_agree(ctx: &FlowContext<'_>, message: Option<&serde_json::
     {
         return reason;
     }
-    let Ok(evidence) = super::super::refund::verify_final_refund_event(
-        message,
-        ctx.prefetched,
-        9,
-        ctx.agent_id,
-    ) else {
+    let Ok(evidence) =
+        super::super::refund::verify_final_refund_event(message, ctx.prefetched, 9, ctx.agent_id)
+    else {
         let content = incomplete_subscription_refund_notice(ctx, message);
         return notify_and_end(&content);
     };
@@ -637,12 +634,9 @@ pub(crate) fn sub_reject_refund_notify(
     {
         return reason;
     }
-    let Ok(evidence) = super::super::refund::verify_final_refund_event(
-        message,
-        ctx.prefetched,
-        9,
-        ctx.agent_id,
-    ) else {
+    let Ok(evidence) =
+        super::super::refund::verify_final_refund_event(message, ctx.prefetched, 9, ctx.agent_id)
+    else {
         let content = incomplete_subscription_refund_notice(ctx, message);
         return notify_and_end(&content);
     };

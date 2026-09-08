@@ -23,3 +23,6 @@ complete the active Reveal promptly.
 For `vote_revealed`, state that the vote is on-chain and the ruling is pending.
 Wait for `dispute_resolved` or `round_failed`, routed to
 [`result.md`](result.md).
+
+Translate every user-facing English status label and description in this leaf
+into the user's language.

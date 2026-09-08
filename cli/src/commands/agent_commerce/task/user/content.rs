@@ -214,7 +214,8 @@ pub fn dispute_won_user_notify(
          - Refund ASP: {}\n\
          - Service: {}\n\
          {settlement}\n\
-         - Outcome: ClientWins\n\
+         - Evaluation status: Decided\n\
+         - Result: User Agent won; the refund completed\n\
          {EVALUATION_REASONS_BLOCK}",
         refund_party(provider_name, provider_id),
         service_name.unwrap_or("not provided by the final event"),
@@ -238,7 +239,8 @@ pub fn dispute_lost_user_notify(
          - ASP: {}\n\
          - Service: {}\n\
          - Original payment: {} (funds released to the ASP)\n\
-         - Outcome: ASPWins\n\
+         - Evaluation status: Decided\n\
+         - Result: ASP won; task funds were released to the ASP\n\
          {EVALUATION_REASONS_BLOCK}\n\
          This job is complete.",
         refund_party(provider_name, provider_id),

@@ -9,17 +9,16 @@ For the returned `approve_review` action, execute its exact command once. A
 successful result is `phase=deliverable_review`,
 `reason=completion_submitted`, `nextAction=stop`.
 
-Stop the current event route after broadcast. Do not call legacy `complete`, do
-not submit a second completion, and wait for the authoritative terminal event.
+Stop the current event route after broadcast and wait for the authoritative
+terminal event. The returned `approve_review` action is the completion action
+for this route.
 
 ## Reject
 
-For any unambiguous rejection, enter [`refund-prepare.md`](refund-prepare.md)
-and render the fresh Refund confirmation. Preserve any User-authored wording
-verbatim as context, but treat the rejection only as authorization to open the
-confirmation flow. The refund write requires the submission intent and refund
-reason described in [`refund-confirm.md`](refund-confirm.md).
+For any unambiguous rejection, preserve the User-authored wording verbatim,
+enter [`refund-prepare.md`](refund-prepare.md), and render the complete fresh
+Template 6.1 Refund V2 confirmation. Continue with the intent-and-reason response
+matrix in [`refund-confirm.md`](refund-confirm.md).
 
-An ambiguous, expired, already-handled, missing, or metadata-mismatched reply
-performs no task mutation. Re-render or report the exact returned recovery
-guidance.
+For an ambiguous, expired, already-handled, missing, or metadata-mismatched
+reply, re-render or report the exact returned recovery guidance.

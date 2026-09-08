@@ -54,7 +54,7 @@ Apply these extraction rules:
 | Previous query | Current query | Arguments |
 |---|---|---|
 | — | `Find a market analysis service priced between 8 and 20` | `{"asp-agent-id":null,"asp-name":null,"service-name":null,"sid":null,"min-payment-token-amount":8,"max-payment-token-amount":20,"keywords":["market analysis"]}` |
-| `找一个 BTC 行情分析服务` | `换成 ETH，价格低于 10` | `{"asp-agent-id":null,"asp-name":null,"service-name":null,"sid":null,"min-payment-token-amount":null,"max-payment-token-amount":10,"keywords":["ETH 行情分析"]}` |
+| `Find a BTC market-analysis service` | `Switch to ETH, below 10` | `{"asp-agent-id":null,"asp-name":null,"service-name":null,"sid":null,"min-payment-token-amount":null,"max-payment-token-amount":10,"keywords":["ETH market analysis"]}` |
 
 ### Run the search
 

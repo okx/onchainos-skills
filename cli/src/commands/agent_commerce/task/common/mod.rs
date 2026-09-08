@@ -24,7 +24,6 @@ pub mod okx_a2a;
 pub mod onchainos_self;
 pub mod payment_mode;
 pub mod pending_v2;
-pub mod template_vars;
 pub mod prefilled_notify;
 pub mod prefilled_rating;
 pub mod query;
@@ -32,6 +31,7 @@ pub mod review_gate;
 pub mod session_cleanup;
 pub mod state_machine;
 pub mod subscription_identity;
+pub mod template_vars;
 pub mod user_lang;
 pub mod util;
 
@@ -189,6 +189,11 @@ pub struct PreFetchedTaskContext {
     pub service_token_address: Option<String>,
     pub service_token_amount: Option<String>,
     pub service_params: Option<String>,
+    /// Buyer-authored refund/rejection reason used by the ASP Template 6.4 card.
+    pub refund_reason: Option<String>,
+    /// Current subscription billing period used by the ASP Template 6.4 card.
+    pub period_start_time: Option<i64>,
+    pub period_end_time: Option<i64>,
     pub user_agent_address: Option<String>,
     pub token_address: Option<String>,
     /// Optional transaction metadata verified by Refund's local order
@@ -198,9 +203,9 @@ pub struct PreFetchedTaskContext {
     /// for the exact task/payment snapshot now being displayed.
     /// Raw task/subscription API responses never populate this flag.
     pub refund_request_provenance: bool,
-    /// Acceptance/review deadline (unix seconds). `Some` when the API returned a
-    /// positive `expireTime`, else `now()+expireConfig.reviewDeadline` when that
-    /// is positive, else `None` (no reminder — backward compatible).
+    /// Current action deadline (unix seconds). Rejection response deadlines take
+    /// precedence over `expireTime`; otherwise use the positive server deadline
+    /// or `now()+expireConfig.reviewDeadline` fallback.
     pub expire_time: Option<i64>,
 
     /// FR-2: backend-derived sandbox-review flag (creator ∈ test-buyer allowlist ⇒ `true`).
@@ -224,10 +229,18 @@ impl PreFetchedTaskContext {
                     .or_else(|| value.as_u64().map(|value| value.to_string()))
             })
         };
-        // FR-1: prefer server-precise expireTime; else approximate now()+reviewDeadline.
-        let expire_time = v
-            .get("expireTime")
-            .and_then(|x| x.as_i64())
+        // Prefer the rejection response deadline for ASP decisions, then the
+        // ordinary server expiry, then approximate now()+reviewDeadline.
+        let integer = |keys: &[&str]| {
+            keys.iter().find_map(|key| {
+                v.get(*key).and_then(|value| {
+                    value
+                        .as_i64()
+                        .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
+                })
+            })
+        };
+        let expire_time = integer(&["rejectWindowEndsAt", "responseDeadline", "expireTime"])
             .filter(|&t| t > 0)
             .or_else(|| {
                 v.get("expireConfig")
@@ -267,6 +280,9 @@ impl PreFetchedTaskContext {
             service_token_address: string(&["serviceTokenAddress"]),
             service_token_amount: string(&["serviceTokenAmount"]),
             service_params: v["serviceParams"].as_str().map(String::from),
+            refund_reason: string(&["refundReason", "rejectReason", "userReason", "reason"]),
+            period_start_time: integer(&["subStartTime", "periodStartTime"]),
+            period_end_time: integer(&["subEndTime", "periodEndTime"]),
             user_agent_address: v["buyerAgentAddress"].as_str().map(String::from),
             token_address: string(&["paymentTokenAddress", "tokenAddress"]),
             verified_transaction_hash: None,
@@ -868,21 +884,21 @@ pub async fn designated_route_inner(
             .and_then(serde_json::Value::as_str)
             .is_some_and(|value| value.eq_ignore_ascii_case("A2MCP"))
     }) {
-            return Ok(serde_json::json!({
-                "route": "error",
-            "errorType": "a2mcp_direct_invoke_required",
-                "providerName": provider_name,
-                "onlineStatus": online_status,
-            }));
-        }
-        if online_status == 2 {
+        return Ok(serde_json::json!({
+            "route": "error",
+        "errorType": "a2mcp_direct_invoke_required",
+            "providerName": provider_name,
+            "onlineStatus": online_status,
+        }));
+    }
+    if online_status == 2 {
         Ok(serde_json::json!({
                 "route": "error",
                 "errorType": "offline",
                 "providerName": provider_name,
                 "onlineStatus": online_status,
         }))
-        } else {
+    } else {
         Ok(serde_json::json!({
                 "route": "a2a",
                 "providerName": provider_name,
@@ -1210,7 +1226,7 @@ fn status_desc(s: &str) -> &str {
         "disputed" => "Evaluation in progress (Disputed)",
         "admin_stopped" => "Admin stopped the task (AdminStopped)",
         "completed" | "complete" => "Task completed; funds released (Complete)",
-        "failed" => "Evaluation concluded; task closed (Failed)",
+        "failed" => "Refund completed; task closed (backend Failed)",
         "close" => "User Agent closed the task (Close)",
         "expired" => "Task expired (Expired)",
         _ => "Unknown status",
@@ -1458,7 +1474,11 @@ mod expire_time_tests {
             "serviceName": "Audit",
             "paymentTokenAmount": "10.00",
             "paymentTokenSymbol": "USDT",
-            "paymentTokenAddress": "0xtoken"
+            "paymentTokenAddress": "0xtoken",
+            "refundReason": "Delivery did not match the request",
+            "subStartTime": 1_700_000_000,
+            "subEndTime": 1_700_500_000,
+            "rejectWindowEndsAt": 1_700_600_000
         });
         let ctx = PreFetchedTaskContext::from_api_response(&v);
         assert_eq!(ctx.status, Some(0));
@@ -1469,6 +1489,13 @@ mod expire_time_tests {
         assert_eq!(ctx.token_amount, "10.00");
         assert_eq!(ctx.token_symbol, "USDT");
         assert_eq!(ctx.token_address.as_deref(), Some("0xtoken"));
+        assert_eq!(
+            ctx.refund_reason.as_deref(),
+            Some("Delivery did not match the request")
+        );
+        assert_eq!(ctx.period_start_time, Some(1_700_000_000));
+        assert_eq!(ctx.period_end_time, Some(1_700_500_000));
+        assert_eq!(ctx.expire_time, Some(1_700_600_000));
     }
 
     // AC-8: `expireTime == 0` is filtered out; with no expireConfig it falls to None.

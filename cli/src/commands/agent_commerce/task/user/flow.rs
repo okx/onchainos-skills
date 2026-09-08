@@ -573,7 +573,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      # For reject_review, include user-authored wording verbatim via message.data when present:\n\
                      onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"reject_review\",\"jobId\":\"{job_id}\",\"data\":\"<verbatim user-authored reason, JSON-escaped>\"}}'\n\
                      ```\n\
-                     For a rejection without extra wording, omit `data`. Render the returned Confirm Refund Request card and end the turn. Continue the refund only after the user provides clear `Submit refund request` intent and a refund reason.\n\
+                     For a rejection without extra wording, omit `data`. Always render the complete returned Template 6.1 Confirm Refund Request card as a single-record `- Label: value` field list, even when its reason is blank, and end the turn. Never replace it with only a reason question. B is not submission intent and does not arm a reason-only continuation. Continue the refund only after the user provides clear `Submit refund request` intent and a refund reason.\n\
                      If the reply is **truly ambiguous** (e.g. non-committal `hmm` / `got it` / unrelated chitchat): re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` as the incoming relay's `[to: …]` header (or none, if it says `[to: backup]` / you run in a backup sub — NEVER your own agentId) and `--source-event {source}`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=approve  B=reject\".\n"
                 ),
                 "cli_failed" => format!(
@@ -1043,7 +1043,10 @@ mod tests {
 
         assert!(out.contains("reject_review"));
         assert!(out.contains("without extra wording"));
-        assert!(out.contains("Confirm Refund Request card"));
+        assert!(out.contains("Template 6.1 Confirm Refund Request card"));
+        assert!(out.contains("single-record `- Label: value` field list"));
+        assert!(out.contains("Never replace it with only a reason question"));
+        assert!(out.contains("B is not submission intent"));
         assert!(out.contains("Submit refund request"));
     }
 

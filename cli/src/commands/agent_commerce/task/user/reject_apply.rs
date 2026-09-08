@@ -24,11 +24,13 @@ pub async fn handle_reject_apply(
     let (_, _, agent_id) =
         signing::resolve_wallet_and_agent_for_task(client, job_id, explicit_agent_id).await?;
 
-    client.post_with_identity(
-        &client.endpoint(job_id, "user/reject"),
-        &serde_json::json!({}),
-        &agent_id,
-    ).await?;
+    client
+        .post_with_identity(
+            &client.endpoint(job_id, "user/reject"),
+            &serde_json::json!({}),
+            &agent_id,
+        )
+        .await?;
 
     audit::log(
         "cli",

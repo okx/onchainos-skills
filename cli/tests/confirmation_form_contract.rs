@@ -9,6 +9,8 @@ const PREPARE: &str = include_str!("../../skills/okx-ai/references/a2a/user/crea
 const CREATE: &str = include_str!("../../skills/okx-ai/references/a2a/user/create.md");
 const SUBSCRIPTION_CREATE: &str =
     include_str!("../../skills/okx-ai/references/a2a/user/subscription-create.md");
+const SUBSCRIPTION_QUERY: &str =
+    include_str!("../../skills/okx-ai/references/a2a/user/subscription.md");
 const GUIDE: &str = include_str!("../../skills/okx-ai/references/a2a/user/create-guide.md");
 const REFUND_PREPARE: &str =
     include_str!("../../skills/okx-ai/references/a2a/user/refund-prepare.md");
@@ -19,15 +21,9 @@ const REFUND_EXECUTE: &str =
 const REFUND_CONTRACT: &str =
     include_str!("../../skills/okx-ai/references/shared/refund-contract.md");
 const TASK_QUERY: &str = include_str!("../../skills/okx-ai/references/a2a/task-query.md");
-const PROVIDER_ARBITRATION_QUERY: &str =
-    include_str!("../../skills/okx-ai/references/a2a/provider/arbitration-query.md");
-const PROVIDER_ARBITRATION_DECISION: &str =
-    include_str!("../../skills/okx-ai/references/a2a/provider/arbitration-decision.md");
 const COMPLETION: &str = include_str!("../../skills/okx-ai/references/a2a/completion.md");
 const FEEDBACK: &str = include_str!("../../skills/okx-ai/references/a2a/feedback.md");
 const NOTIFY: &str = include_str!("../../skills/okx-ai/references/a2a/notify.md");
-const RATING: &str = include_str!("../../skills/okx-ai/references/a2a/user/rating.md");
-const PROVIDER_RATING: &str = include_str!("../../skills/okx-ai/references/a2a/provider/rating.md");
 const INTAKE: &str = include_str!("../../skills/okx-ai/references/a2a/user/intake.md");
 const RECOVERY: &str = include_str!("../../skills/okx-ai/references/runtime/recovery.md");
 
@@ -80,13 +76,8 @@ fn unknown_system_events_stop_before_cli_dispatch() {
 }
 
 #[test]
-fn create_confirmation_combines_guide_task_and_payment() {
+fn create_confirmation_excludes_execution_configuration() {
     let create = CREATE.split_whitespace().collect::<Vec<_>>().join(" ");
-    let guide = GUIDE.split_whitespace().collect::<Vec<_>>().join(" ");
-    let subscription_create = SUBSCRIPTION_CREATE
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
     for forbidden in [
         "| Signal Execution |",
         "| Per-Signal Amount |",
@@ -94,46 +85,18 @@ fn create_confirmation_combines_guide_task_and_payment() {
     ] {
         assert!(!CREATE.contains(forbidden));
     }
-    assert!(CREATE.contains("List attachments below the table"));
-    assert!(CREATE.contains("| Service Guide Consent | {guideConsent} |"));
-    assert!(create.contains("displayed payment, and exact Guide Consent"));
-    assert!(guide.contains("Do not render a standalone Guide confirmation"));
-    assert!(guide.contains("single final confirmation card"));
-    assert!(!GUIDE.contains("independent from the final task/payment confirmation"));
-    assert!(!CREATE.contains("Guide Consent was confirmed separately"));
-    assert!(subscription_create.contains("without asking for a separate confirmation"));
-    assert!(subscription_create.contains("one explicit final confirmation"));
-}
-
-#[test]
-fn one_time_task_details_use_a_vertical_field_value_card() {
-    assert!(TASK_QUERY.contains("### One-time Job Details"));
-    assert!(TASK_QUERY.contains("| Field | Value |"));
-    assert!(TASK_QUERY.contains("| Job ID | {jobId} |"));
-    assert!(TASK_QUERY.contains("| Job Description | {description} |"));
-    assert!(!TASK_QUERY.contains(
-        "| Job Name | Job ID | Service Provider | Fee | Status | Job Description |"
-    ));
-}
-
-#[test]
-fn subscription_confirmation_uses_one_canonical_product_card() {
-    assert!(SUBSCRIPTION_CREATE.contains("scene: Subscription job creation confirmation"));
-    assert!(SUBSCRIPTION_CREATE.contains("| Field | Value |"));
-    assert!(SUBSCRIPTION_CREATE
-        .contains("| Service Provider | {providerAgentName}（Agent {providerAgentId}） |"));
-    assert!(SUBSCRIPTION_CREATE.contains("| Service Guide Consent | {guideConsent} |"));
-    assert!(!SUBSCRIPTION_CREATE.contains("| Execution Mode |"));
-    assert!(SUBSCRIPTION_CREATE.contains("Omit the entire Service Parameters row"));
-    assert!(SUBSCRIPTION_CREATE.contains("Never render `None`"));
-    assert!(SUBSCRIPTION_CREATE.contains("{feeAmount} {feeTokenSymbol}/{interval}"));
-    assert!(SUBSCRIPTION_CREATE.contains("{Next Action}"));
-    assert!(SUBSCRIPTION_CREATE
-        .contains("The trial will start after the Service Provider accepts the job."));
-    assert!(SUBSCRIPTION_CREATE
-        .contains("The subscription will start after the Service Provider accepts the job."));
-    assert!(SUBSCRIPTION_CREATE.contains("https://www.okx.ai/tasks"));
-    assert!(!SUBSCRIPTION_CREATE.contains("{firstChargeAt}"));
+    assert!(CREATE.contains("Render attachments below the field list"));
+    assert!(CREATE.contains("- Job Name: {title}"));
+    assert!(!CREATE.contains("| Job Name | Job Description |"));
+    assert!(SUBSCRIPTION_CREATE.contains("- Task Name: {title}"));
+    assert!(!SUBSCRIPTION_CREATE.contains("| Field | Value |"));
+    let subscription_detail = SUBSCRIPTION_QUERY.split_once("## Detail").unwrap().1;
+    assert!(subscription_detail.contains("- Job ID: {jobId}"));
+    assert!(subscription_detail.contains("- Status: {localizedStatusLabel}"));
+    assert!(subscription_detail.contains("- Status Description: {localizedStatusDescription}"));
+    assert!(SUBSCRIPTION_QUERY.contains("`Refund completed`, respectively"));
+    assert!(!subscription_detail.contains("| Job Name |"));
+    assert!(create.contains("Keep Guide Consent in its separate confirmation"));
 }
 
 #[test]
@@ -146,52 +109,35 @@ fn refund_reason_and_write_are_freshly_bound() {
     for expected in ["user-authored", "non-blank", "preserve", "verbatim"] {
         assert!(confirmation.contains(expected));
     }
-    assert!(confirmation.contains("final input"));
-    assert!(REFUND_PREPARE.contains("read-only Refund result"));
+    assert!(confirmation.contains("after both submission intent and the reason are present"));
+    assert!(REFUND_PREPARE.contains("read-only Refund V2 result"));
     assert!(REFUND_CONFIRM.contains("submit_refund_request"));
     assert!(REFUND_EXECUTE.contains("refund-execute JOB_ID_ARG"));
     assert!(REFUND_EXECUTE.contains("--refund-context-id"));
     assert!(REFUND_EXECUTE.contains("--confirm"));
-    assert!(REFUND_CONFIRM.contains("bound to one latest preparation result"));
+    assert!(REFUND_EXECUTE.contains("您可以让我查看指定任务详情，获取退款处理结果。"));
+    assert!(REFUND_EXECUTE.contains("Do not\nrender a CLI command"));
+    assert!(!REFUND_EXECUTE.contains("onchainos agent status <jobId>"));
+    assert!(REFUND_CONFIRM
+        .contains("Bind each write to an explicit action selected from the latest preparation"));
 }
 
 #[test]
 fn refund_finality_and_display_remain_exact() {
-    for fact in [
-        "Expired(8)",
-        "Failed(9)",
-        "job_asp_reject_expire",
-        "sub_failed_notify",
-    ] {
+    for fact in ["Expired(8)", "Failed(9)", "job_asp_reject_expire"] {
         assert!(REFUND_CONTRACT.contains(fact));
     }
+    assert!(REFUND_CONTRACT.contains("render `Refund completed`"));
     assert!(REFUND_CONTRACT.contains("A Tx Hash is optional audit metadata"));
     assert!(REFUND_CONFIRM.contains("## Output Templates"));
     assert!(REFUND_CONFIRM.contains("### Confirm Refund Request"));
-    assert!(REFUND_CONFIRM.contains(
-        "If everything is correct, reply “Submit refund request.” and provide your reason."
-    ));
-    assert!(!REFUND_CONFIRM.contains("To make changes"));
+    assert!(REFUND_CONFIRM.contains("include your refund reason"));
+    assert!(REFUND_CONFIRM.contains("Render the complete [Confirm Refund Request]"));
+    assert!(REFUND_CONFIRM.contains("preceding `B` or rejection enters"));
     assert!(TASK_QUERY.contains("## Output Templates"));
-    assert!(TASK_QUERY.contains("### Pending Refund Requests"));
-    assert!(TASK_QUERY.contains("You have {pendingCount} pending refund requests:"));
-    assert!(TASK_QUERY.contains("Reply with the number or Job ID to view details."));
+    assert!(TASK_QUERY.contains("### Refund Task List"));
     assert!(TASK_QUERY.contains("### Refund Request Details"));
     assert!(TASK_QUERY.contains("Preserve the full Job ID and the original refund reason"));
-    assert!(TASK_QUERY.contains("This scene has no Recommend action"));
-    assert!(PROVIDER_ARBITRATION_QUERY
-        .contains("You have {pendingCount} refund requests from buyers awaiting your decision:"));
-    assert!(PROVIDER_ARBITRATION_QUERY.contains(
-        "A full refund will be issued automatically if no action is taken by the deadline. Reply with a number or Job ID to view the request."
-    ));
-    assert!(PROVIDER_ARBITRATION_DECISION.contains("### Buyer Refund Request"));
-    assert!(PROVIDER_ARBITRATION_DECISION.contains("`message.rejectReason`"));
-    assert!(PROVIDER_ARBITRATION_DECISION.contains("`detail.rejectReason`"));
-    assert!(PROVIDER_ARBITRATION_DECISION.contains(
-        "To refund the buyer, reply “Approve refund.” To dispute the request, reply “Request evaluation” and provide your reason."
-    ));
-    assert!(PROVIDER_ARBITRATION_DECISION.contains("--user-content-b64"));
-    assert!(PROVIDER_ARBITRATION_DECISION.contains("--list-label-b64"));
 }
 
 #[test]
@@ -204,15 +150,6 @@ fn completion_orders_feedback_notification_and_cleanup() {
     assert!(FEEDBACK.contains("`required=false`"));
     assert!(NOTIFY.contains("[onchainos:task-terminal]"));
     assert!(NOTIFY.contains("byte-for-byte"));
-    assert!(COMPLETION.contains("says `Rate job`"));
-    assert!(COMPLETION.contains("says `Rate User Agent`"));
-    assert!(RATING.contains("Never rate a one-time task before it is Completed"));
-    assert!(RATING.contains("replaces any AI-generated rating"));
-    assert!(RATING.contains("Do not stop or require a separate overwrite confirmation"));
-    assert!(RATING.contains("Keep only rows whose lookup succeeds with an empty `data[]`"));
-    assert!(RATING.contains("no unreviewed A2A jobs were found"));
-    assert!(PROVIDER_RATING.contains("replaces the AI-generated rating"));
-    assert!(PROVIDER_RATING.contains("Do not stop or request a separate"));
 }
 
 #[test]

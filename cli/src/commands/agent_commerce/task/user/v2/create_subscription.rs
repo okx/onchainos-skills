@@ -149,9 +149,7 @@ where
         .context("subscription local execution configuration could not be persisted")?;
     let prebind = match common::a2a_binding::bind_job_provider_to_current_runtime_required(&job_id)
         .await
-        .context(
-            "cannot bind subscription to the current AI runtime; creation was not broadcast",
-        )
+        .context("cannot bind subscription to the current AI runtime; creation was not broadcast")
     {
         Ok(prebind) => prebind,
         Err(error) => {

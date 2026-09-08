@@ -39,8 +39,10 @@ Match Job ID, ASP Agent ID, task type, and resume event before using the reason.
 receipt has no write action.
 
 After a successful command, state that the evaluation request was submitted
-and that progress will update in the task. The exact detail query is:
-
-```text
-onchainos agent arbitration-detail <jobId> --agent-id <aspAgentId>
-```
+and that progress will update in the task. Display the current source status as
+`Evaluation request submitted` and translate it into the user's language. Add
+a friendly sentence explaining that the user may ask to view the selected task's
+details for the result. Do
+not display a CLI command, code block, or other internal implementation detail.
+For a later explicit query, route through `arbitration-query.md` and run its
+detail query internally.
