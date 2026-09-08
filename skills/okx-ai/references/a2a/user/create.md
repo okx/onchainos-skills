@@ -6,10 +6,11 @@ Enter only from `create-prepare.md` with the latest bound Service payload.
 
 ## Collect inputs
 
-If `payload.serviceGuide` is non-blank, complete and independently confirm
-`create-guide.md` first. Then parse only `payload.serviceDescription` for
-explicit required and optional inputs. Ignore promotional text and never invent
-scope.
+If `payload.serviceGuide` is non-blank, complete `create-guide.md` first and
+retain its collected Guide Consent for the final card below. Do not request a
+separate Guide confirmation. Then parse only `payload.serviceDescription` for
+explicit required and optional inputs. Ignore promotional text and never
+invent scope.
 
 Fill values from the User's request or direct answers. Ask for all missing
 required values together; re-ask only missing or invalid values. Produce:
@@ -31,22 +32,36 @@ display template:
 ```markdown
 ### One-time Job Creation Confirmation
 
-| Job Name | Job Description | Service Provider | Fee | Service Parameters |
-|---|---|---|---|---|
-| {title} | {Description} | Agent {providerAgentId}({providerAgentName}) | {feeAmount} {feeTokenSymbol} | {serviceParams} |
+| Field | Value |
+|---|---|
+| Job Name | {title} |
+| Job Description | {Description} |
+| Service Provider | Agent {providerAgentId}({providerAgentName}) |
+| Fee | {feeAmount} {feeTokenSymbol} |
+| Service Parameters | {serviceParams} |
+| Service Guide Consent | {guideConsent} |
 
-To create this job, reply “Confirm”. To cancel, reply “Cancel”.
+To create this job and authorize the displayed payment and Service Guide
+Consent, reply “Confirm”. To cancel, reply “Cancel”.
 ```
 
 display rules:
 
-1. Preserve the confirmed Job Name, Job Description, and Service Parameters.
+1. Preserve the collected Job Name, Job Description, Service Parameters, and
+   complete Guide Consent.
 2. Render the Service Provider as `Agent {providerAgentId}({providerAgentName})`. Omit only the parenthesized name when it is absent.
 3. Render a zero Fee as `Free`; otherwise render the exact amount and token symbol.
-4. Omit the Service Parameters column when no parameters were confirmed.
+4. Omit the Service Parameters row when no parameters were collected. Include
+   the Service Guide Consent row only when `serviceGuide` is non-blank, and
+   render every collected Guide field and User-authored value without
+   rewriting them.
 5. List attachments below the table, not as another table field.
-6. Guide Consent was confirmed separately and must not be added to this confirmation.
-7. `Confirm` is the explicit final confirmation for only the current complete card. Apply edits and render the whole confirmation again.
+6. Do not show an earlier standalone Guide, parameter, or payment confirmation.
+   This card is the only explicit final confirmation for creation.
+7. `Confirm` explicitly authorizes the task creation, displayed payment, and
+   exact Guide Consent for only the current complete card. Any edit to a task,
+   payment, attachment, Service Parameter, or Guide Consent fact invalidates
+   that confirmation; apply the edit and render the whole card again.
 
 ## Communication check
 

@@ -78,8 +78,13 @@ fn unknown_system_events_stop_before_cli_dispatch() {
 }
 
 #[test]
-fn create_confirmation_excludes_execution_configuration() {
+fn create_confirmation_combines_guide_task_and_payment() {
     let create = CREATE.split_whitespace().collect::<Vec<_>>().join(" ");
+    let guide = GUIDE.split_whitespace().collect::<Vec<_>>().join(" ");
+    let subscription_create = SUBSCRIPTION_CREATE
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     for forbidden in [
         "| Signal Execution |",
         "| Per-Signal Amount |",
@@ -88,17 +93,36 @@ fn create_confirmation_excludes_execution_configuration() {
         assert!(!CREATE.contains(forbidden));
     }
     assert!(CREATE.contains("List attachments below the table"));
-    assert!(create.contains("Guide Consent was confirmed separately"));
+    assert!(CREATE.contains("| Service Guide Consent | {guideConsent} |"));
+    assert!(create.contains("displayed payment, and exact Guide Consent"));
+    assert!(guide.contains("Do not render a standalone Guide confirmation"));
+    assert!(guide.contains("single final confirmation card"));
+    assert!(!GUIDE.contains("independent from the final task/payment confirmation"));
+    assert!(!CREATE.contains("Guide Consent was confirmed separately"));
+    assert!(subscription_create.contains("without asking for a separate confirmation"));
+    assert!(subscription_create.contains("one explicit final confirmation"));
+}
+
+#[test]
+fn one_time_task_details_use_a_vertical_field_value_card() {
+    assert!(TASK_QUERY.contains("### One-time Job Details"));
+    assert!(TASK_QUERY.contains("| Field | Value |"));
+    assert!(TASK_QUERY.contains("| Job ID | {jobId} |"));
+    assert!(TASK_QUERY.contains("| Job Description | {description} |"));
+    assert!(!TASK_QUERY.contains(
+        "| Job Name | Job ID | Service Provider | Fee | Status | Job Description |"
+    ));
 }
 
 #[test]
 fn subscription_confirmation_uses_one_canonical_product_card() {
     assert!(SUBSCRIPTION_CREATE.contains("scene: Subscription job creation confirmation"));
-    assert!(SUBSCRIPTION_CREATE.contains(
-        "| Job Name | Job Description | Service Provider | Service Parameters | Fee | Trial | Auto-renewal |"
-    ));
-    assert!(SUBSCRIPTION_CREATE.contains("{providerAgentName} (Agent{providerAgentId})"));
-    assert!(SUBSCRIPTION_CREATE.contains("Omit the entire Service Parameters column"));
+    assert!(SUBSCRIPTION_CREATE.contains("| Field | Value |"));
+    assert!(SUBSCRIPTION_CREATE
+        .contains("| Service Provider | {providerAgentName}（Agent {providerAgentId}） |"));
+    assert!(SUBSCRIPTION_CREATE.contains("| Service Guide Consent | {guideConsent} |"));
+    assert!(!SUBSCRIPTION_CREATE.contains("| Execution Mode |"));
+    assert!(SUBSCRIPTION_CREATE.contains("Omit the entire Service Parameters row"));
     assert!(SUBSCRIPTION_CREATE.contains("Never render `None`"));
     assert!(SUBSCRIPTION_CREATE.contains("{feeAmount} {feeTokenSymbol}/{interval}"));
     assert!(SUBSCRIPTION_CREATE.contains("{Next Action}"));
