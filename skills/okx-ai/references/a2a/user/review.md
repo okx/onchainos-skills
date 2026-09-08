@@ -14,3 +14,24 @@ delivery-first, submitted-first, and replay ordering. Follow its result:
 Offer only `A` to approve and `B` to reject with a User-authored reason. After
 the card is delivered, stop and wait for a real future reply. Never infer
 approval from task status, silence, prior messages, or provider content.
+
+## Main-conversation status recovery
+
+When the active review card was created and displayed directly by
+[`../task-query.md`](../task-query.md) after a `one_time` + `submitted` status
+result, the main conversation owns the next reply. The creation turn must not
+read the decision back before displaying it.
+
+On the User's later non-defer reply, obtain the claim ID with:
+
+```text
+okx-a2a user list --job-id <jobId> --all-providers --json
+```
+
+Select only the pending `decision_request` whose `idempotencyKey` exactly
+equals `buyer-review:<jobId>:job_submitted`. Require exactly one match, then
+claim its `id` with `okx-a2a user check --todo-ids <id> --json`. On `handled`,
+continue in [`review-decision.md`](review-decision.md) with the User's wording
+unchanged. On `alreadyHandled`, missing, or multiple matches, perform no task
+mutation and report the conflict. A defer reply remains pending and performs
+neither `list` nor `check`.

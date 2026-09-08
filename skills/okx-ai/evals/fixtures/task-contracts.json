@@ -114,10 +114,10 @@
       "id": "A30",
       "input": "Submit refund request with a verbatim reason, or provide the reason when prompted",
       "role": "user",
-      "stateGate": "fresh Refund V2 prepare and matching context",
+      "stateGate": "fresh Refund prepare and matching context",
       "targetLeaf": "references/a2a/user/refund-confirm.md",
       "sideEffectOwner": "refund-execute request-refund",
-      "sourceSymbols": ["task/user/refund_v2.rs", "task/common/pending_v2.rs"]
+      "sourceSymbols": ["task/user/refund.rs", "task/common/pending_v2.rs"]
     },
     {
       "id": "A35",
@@ -126,7 +126,7 @@
       "stateGate": "accepted_task_refund_contract_required",
       "targetLeaf": "references/a2a/user/refund-prepare.md",
       "sideEffectOwner": "none; read-only",
-      "sourceSymbols": ["task/user/refund_v2.rs"]
+      "sourceSymbols": ["task/user/refund.rs"]
     },
     {
       "id": "A39",
@@ -135,7 +135,7 @@
       "stateGate": "fresh finality matrix proof",
       "targetLeaf": "references/a2a/refund-reconcile.md",
       "sideEffectOwner": "direct stop or scoped cleanup",
-      "sourceSymbols": ["task/user/refund_v2.rs", "task/user/flow_lifecycle/terminal.rs"]
+      "sourceSymbols": ["task/user/refund.rs", "task/user/flow_lifecycle/terminal.rs"]
     },
     {
       "id": "A43",

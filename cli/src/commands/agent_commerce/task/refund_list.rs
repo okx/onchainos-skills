@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 
 use super::common::network::task_api_client::TaskApiClient;
 use super::common::{self, query};
-use super::user::refund_v2;
+use super::user::refund;
 use super::user::subscription_ops::{self, SubscriptionRole};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -179,7 +179,7 @@ pub async fn handle_refund_list(
 
     let mut rows = Vec::new();
     for candidate in collect_candidates(&one_time, &subscriptions) {
-        let item = refund_v2::fetch_refund_list_item_for_identity(
+        let item = refund::fetch_refund_list_item_for_identity(
             client,
             &candidate.job_id,
             &agent_id,
@@ -219,7 +219,7 @@ pub async fn handle_refund_detail(
     agent_id: &str,
 ) -> Result<()> {
     let agent_id = query::resolve_agent_id_or_error(agent_id, role.agent_role()).await?;
-    let item = refund_v2::fetch_refund_list_item_for_identity(
+    let item = refund::fetch_refund_list_item_for_identity(
         client,
         job_id,
         &agent_id,

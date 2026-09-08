@@ -147,7 +147,7 @@ fn refund_reason_and_write_are_freshly_bound() {
         assert!(confirmation.contains(expected));
     }
     assert!(confirmation.contains("final input"));
-    assert!(REFUND_PREPARE.contains("read-only Refund V2 result"));
+    assert!(REFUND_PREPARE.contains("read-only Refund result"));
     assert!(REFUND_CONFIRM.contains("submit_refund_request"));
     assert!(REFUND_EXECUTE.contains("refund-execute JOB_ID_ARG"));
     assert!(REFUND_EXECUTE.contains("--refund-context-id"));

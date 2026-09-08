@@ -30,7 +30,7 @@ mod flow_negotiate;
 pub(crate) mod my_tasks;
 pub(crate) mod negotiate;
 mod query;
-pub(crate) mod refund_v2;
+pub(crate) mod refund;
 mod reject_apply;
 mod service_detail;
 pub(crate) mod service_param_update;
@@ -259,13 +259,13 @@ pub enum TaskCommand {
     ConfirmAccept { job_id: String },
     /// Client confirms task complete and releases payment
     Complete { job_id: String },
-    /// Disabled direct rejection; use Refund V2 preparation and confirmation.
+    /// Disabled direct rejection; use Refund preparation and confirmation.
     Reject {
         job_id: String,
         #[arg(long)]
         reason: String,
     },
-    /// Read-only Refund V2 eligibility and next-action preparation.
+    /// Read-only Refund eligibility and next-action preparation.
     #[command(name = "refund-prepare")]
     RefundPrepare {
         job_id: String,
@@ -278,7 +278,7 @@ pub enum TaskCommand {
     RefundExecute {
         job_id: String,
         #[arg(long, value_enum)]
-        operation: refund_v2::RefundOperation,
+        operation: refund::RefundOperation,
         #[arg(long = "refund-context-id")]
         refund_context_id: String,
         /// Exact user-authored reason returned through the prepare action params.
@@ -288,7 +288,7 @@ pub enum TaskCommand {
         #[arg(long, default_value_t = false)]
         confirm: bool,
     },
-    /// Disabled legacy close. Use Refund V2 preparation.
+    /// Disabled legacy close. Use Refund preparation.
     Close {
         job_id: String,
         #[arg(long = "agent-id")]
@@ -301,7 +301,7 @@ pub enum TaskCommand {
         agent_id: Option<String>,
     },
     /// Disabled legacy write command. Use `refund-prepare`; a cause-specific
-    /// timeout claim requires a backend Refund V2 contract.
+    /// timeout claim requires a backend Refund contract.
     ClaimAutoRefund { job_id: String },
     /// Reject a provider's apply (on-chain pass-through; status stays `created`)
     RejectApply {
@@ -324,7 +324,7 @@ pub enum TaskCommand {
     /// Enable auto-renew on a subscription (needs EIP-712 terms signing)
     #[command(name = "start-autorenew")]
     StartAutorenew { sub_id: String },
-    /// Disabled direct subscription rejection; use Refund V2 preparation.
+    /// Disabled direct subscription rejection; use Refund preparation.
     #[command(name = "subscribe-reject")]
     SubscribeReject {
         sub_id: String,
@@ -2066,11 +2066,11 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         }
         TaskCommand::Reject { job_id, reason: _ } => {
             anyhow::bail!(
-                "direct reject is disabled by Refund V2; run `onchainos agent refund-prepare {job_id} --reason <user-authored-reason>` and execute only the returned confirmed action"
+                "direct reject is disabled by Refund; run `onchainos agent refund-prepare {job_id} --reason <user-authored-reason>` and execute only the returned confirmed action"
             )
         }
         TaskCommand::RefundPrepare { job_id, reason } => {
-            refund_v2::handle_prepare(&mut client, &job_id, reason.as_deref()).await
+            refund::handle_prepare(&mut client, &job_id, reason.as_deref()).await
         }
         TaskCommand::RefundExecute {
             job_id,
@@ -2079,7 +2079,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             reason,
             confirm,
         } => {
-            refund_v2::handle_execute(
+            refund::handle_execute(
                 &mut client,
                 &job_id,
                 operation,

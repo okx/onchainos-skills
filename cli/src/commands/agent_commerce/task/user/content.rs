@@ -205,7 +205,7 @@ pub fn dispute_won_user_notify(
         format!(
             "- Refund amount: {} (approved; settlement verification pending)\n\
              - Tx Hash: unavailable\n\
-             The ruling favors the User Agent, but the available lifecycle facts do not yet verify the settlement result. Reconcile through Refund V2 before reporting completion.",
+             The ruling favors the User Agent, but the available lifecycle facts do not yet verify the settlement result. Reconcile through Refund before reporting completion.",
             amount_and_token(amount, symbol)
         )
     };

@@ -285,7 +285,7 @@ pub(crate) async fn handle_subscribe_reject_inner(
     Ok(tx_hash)
 }
 
-/// Disabled legacy CLI entry. Refund V2 owns paid subscription rejection.
+/// Disabled legacy CLI entry. Refund owns paid subscription rejection.
 pub async fn handle_subscribe_reject(
     client: &mut TaskApiClient,
     sub_id: &str,
@@ -293,7 +293,7 @@ pub async fn handle_subscribe_reject(
 ) -> Result<()> {
     let _ = (client, reason);
     bail!(
-        "direct subscribe-reject is disabled by Refund V2; run `onchainos agent refund-prepare {sub_id} --reason <user-authored-reason>` and execute only the returned confirmed action"
+        "direct subscribe-reject is disabled by Refund; run `onchainos agent refund-prepare {sub_id} --reason <user-authored-reason>` and execute only the returned confirmed action"
     )
 }
 
@@ -936,7 +936,7 @@ fn trial_duration_label(hours: i64) -> String {
 
 fn subscription_fee_label(amount: Option<&str>, symbol: Option<&str>) -> Option<String> {
     let amount = amount.map(str::trim).filter(|value| !value.is_empty())?;
-    if super::refund_v2::is_zero_decimal(amount) {
+    if super::refund::is_zero_decimal(amount) {
         return Some("Free".to_string());
     }
     let symbol = symbol.map(str::trim).filter(|value| !value.is_empty())?;

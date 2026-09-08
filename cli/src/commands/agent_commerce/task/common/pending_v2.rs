@@ -1064,6 +1064,15 @@ fn sanitize_to_agent(to_agent_id: Option<String>, agent_id: &str) -> Option<Stri
     }
 }
 
+fn buyer_review_idempotency_key(
+    job_id: &str,
+    role: &str,
+    source_event: Option<&str>,
+) -> Option<String> {
+    (role == "user" && source_event == Some("job_submitted"))
+        .then(|| format!("buyer-review:{job_id}:job_submitted"))
+}
+
 /// Auto-trade decisions must resume in the session that received the admitted
 /// delivery. The provider id comes from CLI-persisted delivery context, not
 /// from model output. `None` remains a compatibility fallback only for
@@ -1293,22 +1302,14 @@ fn request_prompt_inner(
 
     if cli_mode {
         let is_buyer_review = role == "user" && source_event.as_deref() == Some("job_submitted");
-        // CLI mode has no queue entry to deduplicate. Reuse the queue lock so
-        // concurrent delivery-first and event-first requests serialize.
+        // CLI mode has no local queue entry. Serialize concurrent
+        // delivery-first/status-recovery requests here, then let okx-a2a's
+        // stable idempotency key return the one canonical attention record.
         let _review_lock = if is_buyer_review {
             Some(acquire_lock()?)
         } else {
             None
         };
-        if is_buyer_review && super::deliverables::has_review_card_sent_marker(&job_id) {
-            trace_log(&format!(
-                "request_prompt CLI_MODE: buyer review already sent for job_id={job_id}"
-            ));
-            if print_ok {
-                println!("OK");
-            }
-            return Ok(());
-        }
         let now = Utc::now();
         let entry = PendingEntry {
             job_id,
@@ -1329,7 +1330,17 @@ fn request_prompt_inner(
         };
         let llm_content = resolve_llm_content_cli(&entry);
         use crate::commands::agent_commerce::task::common::okx_a2a;
-        okx_a2a::user_decision_request(&entry.user_content, &llm_content)?;
+        let idempotency_key = buyer_review_idempotency_key(
+            &entry.job_id,
+            &entry.role,
+            entry.source_event.as_deref(),
+        );
+        okx_a2a::user_decision_request(
+            &entry.user_content,
+            &llm_content,
+            is_buyer_review.then_some(entry.job_id.as_str()),
+            idempotency_key.as_deref(),
+        )?;
         if is_buyer_review {
             super::deliverables::mark_review_card_sent(&entry.job_id)?;
         }
@@ -1362,6 +1373,8 @@ fn request_prompt_inner(
 
         let _lock = acquire_lock()?;
         let is_buyer_review = role == "user" && source_event.as_deref() == Some("job_submitted");
+        // Queue-mode runtimes keep their existing local queue lifecycle. The
+        // foreground status-recovery behavior applies only to CLI-driver mode.
         if is_buyer_review && super::deliverables::has_review_card_sent_marker(&job_id) {
             trace_log(&format!(
                 "request_prompt QUEUE_MODE: buyer review already sent for job_id={job_id}"
@@ -1408,7 +1421,17 @@ fn request_prompt_inner(
         let entry = q.entries.last().unwrap();
         let llm_content = resolve_llm_content_prompt_user(entry);
         use crate::commands::agent_commerce::task::common::okx_a2a;
-        okx_a2a::user_decision_request(&entry.user_content, &llm_content)?;
+        let idempotency_key = buyer_review_idempotency_key(
+            &entry.job_id,
+            &entry.role,
+            entry.source_event.as_deref(),
+        );
+        okx_a2a::user_decision_request(
+            &entry.user_content,
+            &llm_content,
+            is_buyer_review.then_some(entry.job_id.as_str()),
+            idempotency_key.as_deref(),
+        )?;
         if is_buyer_review {
             super::deliverables::mark_review_card_sent(&entry.job_id)?;
         }
@@ -2760,7 +2783,7 @@ fn buyer_review_llm_content_cli(entry: &PendingEntry) -> Option<String> {
          Step 3 — Interpret the choice and complete the selected review action here:\n\
            - A or an unambiguous approval: run `onchainos agent next-action --role user --agentId {agent} --message '{{\"event\":\"approve_review\",\"jobId\":\"{job}\"}}'`. For `reason=completion_submitted`, give one localized friendly confirmation equivalent to: \"Deliverable approved. The on-chain completion transaction has been submitted.\" For any other result, present its returned status and actions.\n\
            - B or an unambiguous rejection: run the read-only `onchainos agent refund-prepare {job}`. Render the returned `payload.display` with the Confirm Refund Request template and ask the user to reply `Submit refund request` with a refund reason, or describe changes. End the turn.\n\
-           - After the card, analyze the reply for both the submission intent and a refund reason. If it contains clear `Submit refund request` intent and a non-blank reason, preserve the reason verbatim and continue immediately. If the intent is clear but the reason is missing, ask only for the refund reason and keep the Job ID and latest Refund V2 context active. During that follow-up, treat the next non-blank reply as the verbatim reason.\n\
+           - After the card, analyze the reply for both the submission intent and a refund reason. If it contains clear `Submit refund request` intent and a non-blank reason, preserve the reason verbatim and continue immediately. If the intent is clear but the reason is missing, ask only for the refund reason and keep the Job ID and latest Refund context active. During that follow-up, treat the next non-blank reply as the verbatim reason.\n\
            - After obtaining the reason: run `onchainos agent refund-prepare {job} --reason \"<verbatim reason>\"`. Continue only when it returns `payload.schemaVersion=2`, `phase=refund_confirmation`, `decision=ready`, `reason=refund_request_confirmation_required`, and `nextAction[id=submit_refund_request]`; immediately run `onchainos agent refund-execute <params.jobId> --operation <params.operation> --refund-context-id <params.refundContextId> --reason \"<params.reason verbatim>\" --confirm` with every parameter copied from that fresh action. For `reason=refund_request_broadcast_submitted`, give one concise localized confirmation that the request was submitted and progress will update in this task. For any other result, present its returned status and actions.\n\
            - Ambiguous or unrelated text: show the same A/B choice and wait.\n\n\
          The current conversation owns choice parsing, action execution, and result feedback. For `refund_request_broadcast_submitted`, end the turn after the pending confirmation and do not resume the originating watch; the User may request a later status query explicitly. Other decisions resume the exact originating watch only when the watch-core rules require it.",
@@ -3375,10 +3398,11 @@ mod shared_encoding_shell_safety_tests {
 #[cfg(test)]
 mod sanitize_tests {
     use super::{
-        arbitration_relay_description, decision_relay_post_action, local_arbitration_resolution,
-        read_queue, request_prompt_inner, resolve_arbitration_choice, resolve_llm_content_cli,
-        resolve_llm_content_prompt_user, sanitize_to_agent, trusted_autotrade_session_key,
-        write_queue_atomic, PendingEntry, Queue, Status,
+        arbitration_relay_description, buyer_review_idempotency_key, decision_relay_post_action,
+        local_arbitration_resolution, read_queue, request_prompt_inner,
+        resolve_arbitration_choice, resolve_llm_content_cli, resolve_llm_content_prompt_user,
+        sanitize_to_agent, trusted_autotrade_session_key, write_queue_atomic, PendingEntry, Queue,
+        Status,
     };
     use chrono::Utc;
 
@@ -3414,6 +3438,22 @@ mod sanitize_tests {
             Some("4941".into())
         );
         assert_eq!(sanitize_to_agent(None, "8315"), None);
+    }
+
+    #[test]
+    fn only_submitted_buyer_review_gets_the_stable_attention_key() {
+        assert_eq!(
+            buyer_review_idempotency_key("job-123", "user", Some("job_submitted")),
+            Some("buyer-review:job-123:job_submitted".to_string())
+        );
+        assert_eq!(
+            buyer_review_idempotency_key("job-123", "user", Some("review_deadline_warn")),
+            None
+        );
+        assert_eq!(
+            buyer_review_idempotency_key("job-123", "asp", Some("job_submitted")),
+            None
+        );
     }
 
     #[test]

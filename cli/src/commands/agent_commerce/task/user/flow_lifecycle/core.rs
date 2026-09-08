@@ -1525,7 +1525,7 @@ fn job_submitted_waiting_for_deliverable(job_id: &str) -> String {
 ///   Step 1 (task ctx) → Step 2a (saved check) → Step 2b (download / extract + save)
 ///   → Step 3 (compose review user_content) → push pending-decisions-v2 review card.
 /// User must reply A (approve) / B + reason (reject). The B reply is the final
-/// confirmation for a fresh Refund V2 rejection write. Auto-approve is strictly forbidden.
+/// confirmation for a fresh Refund rejection write. Auto-approve is strictly forbidden.
 pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
@@ -1775,7 +1775,7 @@ pub(crate) async fn reject_review(ctx: &FlowContext<'_>) -> String {
         .map(|value| format!(" --reason {}", serde_json::to_string(value).unwrap()))
         .unwrap_or_default();
     format!(
-        "[reject_review compatibility] The relayed rejection opens the Refund V2 confirmation flow.\n\n\
+        "[reject_review compatibility] The relayed rejection opens the Refund confirmation flow.\n\n\
          Run the read-only `onchainos agent refund-prepare {job_id}{reason_arg}` and render its `payload.display` with the Confirm Refund Request template. End the turn after presenting the card. The rejection itself authorizes no refund write. Continue only after the user provides clear `Submit refund request` intent and a refund reason; then rerun the fresh preparation with that verbatim reason and execute only its returned `submit_refund_request` action. Any other preparation result is the authoritative outcome to present to the user.\n"
     )
 }
@@ -1958,7 +1958,7 @@ mod tests {
 
         let out = reject_review(&ctx).await;
         assert!(
-            out.contains("opens the Refund V2 confirmation flow"),
+            out.contains("opens the Refund confirmation flow"),
             "{out}"
         );
         assert!(

@@ -230,6 +230,32 @@ pub async fn handle_status(
         if let Some(pid) = t["providerAgentId"].as_str() {
             println!("  asp: {pid}");
         }
+        if job_type == Some(0) && status_code == Some(2) {
+            let review = super::PreFetchedTaskContext::from_api_response(t);
+            println!(
+                "  payment: {}",
+                match review.payment_mode {
+                    Some(1) => "escrow",
+                    Some(3) => "x402",
+                    _ => "unknown",
+                }
+            );
+            let exact_expire_time = t["expireTime"]
+                .as_i64()
+                .or_else(|| {
+                    t["expireTime"]
+                        .as_str()
+                        .and_then(|value| value.parse().ok())
+                })
+                .filter(|value| *value > 0);
+            if let Some(line) = super::deadline::deadline_reminder_line(
+                exact_expire_time,
+                chrono::Local::now().timestamp(),
+                super::deadline::DeadlineKind::Review,
+            ) {
+                println!("  review: {line}");
+            }
+        }
     }
     Ok(())
 }

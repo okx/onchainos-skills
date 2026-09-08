@@ -1,7 +1,7 @@
 //! Disabled legacy close command.
 //!
 //! Closing a funded V2 task is a refund-related funds mutation. It must use
-//! Refund V2 preparation, confirmation, and reconciliation instead of this
+//! Refund preparation, confirmation, and reconciliation instead of this
 //! context-free legacy entry point.
 
 use anyhow::Result;

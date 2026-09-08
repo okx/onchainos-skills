@@ -14,6 +14,18 @@ fn watch_reenters_after_nonterminal_results() {
 }
 
 #[test]
+fn creation_watch_shows_one_localized_monitoring_note_without_reentry_repeats() {
+    let note = "> Note: Message monitoring may stop after the job is created, but the job will continue running. Reply “Resume message monitoring” to receive updates.";
+    assert_eq!(WATCH.matches(note).count(), 1);
+    assert!(WATCH.contains("`phase=creation`"));
+    assert!(WATCH.contains("`reason=broadcast_submitted`"));
+    assert!(WATCH.contains("`nextAction.id=watch_task`"));
+    assert!(WATCH.contains("translate it into the user's initial locale"));
+    assert!(WATCH.contains("Do not show it for"));
+    assert!(WATCH.contains("dispatch resume, wake re-entry, or any later watch call"));
+}
+
+#[test]
 fn decision_reply_claims_before_relay() {
     let claim = RELAY.find("Otherwise claim first").unwrap();
     let execute = RELAY.find("On `handled`").unwrap();

@@ -132,6 +132,27 @@ Canonical English banner:
 
 English sessions use it verbatim. Other languages translate it faithfully, preserving the leading 🔔 and the sequence: started, backlog first, then new events.
 
+#### Creation-start monitoring note
+
+Only when this watch entry comes directly from the successful task-creation
+result in the same turn, render one additional paragraph immediately after the
+banner and before calling watch. Require all of these exact structured facts:
+
+- `phase=creation`;
+- `reason=broadcast_submitted`;
+- `nextAction.id=watch_task`;
+- `nextAction.params.jobId` equals `payload.jobId`.
+
+Use this English source and translate it into the user's initial locale,
+including a natural localized equivalent of the quoted reply phrase:
+
+> Note: Message monitoring may stop after the job is created, but the job will continue running. Reply “Resume message monitoring” to receive updates.
+
+Show this note exactly once for that creation-start entry. Do not show it for
+a trigger-phrase watch, an explicit-job watch, a continuation/rearm request,
+backlog/history access, dispatch resume, wake re-entry, or any later watch call
+in the same generation. The canonical banner remains its own paragraph.
+
 ❌ Violation examples:
 
 - Saying `I'll start watching now` (or any paraphrase) **without** the canonical banner in the same assistant message.
@@ -283,7 +304,7 @@ Separate user-initiated intent (`outstanding decisions` / `pending decisions` / 
   For refund-related notifications, dispatch the structured result and apply
   [`../a2a/refund-reconcile.md`](../a2a/refund-reconcile.md). Event names and human-readable
   headings are never stop signals by themselves. Only a leading terminal marker
-  produced after the fresh Refund V2 gate stops a scoped watch; incomplete or
+  produced after the fresh Refund gate stops a scoped watch; incomplete or
   ambiguous results produce no marker and must re-enter.
   - **Global session** (no `--job-id`) does NOT apply this stop — other tasks may still produce new events. See §"NOT stop conditions" below.
 
@@ -300,7 +321,7 @@ After processing all returned items, **always** call `okx-a2a user watch --json`
 - **Mid-flow markers that look terminal but are NOT** — these are intermediate notifications; keep watching even in scoped session. Common offenders:
   - `[Deliverable Received]` / `[x402 Deliverable Received]` — a deliverable or settled endpoint response is available, but the task has not reached a terminal marker; the x402 terminal marker is `[x402 Job Completed]`.
   - `[Job Expired]` / `[ASP Acceptance Expired]` / `[Auto-Refund Processing]`
-    without a generated terminal marker — dispatch must fresh-read Refund V2.
+    without a generated terminal marker — dispatch must fresh-read Refund.
     Follow only its returned result; no Buyer claim/finalize action exists.
   - `job_closed` or another refund-result event without a generated terminal
     marker — apply [`../a2a/refund-reconcile.md`](../a2a/refund-reconcile.md), then re-enter if
