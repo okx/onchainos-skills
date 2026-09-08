@@ -306,6 +306,6 @@ After processing all returned items, **always** call `okx-a2a user watch --json`
     marker — apply [`../a2a/refund-reconcile.md`](../a2a/refund-reconcile.md), then re-enter if
     the result remains pending or incomplete. Never manufacture a marker from
     event prose.
-  - `[Cancelled]` / `[Auto-Renew Cancelled]` from `sub_cancel` — only future trial conversion or renewal was cancelled; the current trial/period continues, so retain the scoped session.
+  - `[Auto-Renew Cancelled]` from a formal-period `sub_cancel` — only future renewal was cancelled; the current formal period continues, so retain the scoped session. A successful trial cancellation is terminal and carries the canonical terminal marker.
   - `[Job Accepted]` / `[Payment Mode Set]` / `[Connecting ASP]` / `[Job Created]` / `[x402 Replay Failed]` / `[Rejection Confirmed]` / `[📝 Rating Submitted]` — all mid-flow status updates, never terminal on their own.
   - **Rule of thumb**: if the marker is not in the literal list under §Stop condition, it is NOT a stop signal — re-enter watch unconditionally.

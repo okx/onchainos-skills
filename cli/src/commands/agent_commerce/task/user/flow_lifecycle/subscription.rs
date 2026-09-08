@@ -284,8 +284,6 @@ pub(crate) fn sub_cancel(ctx: &FlowContext<'_>, message: Option<&serde_json::Val
         extract_str(message, "failReason").or_else(|| extract_str(message, "failReasopn"));
     let trial_type = extract_i64(message, "trialType");
     let svc = service_name(message, ctx);
-    let trial_ends_at =
-        extract_i64(message, "trialEndTime").or_else(|| extract_i64(message, "trailEndTime"));
     let sub_end = extract_i64(message, "subEndTime");
     let content = super::super::content::sub_cancel_user_notify(
         cancel_result,
@@ -293,14 +291,15 @@ pub(crate) fn sub_cancel(ctx: &FlowContext<'_>, message: Option<&serde_json::Val
         trial_type,
         svc,
         ctx.job_id,
-        trial_ends_at,
         sub_end,
     );
-    // Cancelling trial-to-paid conversion does not end the trial: the copy
-    // explicitly promises that service continues until trialEndTime. Formal
-    // cancellation likewise affects only future renewal. Neither branch may
-    // emit a terminal marker or clean up the active User task session.
-    notify_and_end(&content)
+    // A successful trial cancellation revokes the trial. A formal-period
+    // cancellation only disables the next renewal and remains non-terminal.
+    if cancel_result != Some("fail") && trial_type == Some(1) {
+        notify_and_end_terminal(&content, &ctx.terminal_session_hint)
+    } else {
+        notify_and_end(&content)
+    }
 }
 
 pub(crate) fn sub_user_reject(
@@ -1015,20 +1014,21 @@ mod tests {
     }
 
     #[test]
-    fn sub_cancel_trial_success_keeps_trial_session_live() {
+    fn sub_cancel_trial_success_revokes_trial_and_cleans_up_session() {
         let ctx = ctx_with_hint();
         let msg = serde_json::json!({
             "jobTitle": "My Sub", "cancelResult": "success", "trialType": 1
         });
         let out = sub_cancel(&ctx, Some(&msg));
         assert!(
-            out.contains("Auto-conversion for the \"My Sub\" free trial has been cancelled"),
-            "trial cancel shows trial-unaffected copy: {out}"
+            out.contains(
+                "free trial for \"My Sub\" has been cancelled and access ends immediately"
+            ),
+            "trial cancellation copy: {out}"
         );
-        assert!(out.contains("continues unaffected"), "{out}");
         assert!(
-            !out.contains(HINT_MARKER),
-            "trial continues, so cancellation must not append session cleanup: {out}"
+            out.contains(HINT_MARKER),
+            "revoked trial must append session cleanup: {out}"
         );
     }
 
@@ -1087,49 +1087,6 @@ mod tests {
         assert!(
             !out.contains(HINT_MARKER),
             "formal-period fail stays non-terminal: {out}"
-        );
-    }
-
-    #[test]
-    fn sub_cancel_trial_end_time_new_name_wins() {
-        let ctx = ctx_with_hint();
-        let ts = 1_700_000_000i64;
-        let only_new = serde_json::json!({ "trialType": 1, "trialEndTime": ts });
-        let out = sub_cancel(&ctx, Some(&only_new));
-        assert!(
-            out.contains("until "),
-            "trialEndTime read into the trial-window clause: {out}"
-        );
-        let both = serde_json::json!({ "trialType": 1, "trialEndTime": ts, "trailEndTime": 1_600_000_000i64 });
-        let only_legacy_other =
-            serde_json::json!({ "trialType": 1, "trailEndTime": 1_600_000_000i64 });
-        assert_eq!(
-            sub_cancel(&ctx, Some(&both)),
-            out,
-            "trialEndTime takes precedence over trailEndTime when both present"
-        );
-        assert_ne!(
-            sub_cancel(&ctx, Some(&both)),
-            sub_cancel(&ctx, Some(&only_legacy_other)),
-            "the legacy value is not used when the new name is present"
-        );
-    }
-
-    #[test]
-    fn sub_cancel_trail_end_time_legacy_fallback() {
-        let ctx = ctx_with_hint();
-        let ts = 1_700_000_000i64;
-        let only_new = serde_json::json!({ "trialType": 1, "trialEndTime": ts });
-        let only_legacy = serde_json::json!({ "trialType": 1, "trailEndTime": ts });
-        let out_new = sub_cancel(&ctx, Some(&only_new));
-        let out_legacy = sub_cancel(&ctx, Some(&only_legacy));
-        assert!(
-            out_legacy.contains("until "),
-            "legacy trailEndTime fallback still read: {out_legacy}"
-        );
-        assert_eq!(
-            out_new, out_legacy,
-            "legacy fallback renders identically to the canonical spelling"
         );
     }
 

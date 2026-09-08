@@ -9,7 +9,7 @@ Only fresh authoritative combinations below may offer a write:
 
 | Target and state | Required facts | Action ID | Operation |
 |---|---|---|---|
-| Trial subscription, Active | `trialType=1`, `autoRenew=1` | `cancel_trial_conversion` | `cancel-trial-conversion` |
+| Trial subscription, Active | `trialType=1`, `autoRenew=1` | `cancel_trial_conversion` | `cancel-trial-conversion` (legacy operation ID; revokes the trial) |
 | One-time, Created | original amount is zero | `close_zero_price` | `close-zero` |
 | One-time, Created | positive amount, `paymentMode=1` | `execute_direct_refund` | `direct-refund` |
 | One-time, Submitted | positive amount, `paymentMode=1`, valid reason | `submit_refund_request` | `request-refund` |

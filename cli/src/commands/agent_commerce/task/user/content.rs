@@ -744,11 +744,11 @@ pub fn sub_asp_dispute_user_notify(
     out
 }
 
-/// `sub_cancel` — cancellation outcome (user). Cancellation affects future
-/// conversion/renewal and is non-terminal because the current trial/period continues:
+/// `sub_cancel` — cancellation outcome (user): cancelling an active trial revokes
+/// that trial, while cancelling a formal subscription affects only future renewal.
 /// - `cancel_result == "fail"` (either branch) → the free-text `failReason` is shown verbatim.
-/// - success + `trialType == 1` (trial cancel) → auto-conversion cancelled; the trial
-///   continues unaffected until `trialEndsAt` (`trialEndTime`, legacy fallback `trailEndTime`), no charge after it ends.
+/// - success + `trialType == 1` (trial cancel) → the trial is revoked immediately;
+///   no conversion charge occurs.
 /// - success + `trialType == 0` (formal-period cancel) → auto-renew cancelled; the
 ///   current period stays active until `periodEnd` (`subEndTime`), then the job moves to Completed
 ///   (non-terminal). An absent `trialType` falls into this non-terminal branch
@@ -759,7 +759,6 @@ pub fn sub_cancel_user_notify(
     trial_type: Option<i64>,
     service_name: &str,
     job_id: &str,
-    trial_ends_at: Option<i64>,
     sub_end: Option<i64>,
 ) -> String {
     if cancel_result == Some("fail") {
@@ -771,14 +770,9 @@ pub fn sub_cancel_user_notify(
         }
         out
     } else if trial_type == Some(1) {
-        let mut out = format!(
-            "[Cancelled] Auto-conversion for the \"{service_name}\" free trial has been cancelled. This trial continues unaffected"
-        );
-        if let Some(t) = fmt_epoch(trial_ends_at) {
-            out.push_str(&format!(" until {t}"));
-        }
-        out.push_str("; no charge will occur after it ends.");
-        out
+        format!(
+            "[Cancelled] The free trial for \"{service_name}\" has been cancelled and access ends immediately. No conversion charge will occur."
+        )
     } else {
         let mut out =
             format!("[Auto-Renew Cancelled] Auto-renew for \"{service_name}\" has been cancelled. Current service continues");
@@ -1615,7 +1609,6 @@ mod tests {
             "My Sub",
             "job-1",
             None,
-            None,
         );
         assert!(out.contains(CN_NETWORK_ERROR));
         assert!(out.contains("could not be cancelled"));
@@ -1624,24 +1617,17 @@ mod tests {
     }
 
     #[test]
-    fn sub_cancel_trial_renders_trial_unaffected_copy() {
-        // trialType == 1 (trial cancel) → auto-conversion-cancelled copy with trialEndsAt.
-        let out = sub_cancel_user_notify(
-            Some("success"),
-            None,
-            Some(1),
-            "My Sub",
-            "job-1",
-            Some(1_700_600_000),
-            None,
-        );
+    fn sub_cancel_trial_revokes_trial_copy() {
+        // trialType == 1 (trial cancel) → the trial is revoked immediately.
+        let out = sub_cancel_user_notify(Some("success"), None, Some(1), "My Sub", "job-1", None);
         assert!(out.starts_with("[Cancelled]"));
         assert!(
-            out.contains("Auto-conversion for the \"My Sub\" free trial has been cancelled"),
-            "trial cancel copy: {out}"
+            out.contains(
+                "free trial for \"My Sub\" has been cancelled and access ends immediately"
+            ),
+            "trial cancellation copy: {out}"
         );
-        assert!(out.contains("continues unaffected until"));
-        assert!(out.contains("no charge will occur after it ends"));
+        assert!(out.contains("No conversion charge will occur"));
         assert!(!out.contains("Auto-Renew Cancelled"));
     }
 
@@ -1654,7 +1640,6 @@ mod tests {
             Some(0),
             "My Sub",
             "job-1",
-            None,
             Some(1_700_600_000),
         );
         assert!(out.starts_with("[Auto-Renew Cancelled]"));
@@ -1670,15 +1655,7 @@ mod tests {
     #[test]
     fn sub_cancel_formal_degrades_without_sub_end() {
         // Absent subEndTime → drop the "until <date>" clause but keep the non-terminal copy.
-        let out = sub_cancel_user_notify(
-            Some("success"),
-            None,
-            Some(0),
-            "My Sub",
-            "job-1",
-            None,
-            None,
-        );
+        let out = sub_cancel_user_notify(Some("success"), None, Some(0), "My Sub", "job-1", None);
         assert!(out.starts_with("[Auto-Renew Cancelled]"));
         assert!(!out.contains("continues until"));
         assert!(out.contains("remainder of the current period"));
@@ -1694,7 +1671,6 @@ mod tests {
             None,
             "My Sub",
             "job-1",
-            None,
             Some(1_700_600_000),
         );
         assert!(out.starts_with("[Auto-Renew Cancelled]"));

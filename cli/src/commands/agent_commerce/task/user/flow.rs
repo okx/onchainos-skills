@@ -1371,21 +1371,24 @@ mod tests {
         assert!(failed.contains("refund-prepare"), "{failed}");
         assert!(!failed.contains("session-cleanup"), "{failed}");
         assert!(!failed.contains(TERMINAL_NOTIFICATION_MARKER), "{failed}");
-        // `sub_cancel` only changes future conversion/renewal. Both a trial
-        // (trialType=1) and a formal current period continue, so neither branch
-        // is terminal or carries a cleanup hint.
+        // A successful trial cancellation revokes that trial, while formal
+        // cancellation only disables future renewal.
         let trial_cancel = run(
             "sub_cancel",
             json!({ "event": "sub_cancel", "jobId": JOB_ID, "cancelResult": "success", "trialType": 1 }),
         )
         .await;
         assert!(
-            trial_cancel.contains("continues unaffected"),
+            trial_cancel.contains("access ends immediately"),
             "{trial_cancel}"
         );
         assert!(
-            !trial_cancel.contains("session-cleanup"),
-            "sub_cancel trialType=1 keeps the trial live → NO cleanup hint"
+            trial_cancel.contains(TERMINAL_NOTIFICATION_MARKER),
+            "sub_cancel trialType=1 must be terminal"
+        );
+        assert!(
+            trial_cancel.contains("session-cleanup"),
+            "sub_cancel trialType=1 must clean up its scoped session"
         );
         let formal_cancel = run(
             "sub_cancel",
