@@ -63,6 +63,7 @@ Display rules:
 2. Number records sequentially and preserve the full Job ID.
 3. Preserve CLI order after its response-deadline sort.
 4. Use the CLI-provided service name, task type, amount, and formatted deadline.
+5. When `pendingCount>0`, the final sentence is the only Recommend action. Omit it for an empty list; selecting a request does not approve or dispute it.
 
 ### Evaluation Records
 

@@ -38,8 +38,6 @@ A task status is not a substitute for Refund V2 settlement provenance.
 
 ## Buyer refund tasks
 
-Use [Refund Task List](#refund-task-list) for both query modes:
-
 - `available`: one-time Submitted tasks and Active subscription periods.
 - `requested`: one-time Rejected tasks and Rejected subscription periods.
 
@@ -49,8 +47,9 @@ onchainos agent refund-list --role buyer --scope requested --agent-id <userAgent
 ```
 
 The CLI applies the one-time and subscription status filters and returns one
-display-ready `items` array. Keep the two modes separate when the user requests
-one explicitly.
+display-ready `items` array. Render [Available Refund Tasks](#available-refund-tasks)
+for `available` and [Pending Refund Requests](#pending-refund-requests) for
+`requested`. Keep the two modes separate.
 
 For an `available` selection, run `refund-prepare <jobId>` and render
 [Confirm Refund Request](user/refund-confirm.md#confirm-refund-request). For a
@@ -127,7 +126,7 @@ The templates below are English sources. Reply in the language of the current
 conversation while preserving Job IDs, Agent IDs, amounts, token symbols,
 timestamps, and user-authored reasons exactly.
 
-### Refund Task List
+### Available Refund Tasks
 
 ```markdown
 You have {refundCount} refund tasks:
@@ -144,7 +143,27 @@ Display rules:
 1. Number records sequentially in CLI order.
 2. Show the full Job ID.
 3. Use the CLI-provided task type, amount, and deadline directly.
-4. Use the same table for `available` and `requested` modes.
+4. Use this template only for `scope=available`.
+
+### Pending Refund Requests
+
+```markdown
+You have {pendingCount} pending refund requests:
+
+| # | Service name | Job ID | Task Type | Refund Amount | Result Deadline |
+|---|---|---|---|---|---|
+| {n} | {serviceName} | {jobId} | {taskType} | {refundAmount} | {resultDeadline} |
+
+Reply with the number or Job ID to view details.
+```
+
+Display rules:
+
+1. Use this template only for `scope=requested`.
+2. Number records sequentially in CLI order and preserve every full Job ID.
+3. Use only the CLI-provided Service name, Task Type, Refund Amount, and Result Deadline.
+4. `No refund required` is the authoritative zero-amount label.
+5. When `pendingCount>0`, the final sentence is the only Recommend action. Omit it for an empty list.
 
 ### Refund Request Details
 
@@ -160,6 +179,6 @@ Display rules:
 
 1. Render only fresh values from `payload.display`.
 2. Preserve the full Job ID and the original refund reason.
-3. Omit unavailable optional values instead of inferring them.
-4. End a detail query result after the table.
+3. The CLI must return Service Name, Service Provider, Requested Refund, Reason for Refund, and Result Deadline. A missing value blocks the card; do not infer it.
+4. End after the table. This scene has no Recommend action.
 5. Keep transaction hashes internal.

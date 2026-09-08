@@ -208,7 +208,9 @@ fn arbitration_decision_json(
             .filter(|value| !value.is_empty() && value != "?")
     });
     let mut decision_context = message.cloned().unwrap_or_else(|| serde_json::json!({}));
-    if decision_context.get("expireTime").is_none() {
+    if source_event == crate::commands::agent_commerce::task::arbitration::JOB_REJECTED
+        && decision_context.get("expireTime").is_none()
+    {
         if let Some(expire_time) = prefetched.and_then(|value| value.expire_time) {
             decision_context["expireTime"] = serde_json::Value::Number(expire_time.into());
         }
@@ -639,65 +641,8 @@ pub async fn generate_next_action(
              ⚠️ Do NOT push to the user with `onchainos agent user-notify`.\n"
         ),
 
-        // ─── Subscription Scene: buyer rejected the current period → ASP decides refund/evaluation ──
-        // `sub_user_reject` is a first-class Event (state_machine → SubStatus::Rejected). The ASP
-        // owns this scene per the design doc: push a refund/evaluation decision to the user, mirroring
-        // job_rejected but routing to the SUBSCRIPTION endpoints. ~1-day window before the backend
-        // auto-refunds this period. (Removed from the "not handled in this slice" notify group.)
         Event::SubUserReject => {
-            use crate::commands::agent_commerce::task::common::{pending_v2, template_vars};
-            let to_flag = prefetched
-                .and_then(|p| p.user_agent_id.as_deref())
-                .filter(|s| !s.is_empty())
-                .map(|b| format!(" --to-agent-id {b}"))
-                .unwrap_or_default();
-            let msg_str = |k: &str| -> Option<&str> {
-                message.and_then(|m| m.get(k)).and_then(|v| v.as_str()).filter(|s| !s.is_empty())
-            };
-            let msg_i64 = |k: &str| message.and_then(|m| m.get(k)).and_then(|v| v.as_i64());
-            // Keep the buyer-controlled subscription
-            // title out of the emitted shell. The title appears in TWO visible
-            // fields whose BASE sources differ and must NOT be collapsed:
-            //   * decision copy — `jobTitle` → `title` → `title_display`;
-            //   * list-label    — `title_display` (falls back to the literal `<title>`).
-            // Each field carries its own reserved placeholder; the raw titles travel
-            // only in the shell-safe Base64 `--template-vars-b64` payload and are
-            // substituted in-process by `request-prompt` after clap parse, before any
-            // push. The public `request-prompt` (direct-push) semantic
-            // is preserved — this is NOT changed to `request`.
-            let copy_ph = template_vars::TITLE_PLACEHOLDER;
-            let label_ph = template_vars::LABEL_TITLE_PLACEHOLDER;
-            let copy_title = msg_str("jobTitle").or_else(|| msg_str("title")).unwrap_or(title_display);
-            let title_b64 = pending_v2::encode_title_vars(copy_title, title_display);
-            let decision_copy = super::content::sub_user_reject_asp_decision_copy(
-                copy_ph,
-                msg_i64("subStartTime"),
-                msg_i64("subEndTime"),
-                msg_i64("rejectWindowEndsAt"),
-                msg_str("tokenAmount"),
-                msg_str("tokenSymbol"),
-            );
-            format!(
-            "[Current state] sub_user_reject (the buyer rejected the current subscription period)\n\
-             [Role] ASP (subscription)\n\n\
-             🛑 **Push the refund/evaluation decision via `pending-decisions-v2 request-prompt`** — `onchainos agent user-notify` is one-way (no reply relay); a plain reply doesn't reach the user-session, so either path lets the ~1-day window lapse into an auto-refund.\n\
-             ⚠️ Limited reaction window (about 1 day). Let the USER choose — do NOT decide autonomously; do NOT `okx-a2a session send` the buyer (they just rejected — they know).\n\n\
-             **Step 1 — push the decision to the user**:\n\n\
-             🌐 **Localize first** — translate the content between the markers to the user's language; keep the `A.` / `B.` letters and the `[Decision {short_id}]` label. Do NOT translate, move, or re-inline the reserved `{copy_ph}` / `{label_ph}` tokens or the `--template-vars-b64` value — they are substituted in-process.\n\
-             ```bash\n\
-             onchainos agent pending-decisions-v2 request-prompt \\\n\
-             \x20\x20--job-id {job_id} --role asp --agent-id {agent_id}{to_flag} \\\n\
-             \x20\x20--user-content \"<localized content shown below>\" \\\n\
-             \x20\x20--list-label \"[Decision {short_id}] {label_ph} — refund or evaluation\" \\\n\
-             \x20\x20--source-event sub_user_reject \\\n\
-             \x20\x20--template-vars-b64 \"{title_b64}\"\n\
-             ```\n\
-             content (only the lines between the markers — translate before passing; do NOT include the markers).\n\
-             Canonical copy — ASP-3 subscription rejection decision (localize to the user's language at push time):\n\
-             === BEGIN ===\n\
-             {decision_copy}\n\
-             === END ===\n",
-            )
+            unreachable!("sub_user_reject returns structured progression before this match")
         }
 
         // Legacy subscription pseudo-events use the same bound-decision gate.
@@ -1492,9 +1437,6 @@ fn user_attachment_received_cli(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::agent_commerce::task::common::template_vars::{
-        self, extract_emitted_label_title, extract_emitted_title,
-    };
     use serde_json::json;
 
     // ── reject_expire_time extraction (FR-4) ─────────────────────────────
@@ -1539,7 +1481,10 @@ mod tests {
             "job-1",
             None,
             Some(&prefetched),
-            Some(&json!({"eventId": "event-1"})),
+            Some(&json!({
+                "eventId": "event-1",
+                "refundReason": "The result was incomplete",
+            })),
         );
         let output: serde_json::Value = serde_json::from_str(&output).unwrap();
 
@@ -2182,6 +2127,8 @@ mod tests {
             "sub_user_reject",
             json!({
                 "event": "sub_user_reject", "jobId": ASP_JOB_ID, "jobTitle": "My Sub",
+                "serviceName": "Signal Service",
+                "rejectReason": "Signals were not delivered",
                 "subStartTime": 1_700_000_000, "subEndTime": 1_700_500_000,
                 "rejectWindowEndsAt": 1_700_600_000,
                 "tokenAmount": "0.0005", "tokenSymbol": "USDT"
@@ -2192,7 +2139,13 @@ mod tests {
         assert_eq!(result["phase"], "arbitration_decision");
         assert_eq!(result["decision"], "requires_user_input");
         assert_eq!(result["payload"]["name"], "My Sub");
+        assert_eq!(result["payload"]["serviceName"], "Signal Service");
+        assert_eq!(
+            result["payload"]["refundReason"],
+            "Signals were not delivered"
+        );
         assert_eq!(result["payload"]["amount"], "0.0005");
+        assert!(result["payload"]["userContentB64"].is_string());
         assert_eq!(result["nextAction"][0]["id"], "sub_agree_refund");
         assert_eq!(
             result["nextAction"][1]["id"],
@@ -2213,18 +2166,14 @@ mod tests {
     /// A hostile title payload. In zsh, `${(e)}`
     /// forces eval and `${(#):-96}` yields a backtick, so this reconstructs and
     /// runs `id>&2` IF any byte of it ever reaches a zsh command line. The whole
-    /// point of the hotfix is that it never does — it travels only inside the
-    /// shell-safe Base64 `--template-vars-b64` payload. Kept byte-identical to the
-    /// integration test (`cli/tests/shell_injection_sub_user_reject.rs`).
+    /// point of the protection is that it never does — the full rendered card
+    /// crosses the shell only as Base64. Kept byte-identical to the integration
+    /// test.
     const HOSTILE_ZSH_TITLE: &str = "x${(e):-${(#):-96}id>&2${(#):-96}}";
 
-    // Exercise the ACTUAL `Event::SubUserReject` renderer (not a hand-assembled
-    // command) with the hostile zsh payload, through the production title
-    // extraction path. This closes the composition gap the integration test flags:
-    // the real renderer must emit the placeholder-carrying `request-prompt` with a
-    // single shell-safe Base64 payload, and the raw attacker title must never
-    // appear in the emitted command/playbook while decoding back byte-for-byte
-    // under BOTH whitelisted keys.
+    // Exercise the actual structured renderer with the hostile zsh payload. The
+    // full card is encoded later by the arbitration layer, and no shell command
+    // is emitted here.
     #[tokio::test]
     async fn asp_sub_user_reject_hostile_payload_stays_out_of_shell() {
         // Production (`agent_commerce/mod.rs`) reads ONLY `message.jobTitle` as the
@@ -2233,6 +2182,8 @@ mod tests {
             "event": "sub_user_reject",
             "jobId": ASP_JOB_ID,
             "jobTitle": HOSTILE_ZSH_TITLE,
+            "serviceName": "Signal Service",
+            "rejectReason": "Signals were not delivered",
             "subStartTime": 1_700_000_000,
             "subEndTime": 1_700_500_000,
             "rejectWindowEndsAt": 1_700_600_000,
@@ -2259,207 +2210,50 @@ mod tests {
             result["nextAction"][1]["id"],
             "raise_subscription_arbitration"
         );
+        assert!(result["payload"]["userContentB64"].is_string());
         assert!(!out.contains("pending-decisions-v2"));
         assert!(!out.contains("--template-vars-b64"));
     }
 
-    // Reproduce the EXACT production title extraction from `agent_commerce/mod.rs`
-    // so the precedence cases below are the ones the real caller can actually
-    // produce (title precedence tests must mirror the production
-    // caller"). Production reads ONLY `message.jobTitle`:
-    //   - `mod.rs` `let job_title = msg_str("jobTitle");` — this layer's `msg_str`
-    //     does NOT filter empty strings, so `jobTitle: ""` becomes `Some("")`;
-    //   - `mod.rs` `let title_ref = job_title.as_deref();` is the 4th arg passed to
-    //     `generate_next_action`;
-    //   - `flow.rs` `let title_display = job_title.unwrap_or("<title>");`.
-    // So `title_display` is a pure function of `message.jobTitle`; a test that sets
-    // `title_display` independently of `jobTitle` is an impossible production
-    // combination. This helper returns exactly what production passes as the 4th
-    // arg (the `jobTitle` value, borrow-checked against `message`).
+    // Reproduce the production `message.jobTitle` extraction used by the caller.
     fn production_title_ref(message: &serde_json::Value) -> Option<&str> {
         message.get("jobTitle").and_then(|v| v.as_str())
     }
 
-    // Preserve the base title-source precedence, proven
-    // through the production extraction path. The list-label uses `title_display`
-    // (= `jobTitle` or the literal `<title>`); the decision copy resolves
-    // `jobTitle` → `title` → `title_display`. These two base values are carried as
-    // SEPARATE whitelisted vars, never collapsed, and for each case the base-vs-head
-    // final user-content / list-label are byte-for-byte identical. The four rows are
-    // the complete production precedence table.
+    // The display name comes from the authoritative Service, independently of
+    // the Buyer-authored Job title.
     #[tokio::test]
-    async fn sub_user_reject_title_precedence_preserved_byte_for_byte() {
-        use std::collections::BTreeMap;
-        const SUB_START: i64 = 1_700_000_000;
-        const SUB_END: i64 = 1_700_500_000;
-        const RW: i64 = 1_700_600_000;
+    async fn sub_user_reject_uses_service_name_independently_of_job_title() {
+        let message = json!({
+            "event": "sub_user_reject",
+            "jobId": ASP_JOB_ID,
+            "jobTitle": "Buyer-authored Job title",
+            "serviceName": "Authoritative Service name",
+            "rejectReason": "The current period was not delivered",
+            "subStartTime": 1_700_000_000,
+            "subEndTime": 1_700_500_000,
+            "rejectWindowEndsAt": 1_700_600_000,
+            "tokenAmount": "0.0005",
+            "tokenSymbol": "USDT",
+        });
+        let out = generate_next_action(
+            ASP_JOB_ID,
+            "sub_user_reject",
+            ASP_AGENT_ID,
+            production_title_ref(&message),
+            None,
+            None,
+            Some(&message),
+        )
+        .await;
+        let result: serde_json::Value = serde_json::from_str(&out).unwrap();
 
-        struct Case {
-            name: &'static str,
-            // Only the message fields the production caller reads. `title_display`
-            // and the two expected titles are DERIVED (never hand-set independently).
-            job_title: Option<&'static str>,
-            title: Option<&'static str>,
-            // The P0-checklist expected outcomes, asserted verbatim.
-            expected_title_display: &'static str,
-            expected_copy: &'static str,
-            expected_label: &'static str,
-        }
-        let cases = [
-            // jobTitle=JobT, title=PlainT → title_display JobT / copy JobT / label JobT
-            Case {
-                name: "jobTitle=JobT, title=PlainT",
-                job_title: Some("JobT"),
-                title: Some("PlainT"),
-                expected_title_display: "JobT",
-                expected_copy: "JobT",
-                expected_label: "JobT",
-            },
-            // no jobTitle, title=PlainT → title_display <title> / copy PlainT / label <title>
-            Case {
-                name: "no jobTitle, title=PlainT",
-                job_title: None,
-                title: Some("PlainT"),
-                expected_title_display: "<title>",
-                expected_copy: "PlainT",
-                expected_label: "<title>",
-            },
-            // neither → title_display <title> / copy <title> / label <title>
-            Case {
-                name: "neither",
-                job_title: None,
-                title: None,
-                expected_title_display: "<title>",
-                expected_copy: "<title>",
-                expected_label: "<title>",
-            },
-            // jobTitle="", title="" → title_display "" / copy "" / label ""
-            Case {
-                name: "jobTitle=\"\", title=\"\"",
-                job_title: Some(""),
-                title: Some(""),
-                expected_title_display: "",
-                expected_copy: "",
-                expected_label: "",
-            },
-        ];
-
-        for c in cases {
-            let mut m = serde_json::Map::new();
-            m.insert("event".into(), json!("sub_user_reject"));
-            m.insert("jobId".into(), json!(ASP_JOB_ID));
-            m.insert("subStartTime".into(), json!(SUB_START));
-            m.insert("subEndTime".into(), json!(SUB_END));
-            m.insert("rejectWindowEndsAt".into(), json!(RW));
-            m.insert("tokenAmount".into(), json!("0.0005"));
-            m.insert("tokenSymbol".into(), json!("USDT"));
-            if let Some(jt) = c.job_title {
-                m.insert("jobTitle".into(), json!(jt));
-            }
-            if let Some(t) = c.title {
-                m.insert("title".into(), json!(t));
-            }
-            let msg = serde_json::Value::Object(m);
-
-            // The 4th arg is exactly what the production caller passes (title_ref).
-            let title_ref = production_title_ref(&msg);
-            let out = generate_next_action(
-                ASP_JOB_ID,
-                "sub_user_reject",
-                ASP_AGENT_ID,
-                title_ref,
-                None,
-                None,
-                Some(&msg),
-            )
-            .await;
-
-            let result: serde_json::Value = serde_json::from_str(&out).unwrap();
-            if result.get("phase").is_some() {
-                if c.expected_copy.is_empty() || c.expected_copy == "<title>" {
-                    assert_eq!(result["decision"], "blocked", "[{}]", c.name);
-                    assert_eq!(result["reason"], "missing_required_facts", "[{}]", c.name);
-                } else {
-                    assert_eq!(result["decision"], "requires_user_input", "[{}]", c.name);
-                    assert_eq!(result["payload"]["name"], c.expected_copy, "[{}]", c.name);
-                }
-                continue;
-            }
-
-            // title_display derivation mirrors flow.rs (`job_title.unwrap_or("<title>")`).
-            let title_display = title_ref.unwrap_or("<title>");
-            assert_eq!(
-                title_display, c.expected_title_display,
-                "[{}] production title_display",
-                c.name
-            );
-            let expected_copy = c.expected_copy;
-            let expected_label = c.expected_label;
-
-            // The two base titles are carried independently (never collapsed) and
-            // equal the P0-checklist expectations.
-            assert_eq!(
-                extract_emitted_title(&out),
-                expected_copy,
-                "[{}] decision-copy title var",
-                c.name
-            );
-            assert_eq!(
-                extract_emitted_label_title(&out),
-                expected_label,
-                "[{}] list-label title var",
-                c.name
-            );
-
-            // Base-vs-head final user-content (decision copy) byte-for-byte.
-            let base_copy = crate::commands::agent_commerce::task::asp::content::sub_user_reject_asp_decision_copy(
-                expected_copy,
-                Some(SUB_START),
-                Some(SUB_END),
-                Some(RW),
-                Some("0.0005"),
-                Some("USDT"),
-            );
-            let head_copy_tmpl = crate::commands::agent_commerce::task::asp::content::sub_user_reject_asp_decision_copy(
-                template_vars::TITLE_PLACEHOLDER,
-                Some(SUB_START),
-                Some(SUB_END),
-                Some(RW),
-                Some("0.0005"),
-                Some("USDT"),
-            );
-            let mut copy_vars = BTreeMap::new();
-            copy_vars.insert("__OKX_TASK_TITLE__".to_string(), expected_copy.to_string());
-            let head_copy = template_vars::render_all(&[head_copy_tmpl.as_str()], &copy_vars)
-                .expect("copy renders")
-                .remove(0);
-            assert_eq!(
-                head_copy, base_copy,
-                "[{}] user-content byte-for-byte",
-                c.name
-            );
-
-            // Base-vs-head final list-label byte-for-byte (short_id slot is stable
-            // across base/head, so a fixed sentinel isolates the title substitution).
-            let label_tmpl = format!(
-                "[Decision SID] {} — refund or evaluation",
-                template_vars::LABEL_TITLE_PLACEHOLDER
-            );
-            let mut label_vars = BTreeMap::new();
-            label_vars.insert(
-                "__OKX_TASK_LABEL_TITLE__".to_string(),
-                expected_label.to_string(),
-            );
-            let head_label = template_vars::render_all(&[label_tmpl.as_str()], &label_vars)
-                .expect("label renders")
-                .remove(0);
-            let base_label = format!("[Decision SID] {expected_label} — refund or evaluation");
-            assert_eq!(
-                head_label, base_label,
-                "[{}] list-label byte-for-byte",
-                c.name
-            );
-        }
+        assert_eq!(result["decision"], "requires_user_input");
+        assert_eq!(result["payload"]["name"], "Buyer-authored Job title");
+        assert_eq!(
+            result["payload"]["serviceName"],
+            "Authoritative Service name"
+        );
     }
 
     #[tokio::test]

@@ -17,6 +17,10 @@ const REFUND_EXECUTE: &str =
 const REFUND_CONTRACT: &str =
     include_str!("../../skills/okx-ai/references/shared/refund-contract.md");
 const TASK_QUERY: &str = include_str!("../../skills/okx-ai/references/a2a/task-query.md");
+const PROVIDER_ARBITRATION_QUERY: &str =
+    include_str!("../../skills/okx-ai/references/a2a/provider/arbitration-query.md");
+const PROVIDER_ARBITRATION_DECISION: &str =
+    include_str!("../../skills/okx-ai/references/a2a/provider/arbitration-decision.md");
 const COMPLETION: &str = include_str!("../../skills/okx-ai/references/a2a/completion.md");
 const FEEDBACK: &str = include_str!("../../skills/okx-ai/references/a2a/feedback.md");
 const NOTIFY: &str = include_str!("../../skills/okx-ai/references/a2a/notify.md");
@@ -117,11 +121,28 @@ fn refund_finality_and_display_remain_exact() {
     assert!(REFUND_CONTRACT.contains("A Tx Hash is optional audit metadata"));
     assert!(REFUND_CONFIRM.contains("## Output Templates"));
     assert!(REFUND_CONFIRM.contains("### Confirm Refund Request"));
-    assert!(REFUND_CONFIRM.contains("include your refund reason"));
+    assert!(REFUND_CONFIRM.contains(
+        "If everything is correct, reply “Submit refund request.” and provide your reason."
+    ));
+    assert!(!REFUND_CONFIRM.contains("To make changes"));
     assert!(TASK_QUERY.contains("## Output Templates"));
-    assert!(TASK_QUERY.contains("### Refund Task List"));
+    assert!(TASK_QUERY.contains("### Pending Refund Requests"));
+    assert!(TASK_QUERY.contains("You have {pendingCount} pending refund requests:"));
+    assert!(TASK_QUERY.contains("Reply with the number or Job ID to view details."));
     assert!(TASK_QUERY.contains("### Refund Request Details"));
     assert!(TASK_QUERY.contains("Preserve the full Job ID and the original refund reason"));
+    assert!(TASK_QUERY.contains("This scene has no Recommend action"));
+    assert!(PROVIDER_ARBITRATION_QUERY
+        .contains("You have {pendingCount} refund requests from buyers awaiting your decision:"));
+    assert!(PROVIDER_ARBITRATION_QUERY.contains(
+        "A full refund will be issued automatically if no action is taken by the deadline. Reply with a number or Job ID to view the request."
+    ));
+    assert!(PROVIDER_ARBITRATION_DECISION.contains("### Buyer Refund Request"));
+    assert!(PROVIDER_ARBITRATION_DECISION.contains(
+        "To refund the buyer, reply “Approve refund.” To dispute the request, reply “Request evaluation” and provide your reason."
+    ));
+    assert!(PROVIDER_ARBITRATION_DECISION.contains("--user-content-b64"));
+    assert!(PROVIDER_ARBITRATION_DECISION.contains("--list-label-b64"));
 }
 
 #[test]

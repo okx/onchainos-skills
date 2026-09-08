@@ -115,6 +115,42 @@ fn sort_rows(rows: &mut [(Value, Option<i64>)], role: RefundListRole) {
     }
 }
 
+fn require_display_string(display: &Value, key: &str, job_id: &str) -> Result<()> {
+    if display
+        .get(key)
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        return Ok(());
+    }
+    bail!("refund display for {job_id} is missing {key}")
+}
+
+fn validate_list_display(display: &Value, job_id: &str) -> Result<()> {
+    for key in [
+        "serviceName",
+        "jobId",
+        "taskType",
+        "refundAmount",
+        "resultDeadline",
+    ] {
+        require_display_string(display, key, job_id)?;
+    }
+    Ok(())
+}
+
+fn validate_detail_display(display: &Value, job_id: &str, role: RefundListRole) -> Result<()> {
+    validate_list_display(display, job_id)?;
+    require_display_string(display, "reasonForRefund", job_id)?;
+    if role == RefundListRole::Buyer {
+        require_display_string(display, "serviceProviderName", job_id)?;
+        require_display_string(display, "agentId", job_id)?;
+    } else if display.get("taskType").and_then(Value::as_str) == Some("Subscription") {
+        require_display_string(display, "currentPeriod", job_id)?;
+    }
+    Ok(())
+}
+
 pub async fn handle_refund_list(
     client: &mut TaskApiClient,
     role: RefundListRole,
@@ -131,9 +167,7 @@ pub async fn handle_refund_list(
         "/priapi/v1/aieco/task/my?page={page}&page_size={page_size}&status={}",
         scope.one_time_status()
     );
-    let one_time = client
-        .get_with_identity(&one_time_path, &agent_id)
-        .await?;
+    let one_time = client.get_with_identity(&one_time_path, &agent_id).await?;
     let subscriptions = subscription_ops::fetch_my_subscriptions_snapshot_for_agent_read_only(
         client,
         role.subscription_role(),
@@ -157,6 +191,9 @@ pub async fn handle_refund_list(
         {
             continue;
         }
+        if scope == RefundListScope::Requested {
+            validate_list_display(&item.display, &candidate.job_id)?;
+        }
         rows.push((item.display, item.deadline));
     }
     sort_rows(&mut rows, role);
@@ -169,6 +206,7 @@ pub async fn handle_refund_list(
         "role": role.as_str(),
         "scope": scope.as_str(),
         "total": items.len(),
+        "pendingCount": items.len(),
         "items": items,
     }));
     Ok(())
@@ -189,8 +227,12 @@ pub async fn handle_refund_detail(
     )
     .await?;
     if item.status != 3 {
-        bail!("refund-detail requires a rejected task; current status is {}", item.status);
+        bail!(
+            "refund-detail requires a rejected task; current status is {}",
+            item.status
+        );
     }
+    validate_detail_display(&item.display, job_id, role)?;
     let next_action = if role == RefundListRole::Provider {
         let (refund_action, evaluation_action) = if item.job_type == 1 {
             ("sub_agree_refund", "raise_subscription_arbitration")
@@ -250,5 +292,24 @@ mod tests {
             .map(|candidate| candidate.job_id)
             .collect::<Vec<_>>();
         assert_eq!(ids, vec!["job-one", "same", "job-sub"]);
+    }
+
+    #[test]
+    fn detail_display_fails_closed_when_reason_is_unavailable() {
+        let display = json!({
+            "serviceName": "Audit",
+            "jobId": "job-full-id",
+            "serviceProviderName": "Example ASP",
+            "agentId": "asp-1",
+            "taskType": "One-time",
+            "currentPeriod": null,
+            "refundAmount": "1 USDT",
+            "reasonForRefund": null,
+            "resultDeadline": "2026-09-08 12:00 (UTC+08:00)",
+        });
+        let error = validate_detail_display(&display, "job-full-id", RefundListRole::Buyer)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("reasonForRefund"));
     }
 }
