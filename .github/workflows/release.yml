@@ -175,6 +175,12 @@ jobs:
           fi
           cp "$src" "${BIN_NAME}-${TARGET}"
           chmod +x "${BIN_NAME}-${TARGET}"
+          # Keep GNU-named downloads available while publishing static musl binaries.
+          if echo "$TARGET" | grep -q 'musl'; then
+            gnu_name=$(echo "${BIN_NAME}-${TARGET}" | sed 's/musl/gnu/')
+            cp "${BIN_NAME}-${TARGET}" "$gnu_name"
+            chmod +x "$gnu_name"
+          fi
 
       - name: "Prepare artifact (Windows: rename .exe)"
         if: runner.os == 'Windows'
