@@ -117,7 +117,19 @@ function refreshSkills() {
   for (const [name, source] of desired) {
     const target = path.join(projectSkillsDir, name);
     if (fs.existsSync(target) || fs.lstatSync(target, { throwIfNoEntry: false })) {
-      if (fs.lstatSync(target).isSymbolicLink() && sameFile(target, source)) continue;
+      const stat = fs.lstatSync(target);
+      if (stat.isSymbolicLink()) {
+        if (sameFile(target, source)) continue;
+        const marker = fs.readlinkSync(target);
+        const absolute = path.resolve(path.dirname(target), marker);
+        // Project-owned links can become stale when a skill directory is renamed.
+        // Refresh those links, but never replace a link managed outside this repo.
+        if (absolute.startsWith(`${sourceSkillsDir}${path.sep}`)) {
+          fs.unlinkSync(target);
+          fs.symlinkSync(source, target, "dir");
+          continue;
+        }
+      }
       fail(`refusing to replace existing project skill entry: ${target}`);
     }
     fs.symlinkSync(source, target, "dir");
