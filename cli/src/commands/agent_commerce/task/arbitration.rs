@@ -68,10 +68,10 @@ impl RefundDisplayMetadata {
             .map(str::trim)
             .filter(|value| !value.is_empty())?;
         let amount = amount.map(str::trim).filter(|value| !value.is_empty())?;
-        if !super::user::refund_v2::validate_decimal(amount) {
+        if !super::user::refund::validate_decimal(amount) {
             return None;
         }
-        let token_symbol = if super::user::refund_v2::is_zero_decimal(amount) {
+        let token_symbol = if super::user::refund::is_zero_decimal(amount) {
             token_symbol.map(str::trim).unwrap_or("")
         } else {
             token_symbol
@@ -123,7 +123,7 @@ impl RefundDisplayMetadata {
     }
 
     pub fn refund_amount_label(&self) -> String {
-        if super::user::refund_v2::is_zero_decimal(&self.amount) {
+        if super::user::refund::is_zero_decimal(&self.amount) {
             "No refund required".to_string()
         } else {
             format!("{} {}", self.amount, self.token_symbol)

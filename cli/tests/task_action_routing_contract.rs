@@ -252,7 +252,7 @@ fn notification_and_refund_actions_are_registered() {
     ] {
         assert!(
             USER_ROUTER.contains(&format!("`{action}`")),
-            "missing Refund V2 action {action}"
+            "missing Refund action {action}"
         );
     }
     assert!(ROUTER.contains("payload.schemaVersion=2"));

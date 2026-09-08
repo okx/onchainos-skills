@@ -49,7 +49,7 @@ fn final_refund_notice(
     automatic: bool,
     expected_status: i64,
 ) -> (String, bool) {
-    let verified = super::super::refund_v2::verify_final_refund_event(
+    let verified = super::super::refund::verify_final_refund_event(
         message,
         ctx.prefetched,
         expected_status,
@@ -114,7 +114,7 @@ fn final_refund_notice(
         }
     } else {
         format!(
-            "Refund completion cannot be verified: {}. Do not claim completion from this message; refresh Refund V2 status.",
+            "Refund completion cannot be verified: {}. Do not claim completion from this message; refresh Refund status.",
             verified.unwrap_err()
         )
     };
@@ -192,7 +192,7 @@ fn expired_terminal_result(ctx: &FlowContext<'_>, cause: &str) -> String {
             return notify_and_end(&content);
         }
     };
-    let zero_amount = super::super::refund_v2::is_zero_decimal(detail.token_amount.trim());
+    let zero_amount = super::super::refund::is_zero_decimal(detail.token_amount.trim());
     if trial || zero_amount {
         let no_funds = if trial {
             "This was a trial subscription, so no refundable escrow payment was collected."
@@ -274,8 +274,8 @@ pub(crate) fn job_asp_accept_expire(
     let amount = detail.token_amount.trim();
     let token_symbol = detail.token_symbol.trim();
     let paid_refund_confirmed =
-        super::super::refund_v2::authoritative_refund_settlement_confirmed(detail, 8);
-    let zero_amount = super::super::refund_v2::is_zero_decimal(amount);
+        super::super::refund::authoritative_refund_settlement_confirmed(detail, 8);
+    let zero_amount = super::super::refund::is_zero_decimal(amount);
     if !is_trial && !zero_amount && !paid_refund_confirmed {
         let content = format!(
             "[ASP Acceptance Timeout Detail Incomplete] Job `{}` has fresh buyer-owned Expired(8), but its original payment amount is invalid. Do not substitute caller-provided fields or report a refund amount.",
@@ -343,7 +343,7 @@ pub(crate) fn job_asp_reject_expire(
         token_symbol,
         message_i64(message, "rejectWindowEndsAt"),
         is_subscription,
-        !super::super::refund_v2::is_zero_decimal(amount),
+        !super::super::refund::is_zero_decimal(amount),
     );
     notify_and_end_terminal(&content, &ctx.terminal_session_hint)
 }
@@ -396,7 +396,7 @@ pub(crate) fn job_asp_reject_closed(
             provider_name,
             provider_agent_id,
             &reason,
-            !super::super::refund_v2::is_zero_decimal(amount),
+            !super::super::refund::is_zero_decimal(amount),
         ),
         Some(1) => {
             let trial_type = message_i64(message, "trialType").or(detail.trial_type);
@@ -456,7 +456,7 @@ fn closed_notice(ctx: &FlowContext<'_>, message: Option<&serde_json::Value>) -> 
     let zero_price = ctx
         .prefetched
         .is_some_and(|value| value.job_type == Some(0))
-        && super::super::refund_v2::is_zero_decimal(amount);
+        && super::super::refund::is_zero_decimal(amount);
     if zero_price {
         let content = format!(
             "[Job Closed] {} (`{}`) has been closed. The task price was 0, so no refund was required.",
@@ -479,7 +479,7 @@ pub(crate) async fn submit_expired(ctx: &FlowContext<'_>) -> String {
 }
 
 pub(crate) fn reject_expired(ctx: &FlowContext<'_>) -> String {
-    // Refund V2 makes the ASP-response timeout settlement a backend
+    // Refund makes the ASP-response timeout settlement a backend
     // responsibility. Wait for its backend transaction-result projection.
     let content = super::super::content::reject_expired_user_notify(ctx.job_id);
     notify_and_end(&content)

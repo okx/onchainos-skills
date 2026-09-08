@@ -987,8 +987,8 @@ pub async fn generate_next_action(
             )
         }
 
-        // job_auto_refunded — buyer/backend Refund V2 settlement receipt; not the ASP's concern
-        Event::JobAutoRefunded => "[System notification] job_auto_refunded (buyer/backend Refund V2 settlement receipt; not the ASP's concern)\n\
+        // job_auto_refunded — buyer/backend Refund settlement receipt; not the ASP's concern
+        Event::JobAutoRefunded => "[System notification] job_auto_refunded (buyer/backend Refund settlement receipt; not the ASP's concern)\n\
              [Role] ASP (Agent Service ASP)\n\n\
              Silently ignore; end this turn.\n".to_string(),
 

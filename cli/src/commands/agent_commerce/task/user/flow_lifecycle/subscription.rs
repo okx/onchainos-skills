@@ -83,7 +83,7 @@ fn incomplete_subscription_refund_notice(
          - Service: {}\n\
          - Refund amount: {}\n\
          - Tx Hash: unavailable\n\
-         The subscription lifecycle result or refund cause is incomplete or ambiguous. Do not report the refund as complete; refresh Refund V2 status.",
+         The subscription lifecycle result or refund cause is incomplete or ambiguous. Do not report the refund as complete; refresh Refund status.",
         title,
         ctx.job_id,
         refund_provider(ctx),
@@ -324,7 +324,7 @@ pub(crate) fn sub_asp_agree(ctx: &FlowContext<'_>, message: Option<&serde_json::
     {
         return reason;
     }
-    let Ok(evidence) = super::super::refund_v2::verify_final_refund_event(
+    let Ok(evidence) = super::super::refund::verify_final_refund_event(
         message,
         ctx.prefetched,
         9,
@@ -631,14 +631,14 @@ pub(crate) fn sub_reject_refund_notify(
 ) -> String {
     // The backend owns this timeout refund, so the client never calls
     // claim-auto-refund. The notification is terminal only when the event and
-    // fresh Failed(9) detail carry an authoritative Refund V2 refund result. A
+    // fresh Failed(9) detail carry an authoritative Refund refund result. A
     // transaction hash is optional display metadata once settlement is proven.
     if let Some(reason) =
         subscription_terminal_context_block_reason(ctx, message, "sub_reject_refund_notify")
     {
         return reason;
     }
-    let Ok(evidence) = super::super::refund_v2::verify_final_refund_event(
+    let Ok(evidence) = super::super::refund::verify_final_refund_event(
         message,
         ctx.prefetched,
         9,
@@ -688,13 +688,13 @@ pub(crate) fn sub_failed_notify(
     }
 
     // Failed(9) is shared by refund completion and charge/conversion failure
-    // in the unchanged backend. A durable local Refund V2 request receipt wins
+    // in the unchanged backend. A durable local Refund request receipt wins
     // over the generic event label, but the absence of that receipt does not
     // prove the opposite cause: caller-provided inbound events have no trusted
     // system provenance. Both branches therefore remain read-only.
     if detail.refund_request_provenance {
         let content = format!(
-            "{}\n\n[Refund reconciliation pending] This device has a durable Refund V2 request receipt for the subscription, so `sub_failed_notify` cannot be treated as a generic charge failure. Do not report either refund completion or charge failure from this event. Run `onchainos agent refund-prepare {}` and follow its returned status/watch action.",
+            "{}\n\n[Refund reconciliation pending] This device has a durable Refund request receipt for the subscription, so `sub_failed_notify` cannot be treated as a generic charge failure. Do not report either refund completion or charge failure from this event. Run `onchainos agent refund-prepare {}` and follow its returned status/watch action.",
             incomplete_subscription_refund_notice(ctx, message),
             ctx.job_id,
         );

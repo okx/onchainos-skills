@@ -283,7 +283,7 @@ Separate user-initiated intent (`outstanding decisions` / `pending decisions` / 
   For refund-related notifications, dispatch the structured result and apply
   [`../a2a/refund-reconcile.md`](../a2a/refund-reconcile.md). Event names and human-readable
   headings are never stop signals by themselves. Only a leading terminal marker
-  produced after the fresh Refund V2 gate stops a scoped watch; incomplete or
+  produced after the fresh Refund gate stops a scoped watch; incomplete or
   ambiguous results produce no marker and must re-enter.
   - **Global session** (no `--job-id`) does NOT apply this stop — other tasks may still produce new events. See §"NOT stop conditions" below.
 
@@ -300,7 +300,7 @@ After processing all returned items, **always** call `okx-a2a user watch --json`
 - **Mid-flow markers that look terminal but are NOT** — these are intermediate notifications; keep watching even in scoped session. Common offenders:
   - `[Deliverable Received]` / `[x402 Deliverable Received]` — a deliverable or settled endpoint response is available, but the task has not reached a terminal marker; the x402 terminal marker is `[x402 Job Completed]`.
   - `[Job Expired]` / `[ASP Acceptance Expired]` / `[Auto-Refund Processing]`
-    without a generated terminal marker — dispatch must fresh-read Refund V2.
+    without a generated terminal marker — dispatch must fresh-read Refund.
     Follow only its returned result; no Buyer claim/finalize action exists.
   - `job_closed` or another refund-result event without a generated terminal
     marker — apply [`../a2a/refund-reconcile.md`](../a2a/refund-reconcile.md), then re-enter if

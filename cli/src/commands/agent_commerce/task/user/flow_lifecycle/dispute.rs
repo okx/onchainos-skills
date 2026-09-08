@@ -143,7 +143,7 @@ pub(crate) fn dispute_resolved(
     }
     let refund_evidence = user_won
         .then(|| {
-            super::super::refund_v2::verify_final_refund_event(message, Some(p), 9, ctx.agent_id)
+            super::super::refund::verify_final_refund_event(message, Some(p), 9, ctx.agent_id)
         })
         .and_then(Result::ok);
     if user_won && refund_evidence.is_none() {

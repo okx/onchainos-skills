@@ -1,7 +1,7 @@
 # Buyer Refund Preparation
 
 Use this leaf to resolve one Buyer-owned refund target and obtain a fresh,
-read-only Refund V2 result. Cancellation changes future renewal; a refund
+read-only Refund result. Cancellation changes future renewal; a refund
 returns the applicable original payment.
 
 Resolve exactly one Job ID from the request or a fresh refund-task list. Run:

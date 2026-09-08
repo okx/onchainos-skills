@@ -1,6 +1,6 @@
 # Buyer Refund Confirmation
 
-Use this leaf only for a fresh Refund V2 confirmation flow.
+Use this leaf only for a fresh Refund confirmation flow.
 
 ## Delivered-task rejection
 
@@ -18,7 +18,7 @@ Analyze the reply for both the submission intent and a refund reason.
 - When the reply contains clear submission intent and a non-blank reason,
   preserve the reason verbatim and continue immediately.
 - When the reply contains clear submission intent without a reason, ask only
-  for the refund reason and keep the Job ID and latest Refund V2 context active.
+  for the refund reason and keep the Job ID and latest Refund context active.
 - During that reason follow-up, treat the next non-blank user-authored reply as
   the reason and preserve it verbatim.
 

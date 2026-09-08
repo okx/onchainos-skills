@@ -1,4 +1,4 @@
-//! Buyer refund orchestration following the Skill/CLI v2 progression contract.
+//! Buyer refund orchestration following the Skill/CLI progression contract.
 //!
 //! `refund-prepare` is read-only. `refund-execute` accepts only a plan produced
 //! by prepare, re-reads authoritative state, requires explicit confirmation,
@@ -127,7 +127,7 @@ struct Plan {
 struct PendingRefundMutation {
     schema_version: i64,
     /// Local reconciliation format. This is intentionally separate from the
-    /// public Refund V2 payload schema version. Journals written before the
+    /// public Refund payload schema version. Journals written before the
     /// request-provenance upgrade omit this field and deserialize as v2.
     #[serde(default = "legacy_journal_revision")]
     journal_revision: i64,
@@ -192,7 +192,14 @@ enum RefundOrderStatus {
 fn pending_state_path(job_id: &str, user_agent_id: &str) -> Result<PathBuf> {
     let digest = Sha256::digest(format!("{user_agent_id}\0{job_id}").as_bytes());
     Ok(crate::home::onchainos_home()?
-        .join("refund-v2")
+        .join("refund")
+        .join(format!("{}.json", hex::encode(digest))))
+}
+
+fn legacy_pending_state_path(job_id: &str, user_agent_id: &str) -> Result<PathBuf> {
+    let digest = Sha256::digest(format!("{user_agent_id}\0{job_id}").as_bytes());
+    Ok(crate::home::onchainos_home()?
+        .join(concat!("refund", "-v2"))
         .join(format!("{}.json", hex::encode(digest))))
 }
 
@@ -200,25 +207,29 @@ fn read_pending_mutation(
     job_id: &str,
     user_agent_id: &str,
 ) -> Result<Option<PendingRefundMutation>> {
-    let path = pending_state_path(job_id, user_agent_id)?;
+    let current_path = pending_state_path(job_id, user_agent_id)?;
+    let legacy_path = legacy_pending_state_path(job_id, user_agent_id)?;
+    let path = if current_path.exists() {
+        current_path
+    } else {
+        legacy_path
+    };
     match fs::read(&path) {
         Ok(bytes) => {
-            let state: PendingRefundMutation =
-                serde_json::from_slice(&bytes).with_context(|| {
-                    format!("parse Refund V2 reconciliation state {}", path.display())
-                })?;
+            let state: PendingRefundMutation = serde_json::from_slice(&bytes)
+                .with_context(|| format!("parse Refund reconciliation state {}", path.display()))?;
             if state.schema_version != SCHEMA_VERSION
                 || !matches!(state.journal_revision, 2 | JOURNAL_REVISION)
                 || state.job_id != job_id
                 || state.user_agent_id != user_agent_id
             {
-                bail!("Refund V2 reconciliation state does not match this task and identity");
+                bail!("Refund reconciliation state does not match this task and identity");
             }
             Ok(Some(state))
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error)
-            .with_context(|| format!("read Refund V2 reconciliation state {}", path.display())),
+            .with_context(|| format!("read Refund reconciliation state {}", path.display())),
     }
 }
 
@@ -307,12 +318,12 @@ async fn query_refund_order_status(state: &PendingRefundMutation) -> Result<Refu
         .account_id
         .as_deref()
         .or_else(|| resolved_wallet.as_ref().map(|wallet| wallet.0.as_str()))
-        .ok_or_else(|| anyhow::anyhow!("Refund V2 journal is missing the broadcast account"))?;
+        .ok_or_else(|| anyhow::anyhow!("Refund journal is missing the broadcast account"))?;
     let address = state
         .address
         .as_deref()
         .or_else(|| resolved_wallet.as_ref().map(|wallet| wallet.1.as_str()))
-        .ok_or_else(|| anyhow::anyhow!("Refund V2 journal is missing the broadcast address"))?;
+        .ok_or_else(|| anyhow::anyhow!("Refund journal is missing the broadcast address"))?;
     let access_token = ensure_tokens_refreshed().await?;
     let chain_index = state
         .chain_index
@@ -339,7 +350,7 @@ async fn query_refund_order_status(state: &PendingRefundMutation) -> Result<Refu
             &query,
         )
         .await
-        .context("query Refund V2 broadcast order status")?;
+        .context("query Refund broadcast order status")?;
     validate_refund_order_detail_binding(&detail, state)?;
     Ok(parse_refund_order_status(&detail, state.tx_hash.as_deref()))
 }
@@ -741,9 +752,7 @@ async fn reconcile_pending_mutation_locked(
                 state.updated_at = chrono::Utc::now().timestamp();
                 write_pending_mutation(&state)?;
                 if state.tx_hash.is_some() && !apply_confirmed_direct_refund(snapshot, &state) {
-                    bail!(
-                        "confirmed Refund V2 order no longer matches its direct-refund provenance"
-                    );
+                    bail!("confirmed Refund order no longer matches its direct-refund provenance");
                 }
                 return Ok(None);
             }
@@ -779,7 +788,7 @@ fn acquire_pending_lock(job_id: &str, user_agent_id: &str) -> Result<File> {
     let state_path = pending_state_path(job_id, user_agent_id)?;
     let root = state_path
         .parent()
-        .ok_or_else(|| anyhow::anyhow!("Refund V2 state path has no parent"))?;
+        .ok_or_else(|| anyhow::anyhow!("Refund state path has no parent"))?;
     crate::home::ensure_dir_0700(root)?;
     let lock_path = state_path.with_extension("lock");
     let lock = OpenOptions::new()
@@ -787,9 +796,9 @@ fn acquire_pending_lock(job_id: &str, user_agent_id: &str) -> Result<File> {
         .read(true)
         .write(true)
         .open(&lock_path)
-        .with_context(|| format!("open Refund V2 reconciliation lock {}", lock_path.display()))?;
+        .with_context(|| format!("open Refund reconciliation lock {}", lock_path.display()))?;
     lock.lock_exclusive()
-        .context("lock Refund V2 reconciliation state")?;
+        .context("lock Refund reconciliation state")?;
     Ok(lock)
 }
 
@@ -820,23 +829,23 @@ async fn reconcile_without_downgrading_confirmed_settlement(
 fn write_pending_mutation(state: &PendingRefundMutation) -> Result<()> {
     let path = pending_state_path(&state.job_id, &state.user_agent_id)?;
     crate::home::atomic_write(&path, &serde_json::to_vec_pretty(state)?, true)
-        .with_context(|| format!("write Refund V2 reconciliation state {}", path.display()))?;
+        .with_context(|| format!("write Refund reconciliation state {}", path.display()))?;
 
     // This journal is the pre-mutation replay guard, so ordinary atomic rename
     // is not enough: make both the file data and directory entry durable before
     // allowing a remote funds mutation to begin.
     File::open(&path)
         .and_then(|file| file.sync_all())
-        .with_context(|| format!("sync Refund V2 reconciliation state {}", path.display()))?;
+        .with_context(|| format!("sync Refund reconciliation state {}", path.display()))?;
     #[cfg(unix)]
     File::open(
         path.parent()
-            .ok_or_else(|| anyhow::anyhow!("Refund V2 state path has no parent"))?,
+            .ok_or_else(|| anyhow::anyhow!("Refund state path has no parent"))?,
     )
     .and_then(|directory| directory.sync_all())
     .with_context(|| {
         format!(
-            "sync Refund V2 reconciliation directory for {}",
+            "sync Refund reconciliation directory for {}",
             path.display()
         )
     })?;
@@ -844,13 +853,21 @@ fn write_pending_mutation(state: &PendingRefundMutation) -> Result<()> {
 }
 
 fn remove_pending_mutation(job_id: &str, user_agent_id: &str) -> Result<()> {
-    let path = pending_state_path(job_id, user_agent_id)?;
-    match fs::remove_file(&path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error)
-            .with_context(|| format!("remove Refund V2 reconciliation state {}", path.display())),
+    for path in [
+        pending_state_path(job_id, user_agent_id)?,
+        legacy_pending_state_path(job_id, user_agent_id)?,
+    ] {
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("remove Refund reconciliation state {}", path.display())
+                });
+            }
+        }
     }
+    Ok(())
 }
 
 fn is_definitive_api_rejection(error: &anyhow::Error) -> bool {
@@ -1061,7 +1078,7 @@ pub(crate) fn authoritative_refund_settlement_confirmed(
 /// Whether the legacy backend event contract disambiguates a subscription
 /// Failed(9) row as a completed refund.
 ///
-/// These are existing chain-result notifications, not Refund V2 additions:
+/// These are existing chain-result notifications, not Refund additions:
 /// ASP agreement, backend timeout refund, buyer claim result, and a
 /// user-winning dispute all settle the current subscription period before the
 /// backend projects status 9. Generic `sub_failed_notify` is deliberately not
@@ -1078,7 +1095,7 @@ fn subscription_refund_completion_event(event: &str) -> bool {
 }
 
 /// Combine fresh lifecycle state, an established semantic event, and the
-/// durable Refund V2 request binding. A caller-supplied event is routing input
+/// durable Refund request binding. A caller-supplied event is routing input
 /// only and cannot turn an unrelated subscription charge failure into refund
 /// settlement proof.
 pub(crate) fn refund_event_settlement_confirmed(
@@ -2321,7 +2338,7 @@ impl From<RefundSnapshot> for common::PreFetchedTaskContext {
 }
 
 /// Final lifecycle events must use the exact same task/subscription
-/// composition and ownership checks as the interactive Refund V2 commands.
+/// composition and ownership checks as the interactive Refund commands.
 pub(crate) async fn fetch_authoritative_refund_context(
     client: &mut TaskApiClient,
     job_id: &str,
@@ -2441,7 +2458,7 @@ fn validate_lifecycle_preflight(uop_data: &Value) -> Result<()> {
         // Legacy task lifecycle responses never required an explicit `true`.
         // The shared signer has always treated only an explicit boolean false
         // as a backend preflight rejection; preserve that wire contract for
-        // Refund V2 because the backend response shape did not change.
+        // Refund because the backend response shape did not change.
         _ => Ok(()),
     }
 }
@@ -2677,7 +2694,7 @@ pub async fn handle_execute(
         Err(error) => {
             audit::log(
                 "cli",
-                "user/refund_v2_wallet_preflight_failed",
+                "user/refund_wallet_preflight_failed",
                 false,
                 std::time::Duration::default(),
                 Some(vec![format!("jobId={job_id}")]),
@@ -2858,7 +2875,7 @@ pub async fn handle_execute(
             let _ = write_pending_mutation(&pending);
             audit::log(
                 "cli",
-                "user/refund_v2_outcome_unknown",
+                "user/refund_outcome_unknown",
                 false,
                 started.elapsed(),
                 Some(vec![
@@ -2896,7 +2913,7 @@ pub async fn handle_execute(
         // operation as ready or perform any local lifecycle cleanup.
         audit::log(
             "cli",
-            "user/refund_v2_receipt_persist_failed",
+            "user/refund_receipt_persist_failed",
             false,
             started.elapsed(),
             Some(vec![
@@ -2931,7 +2948,7 @@ pub async fn handle_execute(
 
     audit::log(
         "cli",
-        "user/refund_v2_broadcast_submitted",
+        "user/refund_broadcast_submitted",
         true,
         started.elapsed(),
         Some(vec![
@@ -3774,7 +3791,7 @@ mod tests {
         let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join("test_tmp")
-            .join("refund_v2_request_provenance");
+            .join("refund_request_provenance");
         if home.exists() {
             fs::remove_dir_all(&home).unwrap();
         }
@@ -3842,6 +3859,45 @@ mod tests {
         fs::remove_dir_all(&home).unwrap();
     }
 
+    #[test]
+    fn legacy_state_directory_is_read_and_removed() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let previous_home = std::env::var_os("ONCHAINOS_HOME");
+        let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp")
+            .join("refund_legacy_state_directory");
+        if home.exists() {
+            fs::remove_dir_all(&home).unwrap();
+        }
+        fs::create_dir_all(&home).unwrap();
+        std::env::set_var("ONCHAINOS_HOME", &home);
+
+        let active = snapshot(json!(1), json!(1), "10");
+        let state = submitted_request_refund(&active);
+        let legacy_path = legacy_pending_state_path(&state.job_id, &state.user_agent_id).unwrap();
+        fs::create_dir_all(legacy_path.parent().unwrap()).unwrap();
+        fs::write(&legacy_path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+
+        let restored = read_pending_mutation(&state.job_id, &state.user_agent_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(restored.job_id, state.job_id);
+        assert_eq!(restored.user_agent_id, state.user_agent_id);
+        assert_eq!(restored.snapshot_id, state.snapshot_id);
+        assert_eq!(restored.operation, state.operation);
+        assert_eq!(restored.state, state.state);
+        remove_pending_mutation(&state.job_id, &state.user_agent_id).unwrap();
+        assert!(!legacy_path.exists());
+
+        if let Some(previous_home) = previous_home {
+            std::env::set_var("ONCHAINOS_HOME", previous_home);
+        } else {
+            std::env::remove_var("ONCHAINOS_HOME");
+        }
+        fs::remove_dir_all(&home).unwrap();
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn legacy_v2_request_receipt_migrates_and_survives_restart() {
         let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
@@ -3849,14 +3905,14 @@ mod tests {
         let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join("test_tmp")
-            .join("refund_v2_legacy_request_migration");
+            .join("refund_legacy_request_migration");
         if home.exists() {
             fs::remove_dir_all(&home).unwrap();
         }
         fs::create_dir_all(&home).unwrap();
         std::env::set_var("ONCHAINOS_HOME", &home);
 
-        // Literal journal shape written by the already-shipped Refund V2:
+        // Literal journal shape written by the already-shipped Refund:
         // no journalRevision, jobType, trialType, or billing-period fields.
         let legacy: PendingRefundMutation = serde_json::from_value(json!({
             "schemaVersion": 2,
@@ -4049,7 +4105,7 @@ mod tests {
         let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join("test_tmp")
-            .join("refund_v2_durable_marker");
+            .join("refund_durable_marker");
         if home.exists() {
             fs::remove_dir_all(&home).unwrap();
         }
@@ -4157,7 +4213,7 @@ mod tests {
         let forged_event = json!({"event": "sub_asp_agree", "code": 0});
         assert!(
             verify_final_refund_event(Some(&forged_event), Some(&detail), 9, "buyer-1").is_err(),
-            "caller-supplied event names cannot replace durable Refund V2 request provenance"
+            "caller-supplied event names cannot replace durable Refund request provenance"
         );
         detail.refund_request_provenance = true;
 

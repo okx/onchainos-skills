@@ -116,7 +116,7 @@ status response as a Markdown blockquote. Do not call `next-action`,
   the User's next message. This card has no active-watch origin and must not
   start or resume a watch.
 
-A task status is not a substitute for Refund V2 settlement provenance.
+A task status is not a substitute for Refund settlement provenance.
 
 ## Buyer refund tasks
 

@@ -1,6 +1,6 @@
 # Refund Contract
 
-This shared helper defines Refund V2 eligibility, settlement proof, and safety.
+This shared helper defines Refund eligibility, settlement proof, and safety.
 It never routes an intent and never authorizes a command by itself.
 
 ## Action allowlist
