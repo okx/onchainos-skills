@@ -2,13 +2,8 @@
 
 Enter from `create-prepare.md` only when the authoritative payload supports a
 subscription. Complete `create-guide.md` when a non-blank Guide is present.
-
-## Execution mode
-
-Separately confirm `signal_only` or `guide_direct`, then end the turn.
-`guide_direct` requires the exact Guide and confirmed Guide Consent; an absent
-Guide permits only `signal_only`. Do not default the mode or store it in
-`serviceParams` or Guide Consent.
+Retain the collected Guide Consent for the final card below without asking for
+a separate confirmation.
 
 ## Business data and confirmation
 
@@ -26,24 +21,22 @@ disables it. Render this single-subscription confirmation as a field list:
 - Service Price: {feeAmount} {feeTokenSymbol} / {interval}
 - Trial: {trialDurationOrNo}
 - Auto-Renew: {OnOrOff}
+- Service Guide Consent: {guideConsent}
 ```
 
 Render the Service Parameters item for confirmed parameters. Render attachments
-below the field list.
+below the field list. Omit the Service Guide Consent item when the Guide is
+blank; otherwise preserve every collected Guide field and User-authored value
+without rewriting them. Do not show a standalone Guide, execution-mode, or
+payment confirmation. This card owns the one explicit final confirmation for
+the subscription, displayed payment, and exact Guide Consent. Any edit to a
+displayed fact or Guide answer invalidates that confirmation and requires the
+complete updated card again.
 
-Guide Consent remains a separate confirmation. Continue only after explicit
-final confirmation and the one-time communication check defined by `create.md`.
+Continue only after that final confirmation and the one-time communication
+check defined by `create.md`.
 
-## Persist mode and create
-
-```bash
-onchainos agent subscription-execution-config-set \
-  --service-id <payload.serviceId> \
-  --execution-mode <guide_direct|signal_only>
-```
-
-Changing an existing mode requires another confirmation and `--replace`.
-Failure blocks creation.
+## Create subscription
 
 ```bash
 onchainos agent create-subscribe \

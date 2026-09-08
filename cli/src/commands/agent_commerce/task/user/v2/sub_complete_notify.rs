@@ -1,6 +1,6 @@
 use crate::commands::agent_commerce::task::common::{
-    deliverables, network::task_api_client::TaskApiClient, onchainos_self, session_cleanup,
-    util::validate_job_id, PreFetchedTaskContext, DEBUG_LOG,
+    deliverables, has_same_agent_owner, network::task_api_client::TaskApiClient, onchainos_self,
+    session_cleanup, util::validate_job_id, PreFetchedTaskContext, DEBUG_LOG,
 };
 
 const MAX_SAMPLE_DELIVERABLES: usize = 5;
@@ -42,9 +42,14 @@ pub(crate) async fn handle(
         );
     }
     let task = PreFetchedTaskContext::from_api_response(&response);
-    let notification = completion_notification(job_id, &task);
+    let human_rating_allowed = can_rate_subscription(&response, &task);
+    let notification = completion_notification(job_id, &task, human_rating_allowed);
 
-    let rating = build_rating_payload(agent_id, job_id, &task);
+    let rating = if human_rating_allowed {
+        build_rating_payload(agent_id, job_id, &task)
+    } else {
+        serde_json::json!({ "required": false })
+    };
     success_result(job_id, task_title(&task), &notification, rating)
 }
 
@@ -56,7 +61,10 @@ fn success_result(
 ) -> serde_json::Value {
     let mut payload = serde_json::json!({
         "jobId": job_id,
-        "notification": notification,
+        "notification": {
+            "content": notification,
+            "localize": true,
+        },
         "rating": rating,
     });
     if rating["required"].as_bool() == Some(true) {
@@ -101,8 +109,17 @@ fn blocked_result(reason: &str, job_id: Option<&str>, error: Option<&str>) -> se
     })
 }
 
-fn completion_notification(job_id: &str, task: &PreFetchedTaskContext) -> String {
-    super::super::content::sub_complete_notify_user_notify(task_title(task), job_id, None)
+fn completion_notification(
+    job_id: &str,
+    task: &PreFetchedTaskContext,
+    include_rating_invitation: bool,
+) -> String {
+    super::super::content::sub_complete_notify_user_notify(
+        task_title(task),
+        job_id,
+        None,
+        include_rating_invitation,
+    )
 }
 
 fn task_title(task: &PreFetchedTaskContext) -> &str {
@@ -111,6 +128,14 @@ fn task_title(task: &PreFetchedTaskContext) -> &str {
     } else {
         task.title.as_str()
     }
+}
+
+fn can_rate_subscription(response: &serde_json::Value, task: &PreFetchedTaskContext) -> bool {
+    !has_same_agent_owner(response)
+        && task
+            .provider_agent_id
+            .as_deref()
+            .is_some_and(|value| !value.is_empty())
 }
 
 fn build_rating_payload(
@@ -283,7 +308,7 @@ mod tests {
             "providerAgentId": "provider-1",
         }));
 
-        let notification = completion_notification("job-1", &task);
+        let notification = completion_notification("job-1", &task, true);
         let rating = rating_payload(
             "provider-1",
             "user-1",
@@ -295,6 +320,21 @@ mod tests {
         assert!(notification.contains("Detail title"));
         assert!(notification.contains("reply \"Rate job\""));
         assert_eq!(rating["taskDescription"], "Detail description");
+    }
+
+    #[test]
+    fn same_owner_subscription_omits_rating_invitation() {
+        let response = serde_json::json!({
+            "jobId": "job-1",
+            "title": "Weekly report",
+            "buyerAgentAddress": "0xAbC",
+            "providerAgentAddress": "0xabc",
+            "providerAgentId": "provider-1",
+        });
+        let task = PreFetchedTaskContext::from_api_response(&response);
+
+        assert!(!can_rate_subscription(&response, &task));
+        assert!(!completion_notification("job-1", &task, false).contains("Rate job"));
     }
 
     #[test]
@@ -311,7 +351,8 @@ mod tests {
         assert_eq!(output["reason"], "notification_required");
         assert_eq!(output["nextAction"][0]["id"], "finalize_user_subscription");
         assert_eq!(output["payload"]["jobId"], "job-1");
-        assert_eq!(output["payload"]["notification"], "Completed");
+        assert_eq!(output["payload"]["notification"]["content"], "Completed");
+        assert_eq!(output["payload"]["notification"]["localize"], true);
         assert_eq!(output["payload"]["rating"]["required"], false);
         assert!(output["payload"].get("ratingResultNotification").is_none());
         assert!(output["payload"].get("cleanup").is_none());

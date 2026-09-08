@@ -37,7 +37,7 @@ display template:
 - Fee: {feeAmount} {feeTokenSymbol}
 - Service Parameters: {serviceParams}
 
-To create this job, reply “Confirm”. To cancel, reply “Cancel”.
+To create this job, reply “Confirm”.
 ```
 
 display rules:
@@ -49,6 +49,10 @@ display rules:
 5. Render attachments below the field list.
 6. Keep Guide Consent in its separate confirmation.
 7. `Confirm` is the explicit final confirmation for only the current complete card. Apply edits and render the whole confirmation again.
+8. Keep the confirmation vertical: render exactly one field per bullet line and
+   never combine fields into a horizontal table or inline prose.
+9. Guide only the `Confirm` action. Do not add a `Cancel` action or cancellation
+   instruction to the confirmation copy.
 
 ## Communication check
 

@@ -85,7 +85,7 @@ fn result_from_task_detail(
         "payload": {
             "jobId": job_id,
             "notification": {
-                "content": completion_notification(job_id, &task),
+                "content": completion_notification(job_id, &task, rating_required),
                 "localize": true,
             },
             "ratingResultNotification": rating_notification(job_id, &task),
@@ -112,14 +112,25 @@ fn blocked_result(job_id: &str, reason: &str) -> String {
     .to_string()
 }
 
-fn completion_notification(job_id: &str, task: &PreFetchedTaskContext) -> String {
-    format!(
-        "{TERMINAL_NOTIFICATION_MARKER} [💰 Job Completed] Job {job_id} ({}) — approved by the User Agent; funds received.\n      - Income: {} {}\n      - User Agent: {}\n    \n    This job is complete.\n\n    To rate the User Agent, reply \"Rate User Agent\". Your rating for Job ID `{job_id}` replaces the AI-generated rating.",
+fn completion_notification(
+    job_id: &str,
+    task: &PreFetchedTaskContext,
+    include_rating_invitation: bool,
+) -> String {
+    let content = format!(
+        "{TERMINAL_NOTIFICATION_MARKER} [💰 Job Completed] Job {job_id} ({}) — approved by the User Agent; funds received.\n      - Income: {} {}\n      - User Agent: {}\n    \n    This job is complete.",
         title(task),
         task.token_amount,
         task.token_symbol,
         task.user_agent_id.as_deref().unwrap_or_default(),
-    )
+    );
+    if include_rating_invitation {
+        format!(
+            "{content}\n\n    To rate the User Agent, reply \"Rate User Agent\". Your rating for Job ID `{job_id}` replaces the AI-generated rating."
+        )
+    } else {
+        content
+    }
 }
 
 fn rating_notification(job_id: &str, task: &PreFetchedTaskContext) -> String {
@@ -220,6 +231,10 @@ mod tests {
             .as_str()
             .unwrap()
             .starts_with(TERMINAL_NOTIFICATION_MARKER));
+        assert!(!output["payload"]["notification"]["content"]
+            .as_str()
+            .unwrap()
+            .contains("Rate User Agent"));
     }
 
     #[test]

@@ -78,6 +78,10 @@ fn unknown_system_events_stop_before_cli_dispatch() {
 #[test]
 fn create_confirmation_excludes_execution_configuration() {
     let create = CREATE.split_whitespace().collect::<Vec<_>>().join(" ");
+    let subscription_create = SUBSCRIPTION_CREATE
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     for forbidden in [
         "| Signal Execution |",
         "| Per-Signal Amount |",
@@ -89,14 +93,27 @@ fn create_confirmation_excludes_execution_configuration() {
     assert!(CREATE.contains("- Job Name: {title}"));
     assert!(!CREATE.contains("| Job Name | Job Description |"));
     assert!(SUBSCRIPTION_CREATE.contains("- Task Name: {title}"));
+    assert!(SUBSCRIPTION_CREATE.contains("- Service Guide Consent: {guideConsent}"));
     assert!(!SUBSCRIPTION_CREATE.contains("| Field | Value |"));
+    assert!(subscription_create.contains("without asking for a separate confirmation"));
+    assert!(subscription_create.contains("one explicit final confirmation"));
+    assert!(!SUBSCRIPTION_CREATE.contains("Guide Consent remains a separate confirmation"));
+    assert!(!SUBSCRIPTION_CREATE.contains("subscription-execution-config-set"));
     let subscription_detail = SUBSCRIPTION_QUERY.split_once("## Detail").unwrap().1;
     assert!(subscription_detail.contains("- Job ID: {jobId}"));
     assert!(subscription_detail.contains("- Status: {localizedStatusLabel}"));
     assert!(subscription_detail.contains("- Status Description: {localizedStatusDescription}"));
-    assert!(SUBSCRIPTION_QUERY.contains("`Refund completed`, respectively"));
+    assert!(SUBSCRIPTION_QUERY.contains("use `Refund completed`"));
     assert!(!subscription_detail.contains("| Job Name |"));
     assert!(create.contains("Keep Guide Consent in its separate confirmation"));
+}
+
+#[test]
+fn one_time_creation_confirmation_is_vertical_and_confirm_only() {
+    assert!(CREATE.contains("render exactly one field per bullet line"));
+    assert!(CREATE.contains("To create this job, reply “Confirm”."));
+    assert!(!CREATE.contains("To cancel, reply “Cancel”."));
+    assert!(CREATE.contains("Do not add a `Cancel` action"));
 }
 
 #[test]
@@ -106,16 +123,21 @@ fn refund_reason_and_write_are_freshly_bound() {
         .collect::<Vec<_>>()
         .join(" ")
         .to_ascii_lowercase();
+    let refund_execute = REFUND_EXECUTE
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     for expected in ["user-authored", "non-blank", "preserve", "verbatim"] {
         assert!(confirmation.contains(expected));
     }
     assert!(confirmation.contains("after both submission intent and the reason are present"));
-    assert!(REFUND_PREPARE.contains("read-only Refund V2 result"));
+    assert!(REFUND_PREPARE.contains("read-only Refund result"));
     assert!(REFUND_CONFIRM.contains("submit_refund_request"));
     assert!(REFUND_EXECUTE.contains("refund-execute JOB_ID_ARG"));
     assert!(REFUND_EXECUTE.contains("--refund-context-id"));
     assert!(REFUND_EXECUTE.contains("--confirm"));
-    assert!(REFUND_EXECUTE.contains("您可以让我查看指定任务详情，获取退款处理结果。"));
+    assert!(refund_execute
+        .contains("may ask me to view the selected task's details for the refund result."));
     assert!(REFUND_EXECUTE.contains("Do not\nrender a CLI command"));
     assert!(!REFUND_EXECUTE.contains("onchainos agent status <jobId>"));
     assert!(REFUND_CONFIRM

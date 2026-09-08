@@ -82,7 +82,7 @@ fn result_from_task_detail(
         "payload": {
             "jobId": job_id,
             "notification": {
-                "content": completion_notification(job_id, &task),
+                "content": completion_notification(job_id, &task, rating_required),
                 "localize": true,
             },
             "ratingResultNotification": super::super::content::rating_submitted_user_notify(
@@ -120,21 +120,30 @@ fn title(task: &PreFetchedTaskContext) -> &str {
     }
 }
 
-fn completion_notification(job_id: &str, task: &PreFetchedTaskContext) -> String {
+fn completion_notification(
+    job_id: &str,
+    task: &PreFetchedTaskContext,
+    include_rating_invitation: bool,
+) -> String {
     let content = if task.payment_mode == Some(3) {
         format!(
-            "[x402 Job Completed] {} (`{job_id}`) — all steps complete.\n- Spent: {} {}\n- Payment: x402\n\nTo rate this job, reply \"Rate job\". Your rating for Job ID `{job_id}` replaces the AI-generated rating.",
+            "[x402 Job Completed] {} (`{job_id}`) — all steps complete.\n- Spent: {} {}\n- Payment: x402",
             title(task), task.token_amount, task.token_symbol,
         )
     } else {
-        super::super::content::job_completed_escrow_user_notify(
-            job_id,
-            title(task),
-            &task.token_amount,
-            &task.token_symbol,
+        format!(
+            "[Job Completed] {} (`{job_id}`) — approved by the User Agent; funds released to the ASP.\n- Spent: {} {}\n- Payment: escrow",
+            title(task), task.token_amount, task.token_symbol,
         )
     };
-    format!("{TERMINAL_NOTIFICATION_MARKER} {content}")
+    let rating_invitation = if include_rating_invitation {
+        format!(
+            "\n\nTo rate this job, reply \"Rate job\". Your rating for Job ID `{job_id}` replaces the AI-generated rating."
+        )
+    } else {
+        String::new()
+    };
+    format!("{TERMINAL_NOTIFICATION_MARKER} {content}{rating_invitation}")
 }
 
 fn deliverable_files(job_id: &str) -> Vec<serde_json::Value> {
@@ -232,6 +241,10 @@ mod tests {
             .as_str()
             .unwrap()
             .starts_with(TERMINAL_NOTIFICATION_MARKER));
+        assert!(!output["payload"]["notification"]["content"]
+            .as_str()
+            .unwrap()
+            .contains("Rate job"));
     }
 
     #[test]
