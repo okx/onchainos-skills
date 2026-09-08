@@ -254,7 +254,8 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
     // currency token / symbol / any extra text is rejected (validate-listing
     // surfaces the same rule as a P1 finding; create/update bypass validate so
     // we enforce it here too). The single-purchase `fee` and every
-    // subscription-tier `fee` share this contract.
+    // subscription-tier `fee` share the A2A two-decimal contract. A2MCP keeps
+    // its six-decimal contract.
     match service.service_type.as_str() {
         "A2A" => {
             // Product spec: A2A services do not have an endpoint field.
@@ -282,14 +283,14 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
                         tier.interval
                     );
                 }
-                if !is_plain_number(&tier.fee) {
-                    bail!("invalid subscription fee in --service: must be a plain number (USDT is the default currency)");
+                if !is_plain_number(&tier.fee, 2) {
+                    bail!("invalid subscription fee in --service: must be a plain number with up to 2 decimal places (USDT is the default currency)");
                 }
             }
             // A real single price must be a plain number; an empty `fee` (the
             // subscription model) is exempt (it is not a price).
-            if has_single_fee && !is_plain_number(&service.fee) {
-                bail!("invalid fee in --service: must be a plain number (USDT is the default currency)");
+            if has_single_fee && !is_plain_number(&service.fee, 2) {
+                bail!("invalid fee in --service for A2A: must be a plain number with up to 2 decimal places (USDT is the default currency)");
             }
             // An empty `fee` is the explicit "no single price" marker (the
             // subscription model); it is forwarded verbatim as `""`. The CLI
@@ -316,8 +317,8 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
             if service.fee.is_empty() {
                 bail!("missing required field in --service for A2MCP: fee");
             }
-            if !is_plain_number(&service.fee) {
-                bail!("invalid fee in --service: must be a plain number (USDT is the default currency)");
+            if !is_plain_number(&service.fee, 6) {
+                bail!("invalid fee in --service for A2MCP: must be a plain number with up to 6 decimal places (USDT is the default currency)");
             }
             if service.endpoint.is_none() {
                 bail!("missing required field in --service for A2MCP: endpoint");
@@ -347,17 +348,17 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
     Ok(service)
 }
 
-/// True when `s` is a plain decimal number: `^\d+(\.\d{1,6})?$` (up to 6
-/// fractional digits). No sign, no currency token, no whitespace. Shared by
-/// `normalize_service` (create/update) and `validate::check_fee` (QA) so both
-/// paths enforce the identical fee contract.
-pub(super) fn is_plain_number(s: &str) -> bool {
+/// True when `s` is a plain decimal number with at most `max_decimals`
+/// fractional digits. No sign, currency token, or whitespace. Shared by
+/// create/update normalization and listing QA so both paths enforce the same
+/// service-type-specific fee contract (A2A: 2, A2MCP: 6).
+pub(super) fn is_plain_number(s: &str, max_decimals: usize) -> bool {
     match s.split_once('.') {
         None => !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()),
         Some((int, frac)) => {
             !int.is_empty()
                 && int.bytes().all(|b| b.is_ascii_digit())
-                && (1..=6).contains(&frac.len())
+                && (1..=max_decimals).contains(&frac.len())
                 && frac.bytes().all(|b| b.is_ascii_digit())
         }
     }

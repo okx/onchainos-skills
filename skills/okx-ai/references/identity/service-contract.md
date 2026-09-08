@@ -65,7 +65,8 @@ If `serviceGuide` is absent for A2A create, show the following prompt:
 #### Value requirements
 
 - `fee` is required.
-- Prices are quoted numeric strings (including `"0"`) with ≤6 decimals; no units, symbols, or approximations.
+- Prices are quoted numeric strings (including `"0"`) with no units, symbols, or approximations.
+- A2A prices have ≤2 decimals; A2MCP prices have ≤6 decimals.
 - Never combine per-call and monthly billing or use a non-monthly interval.
 - Store the per-call price in `fee`; for A2A monthly billing, use `""`.
 
