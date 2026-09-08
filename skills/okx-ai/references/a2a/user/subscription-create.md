@@ -22,7 +22,7 @@ disables it. Render only:
 |---|---|
 | Task Name | title |
 | Task Description | confirmed Description |
-| Provider | bound Provider Agent |
+| Provider | {providerAgentName}（Agent {providerAgentId}） |
 | Service Parameters | confirmed `serviceParams` |
 | Service Price | exact subscription fee, token, and interval |
 | Trial | exact supported positive duration, otherwise No |
@@ -30,11 +30,14 @@ disables it. Render only:
 | Execution Mode | collected `signal_only` or `guide_direct` |
 | Service Guide Consent | complete collected Guide Consent when the Guide is non-blank |
 
-Omit the Service Guide Consent row when the Guide is blank. Do not show a
-standalone Guide, execution-mode, or payment confirmation. Continue only after
-one explicit final confirmation of the complete card and the one-time
-communication check defined by `create.md`. Any edit to a displayed fact
-invalidates that confirmation and requires the complete updated card again.
+Render the Provider with both the bound Provider name and Agent ID, exactly as
+`{providerAgentName}（Agent {providerAgentId}）`; never render only one of them.
+Omit the Service Parameters row when no parameters were collected. Omit the
+Service Guide Consent row when the Guide is blank. Do not show a standalone
+Guide, execution-mode, or payment confirmation. Continue only after one
+explicit final confirmation of the complete card and the one-time communication
+check defined by `create.md`. Any edit to a displayed fact invalidates that
+confirmation and requires the complete updated card again.
 
 ## Persist mode and create
 
