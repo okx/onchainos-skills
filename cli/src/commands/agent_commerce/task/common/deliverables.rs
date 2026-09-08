@@ -258,8 +258,10 @@ pub fn delete_review_marker(job_id: &str) {
     }
 }
 
-// Durable per-job idempotency marker shared by the delivery-first and
-// job_submitted-first review paths. It is written only after card delivery.
+// Durable per-job delivery marker shared by the delivery-first and
+// job_submitted-first review paths. Queue-mode runtimes still use it as their
+// local idempotency guard; CLI-driver runtimes use okx-a2a's stable database
+// idempotency key and retain this marker for compatibility and recovery.
 fn review_card_sent_marker_path(job_id: &str) -> Result<PathBuf> {
     Ok(deliverables_dir("user", job_id)?.join("review_card_sent"))
 }

@@ -455,19 +455,23 @@ pub fn user_notify_scoped_with_timeout(
 /// Sub-side replacement for the MCP `xmtp_prompt_user` tool. Pushes a
 /// decision card into the okx-a2a CLI's SQLite `user_attention` table so the
 /// user-session can surface it and relay the user's reply back later.
-/// All routing fields (job_id / role / agent_id / to_agent_id / source_event)
-/// are encoded inside `llm_content` by the caller (see `resolve_llm_content_cli`).
-pub fn user_decision_request(user_content: &str, llm_content: &str) -> Result<()> {
-    let out = Command::new("okx-a2a")
-        .args([
-            "user",
-            "decision-request",
-            "--user-content",
-            user_content,
-            "--llm-content",
-            llm_content,
-            "--json",
-        ])
+/// Routing fields remain encoded inside `llm_content` by the caller (see
+/// `resolve_llm_content_cli`). `job_id` and `idempotency_key` are supplied for
+/// decision types that need durable cross-session lookup and database-level
+/// deduplication, such as the Buyer deliverable-review card.
+pub fn user_decision_request(
+    user_content: &str,
+    llm_content: &str,
+    job_id: Option<&str>,
+    idempotency_key: Option<&str>,
+) -> Result<()> {
+    let mut command = user_decision_request_command(
+        user_content,
+        llm_content,
+        job_id,
+        idempotency_key,
+    );
+    let out = command
         .output()
         .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
     if !out.status.success() {
@@ -478,6 +482,31 @@ pub fn user_decision_request(user_content: &str, llm_content: &str) -> Result<()
         );
     }
     Ok(())
+}
+
+fn user_decision_request_command(
+    user_content: &str,
+    llm_content: &str,
+    job_id: Option<&str>,
+    idempotency_key: Option<&str>,
+) -> Command {
+    let mut command = Command::new("okx-a2a");
+    command.args([
+        "user",
+        "decision-request",
+        "--user-content",
+        user_content,
+        "--llm-content",
+        llm_content,
+    ]);
+    if let Some(job_id) = job_id.filter(|value| !value.trim().is_empty()) {
+        command.args(["--job-id", job_id]);
+    }
+    if let Some(idempotency_key) = idempotency_key.filter(|value| !value.trim().is_empty()) {
+        command.args(["--idempotency-key", idempotency_key]);
+    }
+    command.arg("--json");
+    command
 }
 
 // ── Session management ────────────────────────────────────────────────────
@@ -1010,6 +1039,47 @@ mod tests {
                 "--json",
             ]
         );
+    }
+
+    #[test]
+    fn buyer_review_decision_request_carries_job_and_idempotency_key() {
+        let command = user_decision_request_command(
+            "Review card",
+            "Handle review",
+            Some("job-1"),
+            Some("buyer-review:job-1:job_submitted"),
+        );
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            args,
+            vec![
+                "user",
+                "decision-request",
+                "--user-content",
+                "Review card",
+                "--llm-content",
+                "Handle review",
+                "--job-id",
+                "job-1",
+                "--idempotency-key",
+                "buyer-review:job-1:job_submitted",
+                "--json",
+            ]
+        );
+    }
+
+    #[test]
+    fn ordinary_decision_request_keeps_legacy_unscoped_shape() {
+        let command = user_decision_request_command("Question", "Handle", None, None);
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(!args.iter().any(|arg| arg == "--job-id"));
+        assert!(!args.iter().any(|arg| arg == "--idempotency-key"));
     }
 
     #[test]

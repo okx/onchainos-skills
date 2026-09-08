@@ -1064,6 +1064,15 @@ fn sanitize_to_agent(to_agent_id: Option<String>, agent_id: &str) -> Option<Stri
     }
 }
 
+fn buyer_review_idempotency_key(
+    job_id: &str,
+    role: &str,
+    source_event: Option<&str>,
+) -> Option<String> {
+    (role == "user" && source_event == Some("job_submitted"))
+        .then(|| format!("buyer-review:{job_id}:job_submitted"))
+}
+
 /// Auto-trade decisions must resume in the session that received the admitted
 /// delivery. The provider id comes from CLI-persisted delivery context, not
 /// from model output. `None` remains a compatibility fallback only for
@@ -1293,22 +1302,14 @@ fn request_prompt_inner(
 
     if cli_mode {
         let is_buyer_review = role == "user" && source_event.as_deref() == Some("job_submitted");
-        // CLI mode has no queue entry to deduplicate. Reuse the queue lock so
-        // concurrent delivery-first and event-first requests serialize.
+        // CLI mode has no local queue entry. Serialize concurrent
+        // delivery-first/status-recovery requests here, then let okx-a2a's
+        // stable idempotency key return the one canonical attention record.
         let _review_lock = if is_buyer_review {
             Some(acquire_lock()?)
         } else {
             None
         };
-        if is_buyer_review && super::deliverables::has_review_card_sent_marker(&job_id) {
-            trace_log(&format!(
-                "request_prompt CLI_MODE: buyer review already sent for job_id={job_id}"
-            ));
-            if print_ok {
-                println!("OK");
-            }
-            return Ok(());
-        }
         let now = Utc::now();
         let entry = PendingEntry {
             job_id,
@@ -1329,7 +1330,17 @@ fn request_prompt_inner(
         };
         let llm_content = resolve_llm_content_cli(&entry);
         use crate::commands::agent_commerce::task::common::okx_a2a;
-        okx_a2a::user_decision_request(&entry.user_content, &llm_content)?;
+        let idempotency_key = buyer_review_idempotency_key(
+            &entry.job_id,
+            &entry.role,
+            entry.source_event.as_deref(),
+        );
+        okx_a2a::user_decision_request(
+            &entry.user_content,
+            &llm_content,
+            is_buyer_review.then_some(entry.job_id.as_str()),
+            idempotency_key.as_deref(),
+        )?;
         if is_buyer_review {
             super::deliverables::mark_review_card_sent(&entry.job_id)?;
         }
@@ -1362,6 +1373,8 @@ fn request_prompt_inner(
 
         let _lock = acquire_lock()?;
         let is_buyer_review = role == "user" && source_event.as_deref() == Some("job_submitted");
+        // Queue-mode runtimes keep their existing local queue lifecycle. The
+        // foreground status-recovery behavior applies only to CLI-driver mode.
         if is_buyer_review && super::deliverables::has_review_card_sent_marker(&job_id) {
             trace_log(&format!(
                 "request_prompt QUEUE_MODE: buyer review already sent for job_id={job_id}"
@@ -1408,7 +1421,17 @@ fn request_prompt_inner(
         let entry = q.entries.last().unwrap();
         let llm_content = resolve_llm_content_prompt_user(entry);
         use crate::commands::agent_commerce::task::common::okx_a2a;
-        okx_a2a::user_decision_request(&entry.user_content, &llm_content)?;
+        let idempotency_key = buyer_review_idempotency_key(
+            &entry.job_id,
+            &entry.role,
+            entry.source_event.as_deref(),
+        );
+        okx_a2a::user_decision_request(
+            &entry.user_content,
+            &llm_content,
+            is_buyer_review.then_some(entry.job_id.as_str()),
+            idempotency_key.as_deref(),
+        )?;
         if is_buyer_review {
             super::deliverables::mark_review_card_sent(&entry.job_id)?;
         }
@@ -3375,10 +3398,11 @@ mod shared_encoding_shell_safety_tests {
 #[cfg(test)]
 mod sanitize_tests {
     use super::{
-        arbitration_relay_description, decision_relay_post_action, local_arbitration_resolution,
-        read_queue, request_prompt_inner, resolve_arbitration_choice, resolve_llm_content_cli,
-        resolve_llm_content_prompt_user, sanitize_to_agent, trusted_autotrade_session_key,
-        write_queue_atomic, PendingEntry, Queue, Status,
+        arbitration_relay_description, buyer_review_idempotency_key, decision_relay_post_action,
+        local_arbitration_resolution, read_queue, request_prompt_inner,
+        resolve_arbitration_choice, resolve_llm_content_cli, resolve_llm_content_prompt_user,
+        sanitize_to_agent, trusted_autotrade_session_key, write_queue_atomic, PendingEntry, Queue,
+        Status,
     };
     use chrono::Utc;
 
@@ -3414,6 +3438,22 @@ mod sanitize_tests {
             Some("4941".into())
         );
         assert_eq!(sanitize_to_agent(None, "8315"), None);
+    }
+
+    #[test]
+    fn only_submitted_buyer_review_gets_the_stable_attention_key() {
+        assert_eq!(
+            buyer_review_idempotency_key("job-123", "user", Some("job_submitted")),
+            Some("buyer-review:job-123:job_submitted".to_string())
+        );
+        assert_eq!(
+            buyer_review_idempotency_key("job-123", "user", Some("review_deadline_warn")),
+            None
+        );
+        assert_eq!(
+            buyer_review_idempotency_key("job-123", "asp", Some("job_submitted")),
+            None
+        );
     }
 
     #[test]
