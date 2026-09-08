@@ -17,7 +17,7 @@ into the conversation language and do not display a raw numeric `payload.status`
   `A subscription task for this service already exists. Job ID: <jobId>. Task name: <title>. Status: <localizedStatusLabel>. Status description: <localizedStatusDescription>. Another subscription cannot be created. Restore listening?`
   Offer only the returned `nextAction` entries and wait for an explicit choice.
   - `restore_subscription`: retain `payload.jobId` as the explicit current
-    subscription and enter `playbook.md` **Signal-receipt watch
+    subscription and enter `subscription-manage.md` **Signal-receipt watch
     entry**. This is receipt-only restoration, so its first authorization gate
     omits `--review-existing`.
   - `stop`: end the current flow without creating or watching a subscription.
