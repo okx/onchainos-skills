@@ -249,17 +249,15 @@ default. Then **END THIS TURN**. A reply confirming Step 4.5 never also answers 
 Step 5 -- Subscription confirmation form
 ================================================
 
-The confirmation form has exactly the seven product-facing rows below. Guide Consent values belong only in the separately confirmed Step 4.5 review. Never append, merge, or render them as rows in this product-facing subscription confirmation form. Continue retaining the user-authored values for the Step 6 `--guide-consent-json` argument.
+The confirmation form has exactly the seven product-facing field items below. Guide Consent values belong only in the separately confirmed Step 4.5 review. Never append, merge, or render them as items in this product-facing subscription confirmation form. Continue retaining the user-authored values for the Step 6 `--guide-consent-json` argument.
 
-| Field | Value |
-|---|---|
-| Title | <short title, <=30 chars> |
-| Description | <full content> (if <=200 chars in table; if >200 write `see below` and render below) |
-| Provider | Agent <providerAgentId>(<providerAgentName>) — degrade to Agent <providerAgentId> when name empty/absent |
-| Service params | <serviceParams readable display, or \"None\"> |
-| Service price | <subscriptionInfo.feeAmount> <feeTokenSymbol> / month |
-| Trial | Yes (<subscriptionInfo.freeTrial> hours free) / No (based on `subscriptionInfo.supportTrial`) |
-| Auto-renew | On / Off |
+- Title: <short title, <=30 chars>
+- Description: <full content> (if <=200 chars inline; if >200 write `see below` and render below)
+- Provider: Agent <providerAgentId>(<providerAgentName>) — degrade to Agent <providerAgentId> when name empty/absent
+- Service params: <serviceParams readable display, or \"None\">
+- Service price: <subscriptionInfo.feeAmount> <feeTokenSymbol> / month
+- Trial: Yes (<subscriptionInfo.freeTrial> hours free) / No (based on `subscriptionInfo.supportTrial`)
+- Auto-renew: On / Off
 
 > Confirm? Once confirmed, the subscription will be created on-chain.
 
@@ -334,15 +332,13 @@ Step 5 -- Regular confirmation form
 
 Never add execution mode, per-signal amount, per-signal cap, quote currency, Trade Kit environment, margin mode, order policy, or any other execution setting to this or any other confirmation form.
 
-| Field | Value |
-|---|---|
-| Title | <short title, <=30 chars> |
-| Description | <full content> (if <=200 chars in table; if >200 write `see below` and render below) |
-| ASP | Agent <providerAgentId>(<providerAgentName>) — degrade to Agent <providerAgentId> when name empty/absent |
-| Service params | <serviceParams readable display, or \"None\"> |
-| Service price | <localized Free when feeAmount is zero; otherwise feeAmount + feeTokenSymbol> (only show this row if feeAmount has a value) |
+- Title: <short title, <=30 chars>
+- Description: <full content> (if <=200 chars inline; if >200 write `see below` and render below)
+- ASP: Agent <providerAgentId>(<providerAgentName>) — degrade to Agent <providerAgentId> when name empty/absent
+- Service params: <serviceParams readable display, or \"None\">
+- Service price: <localized Free when feeAmount is zero; otherwise feeAmount + feeTokenSymbol> (only show this item if feeAmount has a value)
 
-Payment mode is always `escrow` for this Task playbook; do not ask the user or show it as a card row.
+Payment mode is always `escrow` for this Task playbook; do not ask the user or show it as a card item.
 
 > Confirm and publish?
 
@@ -544,7 +540,9 @@ mod tests {
             .expect("confirmation gate must exist");
         assert!(duplicate_gate < confirmation_gate);
         assert!(out.contains("services[0].existingSubscription"));
-        assert!(out.contains("COMPLETED / CLOSED / EXPIRED / FAILED historical subscriptions do not block"));
+        assert!(out.contains(
+            "COMPLETED / CLOSED / EXPIRED / FAILED historical subscriptions do not block"
+        ));
         assert!(out.contains("require top-level `duplicateSubscription`"));
         assert!(out.contains("duplicateSubscription.userFacingPrompt"));
         assert!(out.contains("intentionally omits fee, trial, description, and readiness"));
@@ -561,19 +559,19 @@ mod tests {
         assert!(out.contains("The Guide is the only contract for Consent and Signal"));
         assert!(out.contains("--guide-consent-json"));
         assert!(out.contains("Guide Consent values belong only"));
-        assert!(out.contains("exactly the seven product-facing rows below"));
-        for expected_row in [
-            "| Title |",
-            "| Description |",
-            "| Provider |",
-            "| Service params |",
-            "| Service price |",
-            "| Trial |",
-            "| Auto-renew |",
+        assert!(out.contains("exactly the seven product-facing field items below"));
+        for expected_item in [
+            "- Title:",
+            "- Description:",
+            "- Provider:",
+            "- Service params:",
+            "- Service price:",
+            "- Trial:",
+            "- Auto-renew:",
         ] {
             assert!(
-                out.contains(expected_row),
-                "missing confirmation row {expected_row}"
+                out.contains(expected_item),
+                "missing confirmation item {expected_item}"
             );
         }
         let form = out
@@ -582,12 +580,13 @@ mod tests {
             .expect("subscription confirmation section")
             .split("> Confirm?")
             .next()
-            .expect("subscription confirmation table");
+            .expect("subscription confirmation field list");
         assert_eq!(
-            form.lines().filter(|line| line.starts_with("| ")).count(),
-            8,
-            "confirmation table must contain one header plus exactly seven product rows"
+            form.lines().filter(|line| line.starts_with("- ")).count(),
+            7,
+            "confirmation must contain exactly seven product field items"
         );
+        assert!(!form.contains("| Field | Value |"));
         assert!(out.contains(
             "Continue retaining the user-authored values for the Step 6 `--guide-consent-json` argument"
         ));
@@ -678,6 +677,9 @@ mod tests {
         assert!(out.contains(
             "Never add execution mode, per-signal amount, per-signal cap, quote currency, Trade Kit environment, margin mode, order policy, or any other execution setting to this or any other confirmation form"
         ));
+        assert!(out.contains("- Title: <short title, <=30 chars>"));
+        assert!(out.contains("- Service price:"));
+        assert!(!out.contains("| Field | Value |"));
     }
 
     #[test]
@@ -700,9 +702,7 @@ mod tests {
         assert!(out.contains("`phase=funding_required`"));
         assert!(out.contains("`decision=blocked`"));
         assert!(out.contains("`reason=insufficient_balance`"));
-        assert!(out.contains(
-            "enter `skills/okx-agentic-wallet/references/funding.md` immediately"
-        ));
+        assert!(out.contains("enter `skills/okx-agentic-wallet/references/funding.md` immediately"));
         assert!(out.contains("Do not save or replay the create command"));
         assert!(out.contains("do not create again or Watch"));
     }

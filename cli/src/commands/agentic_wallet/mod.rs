@@ -188,9 +188,9 @@ pub enum WalletCommand {
         /// List-mode end time in Unix milliseconds.
         #[arg(long)]
         end: Option<String>,
-        /// List-mode page cursor.
+        /// List-mode continuation cursor returned by the previous response. Omit for the first page.
         #[arg(long)]
-        page_num: Option<String>,
+        cursor: Option<String>,
         /// List-mode page size.
         #[arg(long)]
         limit: Option<String>,
@@ -778,7 +778,7 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             address,
             begin,
             end,
-            page_num,
+            cursor,
             limit,
             order_id,
             tx_hash,
@@ -790,7 +790,7 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
                 address.as_deref(),
                 begin.as_deref(),
                 end.as_deref(),
-                page_num.as_deref(),
+                cursor.as_deref(),
                 limit.as_deref(),
                 order_id.as_deref(),
                 tx_hash.as_deref(),

@@ -40,7 +40,8 @@ User/Buyer. Select exactly one final leaf and stop routing.
 | `send_task_params_response` | [`../params.md`](../params.md) |
 | `request_rejection_reason`, `approve_review` | [`review-decision.md`](review-decision.md) |
 | `finalize_user_task`, `finalize_user_subscription` | [`../completion.md`](../completion.md) |
-| `resolve_refund_target`, `prepare_refund`, `provide_refund_reason`, `view_refund_status` | [`refund-prepare.md`](refund-prepare.md) |
+| `resolve_refund_target`, `prepare_refund`, `view_refund_status` | [`refund-prepare.md`](refund-prepare.md) |
+| `provide_refund_reason` | [`refund-confirm.md`](refund-confirm.md) |
 | `cancel_trial_conversion`, `close_zero_price`, `execute_direct_refund`, `submit_refund_request` | [`refund-confirm.md`](refund-confirm.md); after the bound confirmation load [`refund-execute.md`](refund-execute.md) |
 
 Cross-domain actions are intercepted before this router is loaded. Unknown

@@ -361,7 +361,7 @@ pub async fn handle_subscribe_detail(
     let status_label = if sub_status == SubStatus::Active && trial_type == 1 {
         "Active (Trial)"
     } else {
-        sub_status.as_str()
+        status_label(status)
     };
 
     println!("Subscription Detail: {title}");
@@ -487,6 +487,10 @@ pub struct SubscriptionInfo {
     pub status: i64,
     #[serde(skip_deserializing)]
     pub status_name: String,
+    #[serde(skip_deserializing)]
+    pub status_label: String,
+    #[serde(skip_deserializing)]
+    pub status_description: String,
     pub chain_id: i64,
     pub title: String,
     pub description: String,
@@ -572,7 +576,12 @@ pub(crate) struct ExistingSubscriptionSummary {
     pub(crate) job_id: String,
     pub(crate) service_id: String,
     pub(crate) provider_agent_id: String,
+    /// Raw backend state retained for compatibility with internal callers only.
+    #[serde(skip_serializing)]
     pub(crate) status_name: String,
+    /// CLI-owned business wording for any user-facing duplicate-subscription card.
+    pub(crate) status_label: String,
+    pub(crate) status_description: String,
     pub(crate) restore_listening_available: bool,
     /// Retained for preparation-time confirmation cards, but deliberately
     /// omitted from the create-subscribe duplicate error contract.
@@ -608,6 +617,8 @@ fn summarize_non_terminal_buyer_subscriptions(
             service_id: item.service_id,
             provider_agent_id: item.provider_agent_id,
             status_name: status_name(item.status),
+            status_label: status_label(item.status).to_string(),
+            status_description: status_description(item.status).to_string(),
             restore_listening_available: item.status == SubStatus::Active.code(),
             title: item.title,
             status: item.status,
@@ -661,6 +672,36 @@ pub fn status_name(status: i64) -> String {
         8 => "EXPIRED".to_string(),
         9 => "FAILED".to_string(),
         n => format!("UNKNOWN_{n}"),
+    }
+}
+
+pub fn status_label(status: i64) -> &'static str {
+    match status {
+        -1 => "Initializing",
+        0 => "Awaiting ASP acceptance",
+        1 => "Active",
+        3 => "Awaiting ASP decision",
+        4 => "Evaluation in progress",
+        6 => "Completed",
+        7 => "Closed",
+        8 => "Expired",
+        9 => "Refund completed",
+        _ => "Status unavailable",
+    }
+}
+
+pub fn status_description(status: i64) -> &'static str {
+    match status {
+        -1 => "The subscription record was created and is awaiting on-chain confirmation.",
+        0 => "The subscription is waiting for an ASP to accept it.",
+        1 => "The subscription is active.",
+        3 => "The buyer rejected the current delivery and is waiting for the ASP's decision.",
+        4 => "The refund request is in Evaluation.",
+        6 => "The subscription completed without a refund.",
+        7 => "The subscription is closed.",
+        8 => "The subscription expired.",
+        9 => "The refund completed successfully.",
+        _ => "The subscription status is currently unavailable.",
     }
 }
 
@@ -1012,6 +1053,14 @@ fn enrich_subscription_detail(
             "statusName".to_string(),
             serde_json::Value::String(status_name(code)),
         );
+        obj.insert(
+            "statusLabel".to_string(),
+            serde_json::Value::String(status_label(code).to_string()),
+        );
+        obj.insert(
+            "statusDescription".to_string(),
+            serde_json::Value::String(status_description(code).to_string()),
+        );
         // Preserve deviceList's wire-level tri-state while categoryCodes
         // continues to normalize to []. Default-all receipt is buyer-side only.
         let enrichment = derive_device_enrichment(
@@ -1167,6 +1216,8 @@ fn enrich_subscription_info(
     default_all_receives: bool,
 ) {
     item.status_name = status_name(item.status);
+    item.status_label = status_label(item.status).to_string();
+    item.status_description = status_description(item.status).to_string();
     let enrichment = derive_device_enrichment(
         item.device_list.take(),
         item.category_codes.take(),
@@ -1363,6 +1414,8 @@ mod tests {
         assert_eq!(page["page"], 2);
         assert_eq!(page["pageSize"], 20);
         assert_eq!(page["list"][0]["statusName"], "ACTIVE");
+        assert_eq!(page["list"][0]["statusLabel"], "Active");
+        assert_eq!(page["list"][0]["statusDescription"], "The subscription is active.");
         assert!(page["list"][0]["deviceList"].is_null());
         assert_eq!(page["list"][0]["categoryCodes"], serde_json::json!([]));
         assert_eq!(page["list"][0]["thisDeviceReceives"], true);
@@ -1668,6 +1721,22 @@ mod tests {
         assert_eq!(status_name(9), "FAILED");
         assert_eq!(status_name(2), "UNKNOWN_2");
         assert_eq!(status_name(42), "UNKNOWN_42");
+    }
+
+    #[test]
+    fn subscription_status_display_uses_business_meaning() {
+        assert_eq!(status_label(0), "Awaiting ASP acceptance");
+        assert_eq!(
+            status_description(0),
+            "The subscription is waiting for an ASP to accept it."
+        );
+        assert_eq!(status_label(1), "Active");
+        assert_eq!(status_label(3), "Awaiting ASP decision");
+        assert_eq!(status_label(4), "Evaluation in progress");
+        assert_eq!(status_label(6), "Completed");
+        assert_eq!(status_label(7), "Closed");
+        assert_eq!(status_label(9), "Refund completed");
+        assert_eq!(status_description(9), "The refund completed successfully.");
     }
 
     #[test]

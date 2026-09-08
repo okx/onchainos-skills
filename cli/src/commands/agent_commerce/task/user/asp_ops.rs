@@ -1273,6 +1273,8 @@ mod tests {
             service_id: "svc-trade".to_string(),
             provider_agent_id: "9967".to_string(),
             status_name: "ACTIVE".to_string(),
+            status_label: "Active".to_string(),
+            status_description: "The subscription is active.".to_string(),
             restore_listening_available: true,
             title: "Trading Signals".to_string(),
             status: 1,

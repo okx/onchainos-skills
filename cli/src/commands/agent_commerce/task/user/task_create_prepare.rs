@@ -75,6 +75,8 @@ struct DuplicateSubscriptionContext {
     job_id: String,
     title: String,
     status: i64,
+    status_label: String,
+    status_description: String,
     active: bool,
 }
 
@@ -94,6 +96,8 @@ fn duplicate_payload(existing: &DuplicateSubscriptionContext) -> Value {
         "jobId": existing.job_id,
         "title": existing.title,
         "status": existing.status,
+        "statusLabel": existing.status_label,
+        "statusDescription": existing.status_description,
         "active": existing.active,
     })
 }
@@ -129,6 +133,8 @@ fn duplicate_subscription_context(
         job_id: job_id.to_string(),
         title: title.to_string(),
         status: existing.status,
+        status_label: existing.status_label.clone(),
+        status_description: existing.status_description.clone(),
         active: existing.restore_listening_available,
     })
 }
@@ -442,6 +448,8 @@ mod tests {
             service_id: "svc-42".to_string(),
             provider_agent_id: "asp-42".to_string(),
             status_name: "ACTIVE".to_string(),
+            status_label: "Active".to_string(),
+            status_description: "The subscription is active.".to_string(),
             restore_listening_available: true,
             title: "Signal Subscription".to_string(),
             status: 1,
@@ -454,6 +462,8 @@ mod tests {
                 "jobId": "job-42",
                 "title": "Signal Subscription",
                 "status": 1,
+                "statusLabel": "Active",
+                "statusDescription": "The subscription is active.",
                 "active": true
             })
         );
@@ -473,6 +483,8 @@ mod tests {
             service_id: "svc-43".to_string(),
             provider_agent_id: "asp-43".to_string(),
             status_name: "REJECTED".to_string(),
+            status_label: "Awaiting ASP decision".to_string(),
+            status_description: "The buyer rejected the current delivery and is waiting for the ASP's decision.".to_string(),
             restore_listening_available: false,
             title: "Paused Signals".to_string(),
             status: 3,

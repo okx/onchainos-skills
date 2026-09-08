@@ -20,10 +20,9 @@
 //!
 //! A second, **golden** group pins the C4 discoverability guarantee added to the
 //! `init` success packet: `data.nextSteps.completeLogin` is the exact `--phase
-//! poll` command with the packet's own `authSessionId` interpolated, and — when
-//! the browser could not be opened (`ONCHAINOS_NO_BROWSER=1` → `opened:false`) —
-//! `data.nextSteps.openLoginUrl` echoes `data.loginUrl`. `init` mints the session
-//! locally, so these succeed offline with no backend round-trip.
+//! poll` command with the packet's own `authSessionId` interpolated. `init`
+//! opens the login page and returns `data.nextSteps.displayLoginUrl`; the Agent
+//! renders that URL before it invokes the poll command.
 //!
 //! ── Sandbox conventions ──────────────────────────────────────────────────
 //!
@@ -42,6 +41,12 @@ use common::{assert_ok_and_extract_data, onchainos};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+const AUTH_SOURCE: &str = include_str!("../src/commands/agentic_wallet/auth/mod.rs");
+const WALLET_SKILL: &str =
+    include_str!("../../skills/okx-agentic-wallet/references/wallet.md");
+const WALLET_CLI_REFERENCE: &str =
+    include_str!("../../skills/okx-agentic-wallet/references/wallet-cli-reference.md");
 
 // ── Sandbox helpers ──────────────────────────────────────────────────
 
@@ -170,8 +175,9 @@ fn login_phase_poll_unknown_session_errors() {
 fn login_no_phase_defaults_to_init() {
     let (_tmp, home) = fresh_home();
 
-    // No `--phase` → default `init`: mints and returns the login URL + opened
-    // flag. No network, no polling; browser suppressed via ONCHAINOS_NO_BROWSER.
+    // No `--phase` → default `init`: mints the login session, attempts to open
+    // the browser, and returns the login URL without polling. This test disables
+    // browser opening through the sandbox helper.
     let output = scrubbed(&mut onchainos(), &home)
         .args(["wallet", "login"])
         .output()
@@ -187,6 +193,8 @@ fn login_no_phase_defaults_to_init() {
         stdout.contains("loginUrl") && stdout.contains("authSessionId") && stdout.contains("opened"),
         "init output must carry loginUrl + authSessionId + opened\nstdout: {stdout}",
     );
+    let data = assert_ok_and_extract_data(&output);
+    assert_eq!(data["opened"], false, "browser is disabled in this test sandbox");
 }
 
 // ── the removed `full` phase is rejected ─────────────────────────────
@@ -254,14 +262,11 @@ fn login_init_next_steps_complete_login_matches_session_id() {
     );
 }
 
-/// IT-002 — if the browser doesn't open, `init` shows which URL to open.
+/// IT-002 — `init` returns the URL the Agent displays before polling.
 ///
-/// Bare `wallet login` defaults to `--phase init`; with the browser suppressed
-/// (`opened:false`) the packet emits `data.nextSteps.openLoginUrl`, which MUST be
-/// non-empty and equal `data.loginUrl` (spec §4.3/§6.2/§17.3-3). Also exercises
-/// the `--phase` default boundary. The `opened:true` branch (openLoginUrl
-/// omitted) is unreachable headless and is covered by the `next_steps_for_login`
-/// unit test (spec §18.2).
+/// Bare `wallet login` defaults to `--phase init`; the packet emits
+/// `data.nextSteps.displayLoginUrl`, which equals `data.loginUrl`. With browser
+/// opening disabled, `openLoginUrl` also carries the same manual fallback.
 #[test]
 fn login_bare_default_init_next_steps_open_login_url() {
     let (_tmp, home) = fresh_home();
@@ -288,6 +293,50 @@ fn login_bare_default_init_next_steps_open_login_url() {
         open_login_url, login_url,
         "openLoginUrl must echo loginUrl so the user can open it manually\ndata: {data}",
     );
+    assert_eq!(data["nextSteps"]["displayLoginUrl"], data["loginUrl"]);
+    assert_eq!(
+        data["nextSteps"]["requiredOrder"],
+        serde_json::json!(["displayLoginUrl", "completeLogin"])
+    );
+    assert_eq!(data["opened"], false);
+}
+
+#[test]
+fn login_init_opens_browser_before_emitting_result() {
+    let init_body = AUTH_SOURCE
+        .split_once("pub(super) async fn cmd_login_init()")
+        .expect("cmd_login_init source")
+        .1
+        .split_once("fn next_steps_for_login")
+        .expect("next_steps_for_login source")
+        .0;
+    let open_index = init_body.find("try_open_browser").expect("browser open call");
+    let output_index = init_body.find("output::success").expect("init output");
+    assert!(open_index < output_index);
+}
+
+#[test]
+fn login_skill_requires_display_between_init_and_poll() {
+    let skill = WALLET_SKILL.split_whitespace().collect::<Vec<_>>().join(" ");
+    let cli_reference = WALLET_CLI_REFERENCE
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(skill.contains("`init` → display link → `poll`"));
+    assert!(skill.contains("send this block as a visible Agent commentary message"));
+    assert!(skill.contains("complete that message before invoking `poll`"));
+    assert!(cli_reference.contains("opens the login page"));
+    assert!(cli_reference.contains("polls the login result every 2 seconds"));
+    assert!(
+        cli_reference.contains("`nextSteps.requiredOrder=[\"displayLoginUrl\",\"completeLogin\"]`")
+    );
+    assert!(cli_reference.contains("sequence owned by [wallet.md](wallet.md)"));
+}
+
+#[test]
+fn login_poll_interval_is_two_seconds() {
+    assert!(AUTH_SOURCE.contains("const SOCIAL_LOGIN_POLL_INTERVAL_SECS: u64 = 2;"));
+    assert!(AUTH_SOURCE.contains("Duration::from_secs(SOCIAL_LOGIN_POLL_INTERVAL_SECS)"));
 }
 
 /// IT-006 — `init` shows the finish command even against a different backend.

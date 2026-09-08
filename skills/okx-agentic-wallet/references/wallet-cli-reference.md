@@ -16,12 +16,19 @@ onchainos wallet login [--phase init|open|poll] [--url <url>] [--session-id <id>
 
 | Param | Required | Description |
 |---|---|---|
-| `--phase` | No | `init` (default): mint + return the login URL, best-effort open the browser. `open`: open `--url` in the browser (internal orchestration step). `poll`: poll for the login result using the `init` session. |
+| `--phase` | No | `init` (default): mint the login session, open the browser, and return the login URL. `open`: open `--url` in the browser as a compatibility/manual action. `poll`: poll for the login result using the `init` session. |
 | `--url` | For `open` | Login URL to open. Required when `--phase open`. |
 | `--session-id` | No | Auth session id to poll (`--phase poll`). Defaults to the most recent `init` session when omitted. |
 
-- `--phase init` → returns `loginUrl`, `authSessionId`, `opened`, and `nextSteps`. `nextSteps` always carries `completeLogin` (the exact `onchainos wallet login --phase poll --session-id <authSessionId>` command) and, only when `opened == false`, `openLoginUrl` (equal to `loginUrl`).
-- `--phase poll` → persists the authenticated session, sends one best-effort device-registration heartbeat (`chainIndex=196`), then returns `accountId`, `accountName`, `loginType`, `isNew`, addresses, `totalValueUsd` (true `isNew` → new user; trigger the Policy Settings template — see [portal-actions.md](wallet-portal-actions.md)). Only when a non-empty User `agenticId` is resolved may it query subscriptions/devices and return the best-effort `postLoginSubscriptions: { subscriptions, devices }` snapshot. The field is omitted when `agenticId` is unavailable or the lookup is empty/error/timeout, and `devices` is null when only the device lookup fails. A heartbeat failure never turns a successful login into a failed login.
+- `--phase init` → creates the login session, opens the login page, and returns
+  `loginUrl`, `authSessionId`, `opened`, and `nextSteps`. The returned
+  `nextSteps.requiredOrder=["displayLoginUrl","completeLogin"]` defines the
+  sequence owned by [wallet.md](wallet.md). `displayLoginUrl` equals `loginUrl`;
+  `completeLogin` contains the exact poll command; `openLoginUrl` contains the
+  same URL when `opened=false`.
+- `--phase open` → launches `--url` and returns `opened:true|false`. Polling is
+  performed by `--phase poll`.
+- `--phase poll` → polls the login result every 2 seconds, then persists the authenticated session, sends one best-effort device-registration heartbeat (`chainIndex=196`), and returns `accountId`, `accountName`, `loginType`, `isNew`, addresses, `totalValueUsd` (true `isNew` → new user; trigger the Policy Settings template — see [portal-actions.md](wallet-portal-actions.md)). Only when a non-empty User `agenticId` is resolved may it query subscriptions/devices and return the best-effort `postLoginSubscriptions: { subscriptions, devices }` snapshot. The field is omitted when `agenticId` is unavailable or the lookup is empty/error/timeout, and `devices` is null when only the device lookup fails. A heartbeat failure never turns a successful login into a failed login.
 - `status` → returns wallet/account/policy state only. It never queries or returns subscriptions/devices; the hidden legacy `--include-subscriptions` flag remains an accepted no-op for compatibility.
 
 ### `wallet add`
@@ -218,7 +225,7 @@ For BRC-20, this shared query handles direct-transfer history. Transfer-inscript
 
 ```bash
 # List
-onchainos wallet history [--account-id <id>] [--chain <chain>] [--begin <ms>] [--end <ms>] [--page-num <cursor>] [--limit <n>]
+onchainos wallet history [--account-id <id>] [--chain <chain>] [--begin <ms>] [--end <ms>] [--cursor <cursor>] [--limit <n>]
 # Detail (any one identifier)
 onchainos wallet history --chain <chain> --order-id <id>
 onchainos wallet history --chain <chain> --tx-hash <hash> [--address <addr>]
@@ -227,7 +234,7 @@ onchainos wallet history --chain <chain> --uop-hash <hash>
 
 `--chain` is required in detail mode. Right after a Gas Station broadcast, poll by `--order-id` (txHash may be async).
 
-List mode: always pass --limit (page size, default 20) and --page-num (page number) for paging. Detail mode returns a single record — do not pass --limit.
+List mode: omit `--cursor` for the first page. To continue, pass the exact `cursor` returned by the preceding response; never synthesize it from a page number. Pass `--limit` for the requested page size (default 20). Detail mode returns a single record — do not pass --limit.
 
 List fields: `cursor`, `orderList[]` with `txHash`, `txStatus`, `txTime`, `direction` (send/receive), `chainSymbol`, `coinSymbol`, `coinAmount`, `serviceCharge`, `confirmedCount`, `assetChange[]` (`coinSymbol`/`coinAmount`/`direction` in/out). Detail adds `failReason`, `explorerUrl`, `input[]`, `output[]`.
 

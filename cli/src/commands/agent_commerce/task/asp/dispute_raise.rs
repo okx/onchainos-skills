@@ -68,6 +68,20 @@ fn build_reason_handoff(job_id: &str, provider_agent_id: &str, reason: &str) -> 
     )
 }
 
+/// Mark the one-time evaluation broadcast for the server's Smart Account batch path.
+///
+/// This is deliberately scoped to one-time `dispute raise`: subscription disputes and
+/// unrelated task broadcasts must retain the backend-provided `extraData` unchanged.
+fn with_sa_batch_tx_flag(uop_data: &serde_json::Value) -> Result<serde_json::Value> {
+    let mut flagged = uop_data.clone();
+    let extra_data = flagged
+        .get_mut("extraData")
+        .and_then(serde_json::Value::as_object_mut)
+        .context("approveAndCreateDispute response missing object uopData.extraData")?;
+    extra_data.insert("isSaBatchTx".to_string(), serde_json::Value::Bool(true));
+    Ok(flagged)
+}
+
 pub(super) fn build_subscription_reason_handoff(
     job_id: &str,
     provider_agent_id: &str,
@@ -135,6 +149,7 @@ pub async fn handle_dispute_raise(
         .post_with_identity(&evaluation_path, &body, agent_id)
         .await
         .context("dispute raise: approveAndCreateDispute API request failed")?;
+    let evaluation_uop_data = with_sa_batch_tx_flag(&evaluation_resp["uopData"])?;
 
     // Hand the exact reason to the existing task session before the combined
     // transaction is broadcast. The future `job_disputed` event is delivered to
@@ -152,7 +167,7 @@ pub async fn handle_dispute_raise(
     let reason_json = serde_json::json!({ "reason": reason });
     let evaluation_tx = signing::sign_uop_and_broadcast(
         client,
-        &evaluation_resp["uopData"],
+        &evaluation_uop_data,
         &account_id,
         &address,
         job_id,
@@ -179,7 +194,7 @@ pub async fn handle_dispute_raise(
 
     println!("✓ Evaluation request submitted");
     println!("  Progress will update in this task.");
-    println!("  Check: onchainos agent arbitration-detail {job_id} --agent-id {agent_id}");
+    println!("  Ask me to view this task's details for the evaluation result.");
     Ok(())
 }
 
@@ -232,6 +247,28 @@ mod tests {
             reason.as_bytes(),
             "the task session must recover the exact main-session reason"
         );
+    }
+
+    #[test]
+    fn one_time_evaluation_adds_sa_batch_flag_without_changing_backend_fields() {
+        let uop_data = serde_json::json!({
+            "extraData": {
+                "coinAmount": "0",
+                "inputData": "0x1234"
+            }
+        });
+
+        let flagged = with_sa_batch_tx_flag(&uop_data).unwrap();
+
+        assert_eq!(flagged["extraData"]["isSaBatchTx"], true);
+        assert_eq!(flagged["extraData"]["coinAmount"], "0");
+        assert_eq!(flagged["extraData"]["inputData"], "0x1234");
+        assert!(uop_data["extraData"].get("isSaBatchTx").is_none());
+    }
+
+    #[test]
+    fn one_time_evaluation_rejects_missing_extra_data_before_handoff() {
+        assert!(with_sa_batch_tx_flag(&serde_json::json!({})).is_err());
     }
 
     #[test]

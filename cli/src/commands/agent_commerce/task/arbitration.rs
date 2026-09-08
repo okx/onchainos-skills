@@ -265,6 +265,31 @@ pub fn build_decision_result(
         response_deadline_timestamp,
     )
     .and_then(|metadata| metadata.encode().ok());
+    let mut missing_display_fields = Vec::new();
+    if service_name.as_deref().is_none_or(str::is_empty) {
+        missing_display_fields.push("serviceName");
+    }
+    if scalar_string(Some(&buyer_reason)).is_none() {
+        missing_display_fields.push("buyerReason");
+    }
+    if response_deadline_timestamp.is_none() || response_deadline.is_null() {
+        missing_display_fields.push("responseDeadline");
+    }
+    if is_subscription && current_period.is_null() {
+        missing_display_fields.push("currentPeriod");
+    }
+    if refund_display_b64.is_none() {
+        missing_display_fields.push("refundDisplay");
+    }
+    if !missing_display_fields.is_empty() {
+        return progression(
+            "arbitration_decision",
+            "blocked",
+            "missing_required_facts",
+            Vec::new(),
+            json!({"jobId": job_id, "missingFields": missing_display_fields}),
+        );
+    }
     progression(
         "arbitration_decision",
         "requires_user_input",
@@ -283,7 +308,10 @@ pub fn build_decision_result(
             "buyerReason": buyer_reason.clone(),
             "refundReason": buyer_reason,
             "responseDeadline": response_deadline,
+            "responseDeadlineTimestamp": response_deadline_timestamp,
             "responseDeadlineLabel": response_deadline_label,
+            "statusLabel": "Awaiting ASP decision",
+            "statusDescription": "The refund request is waiting for the ASP's decision.",
             "refundDisplayB64": refund_display_b64,
             "extraFields": extra_fields,
         }),
@@ -676,20 +704,25 @@ fn evaluation_status_at(
     now_seconds: i64,
     now_millis: i64,
 ) -> &'static str {
-    if matches!(task_status, Some(6 | 9)) {
-        return "Decided";
+    match task_status {
+        Some(6 | 9) => "Decided",
+        Some(4) => match prepare_end_time {
+            Some(deadline) => {
+                let now = if deadline.unsigned_abs() >= 100_000_000_000 {
+                    now_millis
+                } else {
+                    now_seconds
+                };
+                if now <= deadline {
+                    "Evidence preparation"
+                } else {
+                    "Evaluating"
+                }
+            }
+            None => "Status unavailable",
+        },
+        _ => "Status unavailable",
     }
-    if let Some(deadline) = prepare_end_time {
-        let now = if deadline.unsigned_abs() >= 100_000_000_000 {
-            now_millis
-        } else {
-            now_seconds
-        };
-        if now <= deadline {
-            return "Evidence preparation";
-        }
-    }
-    "Evaluating"
 }
 
 fn evaluation_status(task_status: Option<i64>, prepare_end_time: Option<i64>) -> &'static str {
@@ -819,6 +852,95 @@ fn backend_task_status_name(code: i64) -> &'static str {
     }
 }
 
+fn backend_task_status_label(code: i64) -> &'static str {
+    match code {
+        0 => "Awaiting ASP acceptance",
+        1 => "In progress",
+        2 => "Awaiting buyer review",
+        3 => "Awaiting refund decision",
+        4 => "Evaluation in progress",
+        5 => "Stopped by platform",
+        6 => "Completed",
+        7 => "Closed",
+        8 => "Expired",
+        // In the Evaluation domain, task status 9 is the buyer-won terminal
+        // state and the full refund has completed. Keep the backend key in
+        // `taskStatus`; expose the business meaning separately for display.
+        9 => "Refund completed",
+        _ => "Status unavailable",
+    }
+}
+
+fn backend_task_status_description(code: i64) -> &'static str {
+    match code {
+        0 => "The task is waiting for an ASP to accept it.",
+        1 => "The ASP accepted the task and is working on it.",
+        2 => "The ASP submitted the deliverable and is waiting for buyer review.",
+        3 => "The buyer rejected the deliverable and is waiting for the ASP's refund decision.",
+        4 => "The refund request is in Evaluation.",
+        5 => "The platform stopped the task.",
+        6 => "The ASP won the Evaluation and the task funds were released to the ASP.",
+        7 => "The task is closed.",
+        8 => "The task expired.",
+        9 => "The buyer won the Evaluation and the refund completed.",
+        _ => "The task status is currently unavailable.",
+    }
+}
+
+fn evaluation_status_description(status: &str) -> &'static str {
+    match status {
+        "Evidence preparation" => "Evidence is collected automatically. Please wait.",
+        "Evaluating" => "Evaluators are reviewing the submitted evidence.",
+        "Decided" => "The Evaluation has concluded.",
+        _ => "The Evaluation status is currently unavailable.",
+    }
+}
+
+fn evaluation_status_key(status: &str) -> &'static str {
+    match status {
+        "Evidence preparation" => "evidence_preparation",
+        "Evaluating" => "evaluating",
+        "Decided" => "decided",
+        _ => "unknown",
+    }
+}
+
+fn arbitration_phase_label(phase: &str) -> &'static str {
+    match phase {
+        "evidence_preparation" => "Evidence preparation",
+        "in_progress" => "Evaluating",
+        "resolved" => "Decided",
+        _ => "Status unavailable",
+    }
+}
+
+fn arbitration_phase_description(phase: &str) -> &'static str {
+    match phase {
+        "evidence_preparation" => "Evidence is collected automatically. Please wait.",
+        "in_progress" => "Evaluation is in progress; evaluators are reviewing the evidence.",
+        "resolved" => "The Evaluation has concluded with a decision.",
+        _ => "The Evaluation stage is currently unavailable.",
+    }
+}
+
+fn arbitration_verdict_description(verdict: &Value) -> &'static str {
+    match verdict.as_str() {
+        Some("asp_won") => "The ASP won; task funds were released to the ASP.",
+        Some("asp_lost_auto_refund") => "The buyer won; the refund completed.",
+        Some(_) => "A decision was returned by the Evaluation service.",
+        None => "No decision has been produced yet.",
+    }
+}
+
+fn arbitration_verdict_label(verdict: &Value) -> &'static str {
+    match verdict.as_str() {
+        Some("asp_won") => "ASP won",
+        Some("asp_lost_auto_refund") => "Buyer won; refund completed",
+        Some(_) => "Decision returned",
+        None => "Not decided",
+    }
+}
+
 /// Normalize the ASP-facing arbitration phase from the backend task status and
 /// evidence deadline. Backend fields such as `disputeRoundStatus` remain in the
 /// payload unchanged and are not the merchant-facing phase authority.
@@ -885,6 +1007,10 @@ pub(crate) fn build_list_result(
                 .or_else(|| item["status"].as_i64());
             let prepare_end_time = arbitration.as_ref().and_then(|value| value.prepare_end_time);
             let status = evaluation_status(task_status, prepare_end_time);
+            let phase = arbitration_phase(task_status, prepare_end_time);
+            let verdict = arbitration_verdict(task_status);
+            let verdict_label = arbitration_verdict_label(&verdict);
+            let verdict_description = arbitration_verdict_description(&verdict);
             let key_time = match status {
                 "Evidence preparation" => format_timestamp_value(prepare_end_time),
                 "Evaluating" => format_timestamp_value(
@@ -900,14 +1026,23 @@ pub(crate) fn build_list_result(
                 "jobId": job_id,
                 "serviceName": value_from_keys(item, &["serviceName", "title", "jobTitle"]),
                 "status": status,
+                "evaluationStatus": evaluation_status_key(status),
+                "statusLabel": status,
+                "statusDescription": evaluation_status_description(status),
                 "evaluationStarted": format_timestamp_value(integer_from_keys(item, &["disputeTime", "evaluationStartedAt", "createdAt", "createTime"])),
                 "keyTime": key_time,
                 "description": value_from_keys(item, &["title"]),
                 "occurredAt": value_from_keys(item, &["createTime"]),
                 "taskStatus": task_status.map(backend_task_status_name),
+                "taskStatusLabel": task_status.map(backend_task_status_label),
+                "taskStatusDescription": task_status.map(backend_task_status_description),
                 "taskStatusCode": task_status,
-                "arbitrationPhase": arbitration_phase(task_status, prepare_end_time),
-                "verdict": arbitration_verdict(task_status),
+                "arbitrationPhase": phase,
+                "arbitrationPhaseLabel": arbitration_phase_label(phase),
+                "arbitrationPhaseDescription": arbitration_phase_description(phase),
+                "verdict": verdict,
+                "verdictLabel": verdict_label,
+                "verdictDescription": verdict_description,
             }))
         })
         .collect::<Vec<_>>();
@@ -952,12 +1087,15 @@ pub(crate) fn build_detail_result(
     let prepare_end_time = arbitration.and_then(|value| value.prepare_end_time);
     let phase = arbitration_phase(task_status, prepare_end_time);
     let status = evaluation_status(task_status, prepare_end_time);
+    let status_verdict = arbitration_verdict(task_status);
     let explicit_verdict = value_from_keys(supplement, &["verdict", "disputeResult"]);
-    let verdict = if explicit_verdict.is_null() {
-        arbitration_verdict(task_status)
-    } else {
+    let verdict = if status_verdict.is_null() {
         explicit_verdict
+    } else {
+        status_verdict
     };
+    let verdict_label = arbitration_verdict_label(&verdict);
+    let verdict_description = arbitration_verdict_description(&verdict);
     let service_name = value_from_keys(supplement, &["serviceName", "title", "jobTitle"]);
     let amount = arbitration
         .and_then(|value| value.token_amount.clone())
@@ -993,6 +1131,9 @@ pub(crate) fn build_detail_result(
             "requestedRefund": display_amount(amount.as_deref(), token_symbol.as_deref()),
             "buyerReason": buyer_reason,
             "status": status,
+            "evaluationStatus": evaluation_status_key(status),
+            "statusLabel": status,
+            "statusDescription": evaluation_status_description(status),
             "evaluationStarted": format_timestamp_value(evaluation_started),
             "description": value_from_keys(supplement, &["title", "serviceName"]),
             "occurredAt": value_from_keys(supplement, &["disputeTime", "updatedAt", "updateTime", "createdAt", "createTime"]),
@@ -1000,8 +1141,12 @@ pub(crate) fn build_detail_result(
             "amount": amount,
             "tokenSymbol": token_symbol,
             "taskStatus": task_status.map(backend_task_status_name),
+            "taskStatusLabel": task_status.map(backend_task_status_label),
+            "taskStatusDescription": task_status.map(backend_task_status_description),
             "taskStatusCode": task_status,
             "arbitrationPhase": phase,
+            "arbitrationPhaseLabel": arbitration_phase_label(phase),
+            "arbitrationPhaseDescription": arbitration_phase_description(phase),
             "currentRound": arbitration.and_then(|value| value.current_round),
             "disputeRoundStatus": arbitration.and_then(|value| value.dispute_round_status),
             "prepareEndTime": prepare_end_time,
@@ -1012,6 +1157,8 @@ pub(crate) fn build_detail_result(
                 _ => None,
             },
             "verdict": verdict,
+            "verdictLabel": verdict_label,
+            "verdictDescription": verdict_description,
             "fundDestination": value_from_keys(supplement, &["fundDestination", "fundsTo"]),
             "refundAmount": value_from_keys(supplement, &["refundAmount"]),
         }),
@@ -1025,13 +1172,27 @@ mod tests {
     #[test]
     fn decision_result_uses_one_shared_shape_for_both_task_types() {
         for source in [JOB_REJECTED, SUB_USER_REJECT] {
+            let message = if source == SUB_USER_REJECT {
+                json!({
+                    "periodIndex": 2,
+                    "subStartTime": 1_699_000_000,
+                    "subEndTime": 1_700_000_000,
+                    "refundReason": "Delivery did not match the request",
+                    "rejectWindowEndsAt": 1_700_100_000,
+                })
+            } else {
+                json!({
+                    "refundReason": "Delivery did not match the request",
+                    "expireTime": 1_700_100_000,
+                })
+            };
             let result = build_decision_result(
                 source,
                 "job-1",
                 Some("Service".to_string()),
                 Some("1.25".to_string()),
                 Some("USDT".to_string()),
-                Some(&json!({"periodIndex": 2})),
+                Some(&message),
             );
             assert_eq!(result["phase"], "arbitration_decision");
             assert_eq!(result["decision"], "requires_user_input");
@@ -1051,6 +1212,8 @@ mod tests {
             Some(&json!({
                 "serviceName": "Signal Service",
                 "refundReason": "Signals were not delivered",
+                "subStartTime": 1_699_000_000,
+                "subEndTime": 1_700_000_000,
                 "rejectWindowEndsAt": 1_700_000_000,
             })),
         );
@@ -1064,6 +1227,11 @@ mod tests {
         assert_eq!(
             result["payload"]["responseDeadlineLabel"],
             "2023-11-14 22:13 (UTC+00:00)"
+        );
+        assert_eq!(result["payload"]["statusLabel"], "Awaiting ASP decision");
+        assert_eq!(
+            result["payload"]["statusDescription"],
+            "The refund request is waiting for the ASP's decision."
         );
         let encoded = result["payload"]["refundDisplayB64"].as_str().unwrap();
         let metadata = RefundDisplayMetadata::decode(encoded).unwrap();
@@ -1233,7 +1401,13 @@ mod tests {
             Some("Service".to_string()),
             Some("1".to_string()),
             Some("USDT".to_string()),
-            Some(&json!({"periodIndex": 2})),
+            Some(&json!({
+                "periodIndex": 2,
+                "subStartTime": 1_699_000_000,
+                "subEndTime": 1_700_000_000,
+                "refundReason": "Delivery did not match the request",
+                "rejectWindowEndsAt": 1_700_100_000,
+            })),
         );
         for action in result["nextAction"].as_array().unwrap() {
             assert_eq!(action["params"]["decisionBindingKey"], "periodIndex");
@@ -1282,7 +1456,28 @@ mod tests {
         assert_eq!(result["payload"]["items"][0]["description"], "Research");
         assert_eq!(result["payload"]["items"][0]["occurredAt"], 1_700_000_000);
         assert_eq!(result["payload"]["items"][0]["taskStatus"], "disputed");
-        assert_eq!(result["payload"]["items"][0]["status"], "Evaluating");
+        assert_eq!(
+            result["payload"]["items"][0]["taskStatusLabel"],
+            "Evaluation in progress"
+        );
+        assert_eq!(
+            result["payload"]["items"][0]["arbitrationPhaseDescription"],
+            "The Evaluation stage is currently unavailable."
+        );
+        assert_eq!(
+            result["payload"]["items"][0]["status"],
+            "Status unavailable"
+        );
+        assert_eq!(result["payload"]["items"][0]["evaluationStatus"], "unknown");
+        assert_eq!(
+            result["payload"]["items"][0]["statusLabel"],
+            "Status unavailable"
+        );
+        assert_eq!(
+            result["payload"]["items"][0]["statusDescription"],
+            "The Evaluation status is currently unavailable."
+        );
+        assert_eq!(result["payload"]["items"][0]["verdictLabel"], "Not decided");
         assert!(result["payload"]["items"][0]["verdict"].is_null());
         assert_eq!(result["nextAction"][0]["id"], "view_arbitration");
         assert_eq!(
@@ -1309,7 +1504,13 @@ mod tests {
         assert_eq!(result["payload"]["occurredAt"], 123);
         assert_eq!(result["payload"]["arbitrationPhase"], "unknown");
         assert!(result["payload"]["verdict"].is_null());
-        assert_eq!(result["payload"]["status"], "Evaluating");
+        assert_eq!(result["payload"]["status"], "Status unavailable");
+        assert_eq!(result["payload"]["evaluationStatus"], "unknown");
+        assert_eq!(result["payload"]["statusLabel"], "Status unavailable");
+        assert_eq!(
+            result["payload"]["arbitrationPhaseLabel"],
+            "Status unavailable"
+        );
     }
 
     #[test]
@@ -1344,6 +1545,10 @@ mod tests {
         assert_eq!(result["payload"]["taskStatusCode"], 4);
         assert_eq!(result["payload"]["taskStatus"], "disputed");
         assert_eq!(result["payload"]["arbitrationPhase"], "in_progress");
+        assert_eq!(
+            result["payload"]["arbitrationPhaseDescription"],
+            "Evaluation is in progress; evaluators are reviewing the evidence."
+        );
         assert_eq!(result["payload"]["currentRound"], 2);
         assert_eq!(result["payload"]["prepareEndTime"], 100);
         assert_eq!(result["payload"]["roundEndTime"], 200);
@@ -1351,6 +1556,9 @@ mod tests {
         assert_eq!(result["payload"]["amount"], "3");
         assert_eq!(result["payload"]["tokenSymbol"], "USDT");
         assert_eq!(result["payload"]["status"], "Evaluating");
+        assert_eq!(result["payload"]["evaluationStatus"], "evaluating");
+        assert_eq!(result["payload"]["statusLabel"], "Evaluating");
+        assert_eq!(result["payload"]["arbitrationPhaseLabel"], "Evaluating");
         assert_eq!(
             result["payload"]["buyerReason"],
             "The output missed the requested scope"
@@ -1369,7 +1577,21 @@ mod tests {
             let result = build_detail_result("job-1", &json!({}), Some(&arbitration), None, None);
             assert_eq!(result["payload"]["arbitrationPhase"], "resolved");
             assert_eq!(result["payload"]["status"], "Decided");
+            assert_eq!(result["payload"]["evaluationStatus"], "decided");
+            assert_eq!(result["payload"]["statusLabel"], "Decided");
+            assert_eq!(result["payload"]["arbitrationPhaseLabel"], "Decided");
             assert_eq!(result["payload"]["verdict"], expected);
+            if task_status == 9 {
+                assert_eq!(result["payload"]["taskStatusLabel"], "Refund completed");
+                assert_eq!(
+                    result["payload"]["verdictLabel"],
+                    "Buyer won; refund completed"
+                );
+                assert_eq!(
+                    result["payload"]["verdictDescription"],
+                    "The buyer won; the refund completed."
+                );
+            }
         }
     }
 
@@ -1395,7 +1617,7 @@ mod tests {
     }
 
     #[test]
-    fn evaluation_status_uses_only_the_three_product_states() {
+    fn evaluation_status_uses_product_states_and_an_explicit_unavailable_fallback() {
         assert_eq!(
             evaluation_status_at(Some(4), Some(2_000), 2_000, 2_000_000),
             "Evidence preparation"
@@ -1407,6 +1629,22 @@ mod tests {
         assert_eq!(
             evaluation_status_at(Some(6), None, 2_000, 2_000_000),
             "Decided"
+        );
+        assert_eq!(
+            evaluation_status_at(Some(4), None, 2_000, 2_000_000),
+            "Status unavailable"
+        );
+        assert_eq!(
+            evaluation_status_at(None, Some(2_000), 2_000, 2_000_000),
+            "Status unavailable"
+        );
+        assert_eq!(
+            evaluation_status_description("Evidence preparation"),
+            "Evidence is collected automatically. Please wait."
+        );
+        assert_eq!(
+            arbitration_phase_description("evidence_preparation"),
+            "Evidence is collected automatically. Please wait."
         );
     }
 }

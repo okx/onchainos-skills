@@ -31,9 +31,11 @@ display template:
 ```markdown
 ### One-time Job Creation Confirmation
 
-| Job Name | Job Description | Service Provider | Fee | Service Parameters |
-|---|---|---|---|---|
-| {title} | {Description} | Agent {providerAgentId}({providerAgentName}) | {feeAmount} {feeTokenSymbol} | {serviceParams} |
+- Job Name: {title}
+- Job Description: {Description}
+- Service Provider: Agent {providerAgentId}({providerAgentName})
+- Fee: {feeAmount} {feeTokenSymbol}
+- Service Parameters: {serviceParams}
 
 To create this job, reply “Confirm”. To cancel, reply “Cancel”.
 ```
@@ -41,11 +43,11 @@ To create this job, reply “Confirm”. To cancel, reply “Cancel”.
 display rules:
 
 1. Preserve the confirmed Job Name, Job Description, and Service Parameters.
-2. Render the Service Provider as `Agent {providerAgentId}({providerAgentName})`. Omit only the parenthesized name when it is absent.
+2. Render the Service Provider as `Agent {providerAgentId}({providerAgentName})` when the name is available, or `Agent {providerAgentId}` otherwise.
 3. Render a zero Fee as `Free`; otherwise render the exact amount and token symbol.
-4. Omit the Service Parameters column when no parameters were confirmed.
-5. List attachments below the table, not as another table field.
-6. Guide Consent was confirmed separately and must not be added to this confirmation.
+4. Render the Service Parameters item for confirmed parameters.
+5. Render attachments below the field list.
+6. Keep Guide Consent in its separate confirmation.
 7. `Confirm` is the explicit final confirmation for only the current complete card. Apply edits and render the whole confirmation again.
 
 ## Communication check

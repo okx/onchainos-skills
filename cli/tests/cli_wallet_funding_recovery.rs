@@ -33,6 +33,23 @@ use common::{assert_ok_and_extract_data, onchainos, run_with_retry};
 use predicates::prelude::*;
 use serde_json::Value;
 
+const FUNDING_SKILL: &str =
+    include_str!("../../skills/okx-agentic-wallet/references/funding.md");
+
+#[test]
+fn funding_template_renders_complete_raw_receive_address() {
+    let source = FUNDING_SKILL
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(source.contains("Read the complete `receiveAddress`"));
+    assert!(source.contains("original address on one plain-text line"));
+    assert!(source.contains("Render the QR for that address immediately after the address"));
+    assert!(FUNDING_SKILL.contains("`收款地址：{receiveAddress}`"));
+    assert!(FUNDING_SKILL.contains("Receive address: {receiveAddress}"));
+    assert!(FUNDING_SKILL.contains("Receive address: {fundingTarget.receiveAddress}"));
+}
+
 /// True when stdout/stderr carry a recognised "wallet not logged in / session
 /// expired" marker. Used to accept the auth-gate path when no login fixture is
 /// provisioned in the test environment. `ERR_NOT_LOGGED_IN` is `"not logged in"`

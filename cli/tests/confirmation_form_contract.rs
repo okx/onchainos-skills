@@ -7,6 +7,10 @@ const EVALUATOR_ROUTER: &str =
 const IDENTITY_SEARCH: &str = include_str!("../../skills/okx-ai/references/identity/search.md");
 const PREPARE: &str = include_str!("../../skills/okx-ai/references/a2a/user/create-prepare.md");
 const CREATE: &str = include_str!("../../skills/okx-ai/references/a2a/user/create.md");
+const SUBSCRIPTION_CREATE: &str =
+    include_str!("../../skills/okx-ai/references/a2a/user/subscription-create.md");
+const SUBSCRIPTION_QUERY: &str =
+    include_str!("../../skills/okx-ai/references/a2a/user/subscription.md");
 const GUIDE: &str = include_str!("../../skills/okx-ai/references/a2a/user/create-guide.md");
 const REFUND_PREPARE: &str =
     include_str!("../../skills/okx-ai/references/a2a/user/refund-prepare.md");
@@ -81,8 +85,18 @@ fn create_confirmation_excludes_execution_configuration() {
     ] {
         assert!(!CREATE.contains(forbidden));
     }
-    assert!(CREATE.contains("List attachments below the table"));
-    assert!(create.contains("Guide Consent was confirmed separately"));
+    assert!(CREATE.contains("Render attachments below the field list"));
+    assert!(CREATE.contains("- Job Name: {title}"));
+    assert!(!CREATE.contains("| Job Name | Job Description |"));
+    assert!(SUBSCRIPTION_CREATE.contains("- Task Name: {title}"));
+    assert!(!SUBSCRIPTION_CREATE.contains("| Field | Value |"));
+    let subscription_detail = SUBSCRIPTION_QUERY.split_once("## Detail").unwrap().1;
+    assert!(subscription_detail.contains("- Job ID: {jobId}"));
+    assert!(subscription_detail.contains("- Status: {localizedStatusLabel}"));
+    assert!(subscription_detail.contains("- Status Description: {localizedStatusDescription}"));
+    assert!(SUBSCRIPTION_QUERY.contains("`Refund completed`, respectively"));
+    assert!(!subscription_detail.contains("| Job Name |"));
+    assert!(create.contains("Keep Guide Consent in its separate confirmation"));
 }
 
 #[test]
@@ -95,29 +109,31 @@ fn refund_reason_and_write_are_freshly_bound() {
     for expected in ["user-authored", "non-blank", "preserve", "verbatim"] {
         assert!(confirmation.contains(expected));
     }
-    assert!(confirmation.contains("final input"));
+    assert!(confirmation.contains("after both submission intent and the reason are present"));
     assert!(REFUND_PREPARE.contains("read-only Refund V2 result"));
     assert!(REFUND_CONFIRM.contains("submit_refund_request"));
     assert!(REFUND_EXECUTE.contains("refund-execute JOB_ID_ARG"));
     assert!(REFUND_EXECUTE.contains("--refund-context-id"));
     assert!(REFUND_EXECUTE.contains("--confirm"));
-    assert!(REFUND_CONFIRM.contains("bound to one latest preparation result"));
+    assert!(REFUND_EXECUTE.contains("您可以让我查看指定任务详情，获取退款处理结果。"));
+    assert!(REFUND_EXECUTE.contains("Do not\nrender a CLI command"));
+    assert!(!REFUND_EXECUTE.contains("onchainos agent status <jobId>"));
+    assert!(REFUND_CONFIRM
+        .contains("Bind each write to an explicit action selected from the latest preparation"));
 }
 
 #[test]
 fn refund_finality_and_display_remain_exact() {
-    for fact in [
-        "Expired(8)",
-        "Failed(9)",
-        "job_asp_reject_expire",
-        "sub_failed_notify",
-    ] {
+    for fact in ["Expired(8)", "Failed(9)", "job_asp_reject_expire"] {
         assert!(REFUND_CONTRACT.contains(fact));
     }
+    assert!(REFUND_CONTRACT.contains("render `Refund completed`"));
     assert!(REFUND_CONTRACT.contains("A Tx Hash is optional audit metadata"));
     assert!(REFUND_CONFIRM.contains("## Output Templates"));
     assert!(REFUND_CONFIRM.contains("### Confirm Refund Request"));
     assert!(REFUND_CONFIRM.contains("include your refund reason"));
+    assert!(REFUND_CONFIRM.contains("Render the complete [Confirm Refund Request]"));
+    assert!(REFUND_CONFIRM.contains("preceding `B` or rejection enters"));
     assert!(TASK_QUERY.contains("## Output Templates"));
     assert!(TASK_QUERY.contains("### Refund Task List"));
     assert!(TASK_QUERY.contains("### Refund Request Details"));

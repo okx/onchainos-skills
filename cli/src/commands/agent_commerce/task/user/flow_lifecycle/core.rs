@@ -1421,6 +1421,9 @@ pub(crate) async fn deliverable_received_cli(
                 service_token_address: None,
                 service_token_amount: None,
                 service_params: None,
+                refund_reason: None,
+                period_start_time: None,
+                period_end_time: None,
                 user_agent_address: None,
                 token_address: None,
                 verified_transaction_hash: None,
@@ -1746,7 +1749,7 @@ pub(crate) async fn reject_review(ctx: &FlowContext<'_>) -> String {
         .unwrap_or_default();
     format!(
         "[reject_review compatibility] The relayed rejection opens the Refund V2 confirmation flow.\n\n\
-         Run the read-only `onchainos agent refund-prepare {job_id}{reason_arg}` and render its `payload.display` with the Confirm Refund Request template. End the turn after presenting the card. The rejection itself authorizes no refund write. Continue only after the user provides clear `Submit refund request` intent and a refund reason; then rerun the fresh preparation with that verbatim reason and execute only its returned `submit_refund_request` action. Any other preparation result is the authoritative outcome to present to the user.\n"
+         Run the read-only `onchainos agent refund-prepare {job_id}{reason_arg}` and always render its complete `payload.display` with the Template 6.1 Confirm Refund Request field-list template, even when the reason is blank. Never replace the card with only a refund-reason question. End the turn after presenting the card. The rejection itself authorizes no refund write: B is not `Submit refund request` intent and does not arm a reason-only continuation. Continue only after the user provides clear submission intent and a refund reason; then rerun the fresh preparation with that verbatim reason and execute only its returned `submit_refund_request` action. A reason without submission intent only refreshes and re-renders Template 6.1. Any other preparation result is the authoritative outcome to present to the user.\n"
     )
 }
 
@@ -1905,7 +1908,15 @@ mod tests {
 
         let out = reject_review(&ctx).await;
         assert!(out.contains("refund-prepare 0xabc"), "{out}");
-        assert!(out.contains("Confirm Refund Request template"), "{out}");
+        assert!(
+            out.contains("Template 6.1 Confirm Refund Request field-list template"),
+            "{out}"
+        );
+        assert!(out.contains("even when the reason is blank"), "{out}");
+        assert!(
+            out.contains("B is not `Submit refund request` intent"),
+            "{out}"
+        );
         assert!(out.contains("authorizes no refund write"), "{out}");
         assert!(out.contains("Submit refund request"), "{out}");
         assert!(!out.contains("--reason"), "{out}");
@@ -1936,6 +1947,12 @@ mod tests {
             "{out}"
         );
         assert!(out.contains("submit_refund_request"), "{out}");
+        assert!(
+            out.contains(
+                "A reason without submission intent only refreshes and re-renders Template 6.1"
+            ),
+            "{out}"
+        );
         assert!(out.contains("authoritative outcome"), "{out}");
         assert!(
             out.contains("End the turn after presenting the card"),
@@ -2482,6 +2499,9 @@ Part B continues
             service_token_address: None,
             service_token_amount: None,
             service_params: None,
+            refund_reason: None,
+            period_start_time: None,
+            period_end_time: None,
             user_agent_address: None,
             token_address: None,
             verified_transaction_hash: None,

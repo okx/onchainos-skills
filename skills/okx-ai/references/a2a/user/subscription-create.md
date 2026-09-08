@@ -14,17 +14,22 @@ Guide permits only `signal_only`. Do not default the mode or store it in
 
 Collect `title` (≤30 characters), Description (≤4096 characters), explicit
 Service inputs, and attachments. Use `autoRenew=1` unless the User explicitly
-disables it. Render only:
+disables it. Render this single-subscription confirmation as a field list:
 
-| Field | Value |
-|---|---|
-| Task Name | title |
-| Task Description | confirmed Description |
-| Provider | bound Provider Agent |
-| Service Parameters | confirmed `serviceParams` |
-| Service Price | exact subscription fee, token, and interval |
-| Trial | exact supported positive duration, otherwise No |
-| Auto-Renew | On or Off |
+```markdown
+### Subscription Creation Confirmation
+
+- Task Name: {title}
+- Task Description: {confirmedDescription}
+- Provider: {providerAgent}
+- Service Parameters: {serviceParams}
+- Service Price: {feeAmount} {feeTokenSymbol} / {interval}
+- Trial: {trialDurationOrNo}
+- Auto-Renew: {OnOrOff}
+```
+
+Render the Service Parameters item for confirmed parameters. Render attachments
+below the field list.
 
 Guide Consent remains a separate confirmation. Continue only after explicit
 final confirmation and the one-time communication check defined by `create.md`.

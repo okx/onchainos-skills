@@ -51,7 +51,7 @@ pub enum Status {
     Completed,    // 6
     Close,        // 7
     Expired,      // 8
-    Failed,       // 9
+    Failed,       // 9 — backend key for the refunded terminal state
     /// A status string returned by the backend that this enum does not recognize (tolerantly preserved as-is).
     Other(String),
 }
@@ -169,6 +169,59 @@ impl DisputeRoundStatus {
             DisputeRoundStatus::Other(_) => "unknown",
         }
     }
+
+    pub fn display_label(&self) -> &'static str {
+        match self {
+            DisputeRoundStatus::Init => "Evaluation round initializing",
+            DisputeRoundStatus::CommitPhase => "Vote commitment in progress",
+            DisputeRoundStatus::RevealPhase => "Vote reveal in progress",
+            DisputeRoundStatus::Completed => "Evaluation round completed",
+            DisputeRoundStatus::Rejected => "Evaluation round rejected",
+            DisputeRoundStatus::Invalidated => "Evaluation round invalidated",
+            DisputeRoundStatus::Other(_) => "Round status unavailable",
+        }
+    }
+
+    pub fn display_description(&self) -> &'static str {
+        match self {
+            DisputeRoundStatus::Init => "The evaluation round is being initialized.",
+            DisputeRoundStatus::CommitPhase => {
+                "Selected evaluators are submitting encrypted votes."
+            }
+            DisputeRoundStatus::RevealPhase => {
+                "Evaluators are revealing their previously committed votes."
+            }
+            DisputeRoundStatus::Completed => "This evaluation round has completed.",
+            DisputeRoundStatus::Rejected => "This evaluation round was rejected.",
+            DisputeRoundStatus::Invalidated => {
+                "This round produced no valid result and awaits the next round."
+            }
+            DisputeRoundStatus::Other(_) => "The evaluation round status is currently unavailable.",
+        }
+    }
+}
+
+#[cfg(test)]
+mod dispute_round_display_tests {
+    use super::DisputeRoundStatus;
+
+    #[test]
+    fn round_statuses_have_human_readable_labels_and_descriptions() {
+        let cases = [
+            (0, "Evaluation round initializing"),
+            (1, "Vote commitment in progress"),
+            (2, "Vote reveal in progress"),
+            (3, "Evaluation round completed"),
+            (4, "Evaluation round rejected"),
+            (5, "Evaluation round invalidated"),
+            (99, "Round status unavailable"),
+        ];
+        for (code, expected_label) in cases {
+            let status = DisputeRoundStatus::from_int(code);
+            assert_eq!(status.display_label(), expected_label);
+            assert!(!status.display_description().trim().is_empty());
+        }
+    }
 }
 
 // ─── Event ──────────────────────────────────────────────────────────────
@@ -204,7 +257,8 @@ pub enum Event {
     DisputeApproved,
     /// Either party's dispute-raise on-chain (status enters disputed; notifies both user + ASP to upload evidence).
     JobDisputed,
-    /// ASP agrees to refund / arbitration user-wins refund on-chain (status enters refunded; notifies user + ASP).
+    /// ASP agrees to refund / arbitration user-wins refund on-chain (status
+    /// enters backend Failed(9), displayed as refund completed; notifies user + ASP).
     JobRefunded,
     /// DisputeSettled arbitration verdict (status enters completed or refunded; notifies user/ASP/voters
     /// to call /claimable + /claim to collect rewards).

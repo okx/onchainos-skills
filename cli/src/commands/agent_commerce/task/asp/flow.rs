@@ -163,13 +163,13 @@ async fn provider_assignment_playbook(
     )
 }
 
-fn arbitration_decision_json(
+fn arbitration_decision_result(
     source_event: &str,
     job_id: &str,
     job_title: Option<&str>,
     prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
     message: Option<&serde_json::Value>,
-) -> String {
+) -> serde_json::Value {
     use crate::commands::agent_commerce::task::arbitration::{
         build_decision_result, scalar_string,
     };
@@ -221,15 +221,163 @@ fn arbitration_decision_json(
             decision_context["serviceName"] = serde_json::Value::String(service_name.to_string());
         }
     }
-    let result = build_decision_result(
+    if scalar_string(decision_context.get("refundReason")).is_none() {
+        if let Some(reason) = prefetched
+            .and_then(|value| value.refund_reason.as_deref())
+            .filter(|value| !value.trim().is_empty())
+        {
+            decision_context["refundReason"] = serde_json::Value::String(reason.to_string());
+        }
+    }
+    for (key, value) in [
+        (
+            "subStartTime",
+            prefetched.and_then(|value| value.period_start_time),
+        ),
+        (
+            "subEndTime",
+            prefetched.and_then(|value| value.period_end_time),
+        ),
+    ] {
+        if decision_context.get(key).is_none() {
+            if let Some(value) = value {
+                decision_context[key] = serde_json::Value::Number(value.into());
+            }
+        }
+    }
+    build_decision_result(
         source_event,
         job_id,
         name,
         amount,
         token_symbol,
         Some(&decision_context),
+    )
+}
+
+fn arbitration_decision_json(
+    source_event: &str,
+    job_id: &str,
+    job_title: Option<&str>,
+    prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
+    message: Option<&serde_json::Value>,
+) -> String {
+    serde_json::to_string(&arbitration_decision_result(
+        source_event,
+        job_id,
+        job_title,
+        prefetched,
+        message,
+    ))
+    .unwrap_or_else(|_| "{}".to_string())
+}
+
+fn arbitration_decision_playbook(
+    source_event: &str,
+    job_id: &str,
+    agent_id: &str,
+    job_title: Option<&str>,
+    prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
+    message: Option<&serde_json::Value>,
+) -> String {
+    use crate::commands::agent_commerce::task::{arbitration, common};
+
+    let result = arbitration_decision_result(source_event, job_id, job_title, prefetched, message);
+    if result["decision"] != "requires_user_input" {
+        return serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string());
+    }
+
+    let payload = &result["payload"];
+    let required = |key: &str| payload.get(key).and_then(serde_json::Value::as_str);
+    let (
+        Some(service_name),
+        Some(task_type),
+        Some(requested_refund),
+        Some(buyer_reason),
+        Some(response_deadline),
+        Some(decision_id),
+        Some(refund_display_b64),
+    ) = (
+        required("serviceName"),
+        required("taskType"),
+        required("requestedRefund"),
+        required("buyerReason"),
+        required("responseDeadline"),
+        required("decisionId"),
+        required("refundDisplayB64"),
+    )
+    else {
+        return arbitration::blocked_result(
+            "missing_required_facts",
+            job_id,
+            serde_json::json!({"sourceEvent": source_event}),
+        );
+    };
+    let is_subscription = source_event == arbitration::SUB_USER_REJECT;
+    let current_period = if is_subscription {
+        required("currentPeriod")
+    } else {
+        None
+    };
+    if is_subscription && current_period.is_none() {
+        return arbitration::blocked_result(
+            "missing_required_facts",
+            job_id,
+            serde_json::json!({"sourceEvent": source_event, "missingFields": ["currentPeriod"]}),
+        );
+    }
+    let Some(expires_at) = payload["responseDeadlineTimestamp"].as_i64() else {
+        return arbitration::blocked_result(
+            "missing_required_facts",
+            job_id,
+            serde_json::json!({"sourceEvent": source_event, "missingFields": ["responseDeadline"]}),
+        );
+    };
+
+    let template_vars_b64 = common::pending_v2::encode_refund_decision_vars(
+        service_name,
+        job_id,
+        task_type,
+        current_period,
+        requested_refund,
+        buyer_reason,
+        response_deadline,
     );
-    serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string())
+    let source_template = super::content::asp_refund_decision_source_template(is_subscription);
+    let choices = arbitration::default_choices(source_event, job_id);
+    let choices_json = serde_json::to_string(&choices)
+        .unwrap_or_else(|_| "[]".to_string())
+        .replace('\'', "'\"'\"'");
+    let short_id = short_job_id(job_id);
+    let to_flag = prefetched
+        .and_then(|value| value.user_agent_id.as_deref())
+        .filter(|value| !value.is_empty())
+        .map(|value| format!(" --to-agent-id {value}"))
+        .unwrap_or_default();
+    let label_placeholder = common::template_vars::REFUND_SERVICE_NAME_PLACEHOLDER;
+
+    format!(
+        "[Current state] {source_event} (buyer refund request requires the ASP owner's decision)\n\
+         [Role] ASP\n\n\
+         Render and push Product Template 6.4 exactly once as a single-record field list. The card itself is the refund-or-evaluation confirmation; do not add a third confirmation.\n\n\
+         Localize the complete source template below to the current conversation language before passing it to `--user-content`. Translate the title, field labels, explanatory text, and action wording. Preserve every reserved `{{__OKX_...__}}` placeholder byte-for-byte; the CLI replaces those placeholders in-process after shell parsing. Do not expose or decode `--template-vars-b64`.\n\n\
+         ```bash\n\
+         onchainos agent pending-decisions-v2 request-prompt \\\n\
+         \x20\x20--job-id {job_id} --role asp --agent-id {agent_id}{to_flag} \\\n\
+         \x20\x20--user-content \"<localized complete Template 6.4 source below>\" \\\n\
+         \x20\x20--list-label \"[Decision {short_id}] {label_placeholder} — refund or evaluation\" \\\n\
+         \x20\x20--source-event {source_event} \\\n\
+         \x20\x20--decision-id \"{decision_id}\" \\\n\
+         \x20\x20--choices-json '{choices_json}' \\\n\
+         \x20\x20--expires-at {expires_at} \\\n\
+         \x20\x20--refund-display-b64 \"{refund_display_b64}\" \\\n\
+         \x20\x20--template-vars-b64 \"{template_vars_b64}\"\n\
+         ```\n\n\
+         === BEGIN TEMPLATE 6.4 SOURCE ===\n\
+         {source_template}\n\
+         === END TEMPLATE 6.4 SOURCE ===\n\n\
+         After `request-prompt` succeeds, end this turn and wait for the ASP owner's reply.",
+    )
 }
 
 /// Extract the decision deadline (unix seconds) from a `job_rejected` event
@@ -404,18 +552,20 @@ pub async fn generate_next_action(
     let event = parse_status_or_event(event_str);
     match &event {
         Event::JobRejected => {
-            return arbitration_decision_json(
+            return arbitration_decision_playbook(
                 crate::commands::agent_commerce::task::arbitration::JOB_REJECTED,
                 job_id,
+                agent_id,
                 job_title,
                 prefetched,
                 message,
             );
         }
         Event::SubUserReject => {
-            return arbitration_decision_json(
+            return arbitration_decision_playbook(
                 crate::commands::agent_commerce::task::arbitration::SUB_USER_REJECT,
                 job_id,
+                agent_id,
                 job_title,
                 prefetched,
                 message,
@@ -861,7 +1011,10 @@ pub async fn generate_next_action(
              The CLI auto-attaches every entry under `~/.onchainos/deliverables/asp/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers the deliverable copy saved at `deliver` time. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 5 — the on-chain evaluation will continue with the available evidence.\n\n\
              **Step 5 — Notify the user (after upload returns):**\n\n\
              content:\n\
-             \x20\x20\x20\x20[Evaluation opened] Evaluation for job `{job_id}` is on-chain. The system has automatically submitted your evidence (evaluation reason + chat history + saved deliverable). Awaiting the evaluator's verdict.\n\n\
+             \x20\x20\x20\x20[Evaluation opened] Evaluation for job `{job_id}` is on-chain.\n\
+             \x20\x20\x20\x20- Evaluation status: Evidence preparation\n\
+             \x20\x20\x20\x20- Status description: Evidence was submitted and the evidence stage is in progress.\n\
+             \x20\x20\x20\x20Awaiting the evaluator's verdict.\n\n\
              **Step 6 — End this turn.** Do NOT `okx-a2a session send` anything to the User Agent.\n\n\
              [Follow-up events]\n\
              - job_completed → won, funds released to the ASP\n\
@@ -1268,7 +1421,10 @@ pub async fn generate_next_action(
              The CLI auto-attaches the most recent 20 entries under `~/.onchainos/deliverables/asp/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers the deliverable copies saved at delivery time. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 5 — the on-chain evaluation will continue with the available evidence.\n\n\
              **Step 5 — Notify the user (after upload returns):**\n\n\
              content:\n\
-             \x20\x20\x20\x20[Evaluation opened] Subscription evaluation for job `{job_id}` is on-chain. The system has automatically submitted your evidence (evaluation reason + chat history + saved deliverables). Awaiting the evaluator's verdict.\n\n\
+             \x20\x20\x20\x20[Evaluation opened] Subscription evaluation for job `{job_id}` is on-chain.\n\
+             \x20\x20\x20\x20- Evaluation status: Evidence preparation\n\
+             \x20\x20\x20\x20- Status description: Evidence was submitted and the evidence stage is in progress.\n\
+             \x20\x20\x20\x20Awaiting the evaluator's verdict.\n\n\
              **Step 6 — End this turn.** Do NOT `okx-a2a session send` anything to the User Agent.\n\n\
              [Follow-up events]\n\
              - job_completed → won, funds released to the ASP\n\
@@ -1488,9 +1644,6 @@ fn user_attachment_received_cli(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::agent_commerce::task::common::template_vars::{
-        self, extract_emitted_label_title, extract_emitted_title,
-    };
     use serde_json::json;
 
     // ── reject_expire_time extraction (FR-4) ─────────────────────────────
@@ -1528,6 +1681,7 @@ mod tests {
                     "tokenAmount": "2.5",
                     "tokenSymbol": "USDT",
                     "expireTime": 2_000_000_000i64,
+                    "refundReason": "Delivery did not match the request",
                 }),
             );
         let output = arbitration_decision_json(
@@ -2180,20 +2334,41 @@ mod tests {
                 "event": "sub_user_reject", "jobId": ASP_JOB_ID, "jobTitle": "My Sub",
                 "subStartTime": 1_700_000_000, "subEndTime": 1_700_500_000,
                 "rejectWindowEndsAt": 1_700_600_000,
-                "tokenAmount": "0.0005", "tokenSymbol": "USDT"
+                "tokenAmount": "0.0005", "tokenSymbol": "USDT",
+                "refundReason": "Delivery did not match the request"
             }),
         )
         .await;
-        let result: serde_json::Value = serde_json::from_str(&out).unwrap();
-        assert_eq!(result["phase"], "arbitration_decision");
-        assert_eq!(result["decision"], "requires_user_input");
-        assert_eq!(result["payload"]["name"], "My Sub");
-        assert_eq!(result["payload"]["amount"], "0.0005");
-        assert_eq!(result["nextAction"][0]["id"], "sub_agree_refund");
-        assert_eq!(
-            result["nextAction"][1]["id"],
-            "raise_subscription_arbitration"
+        assert!(out.contains("pending-decisions-v2 request-prompt"), "{out}");
+        assert!(out.contains("=== BEGIN TEMPLATE 6.4 SOURCE ==="), "{out}");
+        assert!(
+            out.contains("- Service Name: {{__OKX_REFUND_SERVICE_NAME__}}"),
+            "{out}"
         );
+        assert!(
+            out.contains("- Current Period: {{__OKX_REFUND_CURRENT_PERIOD__}}"),
+            "{out}"
+        );
+        assert!(!out.contains("| Service Name |"), "{out}");
+        assert!(
+            out.contains("--decision-id \"0xsub01:sub_user_reject:"),
+            "{out}"
+        );
+        assert!(out.contains("--choices-json"), "{out}");
+        assert!(out.contains("--expires-at 1700600000"), "{out}");
+        assert!(out.contains("--refund-display-b64"), "{out}");
+        assert!(out.contains("--template-vars-b64"), "{out}");
+        let vars =
+            crate::commands::agent_commerce::task::common::template_vars::decode_emitted_vars(&out);
+        assert_eq!(vars["__OKX_REFUND_SERVICE_NAME__"], "My Sub");
+        assert_eq!(vars["__OKX_REFUND_JOB_ID__"], ASP_JOB_ID);
+        assert_eq!(vars["__OKX_REFUND_TASK_TYPE__"], "Subscription");
+        assert_eq!(vars["__OKX_REFUND_AMOUNT__"], "0.0005 USDT");
+        assert_eq!(
+            vars["__OKX_REFUND_BUYER_REASON__"],
+            "Delivery did not match the request"
+        );
+        assert!(vars.contains_key("__OKX_REFUND_CURRENT_PERIOD__"));
 
         let degraded = run_asp(
             "sub_user_reject",
@@ -2206,21 +2381,51 @@ mod tests {
         assert_eq!(degraded["nextAction"], serde_json::json!([]));
     }
 
+    #[tokio::test]
+    async fn asp_job_rejected_pushes_one_time_template_6_4_without_current_period() {
+        let out = run_asp(
+            "job_rejected",
+            json!({
+                "event": "job_rejected",
+                "jobId": ASP_JOB_ID,
+                "jobTitle": "One-time service",
+                "expireTime": 1_700_600_000,
+                "tokenAmount": "1.25",
+                "tokenSymbol": "USDT",
+                "refundReason": "Delivery did not match the request"
+            }),
+        )
+        .await;
+
+        assert!(out.contains("pending-decisions-v2 request-prompt"), "{out}");
+        assert!(out.contains("=== BEGIN TEMPLATE 6.4 SOURCE ==="), "{out}");
+        assert!(
+            out.contains("- Service Name: {{__OKX_REFUND_SERVICE_NAME__}}"),
+            "{out}"
+        );
+        assert!(!out.contains("- Current Period:"), "{out}");
+        assert!(!out.contains("| Service Name |"), "{out}");
+        assert!(out.contains("do not add a third confirmation"), "{out}");
+        let vars =
+            crate::commands::agent_commerce::task::common::template_vars::decode_emitted_vars(&out);
+        assert_eq!(vars["__OKX_REFUND_TASK_TYPE__"], "One-time");
+        assert!(!vars.contains_key("__OKX_REFUND_CURRENT_PERIOD__"));
+    }
+
     /// A hostile title payload. In zsh, `${(e)}`
     /// forces eval and `${(#):-96}` yields a backtick, so this reconstructs and
     /// runs `id>&2` IF any byte of it ever reaches a zsh command line. The whole
     /// point of the hotfix is that it never does — it travels only inside the
-    /// shell-safe Base64 `--template-vars-b64` payload. Kept byte-identical to the
-    /// integration test (`cli/tests/shell_injection_sub_user_reject.rs`).
+    /// shell-safe Base64 `--template-vars-b64` payload.
     const HOSTILE_ZSH_TITLE: &str = "x${(e):-${(#):-96}id>&2${(#):-96}}";
 
     // Exercise the ACTUAL `Event::SubUserReject` renderer (not a hand-assembled
     // command) with the hostile zsh payload, through the production title
     // extraction path. This closes the composition gap the integration test flags:
     // the real renderer must emit the placeholder-carrying `request-prompt` with a
-    // single shell-safe Base64 payload, and the raw attacker title must never
-    // appear in the emitted command/playbook while decoding back byte-for-byte
-    // under BOTH whitelisted keys.
+    // single shell-safe Base64 payload. Neither the raw attacker title nor the
+    // buyer-authored reason may appear in emitted shell source; both must decode
+    // back byte-for-byte only inside `request-prompt`.
     #[tokio::test]
     async fn asp_sub_user_reject_hostile_payload_stays_out_of_shell() {
         // Production (`agent_commerce/mod.rs`) reads ONLY `message.jobTitle` as the
@@ -2233,7 +2438,8 @@ mod tests {
             "subEndTime": 1_700_500_000,
             "rejectWindowEndsAt": 1_700_600_000,
             "tokenAmount": "0.0005",
-            "tokenSymbol": "USDT"
+            "tokenSymbol": "USDT",
+            "refundReason": "$(touch /tmp/asp-refund-reason-must-not-run)"
         });
         let title_ref = production_title_ref(&msg);
         let out = generate_next_action(
@@ -2247,16 +2453,17 @@ mod tests {
         )
         .await;
 
-        let result: serde_json::Value = serde_json::from_str(&out).unwrap();
-        assert_eq!(result["phase"], "arbitration_decision");
-        assert_eq!(result["payload"]["name"], HOSTILE_ZSH_TITLE);
-        assert_eq!(result["nextAction"][0]["id"], "sub_agree_refund");
+        assert!(out.contains("pending-decisions-v2 request-prompt"));
+        assert!(out.contains("--template-vars-b64"));
+        assert!(!out.contains(HOSTILE_ZSH_TITLE));
+        assert!(!out.contains("$(touch /tmp/asp-refund-reason-must-not-run)"));
+        let vars =
+            crate::commands::agent_commerce::task::common::template_vars::decode_emitted_vars(&out);
+        assert_eq!(vars["__OKX_REFUND_SERVICE_NAME__"], HOSTILE_ZSH_TITLE);
         assert_eq!(
-            result["nextAction"][1]["id"],
-            "raise_subscription_arbitration"
+            vars["__OKX_REFUND_BUYER_REASON__"],
+            "$(touch /tmp/asp-refund-reason-must-not-run)"
         );
-        assert!(!out.contains("pending-decisions-v2"));
-        assert!(!out.contains("--template-vars-b64"));
     }
 
     // Reproduce the EXACT production title extraction from `agent_commerce/mod.rs`
@@ -2276,186 +2483,34 @@ mod tests {
         message.get("jobTitle").and_then(|v| v.as_str())
     }
 
-    // Preserve the base title-source precedence, proven
-    // through the production extraction path. The list-label uses `title_display`
-    // (= `jobTitle` or the literal `<title>`); the decision copy resolves
-    // `jobTitle` → `title` → `title_display`. These two base values are carried as
-    // SEPARATE whitelisted vars, never collapsed, and for each case the base-vs-head
-    // final user-content / list-label are byte-for-byte identical. The four rows are
-    // the complete production precedence table.
     #[tokio::test]
-    async fn sub_user_reject_title_precedence_preserved_byte_for_byte() {
-        use std::collections::BTreeMap;
-        const SUB_START: i64 = 1_700_000_000;
-        const SUB_END: i64 = 1_700_500_000;
-        const RW: i64 = 1_700_600_000;
+    async fn sub_user_reject_service_name_falls_back_to_task_title() {
+        let msg = json!({
+            "event": "sub_user_reject",
+            "jobId": ASP_JOB_ID,
+            "title": "Fallback task title",
+            "subStartTime": 1_700_000_000,
+            "subEndTime": 1_700_500_000,
+            "rejectWindowEndsAt": 1_700_600_000,
+            "tokenAmount": "0.0005",
+            "tokenSymbol": "USDT",
+            "refundReason": "Delivery did not match the request"
+        });
+        let out = generate_next_action(
+            ASP_JOB_ID,
+            "sub_user_reject",
+            ASP_AGENT_ID,
+            production_title_ref(&msg),
+            None,
+            None,
+            Some(&msg),
+        )
+        .await;
 
-        struct Case {
-            name: &'static str,
-            // Only the message fields the production caller reads. `title_display`
-            // and the two expected titles are DERIVED (never hand-set independently).
-            job_title: Option<&'static str>,
-            title: Option<&'static str>,
-            // The P0-checklist expected outcomes, asserted verbatim.
-            expected_title_display: &'static str,
-            expected_copy: &'static str,
-            expected_label: &'static str,
-        }
-        let cases = [
-            // jobTitle=JobT, title=PlainT → title_display JobT / copy JobT / label JobT
-            Case {
-                name: "jobTitle=JobT, title=PlainT",
-                job_title: Some("JobT"),
-                title: Some("PlainT"),
-                expected_title_display: "JobT",
-                expected_copy: "JobT",
-                expected_label: "JobT",
-            },
-            // no jobTitle, title=PlainT → title_display <title> / copy PlainT / label <title>
-            Case {
-                name: "no jobTitle, title=PlainT",
-                job_title: None,
-                title: Some("PlainT"),
-                expected_title_display: "<title>",
-                expected_copy: "PlainT",
-                expected_label: "<title>",
-            },
-            // neither → title_display <title> / copy <title> / label <title>
-            Case {
-                name: "neither",
-                job_title: None,
-                title: None,
-                expected_title_display: "<title>",
-                expected_copy: "<title>",
-                expected_label: "<title>",
-            },
-            // jobTitle="", title="" → title_display "" / copy "" / label ""
-            Case {
-                name: "jobTitle=\"\", title=\"\"",
-                job_title: Some(""),
-                title: Some(""),
-                expected_title_display: "",
-                expected_copy: "",
-                expected_label: "",
-            },
-        ];
-
-        for c in cases {
-            let mut m = serde_json::Map::new();
-            m.insert("event".into(), json!("sub_user_reject"));
-            m.insert("jobId".into(), json!(ASP_JOB_ID));
-            m.insert("subStartTime".into(), json!(SUB_START));
-            m.insert("subEndTime".into(), json!(SUB_END));
-            m.insert("rejectWindowEndsAt".into(), json!(RW));
-            m.insert("tokenAmount".into(), json!("0.0005"));
-            m.insert("tokenSymbol".into(), json!("USDT"));
-            if let Some(jt) = c.job_title {
-                m.insert("jobTitle".into(), json!(jt));
-            }
-            if let Some(t) = c.title {
-                m.insert("title".into(), json!(t));
-            }
-            let msg = serde_json::Value::Object(m);
-
-            // The 4th arg is exactly what the production caller passes (title_ref).
-            let title_ref = production_title_ref(&msg);
-            let out = generate_next_action(
-                ASP_JOB_ID,
-                "sub_user_reject",
-                ASP_AGENT_ID,
-                title_ref,
-                None,
-                None,
-                Some(&msg),
-            )
-            .await;
-
-            let result: serde_json::Value = serde_json::from_str(&out).unwrap();
-            if result.get("phase").is_some() {
-                if c.expected_copy.is_empty() || c.expected_copy == "<title>" {
-                    assert_eq!(result["decision"], "blocked", "[{}]", c.name);
-                    assert_eq!(result["reason"], "missing_required_facts", "[{}]", c.name);
-                } else {
-                    assert_eq!(result["decision"], "requires_user_input", "[{}]", c.name);
-                    assert_eq!(result["payload"]["name"], c.expected_copy, "[{}]", c.name);
-                }
-                continue;
-            }
-
-            // title_display derivation mirrors flow.rs (`job_title.unwrap_or("<title>")`).
-            let title_display = title_ref.unwrap_or("<title>");
-            assert_eq!(
-                title_display, c.expected_title_display,
-                "[{}] production title_display",
-                c.name
-            );
-            let expected_copy = c.expected_copy;
-            let expected_label = c.expected_label;
-
-            // The two base titles are carried independently (never collapsed) and
-            // equal the P0-checklist expectations.
-            assert_eq!(
-                extract_emitted_title(&out),
-                expected_copy,
-                "[{}] decision-copy title var",
-                c.name
-            );
-            assert_eq!(
-                extract_emitted_label_title(&out),
-                expected_label,
-                "[{}] list-label title var",
-                c.name
-            );
-
-            // Base-vs-head final user-content (decision copy) byte-for-byte.
-            let base_copy = crate::commands::agent_commerce::task::asp::content::sub_user_reject_asp_decision_copy(
-                expected_copy,
-                Some(SUB_START),
-                Some(SUB_END),
-                Some(RW),
-                Some("0.0005"),
-                Some("USDT"),
-            );
-            let head_copy_tmpl = crate::commands::agent_commerce::task::asp::content::sub_user_reject_asp_decision_copy(
-                template_vars::TITLE_PLACEHOLDER,
-                Some(SUB_START),
-                Some(SUB_END),
-                Some(RW),
-                Some("0.0005"),
-                Some("USDT"),
-            );
-            let mut copy_vars = BTreeMap::new();
-            copy_vars.insert("__OKX_TASK_TITLE__".to_string(), expected_copy.to_string());
-            let head_copy = template_vars::render_all(&[head_copy_tmpl.as_str()], &copy_vars)
-                .expect("copy renders")
-                .remove(0);
-            assert_eq!(
-                head_copy, base_copy,
-                "[{}] user-content byte-for-byte",
-                c.name
-            );
-
-            // Base-vs-head final list-label byte-for-byte (short_id slot is stable
-            // across base/head, so a fixed sentinel isolates the title substitution).
-            let label_tmpl = format!(
-                "[Decision SID] {} — refund or evaluation",
-                template_vars::LABEL_TITLE_PLACEHOLDER
-            );
-            let mut label_vars = BTreeMap::new();
-            label_vars.insert(
-                "__OKX_TASK_LABEL_TITLE__".to_string(),
-                expected_label.to_string(),
-            );
-            let head_label = template_vars::render_all(&[label_tmpl.as_str()], &label_vars)
-                .expect("label renders")
-                .remove(0);
-            let base_label = format!("[Decision SID] {expected_label} — refund or evaluation");
-            assert_eq!(
-                head_label, base_label,
-                "[{}] list-label byte-for-byte",
-                c.name
-            );
-        }
+        assert!(out.contains("pending-decisions-v2 request-prompt"), "{out}");
+        let vars =
+            crate::commands::agent_commerce::task::common::template_vars::decode_emitted_vars(&out);
+        assert_eq!(vars["__OKX_REFUND_SERVICE_NAME__"], "Fallback task title");
     }
 
     #[tokio::test]

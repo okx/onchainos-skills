@@ -11,19 +11,25 @@ result. Render [Buyer Refund Request](#buyer-refund-request).
 
 ## Resolve the decision
 
-For an event-created card, preserve its Job ID, decision ID, deadline, and
-choice binding in `pending-decisions-v2`.
+Bind an event-created card to its Job ID, decision ID, deadline, and choices in
+`pending-decisions-v2`. Bind a card opened from a selected pending request to
+its Job ID and fresh `refund-detail.nextAction` values. Render the complete
+Template 6.4 view before waiting for a decision.
 
-- `Approve refund` resolves to `agree_refund` or `sub_agree_refund` and runs the returned command in the current conversation.
-- Analyze a `Request evaluation` reply for both the intent and an evaluation reason. When both are present, preserve the reason verbatim, resolve the bound action, and run it in the current conversation.
-- When the reply contains the `Request evaluation` intent without a reason, ask only for the evaluation reason. Treat the next non-blank reply as the reason, preserve it verbatim, resolve the bound action, and run it in the current conversation.
+Apply this response matrix to either binding:
 
-For a card opened directly from a selected pending request, keep the selected
-Job ID and fresh `nextAction` values in the current conversation:
-
-- `Approve refund` runs the matching refund action returned by `refund-detail`.
-- Analyze a `Request evaluation` reply for both the intent and an evaluation reason. When both are present, preserve the reason verbatim, add it to the matching evaluation action, and run it immediately.
-- When the reply contains the `Request evaluation` intent without a reason, ask only for the evaluation reason. Treat the next non-blank reply as the reason, preserve it verbatim, add it to the matching evaluation action, and run it immediately.
+- `Approve refund`: resolve the matching `agree_refund` or
+  `sub_agree_refund` action and run its returned command in the current
+  conversation.
+- `Request evaluation` with a non-blank reason: preserve the reason verbatim,
+  resolve the matching Evaluation action, and run it in the current
+  conversation.
+- `Request evaluation` with a missing reason: retain the Evaluation intent and
+  binding, render [Seller Refund Rejection](#seller-refund-rejection), and ask
+  for the evaluation reason. Treat the next non-blank reply as the verbatim
+  reason and run the matching action.
+- A reason received while waiting for a decision: preserve it as draft context,
+  re-render the complete Template 6.4 view, and wait for an action selection.
 
 The returned action is the final authorization. Present one concise localized
 result after the command completes.
@@ -39,13 +45,40 @@ timestamps, and user-authored reasons exactly.
 ```markdown
 ### Buyer Refund Request
 
-| Service Name | Job ID | Task Type | Current Period | Requested Refund | Buyer’s Reason | Response Deadline |
-|---|---|---|---|---|---|---|
-| {serviceName} | {jobId} | {taskType} | {currentPeriod} | {requestedRefund} | {buyerReason} | {responseDeadline} |
+- Service Name: {serviceName}
+- Job ID: {jobId}
+- Task Type: {taskType}
+- Current Period: {currentPeriod}
+- Requested Refund: {requestedRefund}
+- Buyer’s Reason: {buyerReason}
+- Response Deadline: {responseDeadline}
+- Refund Status: {localizedStatusLabel}
+- Status Description: {localizedStatusDescription}
 
 Please respond by the deadline. Otherwise, a full refund will be issued automatically.
 
 To refund the buyer, reply “Approve refund”. To request platform evaluation, reply “Request evaluation” and include your evaluation reason.
+```
+
+### Seller Refund Rejection
+
+Render this decision card only after the ASP has chosen to reject the refund
+but has not yet supplied an evaluation reason. It is not a new authorization;
+the already-selected rejection and its task binding remain active.
+
+```markdown
+### Seller Refund Rejection
+
+- Service Name: {serviceName}
+- Job ID: {jobId}
+- Task Type: {taskType}
+- Current Period: {currentPeriod}
+- Requested Refund: {requestedRefund}
+- Buyer’s Reason: {buyerReason}
+- Response Deadline: {responseDeadline}
+- Seller Decision: Reject refund
+
+Rejecting the refund will start a platform evaluation. Please provide your reason for requesting review; it will be preserved verbatim and submitted as the evaluation reason.
 ```
 
 Display rules:
@@ -54,3 +87,9 @@ Display rules:
 2. Preserve the full Job ID and the buyer-authored reason.
 3. Use CLI-provided display values directly.
 4. An explicit request to evaluate a selected task uses this same decision view.
+5. Localize the title, field labels, explanatory copy, and action wording to the current conversation language.
+6. Treat this Template 6.4 view as the ASP confirmation. Execute the returned action after `Approve refund`, or after `Request evaluation` with a reason.
+7. Render `Awaiting ASP decision` as `等待 ASP 处理`, and render its description
+   as `退款申请正在等待 ASP 决策` in a Chinese conversation.
+8. In Chinese, localize the rejection card title as `卖方拒绝退款`, its decision
+   as `卖方决定：拒绝退款`, and its prompt as `拒绝退款将发起平台评审。请补充申请评审的理由；我会原样使用该理由提交评审。`

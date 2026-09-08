@@ -22,12 +22,14 @@ broadcast receipt is pending, not settlement, and must never trigger an
 automatic retry.
 
 For `refund_request_broadcast_submitted`, say concisely that the request was
-submitted with the User's verbatim reason and that the ASP needs time. Provide
-the later-query hint:
+submitted with the User's verbatim reason and that the ASP needs time. Do not
+render a CLI command, code block, or other internal implementation detail.
+Instead, give this friendly later-query guidance:
 
-```text
-onchainos agent status <jobId> --agent-id <buyerAgentId>
-```
+> 退款申请已提交，原因：{refundReason}。需等待 ASP 处理。您可以让我查看指定任务详情，获取退款处理结果。
+
+If the User later asks for the result, route through `task-query.md` and run
+the required status query internally.
 
 Then end the current turn. Do not execute or resume `watch_task` automatically.
 For other broadcast-submitted outcomes, state that the operation is pending and

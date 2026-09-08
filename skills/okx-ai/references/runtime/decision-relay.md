@@ -24,4 +24,4 @@ never infer origin or scope from reply text.
 After normal outcomes, resume only the exact active-watch origin. One exception:
 a Buyer review rejection whose execution returns
 `refund_request_broadcast_submitted` ends after the pending confirmation and
-status-query hint. List-origin items never start watch.
+friendly later-query guidance. List-origin items never start watch.

@@ -2612,6 +2612,53 @@ pub fn encode_title_vars(copy_title: &str, label_title: &str) -> String {
         .encode(serde_json::to_vec(&obj).expect("json object serializes"))
 }
 
+#[allow(clippy::too_many_arguments)]
+pub fn encode_refund_decision_vars(
+    service_name: &str,
+    job_id: &str,
+    task_type: &str,
+    current_period: Option<&str>,
+    requested_refund: &str,
+    buyer_reason: &str,
+    response_deadline: &str,
+) -> String {
+    use base64::Engine;
+    let mut obj = serde_json::Map::from_iter([
+        (
+            "__OKX_REFUND_SERVICE_NAME__".to_string(),
+            serde_json::Value::String(service_name.to_string()),
+        ),
+        (
+            "__OKX_REFUND_JOB_ID__".to_string(),
+            serde_json::Value::String(job_id.to_string()),
+        ),
+        (
+            "__OKX_REFUND_TASK_TYPE__".to_string(),
+            serde_json::Value::String(task_type.to_string()),
+        ),
+        (
+            "__OKX_REFUND_AMOUNT__".to_string(),
+            serde_json::Value::String(requested_refund.to_string()),
+        ),
+        (
+            "__OKX_REFUND_BUYER_REASON__".to_string(),
+            serde_json::Value::String(buyer_reason.to_string()),
+        ),
+        (
+            "__OKX_REFUND_RESPONSE_DEADLINE__".to_string(),
+            serde_json::Value::String(response_deadline.to_string()),
+        ),
+    ]);
+    if let Some(current_period) = current_period {
+        obj.insert(
+            "__OKX_REFUND_CURRENT_PERIOD__".to_string(),
+            serde_json::Value::String(current_period.to_string()),
+        );
+    }
+    base64::engine::general_purpose::STANDARD
+        .encode(serde_json::to_vec(&obj).expect("json object serializes"))
+}
+
 /// Map internal role enum to the short user-facing label used in notifications.
 fn role_short_label(role: &str) -> &str {
     match role {
@@ -2671,11 +2718,11 @@ fn buyer_review_llm_content_cli(entry: &PendingEntry) -> Option<String> {
          Step 2 — Handle that reply in this current conversation. Enter through `skills/okx-ai/SKILL.md`, then apply `skills/okx-ai/references/runtime/watch.md` §Handling the user reply: cancel the wake when applicable, and for a non-defer reply claim the decision with `okx-a2a user check --todo-ids <todo_id> --json`. Continue on `handled`.\n\
          Step 3 — Interpret the choice and complete the selected review action here:\n\
            - A or an unambiguous approval: run `onchainos agent next-action --role user --agentId {agent} --message '{{\"event\":\"approve_review\",\"jobId\":\"{job}\"}}'`. For `reason=completion_submitted`, give one localized friendly confirmation equivalent to: \"Deliverable approved. The on-chain completion transaction has been submitted.\" For any other result, present its returned status and actions.\n\
-           - B or an unambiguous rejection: run the read-only `onchainos agent refund-prepare {job}`. Render the returned `payload.display` with the Confirm Refund Request template and ask the user to reply `Submit refund request` with a refund reason, or describe changes. End the turn.\n\
-           - After the card, analyze the reply for both the submission intent and a refund reason. If it contains clear `Submit refund request` intent and a non-blank reason, preserve the reason verbatim and continue immediately. If the intent is clear but the reason is missing, ask only for the refund reason and keep the Job ID and latest Refund V2 context active. During that follow-up, treat the next non-blank reply as the verbatim reason.\n\
-           - After obtaining the reason: run `onchainos agent refund-prepare {job} --reason \"<verbatim reason>\"`. Continue only when it returns `payload.schemaVersion=2`, `phase=refund_confirmation`, `decision=ready`, `reason=refund_request_confirmation_required`, and `nextAction[id=submit_refund_request]`; immediately run `onchainos agent refund-execute <params.jobId> --operation <params.operation> --refund-context-id <params.refundContextId> --reason \"<params.reason verbatim>\" --confirm` with every parameter copied from that fresh action. For `reason=refund_request_broadcast_submitted`, give one concise localized confirmation that the request was submitted and progress will update in this task. For any other result, present its returned status and actions.\n\
+           - B or an unambiguous rejection: run the read-only `onchainos agent refund-prepare {job}`. **Always render the complete Template 6.1 Confirm Refund Request from the returned `payload.display` as a single-record `- Label: value` field list, even when its reason is blank. Never replace the card with only a refund-reason question.** Ask the user to reply `Submit refund request` with a refund reason, or describe changes. End the turn. B opens the confirmation only; B never counts as submission intent and never arms a reason-only continuation.\n\
+           - After the card, analyze the reply for both the submission intent and a refund reason. If it contains clear `Submit refund request` intent and a non-blank reason, preserve the reason verbatim and continue immediately. If the intent is clear but the reason is missing, ask only for the refund reason and keep the Job ID, latest Refund V2 context, and explicit submission intent active. Only during that explicitly armed follow-up may the next non-blank reply be treated as the verbatim reason. A reason without current submission intent must be previewed by rerunning `refund-prepare` with that reason and re-rendering Template 6.1; it does not authorize a write.\n\
+           - After both submission intent and the reason are present: run `onchainos agent refund-prepare {job} --reason \"<verbatim reason>\"`. Continue only when it returns `payload.schemaVersion=2`, `phase=refund_confirmation`, `decision=ready`, `reason=refund_request_confirmation_required`, and `nextAction[id=submit_refund_request]`; immediately run `onchainos agent refund-execute <params.jobId> --operation <params.operation> --refund-context-id <params.refundContextId> --reason \"<params.reason verbatim>\" --confirm` with every parameter copied from that fresh action. For `reason=refund_request_broadcast_submitted`, give one concise localized confirmation that the request was submitted and progress will update in this task. For any other result, present its returned status and actions.\n\
            - Ambiguous or unrelated text: show the same A/B choice and wait.\n\n\
-         The current conversation owns choice parsing, action execution, and result feedback. For `refund_request_broadcast_submitted`, end the turn after the pending confirmation and do not resume the originating watch; the User may request a later status query explicitly. Other decisions resume the exact originating watch only when the watch-core rules require it.",
+         The current conversation owns choice parsing, action execution, and result feedback. For `refund_request_broadcast_submitted`, end the turn after the pending confirmation and friendly later-query guidance without displaying a CLI command; do not resume the originating watch. The User may later ask to view the task details for the refund result. Other decisions resume the exact originating watch only when the watch-core rules require it.",
         job = entry.job_id,
         role = entry.role,
         agent = entry.agent_id,
@@ -2722,7 +2769,7 @@ fn asp_arbitration_llm_content(entry: &PendingEntry, queue_mode: bool) -> Option
          Step 2 — Handle the next reply in this current conversation. Enter through `skills/okx-ai/SKILL.md`, then apply `skills/okx-ai/references/runtime/watch.md` §Handling the user reply: cancel the wake when applicable, and claim a non-defer reply with `okx-a2a user check --todo-ids <todo_id> --json`. Continue on `handled`.\n\
          Step 3 — Analyze the reply for both the decision intent and any evaluation reason. Resolve `Approve refund`, or `Request evaluation` with a non-blank reason, by running this pre-filled command once:\n\
            `{resolver}`\n\
-         The resolver preserves the card's `decisionId`, choices, deadline, and job binding. When a reply contains the `Request evaluation` intent and a non-blank reason, preserve that reason verbatim and pass the canonical `--user-reply \"Request evaluation: <verbatim reason>\"`. If the intent is clear but the reason is missing, ask only for the evaluation reason and keep this card context active. During that follow-up, treat the next non-blank reply as the reason, preserve it verbatim, and resolve once with the same canonical form. For `ambiguous_choice`, show the same card.\n\n\
+         The resolver preserves the card's `decisionId`, choices, deadline, and job binding. When a reply contains the `Request evaluation` intent and a non-blank reason, preserve that reason verbatim and pass the canonical `--user-reply \"Request evaluation: <verbatim reason>\"`. If the intent is clear but the reason is missing, show the complete Seller Refund Rejection field-list card, then ask for the evaluation reason and keep this card context and explicit evaluation intent active. Only during that explicitly armed follow-up may the next non-blank reply be treated as the reason, preserved verbatim, and resolved once with the same canonical form. A reason without current `Request evaluation` intent does not authorize Evaluation: show the same complete Template 6.4 field-list card and wait. For `ambiguous_choice`, show the same card.\n\n\
          Step 4 — For `phase=arbitration_decision`, `decision=ready`, and `reason=user_choice_resolved`, execute the sole returned action directly in this current conversation.\n\
            - `agree_refund`: run `onchainos agent agree-refund <params.jobId> --agent-id {agent}` in this current conversation, then give one concise localized result with the outcome, relevant returned fields, and next available query.\n\
            - `raise_arbitration`: run `onchainos agent dispute raise <params.jobId> --reason \"<params.reason verbatim>\" --agent-id {agent}` in this current conversation, then give one concise localized result with the outcome, relevant returned fields, and next available query. The later `job_disputed` event starts automatic evidence submission in the task session.\n\
@@ -3059,7 +3106,7 @@ fn indent(s: &str, prefix: &str) -> String {
 }
 #[cfg(test)]
 mod template_var_emitter_tests {
-    use super::encode_title_vars;
+    use super::{encode_refund_decision_vars, encode_title_vars};
     use crate::commands::agent_commerce::task::common::template_vars;
 
     // encode_title_vars is the shared emitter primitive used by the retained
@@ -3093,6 +3140,43 @@ mod template_var_emitter_tests {
                 Some(label.as_str())
             );
         }
+    }
+
+    #[test]
+    fn refund_template_vars_round_trip_without_exposing_dynamic_values() {
+        let b64 = encode_refund_decision_vars(
+            "Signal Service",
+            "job-full-id",
+            "Subscription",
+            Some("2026-09-01–2026-10-01"),
+            "1.25 USDT",
+            "$(touch /tmp/must-not-run)",
+            "2026-09-08 12:00 (UTC+08:00)",
+        );
+        let vars = template_vars::decode_and_validate(&b64).expect("valid refund vars");
+        let template = format!(
+            "{} | {} | {} | {} | {} | {} | {}",
+            template_vars::REFUND_SERVICE_NAME_PLACEHOLDER,
+            template_vars::REFUND_JOB_ID_PLACEHOLDER,
+            template_vars::REFUND_TASK_TYPE_PLACEHOLDER,
+            template_vars::REFUND_CURRENT_PERIOD_PLACEHOLDER,
+            template_vars::REFUND_AMOUNT_PLACEHOLDER,
+            template_vars::REFUND_BUYER_REASON_PLACEHOLDER,
+            template_vars::REFUND_RESPONSE_DEADLINE_PLACEHOLDER,
+        );
+        let label = format!(
+            "[Decision job-full] {} — refund or evaluation",
+            template_vars::REFUND_SERVICE_NAME_PLACEHOLDER
+        );
+        let rendered = template_vars::render_all(&[&template, &label], &vars)
+            .expect("all refund placeholders render");
+
+        assert!(rendered[0].contains("Signal Service"));
+        assert!(rendered[0].contains("job-full-id"));
+        assert!(rendered[0].contains("$(touch /tmp/must-not-run)"));
+        assert!(rendered[0].contains("2026-09-01–2026-10-01"));
+        assert!(rendered[1].contains("Signal Service"));
+        assert!(!rendered.iter().any(|value| value.contains("{{__OKX_")));
     }
 }
 
@@ -3400,7 +3484,10 @@ mod sanitize_tests {
             let content = resolve_llm_content_cli(&entry);
 
             assert!(content.contains("Handle that reply in this current conversation"));
-            assert!(content.contains("Confirm Refund Request template"));
+            assert!(content.contains("complete Template 6.1 Confirm Refund Request"));
+            assert!(content.contains("single-record `- Label: value` field list"));
+            assert!(content.contains("B never counts as submission intent"));
+            assert!(content.contains("reason without current submission intent"));
             assert!(content.contains("both the submission intent and a refund reason"));
             assert!(content.contains("refund-prepare job-123"));
             assert!(content.contains("refund-execute <params.jobId>"));
@@ -3470,6 +3557,9 @@ mod sanitize_tests {
         ] {
             assert!(content.contains("Handle the next reply in this current conversation"));
             assert!(content.contains("Request evaluation: <verbatim reason>"));
+            assert!(content.contains("Only during that explicitly armed follow-up"));
+            assert!(content.contains("does not authorize Evaluation"));
+            assert!(content.contains("same complete Template 6.4 field-list card"));
             assert!(content.contains("execute the sole returned action directly"));
             assert!(content.contains("onchainos agent agree-refund <params.jobId>"));
             assert!(content.contains("onchainos agent dispute raise <params.jobId>"));

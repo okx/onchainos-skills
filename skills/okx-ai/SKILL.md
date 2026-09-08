@@ -18,8 +18,19 @@ confirmation, output, and recovery. Structured inbound envelopes take
 precedence over free-text routing.
 
 ## Response language
-Keep the flow in the user's initial language. Translate prose and labels;
-preserve IDs, URLs, raw tokens, and `A2A`/`A2MCP`.
+Keep the flow in the user's initial language. Translate prose, titles, field
+labels, table introductions, and every Markdown table header; preserve IDs,
+URLs, raw tokens, and `A2A`/`A2MCP`. English source templates define field
+order only: they are not permission to leave a user-facing title or table
+header in English during a Chinese conversation.
+
+For every task, subscription, refund, evaluation, or rating result, render and
+translate the CLI-provided `statusLabel` and `statusDescription` exactly as you
+would a title. Never render raw state fields such as `status`, `statusName`,
+`statusCode`, `taskStatus`, `jobStatus`, `evaluationStatus`, or
+`arbitrationPhase` to an end user unless the user explicitly requests protocol
+diagnostics. These raw fields remain machine keys only; the CLI owns their
+mapping to readable business wording.
 
 ## Preflight
 

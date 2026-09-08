@@ -45,3 +45,17 @@ For `vote_committed`, state that Commit succeeded and keep the vote secret.
 For a deadline warning, show local deadline, remaining time, timeout adjustment
 and cooldown when returned, then continue the active Commit promptly.
 Route reveal events to [`reveal.md`](reveal.md).
+
+Localize statuses returned in this leaf as follows:
+
+- `Evidence preparation` -> `证据准备中`
+- `Evaluation round initializing` -> `评审轮次初始化中`
+- `Vote commitment in progress` -> `投票提交中`
+- `Vote committed; awaiting reveal` -> `投票已提交，等待揭示`
+- `Vote reveal in progress` -> `投票揭示中`
+- `Evaluation round completed` -> `本轮评审已完成`
+- `Evaluation round rejected` -> `本轮评审已驳回`
+- `Evaluation round invalidated` -> `本轮评审未形成有效结果`
+- `Round status unavailable` -> `评审轮次状态暂不可用`
+
+Preserve the raw keys and codes returned by `evidence-info`.

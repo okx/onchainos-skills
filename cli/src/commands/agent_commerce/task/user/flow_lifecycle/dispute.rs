@@ -79,7 +79,10 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
      onchainos agent user-notify --content \"<localized content>\"\n\
      ```\n\
      Content:\n\
-     \x20\x20\x20\x20[Evaluation opened] Evaluation for **{title_display}** (`{job_id}`) is on-chain. The system has automatically submitted your evidence (chat history + locally-saved deliverables). Awaiting the evaluator's verdict.\n\n\
+     \x20\x20\x20\x20[Evaluation opened] Evaluation for **{title_display}** (`{job_id}`) is on-chain.\n\
+     \x20\x20\x20\x20- Evaluation status: Evidence preparation\n\
+     \x20\x20\x20\x20- Status description: Evidence was submitted and the evidence stage is in progress.\n\
+     \x20\x20\x20\x20Awaiting the evaluator's verdict.\n\n\
      **Step 5 — End this turn.** Do NOT send any message to the ASP.\n\n\
 "
     )

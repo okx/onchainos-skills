@@ -126,6 +126,16 @@ fn enrich_one_time_status_names(list: &mut [Value]) {
             Err(_) => format!("status_{status_code}"),
         };
         object.insert("statusName".to_string(), Value::String(status_name));
+        object.insert(
+            "statusLabel".to_string(),
+            Value::String(super::super::common::query::task_status_label(status_code).to_string()),
+        );
+        object.insert(
+            "statusDescription".to_string(),
+            Value::String(
+                super::super::common::query::task_status_description(status_code).to_string(),
+            ),
+        );
     }
 }
 
@@ -515,7 +525,13 @@ mod tests {
         assert_eq!(rows[0]["statusName"], "init");
         assert_eq!(rows[1]["statusName"], "completed");
         assert_eq!(rows[2]["statusName"], "failed");
+        assert_eq!(rows[2]["statusLabel"], "Refund completed");
+        assert_eq!(
+            rows[2]["statusDescription"],
+            "The refund completed and the task is closed."
+        );
         assert_eq!(rows[3]["statusName"], "status_17");
+        assert_eq!(rows[3]["statusLabel"], "Status unavailable");
         assert_eq!(rows[3]["futureField"], json!({"kept": true}));
         assert!(output.get("subscriptions").is_none());
     }

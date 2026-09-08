@@ -19,9 +19,10 @@ onchainos agent my-tasks --task-type subscription --status-type 1 --page 1
 
   | # | Task | Provider | Status | Job ID |
   |---|---|---|---|---|
-  | 1 | `<title>` | `Agent#<providerAgentId>` | `<statusName>` | `<jobId>` |
+  | 1 | `<title>` | `Agent#<providerAgentId>` | `<localizedStatusLabel>` | `<jobId>` |
 
-Populate every table cell from its returned row and render `statusName` verbatim.
+Populate every table cell from its returned row. Render and localize the CLI
+`statusLabel`; do not display raw `status`, `statusName`, or `statusCode`.
 Use only the selected row's `jobId`, `buyerAgentId`, and `providerAgentId`. Stop
 if the row or either Agent ID is missing. Do not substitute detail, status,
 device, or task-session data. Do not add fee, renewal, device, or billing fields

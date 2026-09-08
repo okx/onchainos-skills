@@ -18,6 +18,10 @@ returned `nextAction[].id`.
 - Use [`refund-execute.md`](refund-execute.md) only after the required intent and reason are complete.
 - Use [`../refund-reconcile.md`](../refund-reconcile.md) for pending or terminal results.
 
-For `refund_reason_required` or `refund_reason_too_long`, follow the active
-confirmation flow. Preserve the reason verbatim and enforce the CLI-provided
-maximum length. Unknown reasons or action IDs keep the flow read-only.
+For `refund_reason_required`, enter [`refund-confirm.md`](refund-confirm.md),
+render the complete Template 6.1 confirmation from `payload.display`, and apply
+its intent-and-reason response matrix. For `refund_reason_too_long`, re-render
+the active confirmation and ask for a replacement reason within the
+CLI-provided maximum length. Preserve every User-authored reason verbatim.
+Render an unrecognized reason or action ID as a read-only result with its
+returned guidance.

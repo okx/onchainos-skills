@@ -136,6 +136,57 @@ pub fn job_rejected_user_decision_prompt(short_id: &str, expire_time: Option<i64
     )
 }
 
+/// Product Template 6.4 source for the ASP refund-or-evaluation decision.
+/// Dynamic values stay as reserved placeholders until `request-prompt` replaces
+/// them in-process after shell parsing.
+pub fn asp_refund_decision_source_template(is_subscription: bool) -> String {
+    use super::super::common::template_vars;
+
+    if is_subscription {
+        format!(
+            "### Buyer Refund Request\n\n\
+             - Service Name: {service_name}\n\
+             - Job ID: {job_id}\n\
+             - Task Type: {task_type}\n\
+             - Current Period: {current_period}\n\
+             - Requested Refund: {amount}\n\
+             - Buyer’s Reason: {buyer_reason}\n\
+             - Response Deadline: {deadline}\n\
+             - Refund Status: Awaiting ASP decision\n\
+             - Status Description: The refund request is waiting for the ASP's decision.\n\n\
+             Please respond by the deadline. Otherwise, a full refund will be issued automatically.\n\n\
+             To refund the buyer, reply “Approve refund”. To request platform evaluation, reply “Request evaluation” and include your evaluation reason.",
+            service_name = template_vars::REFUND_SERVICE_NAME_PLACEHOLDER,
+            job_id = template_vars::REFUND_JOB_ID_PLACEHOLDER,
+            task_type = template_vars::REFUND_TASK_TYPE_PLACEHOLDER,
+            current_period = template_vars::REFUND_CURRENT_PERIOD_PLACEHOLDER,
+            amount = template_vars::REFUND_AMOUNT_PLACEHOLDER,
+            buyer_reason = template_vars::REFUND_BUYER_REASON_PLACEHOLDER,
+            deadline = template_vars::REFUND_RESPONSE_DEADLINE_PLACEHOLDER,
+        )
+    } else {
+        format!(
+            "### Buyer Refund Request\n\n\
+             - Service Name: {service_name}\n\
+             - Job ID: {job_id}\n\
+             - Task Type: {task_type}\n\
+             - Requested Refund: {amount}\n\
+             - Buyer’s Reason: {buyer_reason}\n\
+             - Response Deadline: {deadline}\n\
+             - Refund Status: Awaiting ASP decision\n\
+             - Status Description: The refund request is waiting for the ASP's decision.\n\n\
+             Please respond by the deadline. Otherwise, a full refund will be issued automatically.\n\n\
+             To refund the buyer, reply “Approve refund”. To request platform evaluation, reply “Request evaluation” and include your evaluation reason.",
+            service_name = template_vars::REFUND_SERVICE_NAME_PLACEHOLDER,
+            job_id = template_vars::REFUND_JOB_ID_PLACEHOLDER,
+            task_type = template_vars::REFUND_TASK_TYPE_PLACEHOLDER,
+            amount = template_vars::REFUND_AMOUNT_PLACEHOLDER,
+            buyer_reason = template_vars::REFUND_BUYER_REASON_PLACEHOLDER,
+            deadline = template_vars::REFUND_RESPONSE_DEADLINE_PLACEHOLDER,
+        )
+    }
+}
+
 /// `Event::JobSubmitted` — notify the user (ASP's owner) that the deliverable
 /// is on-chain (deliver tx confirmed) and the User Agent's review window has begun.
 /// ASP has no further peer-side action; this is a milestone status update
@@ -160,7 +211,8 @@ const EVALUATION_REASONS_BLOCK: &str = "\x20\x20\x20\x20\x20\x20- Evaluation rea
 pub fn dispute_won_with_claim_user_notify(job_id: &str) -> String {
     format!(
         "\x20\x20\x20\x20[⚖️💰 Evaluation Result] Job {job_id} (<title>) — evaluation completed; ASP wins.\n\
-         \x20\x20\x20\x20  - Outcome: ASPWins\n\
+         \x20\x20\x20\x20  - Evaluation Status: Decided\n\
+         \x20\x20\x20\x20  - Result: ASP won; task funds were released to the ASP\n\
          \x20\x20\x20\x20  - Job income: <tokenAmount> <tokenSymbol>\n\
          \x20\x20\x20\x20  - Auto-claimed account reward: <claimed amount> <symbol>\n\
          \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
@@ -175,7 +227,8 @@ pub fn dispute_won_with_claim_user_notify(job_id: &str) -> String {
 pub fn dispute_won_no_claim_user_notify(job_id: &str) -> String {
     format!(
         "\x20\x20\x20\x20[⚖️💰 Evaluation Result] Job {job_id} (<title>) — evaluation completed; ASP wins.\n\
-         \x20\x20\x20\x20  - Outcome: ASPWins\n\
+         \x20\x20\x20\x20  - Evaluation Status: Decided\n\
+         \x20\x20\x20\x20  - Result: ASP won; task funds were released to the ASP\n\
          \x20\x20\x20\x20  - Job income: <tokenAmount> <tokenSymbol>\n\
          \x20\x20\x20\x20  - Account-level pending reward: none (checked)\n\
          \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
@@ -245,7 +298,8 @@ pub fn rating_submitted_user_notify(job_id: &str) -> String {
 pub fn dispute_lost_user_notify(job_id: &str) -> String {
     format!(
         "\x20\x20\x20\x20[⚖️⚠️ Evaluation Result] Job {job_id} (<title>) — evaluation completed; User Agent wins.\n\
-         \x20\x20\x20\x20  - Outcome: ClientWins\n\
+         \x20\x20\x20\x20  - Evaluation Status: Decided\n\
+         \x20\x20\x20\x20  - Result: User Agent won; the refund completed\n\
          \x20\x20\x20\x20  - Loss: <tokenAmount> <tokenSymbol> (funds returned to the User Agent)\n\
          \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
          {EVALUATION_REASONS_BLOCK}\n\
