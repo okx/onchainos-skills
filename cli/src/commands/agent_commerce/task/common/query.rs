@@ -180,6 +180,11 @@ pub async fn handle_status(
             return Ok(());
         }
     };
+    let job_type = resp["jobType"].as_i64().or_else(|| {
+        resp["jobType"]
+            .as_str()
+            .and_then(|value| value.parse().ok())
+    });
     let status_code = resp["status"].as_i64();
     let dispute = match status_code {
         Some(4) => Some(
@@ -202,9 +207,13 @@ pub async fn handle_status(
     } else {
         let t = &resp;
         let token_sym = t["tokenSymbol"].as_str().unwrap_or("?");
+        println!("Task type: {}", task_type_name(job_type));
         println!(
             "Task status: {}",
-            t["status"].as_i64().map(status_name).unwrap_or("?")
+            t["status"]
+                .as_i64()
+                .map(|status| task_status_name(job_type, status))
+                .unwrap_or("?")
         );
         println!("  jobId:    {job_id}");
         println!("  title:    {}", t["title"].as_str().unwrap_or("?"));
@@ -295,6 +304,32 @@ pub fn status_name(code: i64) -> &'static str {
         5 => "admin_stopped",
         6 => "complete",
         7 => "close",
+        8 => "expired",
+        9 => "failed",
+        _ => "unknown",
+    }
+}
+
+fn task_type_name(job_type: Option<i64>) -> &'static str {
+    match job_type {
+        Some(0) => "one_time",
+        Some(1) => "subscription",
+        _ => "unknown",
+    }
+}
+
+fn task_status_name(job_type: Option<i64>, code: i64) -> &'static str {
+    if job_type != Some(1) {
+        return status_name(code);
+    }
+    match code {
+        -1 => "init",
+        0 => "created",
+        1 => "active",
+        3 => "rejected",
+        4 => "disputed",
+        6 => "completed",
+        7 => "closed",
         8 => "expired",
         9 => "failed",
         _ => "unknown",
@@ -467,6 +502,22 @@ mod tests {
 
     fn agent(id: &str, role: i64) -> Value {
         json!({ "agentId": id, "role": role })
+    }
+
+    #[test]
+    fn task_type_name_maps_backend_job_type() {
+        assert_eq!(task_type_name(Some(0)), "one_time");
+        assert_eq!(task_type_name(Some(1)), "subscription");
+        assert_eq!(task_type_name(None), "unknown");
+        assert_eq!(task_type_name(Some(2)), "unknown");
+    }
+
+    #[test]
+    fn task_status_name_uses_subscription_lifecycle() {
+        assert_eq!(task_status_name(Some(0), 1), "accepted");
+        assert_eq!(task_status_name(Some(1), 1), "active");
+        assert_eq!(task_status_name(Some(1), 7), "closed");
+        assert_eq!(task_status_name(Some(1), 2), "unknown");
     }
 
     // ─── R5 / ambiguity builder ──────────────────────────────────────────

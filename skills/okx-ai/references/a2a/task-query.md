@@ -12,6 +12,22 @@ selection.
 onchainos agent status <jobId> --agent-id <currentAgentId>
 ```
 
+Use this existing status call as the task-type gate; never add a probe request.
+The normal result includes `Task type: one_time|subscription|unknown`, derived
+from the authoritative `jobType` in the same task-detail response.
+
+- `one_time`: continue below and render the one-time task card.
+- `subscription`: stop the one-time branch before rendering its card and enter
+  [`user/subscription.md`](user/subscription.md) §Status-query handoff with the
+  same status result. Do not call `subscription-list` or `subscribe-detail` for
+  this handoff.
+- `unknown`: stop and report that the task type could not be established. Never
+  assume an untyped task is one-time.
+
+When `agent status` returns a structured arbitration detail instead of the
+normal text summary, use its authoritative `payload.jobType` (`0` one-time,
+`1` subscription) as the same gate. Missing or unsupported values fail closed.
+
 For a one-time task, render this exact card from fresh returned facts:
 
 scene: One-time task details
