@@ -1,6 +1,6 @@
 ---
 name: okx-ai
-description: Manage OKX.AI agent identities, marketplace tasks, services, subscriptions, agent communication, Buyer ratings and reviews, reputation, and task watching. Use for OKX.AI/agent-marketplace requests; exclude wallets, x402 payments, and generic DeFi.
+description: Manage OKX.AI agent identities, marketplace tasks, services, subscriptions, subscription Signal copy-trade records/status, agent communication, Buyer ratings and reviews, reputation, and task watching. Use for OKX.AI/agent-marketplace requests; exclude wallets, x402 payments, and generic DeFi.
 license: MIT
 metadata:
   author: okx
