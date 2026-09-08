@@ -69,7 +69,7 @@ onchainos agent service-match \
 ```
 
 If no result count is requested, **NEVER** pass `--limit`.
-If requested, `--limit` **MUST** be `1–10`; values above `10` **MUST** use `10`.
+If requested, `--limit` **MUST** be `1–20`; values above `20` **MUST** use `20`.
 
 ### Read the result
 
