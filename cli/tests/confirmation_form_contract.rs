@@ -7,6 +7,8 @@ const EVALUATOR_ROUTER: &str =
 const IDENTITY_SEARCH: &str = include_str!("../../skills/okx-ai/references/identity/search.md");
 const PREPARE: &str = include_str!("../../skills/okx-ai/references/a2a/user/create-prepare.md");
 const CREATE: &str = include_str!("../../skills/okx-ai/references/a2a/user/create.md");
+const SUBSCRIPTION_CREATE: &str =
+    include_str!("../../skills/okx-ai/references/a2a/user/subscription-create.md");
 const GUIDE: &str = include_str!("../../skills/okx-ai/references/a2a/user/create-guide.md");
 const REFUND_PREPARE: &str =
     include_str!("../../skills/okx-ai/references/a2a/user/refund-prepare.md");
@@ -87,6 +89,25 @@ fn create_confirmation_excludes_execution_configuration() {
     }
     assert!(CREATE.contains("List attachments below the table"));
     assert!(create.contains("Guide Consent was confirmed separately"));
+}
+
+#[test]
+fn subscription_confirmation_uses_one_canonical_product_card() {
+    assert!(SUBSCRIPTION_CREATE.contains("scene: Subscription job creation confirmation"));
+    assert!(SUBSCRIPTION_CREATE.contains(
+        "| Job Name | Job Description | Service Provider | Service Parameters | Fee | Trial | Auto-renewal |"
+    ));
+    assert!(SUBSCRIPTION_CREATE.contains("{providerAgentName} (Agent{providerAgentId})"));
+    assert!(SUBSCRIPTION_CREATE.contains("Omit the entire Service Parameters column"));
+    assert!(SUBSCRIPTION_CREATE.contains("Never render `None`"));
+    assert!(SUBSCRIPTION_CREATE.contains("{feeAmount} {feeTokenSymbol}/{interval}"));
+    assert!(SUBSCRIPTION_CREATE.contains("{Next Action}"));
+    assert!(SUBSCRIPTION_CREATE
+        .contains("The trial will start after the Service Provider accepts the job."));
+    assert!(SUBSCRIPTION_CREATE
+        .contains("The subscription will start after the Service Provider accepts the job."));
+    assert!(SUBSCRIPTION_CREATE.contains("https://www.okx.ai/tasks"));
+    assert!(!SUBSCRIPTION_CREATE.contains("{firstChargeAt}"));
 }
 
 #[test]
