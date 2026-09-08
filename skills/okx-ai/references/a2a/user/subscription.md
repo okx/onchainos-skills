@@ -71,6 +71,7 @@ No subscriptions found.
 4. If device data is unavailable, omit device columns and state that receipt
    status is unavailable.
 5. Warn for each Active row with `hasNoReceivingDevices=true`.
+6. When `statusName=CREATED`, render `nextChargeLabel=Pending acceptance` in User's language.
 
 ### Constraints
 
