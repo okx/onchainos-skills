@@ -7,9 +7,9 @@ const EVALUATOR_ROUTER: &str =
 const IDENTITY_SEARCH: &str = include_str!("../../skills/okx-ai/references/identity/search.md");
 const PREPARE: &str = include_str!("../../skills/okx-ai/references/a2a/user/create-prepare.md");
 const CREATE: &str = include_str!("../../skills/okx-ai/references/a2a/user/create.md");
-const GUIDE: &str = include_str!("../../skills/okx-ai/references/a2a/user/create-guide.md");
 const SUBSCRIPTION_CREATE: &str =
     include_str!("../../skills/okx-ai/references/a2a/user/subscription-create.md");
+const GUIDE: &str = include_str!("../../skills/okx-ai/references/a2a/user/create-guide.md");
 const REFUND_PREPARE: &str =
     include_str!("../../skills/okx-ai/references/a2a/user/refund-prepare.md");
 const REFUND_CONFIRM: &str =
@@ -112,6 +112,26 @@ fn one_time_task_details_use_a_vertical_field_value_card() {
     assert!(!TASK_QUERY.contains(
         "| Job Name | Job ID | Service Provider | Fee | Status | Job Description |"
     ));
+}
+
+#[test]
+fn subscription_confirmation_uses_one_canonical_product_card() {
+    assert!(SUBSCRIPTION_CREATE.contains("scene: Subscription job creation confirmation"));
+    assert!(SUBSCRIPTION_CREATE.contains("| Field | Value |"));
+    assert!(SUBSCRIPTION_CREATE
+        .contains("| Service Provider | {providerAgentName}（Agent {providerAgentId}） |"));
+    assert!(SUBSCRIPTION_CREATE.contains("| Service Guide Consent | {guideConsent} |"));
+    assert!(!SUBSCRIPTION_CREATE.contains("| Execution Mode |"));
+    assert!(SUBSCRIPTION_CREATE.contains("Omit the entire Service Parameters row"));
+    assert!(SUBSCRIPTION_CREATE.contains("Never render `None`"));
+    assert!(SUBSCRIPTION_CREATE.contains("{feeAmount} {feeTokenSymbol}/{interval}"));
+    assert!(SUBSCRIPTION_CREATE.contains("{Next Action}"));
+    assert!(SUBSCRIPTION_CREATE
+        .contains("The trial will start after the Service Provider accepts the job."));
+    assert!(SUBSCRIPTION_CREATE
+        .contains("The subscription will start after the Service Provider accepts the job."));
+    assert!(SUBSCRIPTION_CREATE.contains("https://www.okx.ai/tasks"));
+    assert!(!SUBSCRIPTION_CREATE.contains("{firstChargeAt}"));
 }
 
 #[test]

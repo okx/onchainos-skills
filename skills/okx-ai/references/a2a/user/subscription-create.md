@@ -12,31 +12,52 @@ mode or store it in `serviceParams` or Guide Consent. The final card below owns
 the one confirmation for Guide Consent, subscription, and payment together.
 Do not expose the internal execution-mode value in that card.
 
-## Business data and confirmation
+## Business data
 
 Collect `title` (≤30 characters), Description (≤4096 characters), explicit
-Service inputs, and attachments. Use `autoRenew=1` unless the User explicitly
-disables it. Render only:
+Service inputs, attachments, and the User's explicit `autoRenew` choice. Do not
+default `autoRenew`.
+
+## Final confirmation
+
+scene: Subscription job creation confirmation
+
+display template:
+
+```markdown
+### Subscription Job Creation Confirmation
 
 | Field | Value |
 |---|---|
-| Task Name | title |
-| Task Description | confirmed Description |
-| Provider | {providerAgentName}（Agent {providerAgentId}） |
-| Service Parameters | confirmed `serviceParams` |
-| Service Price | exact subscription fee, token, and interval |
-| Trial | exact supported positive duration, otherwise No |
-| Auto-Renew | On or Off |
-| Service Guide Consent | complete collected Guide Consent when the Guide is non-blank |
+| Job Name | {title} |
+| Job Description | {Description} |
+| Service Provider | {providerAgentName}（Agent {providerAgentId}） |
+| Service Parameters | {serviceParams} |
+| Fee | {feeAmount} {feeTokenSymbol}/{interval} |
+| Trial | {Trial} |
+| Auto-renewal | {Auto-renewal} |
+| Service Guide Consent | {guideConsent} |
 
-Render the Provider with both the bound Provider name and Agent ID, exactly as
-`{providerAgentName}（Agent {providerAgentId}）`; never render only one of them.
-Omit the Service Parameters row when no parameters were collected. Omit the
-Service Guide Consent row when the Guide is blank. Do not show a standalone
-Guide, execution-mode, or payment confirmation. Continue only after one
-explicit final confirmation of the complete card and the one-time communication
-check defined by `create.md`. Any edit to a displayed fact invalidates that
-confirmation and requires the complete updated card again.
+{Next Action}
+```
+
+display rules:
+
+1. Preserve the User-confirmed Job Name, Job Description, and Service Parameters.
+2. Render the Service Provider as `{providerAgentName}（Agent {providerAgentId}）`. Require both values; do not infer either one.
+3. Omit the entire Service Parameters row when the User confirmed no parameters. Never render `None` or another empty-value label.
+4. Render Fee from the exact `subscriptionInfo.feeAmount`, `feeTokenSymbol`, and `subscriptionInfo.interval` returned by the CLI.
+5. When `subscriptionInfo.supportTrial` is `true` and `subscriptionInfo.freeTrial` is positive, render Trial as `{freeTrial} hours free`. Otherwise render `Free trial is not supported.`
+6. Render Auto-renewal as `On` for the confirmed value `1` and `Off` for `0`.
+7. For a supported positive trial, replace `{Next Action}` with `The trial will start after the Service Provider accepts the job. Once accepted, your job will appear in the Task Center at https://www.okx.ai/tasks. Confirm publication?`
+8. Otherwise replace `{Next Action}` with `The subscription will start after the Service Provider accepts the job. Once accepted, your job will appear in the Task Center at https://www.okx.ai/tasks. Confirm publication?`
+9. List attachments below the table, not as another table field.
+10. Omit the Service Guide Consent row when the Guide is blank. Otherwise preserve every collected Guide field and User-authored value without rewriting them. Do not add execution settings to this confirmation.
+11. Do not show an earlier standalone Guide, execution-mode, or payment confirmation. This card is the only explicit final confirmation for creation.
+12. Treat an explicit affirmative reply as final confirmation only for the complete current card, including the displayed payment and Guide Consent. Apply any edit and render the whole card again.
+
+Continue only after explicit final confirmation and the one-time communication
+check defined by `create.md`.
 
 ## Persist mode and create
 

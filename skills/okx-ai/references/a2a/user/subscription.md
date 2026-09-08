@@ -2,6 +2,19 @@
 
 Browse my subscription task lists or details.
 
+## Status-query handoff
+
+Enter here from [`../task-query.md`](../task-query.md) only when its single
+existing `agent status` call identifies `Task type: subscription` or structured
+`payload.jobType=1`. Consume that same result; do not call `subscription-list`
+or `subscribe-detail` again merely to answer the status query.
+
+Render the returned title, full Job ID, provider, fee, status, and description
+as a subscription status card. Use the CLI-normalized subscription status
+verbatim. End after the read-only result; missing subscription-management facts
+such as billing period, auto-renewal, or receipt devices are omitted rather
+than fetched or inferred.
+
 ## Commands
 
 | Intent | Reference |
