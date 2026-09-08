@@ -9,9 +9,7 @@ use std::time::Duration;
 use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::okx_a2a;
-use crate::commands::agent_commerce::task::common::subscription_identity::{
-    select_subscription_agent_id,
-};
+use crate::commands::agent_commerce::task::common::subscription_identity::select_subscription_agent_id;
 use crate::commands::agent_commerce::task::common::{self, DEBUG_LOG};
 use crate::commands::agent_commerce::task::signing;
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
@@ -64,8 +62,7 @@ impl CreateSubscribeParams {
         let Some(raw) = self.guide_consent_json.as_deref() else {
             return Ok(BTreeMap::new());
         };
-        serde_json::from_str(raw)
-            .context("--guide-consent-json must be a JSON object")
+        serde_json::from_str(raw).context("--guide-consent-json must be a JSON object")
     }
 
     fn validated_guide_consent(&self) -> Result<Option<GuideConsentInput>> {
@@ -194,26 +191,6 @@ pub async fn handle_create_subscribe(
         eprintln!("[create-subscribe] user identity check passed (agentId: {user_agent_id})");
     }
 
-    let execution_mode = super::super::common::autotrade::subscription_config::execution_mode(
-        &user_agent_id,
-        &params.service_id,
-    )?
-    .ok_or_else(|| {
-        anyhow::anyhow!(
-            "subscription executionMode is not configured for userAgentId {user_agent_id} and serviceId {}. Ask the user to confirm signal_only or guide_direct, then run `onchainos agent subscription-execution-config-set --service-id {} --execution-mode <signal_only|guide_direct>` while logged in as this User Agent before retrying create-subscribe",
-            params.service_id,
-            params.service_id,
-        )
-    })?;
-    if execution_mode
-        == super::super::common::autotrade::subscription_config::ExecutionMode::GuideDirect
-        && guide_consent.is_none()
-    {
-        bail!(
-            "guide_direct executionMode requires --service-guide, --service-guide-hash when supplied by the provider, and --guide-consent-json before create-subscribe"
-        );
-    }
-
     // Repeat the selection-time duplicate and balance checks immediately
     // before the V2 subscription write boundary.
     let existing_subscriptions =
@@ -232,11 +209,9 @@ pub async fn handle_create_subscribe(
         .into());
     }
 
-    if let Some(insufficient) = subscribe_balance_shortfall(
-        &params.service_token_amount,
-        &params.service_token_address,
-    )
-    .await?
+    if let Some(insufficient) =
+        subscribe_balance_shortfall(&params.service_token_amount, &params.service_token_address)
+            .await?
     {
         let deposit = common::deposit_qr::resolve_current_deposit_info(&user_agent_id)
             .await
@@ -306,8 +281,22 @@ pub async fn handle_create_subscribe(
             format!("useTrial={}", receipt.effective_use_trial),
             format!("autoRenew={}", params.auto_renew),
             "bizType=204".to_string(),
-            format!("guideStatus={}", if guide_and_consent_active { "active" } else { "none" }),
-            format!("consentStatus={}", if guide_and_consent_active { "active" } else { "none" }),
+            format!(
+                "guideStatus={}",
+                if guide_and_consent_active {
+                    "active"
+                } else {
+                    "none"
+                }
+            ),
+            format!(
+                "consentStatus={}",
+                if guide_and_consent_active {
+                    "active"
+                } else {
+                    "none"
+                }
+            ),
             format!("txHash={tx_hash}"),
         ]),
         None,
@@ -402,12 +391,18 @@ mod tests {
             "--service-id",
             "svc_001",
             "--use-trial",
-            "--service-token-amount", "10",
-            "--service-token-address", "0x6776",
-            "--auto-renew", "1",
-            "--title", "Signal Subscription",
-            "--description", "On-chain signal subscription service",
-            "--provider-agent-id", "asp-1",
+            "--service-token-amount",
+            "10",
+            "--service-token-address",
+            "0x6776",
+            "--auto-renew",
+            "1",
+            "--title",
+            "Signal Subscription",
+            "--description",
+            "On-chain signal subscription service",
+            "--provider-agent-id",
+            "asp-1",
         ]);
         match cli.cmd {
             super::super::TaskCommand::CreateSubscribe {
@@ -520,14 +515,22 @@ mod tests {
     #[test]
     fn cli_create_subscribe_bool_strings() {
         let cli = TestCli::parse_from([
-            "test", "create-subscribe",
-            "--service-id", "svc_003",
-            "--service-token-amount", "1",
-            "--service-token-address", "0xA",
-            "--auto-renew", "true",
-            "--title", "t",
-            "--description", "d for test bool strings ok",
-            "--provider-agent-id", "asp-1",
+            "test",
+            "create-subscribe",
+            "--service-id",
+            "svc_003",
+            "--service-token-amount",
+            "1",
+            "--service-token-address",
+            "0xA",
+            "--auto-renew",
+            "true",
+            "--title",
+            "t",
+            "--description",
+            "d for test bool strings ok",
+            "--provider-agent-id",
+            "asp-1",
         ]);
         match cli.cmd {
             super::super::TaskCommand::CreateSubscribe { auto_renew, .. } => {
@@ -559,16 +562,26 @@ mod tests {
     #[test]
     fn cli_create_subscribe_rejects_create_time_device_selection() {
         assert!(TestCli::try_parse_from([
-            "test", "create-subscribe",
-            "--service-id", "svc_001",
-            "--service-token-amount", "10",
-            "--service-token-address", "0xAddr",
-            "--auto-renew", "1",
-            "--title", "t",
-            "--description", "d",
-            "--provider-agent-id", "asp-1",
-            "--exclude-device", "device-2",
-        ]).is_err());
+            "test",
+            "create-subscribe",
+            "--service-id",
+            "svc_001",
+            "--service-token-amount",
+            "10",
+            "--service-token-address",
+            "0xAddr",
+            "--auto-renew",
+            "1",
+            "--title",
+            "t",
+            "--description",
+            "d",
+            "--provider-agent-id",
+            "asp-1",
+            "--exclude-device",
+            "device-2",
+        ])
+        .is_err());
     }
 
     // The backend create response is the first point where the subscription has
@@ -593,8 +606,14 @@ mod tests {
             .find("prebind.rollback_if_created().await")
             .expect("handler must roll back a newly-created binding when broadcast fails");
 
-        assert!(job_id < readiness, "jobId must be resolved before local readiness");
-        assert!(readiness < bind, "local readiness must precede runtime binding");
+        assert!(
+            job_id < readiness,
+            "jobId must be resolved before local readiness"
+        );
+        assert!(
+            readiness < bind,
+            "local readiness must precede runtime binding"
+        );
         assert!(bind < broadcast, "bind-current must run before broadcast");
         assert!(
             broadcast < rollback,
@@ -647,7 +666,8 @@ mod tests {
     }
 
     fn attach_minimal_guide(params: &mut super::CreateSubscribeParams) {
-        params.service_guide = Some("Follow the saved Signal using only the confirmed Consent.".to_string());
+        params.service_guide =
+            Some("Follow the saved Signal using only the confirmed Consent.".to_string());
         params.guide_consent_json = Some("{}".to_string());
     }
 
@@ -661,7 +681,9 @@ mod tests {
         let error = params
             .validate()
             .expect_err("a missing attachment must stop subscription creation");
-        assert!(error.to_string().contains("attachment file is not readable"));
+        assert!(error
+            .to_string()
+            .contains("attachment file is not readable"));
     }
 
     #[test]
@@ -740,27 +762,37 @@ mod tests {
     #[test]
     fn cli_create_subscribe_accepts_guide_defined_consent_values() {
         let cli = TestCli::parse_from([
-            "test", "create-subscribe",
-            "--service-id", "svc_auto",
-            "--service-token-amount", "1",
-            "--service-token-address", "0xA",
-            "--auto-renew", "1",
-            "--title", "Signals",
-            "--description", "Execute the delivered signals",
-            "--provider-agent-id", "asp-1",
+            "test",
+            "create-subscribe",
+            "--service-id",
+            "svc_auto",
+            "--service-token-amount",
+            "1",
+            "--service-token-address",
+            "0xA",
+            "--auto-renew",
+            "1",
+            "--title",
+            "Signals",
+            "--description",
+            "Execute the delivered signals",
+            "--provider-agent-id",
+            "asp-1",
             "--service-guide",
             "guide body",
             "--guide-consent-json",
             r#"{"strategyArmed":true}"#,
         ]);
         let super::super::TaskCommand::CreateSubscribe {
-            guide_consent_json,
-            ..
+            guide_consent_json, ..
         } = cli.cmd
         else {
             panic!("expected CreateSubscribe");
         };
-        assert_eq!(guide_consent_json.as_deref(), Some(r#"{"strategyArmed":true}"#));
+        assert_eq!(
+            guide_consent_json.as_deref(),
+            Some(r#"{"strategyArmed":true}"#)
+        );
     }
 
     #[test]
@@ -794,7 +826,8 @@ mod tests {
         std::env::set_var("ONCHAINOS_HOME", &home);
 
         let mut params = params_fixture(Some("asp-1"));
-        params.service_guide = Some("Place only as directed by this Guide and the saved Signal.".to_string());
+        params.service_guide =
+            Some("Place only as directed by this Guide and the saved Signal.".to_string());
         params.guide_consent_json = Some(r#"{"strategyArmed":true}"#.to_string());
         let consent = params.validate().unwrap().expect("Guide Consent input");
         prepare_guide_consent("job-subscribe-guide", &params, &consent).unwrap();
@@ -809,12 +842,18 @@ mod tests {
             .join("job-subscribe-guide.md")
             .is_file());
         assert_eq!(
-            crate::commands::agent_commerce::task::common::autotrade::guide::consent_snapshot("job-subscribe-guide").status,
+            crate::commands::agent_commerce::task::common::autotrade::guide::consent_snapshot(
+                "job-subscribe-guide"
+            )
+            .status,
             "unavailable"
         );
         activate_guide_consent("job-subscribe-guide").unwrap();
         assert_eq!(
-            crate::commands::agent_commerce::task::common::autotrade::guide::consent_snapshot("job-subscribe-guide").status,
+            crate::commands::agent_commerce::task::common::autotrade::guide::consent_snapshot(
+                "job-subscribe-guide"
+            )
+            .status,
             "active"
         );
 
@@ -828,7 +867,9 @@ mod tests {
         attach_minimal_guide(&mut params);
         params.guide_consent_json = None;
 
-        let error = params.validate().expect_err("Guide bundle needs explicit Consent");
+        let error = params
+            .validate()
+            .expect_err("Guide bundle needs explicit Consent");
         assert!(
             error.to_string().contains("--guide-consent-json"),
             "unexpected error: {error}"

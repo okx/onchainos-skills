@@ -143,20 +143,13 @@ fn duplicate_subscription_for_service(
     service: &Value,
     existing_subscriptions: &[super::subscription_ops::ExistingSubscriptionSummary],
 ) -> Result<Option<DuplicateSubscriptionContext>> {
-    if service
-        .get("supportSubscription")
-        .and_then(Value::as_bool)
-        != Some(true)
-    {
+    if service.get("supportSubscription").and_then(Value::as_bool) != Some(true) {
         return Ok(None);
     }
     let service_id = required_service_string(service, "serviceId")?;
-    super::subscription_ops::existing_subscription_for_service(
-        existing_subscriptions,
-        &service_id,
-    )
-    .map(duplicate_subscription_context)
-    .transpose()
+    super::subscription_ops::existing_subscription_for_service(existing_subscriptions, &service_id)
+        .map(duplicate_subscription_context)
+        .transpose()
 }
 
 async fn fetch_service_detail(user_agent_id: &str, sid: &str) -> Result<Value> {
@@ -484,7 +477,9 @@ mod tests {
             provider_agent_id: "asp-43".to_string(),
             status_name: "REJECTED".to_string(),
             status_label: "Awaiting ASP decision".to_string(),
-            status_description: "The buyer rejected the current delivery and is waiting for the ASP's decision.".to_string(),
+            status_description:
+                "The buyer rejected the current delivery and is waiting for the ASP's decision."
+                    .to_string(),
             restore_listening_available: false,
             title: "Paused Signals".to_string(),
             status: 3,

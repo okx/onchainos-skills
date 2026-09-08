@@ -281,7 +281,9 @@ const REDACT_FULL: &[&str] = &[
     // A2MCP invocation: service snapshots and typed business params may contain
     // user input. The prepared ID is a short-lived capability into local state.
     "--routing-json",
+    "--routing-base64",
     "--params-json",
+    "--params-base64",
     "--prepared-id",
     // subscribe-device-update batch blob embeds jobIds; addr-prefix/suffix of the
     // JSON is meaningless, so redact wholesale.
@@ -596,9 +598,6 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::SubscribeCost { .. } => "subscribe-cost".into(),
         AgentCommand::SubscribeDeviceUpdate { .. } => "subscribe-device-update".into(),
         AgentCommand::SubscribeOfflineUpdate { .. } => "subscribe-offline-update".into(),
-        AgentCommand::SubscriptionExecutionConfigSet { .. } => {
-            "subscription-execution-config-set".into()
-        }
         AgentCommand::DeviceList { .. } => "device-list".into(),
         AgentCommand::AspMatch { .. } => "asp-match".into(),
         AgentCommand::ServiceMatch(_) => "service-match".into(),
@@ -1210,9 +1209,18 @@ mod tests {
             r#"--params-json={"brand":"private input"}"#.into(),
             "--prepared-id".into(),
             "a2prep_private".into(),
+            "--routing-base64".into(),
+            "cm91dGluZy1wcml2YXRl".into(),
+            "--params-base64=cGFyYW1zLXByaXZhdGU=".into(),
         ];
         let out = redact_args(&args);
-        for secret in ["merchant.example", "private input", "a2prep_private"] {
+        for secret in [
+            "merchant.example",
+            "private input",
+            "a2prep_private",
+            "cm91dGluZy1wcml2YXRl",
+            "cGFyYW1zLXByaXZhdGU=",
+        ] {
             assert!(
                 !out.iter().any(|value| value.contains(secret)),
                 "audit argv leaked {secret}: {out:?}"
@@ -1222,7 +1230,7 @@ mod tests {
             out.iter()
                 .filter(|value| value.contains("[REDACTED]"))
                 .count(),
-            3
+            5
         );
     }
 

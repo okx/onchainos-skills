@@ -2406,6 +2406,41 @@ fn normalize_a2a_bad_subscription_fee_is_err() {
 }
 
 #[test]
+fn normalize_a2a_prices_allow_at_most_two_decimals() {
+    assert!(normalize_service(a2a_with("0.12", vec![])).is_ok());
+    let single_err = normalize_service(a2a_with("0.123", vec![]))
+        .unwrap_err()
+        .to_string();
+    assert!(single_err.contains("2 decimal places"), "got: {single_err}");
+
+    assert!(normalize_service(a2a_with("", vec![("month", "0.12")])).is_ok());
+    let subscription_err = normalize_service(a2a_with("", vec![("month", "0.123")]))
+        .unwrap_err()
+        .to_string();
+    assert!(subscription_err.contains("2 decimal places"), "got: {subscription_err}");
+}
+
+#[test]
+fn normalize_a2mcp_fee_keeps_six_decimal_precision() {
+    let build = |fee: &str| AgentService {
+        id: None,
+        service_name: "Price feed svc".to_string(),
+        service_description: "desc".to_string(),
+        service_guide: String::new(),
+        fee: fee.to_string(),
+        service_type: "A2MCP".to_string(),
+        subscription: vec![],
+        free_trial: None,
+        operation: None,
+        endpoint: Some("https://api.example.com/mcp".to_string()),
+    };
+
+    assert!(normalize_service(build("0.123456")).is_ok());
+    let err = normalize_service(build("0.1234567")).unwrap_err().to_string();
+    assert!(err.contains("6 decimal places"), "got: {err}");
+}
+
+#[test]
 fn normalize_a2mcp_with_subscription_is_err() {
     let svc = AgentService {
         id: None,

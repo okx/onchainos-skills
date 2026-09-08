@@ -12,6 +12,6 @@ use crate::commands::agent_commerce::task::common::network::task_api_client::Tas
 pub async fn handle_claim_auto_refund(client: &mut TaskApiClient, job_id: &str) -> Result<()> {
     let _ = client;
     anyhow::bail!(
-        "direct claim-auto-refund is disabled by Refund V2 because timeout refunds are backend-owned; use `onchainos agent refund-prepare {job_id}` only to read the authoritative current state. Expired(8) is terminal and confirms any applicable automatic refund"
+        "direct claim-auto-refund is disabled by Refund because timeout refunds are backend-owned; use `onchainos agent refund-prepare {job_id}` only to read the authoritative current state. Expired(8) is terminal and confirms any applicable automatic refund"
     )
 }

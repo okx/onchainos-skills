@@ -1073,6 +1073,15 @@ fn resolve_arbitration_choice(
     result
 }
 
+fn buyer_review_idempotency_key(
+    job_id: &str,
+    role: &str,
+    source_event: Option<&str>,
+) -> Option<String> {
+    (role == "user" && source_event == Some("job_submitted"))
+        .then(|| format!("buyer-review:{job_id}:job_submitted"))
+}
+
 fn print_arbitration_blocked(reason: &str, job_id: &str, source_event: &str) {
     println!(
         "{}",
@@ -1242,7 +1251,14 @@ fn request_prompt_inner(
         };
         let llm_content = resolve_llm_content_cli(&entry);
         use crate::commands::agent_commerce::task::common::okx_a2a;
-        okx_a2a::user_decision_request(&entry.user_content, &llm_content)?;
+        let idempotency_key =
+            buyer_review_idempotency_key(&entry.job_id, &entry.role, entry.source_event.as_deref());
+        okx_a2a::user_decision_request(
+            &entry.user_content,
+            &llm_content,
+            is_buyer_review.then_some(entry.job_id.as_str()),
+            idempotency_key.as_deref(),
+        )?;
         if is_buyer_review {
             super::deliverables::mark_review_card_sent(&entry.job_id)?;
         }
@@ -1321,7 +1337,14 @@ fn request_prompt_inner(
         let entry = q.entries.last().unwrap();
         let llm_content = resolve_llm_content_prompt_user(entry);
         use crate::commands::agent_commerce::task::common::okx_a2a;
-        okx_a2a::user_decision_request(&entry.user_content, &llm_content)?;
+        let idempotency_key =
+            buyer_review_idempotency_key(&entry.job_id, &entry.role, entry.source_event.as_deref());
+        okx_a2a::user_decision_request(
+            &entry.user_content,
+            &llm_content,
+            is_buyer_review.then_some(entry.job_id.as_str()),
+            idempotency_key.as_deref(),
+        )?;
         if is_buyer_review {
             super::deliverables::mark_review_card_sent(&entry.job_id)?;
         }

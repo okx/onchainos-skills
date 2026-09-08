@@ -68,7 +68,7 @@ fn provider_subscription_decision_commands_are_registered() {
 }
 
 #[test]
-fn refund_v2_commands_expose_the_prepare_confirm_contract() {
+fn refund_commands_expose_the_prepare_confirm_contract() {
     let prepare = onchainos()
         .args(["agent", "refund-prepare", "job-1", "--help"])
         .output()
@@ -133,7 +133,7 @@ fn legacy_claim_auto_refund_is_blocked_before_network_access() {
     assert_error_contains(
         &output,
         &[
-            "direct claim-auto-refund is disabled by Refund V2",
+            "direct claim-auto-refund is disabled by Refund",
             "refund-prepare job-1",
             "Expired(8) is terminal",
         ],
@@ -155,7 +155,7 @@ fn legacy_refund_writes_are_blocked_before_network_access() {
             "reject",
             vec!["agent", "reject", "job-1", "--reason", "not acceptable"],
             [
-                "direct reject is disabled by Refund V2",
+                "direct reject is disabled by Refund",
                 "refund-prepare job-1",
             ],
         ),
@@ -169,7 +169,7 @@ fn legacy_refund_writes_are_blocked_before_network_access() {
                 "not acceptable",
             ],
             [
-                "direct subscribe-reject is disabled by Refund V2",
+                "direct subscribe-reject is disabled by Refund",
                 "refund-prepare sub-1",
             ],
         ),

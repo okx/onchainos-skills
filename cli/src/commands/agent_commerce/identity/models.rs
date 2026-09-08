@@ -27,8 +27,8 @@ pub(super) enum ServiceOperation {
 /// One subscription pricing tier carried in a service's `subscription[]`.
 /// Only A2A services may have them; A2MCP never does. `interval` is currently
 /// restricted to `"month"` (the only billing period the product supports today)
-/// and `fee` is a plain number string (USDT implied, ≤6 decimals) — same fee
-/// contract as the single-purchase `fee`. Field names mirror the Agent Card
+/// and `fee` is a plain number string (USDT implied, ≤2 decimals) — same fee
+/// contract as an A2A single-purchase `fee`. Field names mirror the Agent Card
 /// JSON 1:1 so a fetched service deserializes directly.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(super) struct SubscriptionTier {

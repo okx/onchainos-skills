@@ -2,6 +2,10 @@
 
 Shared Agent/Service templates and display rules.
 
+## Localize
+
+Localize all labels, headings, and static display text to the user's language; keep service-provided values verbatim.
+
 ## Service value display
 
 - Show missing values as `—`.

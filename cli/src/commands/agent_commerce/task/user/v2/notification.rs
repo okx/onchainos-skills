@@ -11,9 +11,18 @@ fn display_field(message: Option<&serde_json::Value>, key: &str) -> Option<Strin
 }
 
 fn job_name(message: Option<&serde_json::Value>) -> String {
-    display_field(message, "jobTitle")
+    display_field(message, "serviceName")
+        .or_else(|| display_field(message, "jobTitle"))
         .or_else(|| display_field(message, "jobName"))
         .unwrap_or_else(|| "job".to_string())
+}
+
+fn i64_field(message: Option<&serde_json::Value>, key: &str) -> Option<i64> {
+    message.and_then(|value| value.get(key)).and_then(|value| {
+        value
+            .as_i64()
+            .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
+    })
 }
 
 fn token_amount(message: Option<&serde_json::Value>) -> String {
@@ -88,6 +97,7 @@ pub(crate) fn job_asp_accept_expire(
             &token_symbol,
             &provider_name,
             &provider_agent_id,
+            i64_field(message, "trialType") == Some(1),
         )
     } else {
         content::regular_job_asp_accept_expire_user_notify(
@@ -122,6 +132,7 @@ pub(crate) fn job_asp_reject_closed(
             &provider_name,
             &provider_agent_id,
             &reason,
+            i64_field(message, "trialType") == Some(1),
         )
     } else {
         content::regular_job_asp_reject_closed_user_notify(
@@ -151,6 +162,7 @@ pub(crate) fn job_asp_reject_expire(
             job_id,
             &amount,
             &token_symbol,
+            i64_field(message, "rejectWindowEndsAt"),
         )
     } else {
         content::regular_job_asp_reject_expire_user_notify(
@@ -158,6 +170,7 @@ pub(crate) fn job_asp_reject_expire(
             job_id,
             &amount,
             &token_symbol,
+            i64_field(message, "rejectWindowEndsAt"),
             is_paid(&amount),
         )
     };

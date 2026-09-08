@@ -293,6 +293,7 @@ mod tests {
         );
 
         assert!(notification.contains("Detail title"));
+        assert!(notification.contains("reply \"Rate job\""));
         assert_eq!(rating["taskDescription"], "Detail description");
     }
 

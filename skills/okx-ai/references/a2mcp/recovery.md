@@ -1,18 +1,12 @@
 # A2MCP Recovery
 
-Route recovery from the latest structured result; never reconstruct state from
-chat prose.
+Use only the latest structured result. Never parse error text, reconstruct
+routing data, or reuse opaque IDs from chat history.
 
-| Condition | Recovery |
+| State | Handling |
 |---|---|
-| `invalid_a2mcp_routing` | Stop; require a fresh service selection and routing result |
-| `a2mcp_prepared_expired_or_missing` or `a2mcp_candidate_invalid_or_missing` | Stop and require a fresh service routing result with a trusted `serviceSnapshot`; never reuse an old ID or reconstruct the routing payload |
-| `a2mcp_free_result_expired_or_missing` | Stop and require a fresh service routing result with a trusted `serviceSnapshot`; never infer the result or routing payload from chat history |
-| Endpoint or payment execution fails | Present the readable returned failure and stop; do not switch methods, tokens, networks, or payment routes automatically |
+| `endpoint_probe / invalid_a2mcp_routing` | Discard the active invocation, explain `payload.message` in plain language, and require fresh Service selection |
+| `invocation_recovery / {a2mcp_prepared_expired_or_missing, a2mcp_candidate_invalid_or_missing, a2mcp_free_result_expired_or_missing, a2mcp_funding_continuation_required}` | Discard the invocation, explain the failure, and require fresh Service selection |
 
-The CLI owns classification of stale, missing, and invalid invocation state.
-Do not parse error text or judge whether an ID is valid. A recovery result has
-`phase=invocation_recovery`, `decision=blocked`, and only `cancel_a2mcp`; present
-its readable message and stop. A new Probe and confirmation card require a new
-trusted service routing result. Normal input collection, cancellation, and
-Funding state transitions remain in `invoke.md` and `funding.md`.
+Never expose reason codes, action IDs, or opaque IDs. A blocked recovery is
+terminal: clear the active invocation and run no further CLI command.

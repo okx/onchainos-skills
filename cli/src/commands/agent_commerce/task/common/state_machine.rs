@@ -264,7 +264,7 @@ pub enum Event {
     /// to call /claimable + /claim to collect rewards).
     DisputeResolved,
     /// Task expired (no accept before the acceptance window, or no submit before the delivery
-    /// window). Buyer-side funds remain subject to read-only Refund V2 reconciliation; this event
+    /// window). Buyer-side funds remain subject to read-only Refund reconciliation; this event
     /// does not authorize a legacy close/claim write or prove settlement.
     JobExpired,
     /// The designated ASP did not accept before the acceptance deadline. The task/subscription
@@ -321,7 +321,7 @@ pub enum Event {
 
     // ── Timeout events ────────────────────────────────────────────────
     /// Submit timeout — no delivery. Buyer handling is notification-only until
-    /// a cause-specific Refund V2 claim contract is available.
+    /// a cause-specific Refund claim contract is available.
     SubmitExpired,
     /// After a refund request, the provider failed to respond in time; backend settlement begins.
     RejectExpired,

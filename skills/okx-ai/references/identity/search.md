@@ -65,10 +65,11 @@ onchainos agent service-match \
   [--keywords <kw>...] [--asp-agent-id <id>] [--asp-name <name>] \
   [--service-name <name>] [--sid <sid>] \
   [--min-payment-token-amount <n>] [--max-payment-token-amount <n>] \
-  --limit <1..10>
+  [--limit <n>]
 ```
 
-Use the requested limit; otherwise **MUST** pass `--limit 3`, **NEVER** use another value.
+If no result count is requested, **NEVER** pass `--limit`.
+If requested, `--limit` **MUST** be `1–20`; values above `20` **MUST** use `20`.
 
 ### Read the result
 
@@ -94,7 +95,7 @@ each group with the `Agent Service group` template in `output-templates.md`.
 When `hasMore == true`, `searchAfter` is non-empty, and the user asks for more, run:
 
 ```bash
-onchainos agent service-match --search-after <cursor> --limit <1..10>
+onchainos agent service-match --search-after <cursor> --limit <n>
 ```
 
 Apply the same rules to every page.

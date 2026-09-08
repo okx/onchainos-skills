@@ -1042,7 +1042,7 @@ pub async fn generate_next_action(
 
         // ─── Job notifications (structured; terminal timeouts also clean up) ───
         Event::JobAspAcceptExpire => match prefetched {
-            Some(task) => super::v2::notification::job_asp_accept_expire(job_id, task),
+            Some(task) => super::v2::notification::job_asp_accept_expire(job_id, task, message),
             None => super::v2::notification::authoritative_context_required(
                 job_id,
                 "job_asp_accept_expire",
@@ -1058,7 +1058,7 @@ pub async fn generate_next_action(
             ),
         },
         Event::JobAspRejectExpire => match prefetched {
-            Some(task) => super::v2::notification::job_asp_reject_expire(job_id, task),
+            Some(task) => super::v2::notification::job_asp_reject_expire(job_id, task, message),
             None => super::v2::notification::authoritative_context_required(
                 job_id,
                 "job_asp_reject_expire",

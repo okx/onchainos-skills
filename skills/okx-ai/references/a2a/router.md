@@ -101,6 +101,6 @@ that router recognizes the exact action, report a coverage failure.
 - Refund write actions require `payload.schemaVersion=2`. Preserve `jobId`,
   `operation`, and `refundContextId` from the latest prepare result.
 - Never substitute retired `close`, `reject`, `subscribe-reject`, or
-  `claim-auto-refund` writes for a missing Refund V2 action.
+  `claim-auto-refund` writes for a missing Refund action.
 - A number or letter maps only to choices most recently displayed from the
   current progression result or durable decision card.

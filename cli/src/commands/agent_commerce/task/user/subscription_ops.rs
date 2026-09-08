@@ -285,7 +285,7 @@ pub(crate) async fn handle_subscribe_reject_inner(
     Ok(tx_hash)
 }
 
-/// Disabled legacy CLI entry. Refund V2 owns paid subscription rejection.
+/// Disabled legacy CLI entry. Refund owns paid subscription rejection.
 pub async fn handle_subscribe_reject(
     client: &mut TaskApiClient,
     sub_id: &str,
@@ -293,7 +293,7 @@ pub async fn handle_subscribe_reject(
 ) -> Result<()> {
     let _ = (client, reason);
     bail!(
-        "direct subscribe-reject is disabled by Refund V2; run `onchainos agent refund-prepare {sub_id} --reason <user-authored-reason>` and execute only the returned confirmed action"
+        "direct subscribe-reject is disabled by Refund; run `onchainos agent refund-prepare {sub_id} --reason <user-authored-reason>` and execute only the returned confirmed action"
     )
 }
 
@@ -954,8 +954,7 @@ async fn resolve_subscription_display_facts(
         .and_then(serde_json::Value::as_bool)
         .or(catalog_supports_trial)
         .or_else(|| {
-            (detail.get("trialType").and_then(serde_json::Value::as_i64) == Some(1))
-                .then_some(true)
+            (detail.get("trialType").and_then(serde_json::Value::as_i64) == Some(1)).then_some(true)
         });
 
     Ok(SubscriptionDisplayFacts {
@@ -977,7 +976,7 @@ fn trial_duration_label(hours: i64) -> String {
 
 fn subscription_fee_label(amount: Option<&str>, symbol: Option<&str>) -> Option<String> {
     let amount = amount.map(str::trim).filter(|value| !value.is_empty())?;
-    if super::refund_v2::is_zero_decimal(amount) {
+    if super::refund::is_zero_decimal(amount) {
         return Some("Free".to_string());
     }
     let symbol = symbol.map(str::trim).filter(|value| !value.is_empty())?;
@@ -1150,11 +1149,14 @@ fn enrich_subscription_detail(
                 .map(serde_json::Value::String)
                 .unwrap_or(serde_json::Value::Null),
         );
-        let provider_label = display_facts.provider_name.as_deref().zip(
-            obj.get("providerAgentId")
-                .and_then(serde_json::Value::as_str),
-        )
-        .map(|(name, id)| format!("{name} ({id})"));
+        let provider_label = display_facts
+            .provider_name
+            .as_deref()
+            .zip(
+                obj.get("providerAgentId")
+                    .and_then(serde_json::Value::as_str),
+            )
+            .map(|(name, id)| format!("{name} ({id})"));
         obj.insert(
             "serviceProviderLabel".to_string(),
             provider_label
@@ -1415,7 +1417,10 @@ mod tests {
         assert_eq!(page["pageSize"], 20);
         assert_eq!(page["list"][0]["statusName"], "ACTIVE");
         assert_eq!(page["list"][0]["statusLabel"], "Active");
-        assert_eq!(page["list"][0]["statusDescription"], "The subscription is active.");
+        assert_eq!(
+            page["list"][0]["statusDescription"],
+            "The subscription is active."
+        );
         assert!(page["list"][0]["deviceList"].is_null());
         assert_eq!(page["list"][0]["categoryCodes"], serde_json::json!([]));
         assert_eq!(page["list"][0]["thisDeviceReceives"], true);

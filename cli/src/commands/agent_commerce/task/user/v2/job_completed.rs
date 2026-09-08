@@ -1,6 +1,6 @@
 use crate::commands::agent_commerce::task::common::{
-    deliverables, has_same_agent_owner, network::task_api_client::TaskApiClient,
-    PreFetchedTaskContext, TERMINAL_NOTIFICATION_MARKER,
+    deliverables, has_same_agent_owner, network::task_api_client::TaskApiClient, onchainos_self,
+    PreFetchedTaskContext, DEBUG_LOG, TERMINAL_NOTIFICATION_MARKER,
 };
 
 pub(crate) async fn handle(job_id: &str, agent_id: &str) -> serde_json::Value {
@@ -8,7 +8,36 @@ pub(crate) async fn handle(job_id: &str, agent_id: &str) -> serde_json::Value {
     let response = client
         .get_with_identity(&client.task_path(job_id), agent_id)
         .await;
-    result_from_task_detail(job_id, agent_id, response)
+    let mut result = result_from_task_detail(job_id, agent_id, response);
+    if result["payload"]["rating"]["required"].as_bool() == Some(true) {
+        let feedback_exists = onchainos_self::task_feedback_exists(agent_id, job_id);
+        preserve_existing_user_rating(&mut result, feedback_exists);
+    }
+    result
+}
+
+fn preserve_existing_user_rating(
+    result: &mut serde_json::Value,
+    feedback_exists: anyhow::Result<bool>,
+) {
+    match feedback_exists {
+        Ok(false) => return,
+        Ok(true) => {}
+        Err(error) => {
+            if DEBUG_LOG {
+                eprintln!(
+                    "[job_completed] feedback lookup failed for {}: {error}",
+                    result["payload"]["jobId"].as_str().unwrap_or("unknown"),
+                );
+            }
+        }
+    }
+
+    result["reason"] = serde_json::json!("notification_required");
+    result["payload"]["rating"]["required"] = serde_json::json!(false);
+    if let Some(payload) = result["payload"].as_object_mut() {
+        payload.remove("ratingResultNotification");
+    }
 }
 
 fn result_from_task_detail(
@@ -52,7 +81,10 @@ fn result_from_task_detail(
         }],
         "payload": {
             "jobId": job_id,
-            "notification": completion_notification(job_id, &task),
+            "notification": {
+                "content": completion_notification(job_id, &task),
+                "localize": true,
+            },
             "ratingResultNotification": super::super::content::rating_submitted_user_notify(
                 job_id,
                 title(&task),
@@ -91,7 +123,7 @@ fn title(task: &PreFetchedTaskContext) -> &str {
 fn completion_notification(job_id: &str, task: &PreFetchedTaskContext) -> String {
     let content = if task.payment_mode == Some(3) {
         format!(
-            "[x402 Job Completed] {} (`{job_id}`) — all steps complete.\n- Spent: {} {}\n- Payment: x402",
+            "[x402 Job Completed] {} (`{job_id}`) — all steps complete.\n- Spent: {} {}\n- Payment: x402\n\nTo rate this job, reply \"Rate job\". Your rating for Job ID `{job_id}` replaces the AI-generated rating.",
             title(task), task.token_amount, task.token_symbol,
         )
     } else {
@@ -162,14 +194,19 @@ mod tests {
             output["payload"]["rating"]["taskParameters"],
             "{\"chain\":\"xlayer\"}"
         );
-        assert!(output["payload"]["notification"]
+        assert_eq!(output["payload"]["notification"]["localize"], true);
+        assert!(output["payload"]["notification"]["content"]
             .as_str()
             .unwrap()
             .starts_with(TERMINAL_NOTIFICATION_MARKER));
-        assert!(output["payload"]["notification"]
+        assert!(output["payload"]["notification"]["content"]
             .as_str()
             .unwrap()
             .contains("Audit report"));
+        assert!(output["payload"]["notification"]["content"]
+            .as_str()
+            .unwrap()
+            .contains("reply \"Rate job\""));
         assert!(output["payload"]["ratingResultNotification"]
             .as_str()
             .unwrap()
@@ -191,10 +228,42 @@ mod tests {
 
         assert_eq!(output["reason"], "notification_required");
         assert_eq!(output["payload"]["rating"]["required"], false);
-        assert!(output["payload"]["notification"]
+        assert!(output["payload"]["notification"]["content"]
             .as_str()
             .unwrap()
             .starts_with(TERMINAL_NOTIFICATION_MARKER));
+    }
+
+    #[test]
+    fn existing_user_rating_is_not_overwritten_by_completion_ai() {
+        let task = serde_json::json!({
+            "jobId": "job-1",
+            "status": 6,
+            "title": "Audit report",
+            "providerAgentId": "provider-1"
+        });
+        let mut output = result_from_task_detail("job-1", "user-1", Ok(task));
+
+        preserve_existing_user_rating(&mut output, Ok(true));
+
+        assert_eq!(output["reason"], "notification_required");
+        assert_eq!(output["payload"]["rating"]["required"], false);
+        assert!(output["payload"].get("ratingResultNotification").is_none());
+    }
+
+    #[test]
+    fn failed_feedback_lookup_does_not_risk_overwriting_user_rating() {
+        let task = serde_json::json!({
+            "jobId": "job-1",
+            "status": 6,
+            "title": "Audit report",
+            "providerAgentId": "provider-1"
+        });
+        let mut output = result_from_task_detail("job-1", "user-1", Ok(task));
+
+        preserve_existing_user_rating(&mut output, Err(anyhow::anyhow!("lookup failed")));
+
+        assert_eq!(output["payload"]["rating"]["required"], false);
     }
 
     #[test]

@@ -64,14 +64,15 @@ pub struct CreateArgs {
     ///                          characters count as 2, Latin/half-width as 1).
     ///   • serviceType        — `A2A` (agent-to-agent) or `A2MCP` (API service).
     ///   • fee                — single-purchase price. A plain number as a JSON
-    ///                          string ("10"), USDT implied, ≤6 decimals. An
+    ///                          string ("10"), USDT implied. A2A allows ≤2
+    ///                          decimals; A2MCP allows ≤6 decimals. An
     ///                          EMPTY string ("") means "no single price"
     ///                          (subscription-priced A2A) and is forwarded
     ///                          verbatim.
     ///   • subscription       — A2A only. Array of monthly tiers, e.g.
     ///                          [{"interval":"month","fee":"10"}]. `interval` is
     ///                          currently limited to "month"; each `fee` is a
-    ///                          plain number.
+    ///                          plain number with ≤2 decimals.
     ///   • freeTrial          — OPTIONAL. Free-trial duration in HOURS as a
     ///                          positive integer string ("72" = 3 days) for a
     ///                          subscription-priced A2A service. The low-level CLI
@@ -168,9 +169,11 @@ pub struct UpdateArgs {
     /// East-Asian display width, with
     /// CJK/full-width characters counting as 2 and Latin/half-width as 1),
     /// `serviceType` (`A2A` | `A2MCP`),
-    /// `fee` (single-purchase price — plain number, USDT implied, ≤6 decimals),
+    /// `fee` (single-purchase price — plain number, USDT implied; ≤2 decimals
+    /// for A2A and ≤6 decimals for A2MCP),
     /// `subscription` (A2A only — array of `{interval, fee}`, `interval`
-    /// limited to `"month"`), `freeTrial` (OPTIONAL — free-trial duration in
+    /// limited to `"month"`, with a plain-number `fee` of ≤2 decimals),
+    /// `freeTrial` (OPTIONAL — free-trial duration in
     /// HOURS as a positive integer string, e.g. `"72"`; the low-level CLI
     /// accepts legacy positive-hour values for write-back, while guided product
     /// flows create 72-hour trials only; only allowed on a subscription-priced service,
@@ -434,9 +437,9 @@ pub struct ServiceMatchArgs {
     /// Cursor returned by the previous response; cannot be combined with initial-search filters.
     #[arg(long = "search-after")]
     pub search_after: Option<String>,
-    /// Requested number of Services, from 1 through 10.
-    #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u8).range(1..=10))]
-    pub limit: u8,
+    /// Requested number of Services.
+    #[arg(long, default_value_t = 3)]
+    pub limit: u64,
 }
 
 #[cfg(test)]
@@ -493,12 +496,11 @@ mod service_match_args_tests {
     }
 
     #[test]
-    fn rejects_limit_outside_documented_range() {
-        for limit in ["0", "11"] {
-            assert!(
-                TestCli::try_parse_from(["test", "--keywords", "audit", "--limit", limit,])
-                    .is_err()
-            );
+    fn accepts_limit_without_a_service_range_constraint() {
+        for limit in ["0", "11", "1000"] {
+            let cli = TestCli::try_parse_from(["test", "--keywords", "audit", "--limit", limit])
+                .expect("limit should not have a service-specific range constraint");
+            assert_eq!(cli.service_match.limit.to_string(), limit);
         }
     }
 }
@@ -552,8 +554,8 @@ pub struct FeedbackListArgs {
 /// INITIATOR) left for a specific task. Read-only; hits `GET /agent/task-feedback`.
 /// Returns the backend `data` array verbatim. When the rater already reviewed the
 /// task it holds one review row (the echoed `agentId`, `taskId` and `chainIndex`
-/// plus `feedbackId` and `comment`); otherwise it is empty, which also serves as
-/// the duplicate-review guard before `feedback-submit`.
+/// plus `feedbackId` and `comment`); otherwise it is empty. Callers may use this
+/// to disclose that a user-authored rating will replace an existing AI rating.
 #[derive(Args, Clone, Debug)]
 pub struct TaskFeedbackArgs {
     /// The rater's agent id — the review INITIATOR (backend `feedBackAgentId`),

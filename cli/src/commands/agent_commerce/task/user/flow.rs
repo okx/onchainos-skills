@@ -245,11 +245,11 @@ pub fn available_actions(status: &Status, job_id: &str) -> Vec<String> {
         ],
         Status::Failed => vec![
             next_action("job_refunded"),
-            "Run Refund V2 against fresh task detail. For a one-time task, Failed(9) is the backend's post-chain refund result and may confirm completion even when no Tx Hash is exposed. Subscription Failed(9) remains cause-ambiguous.".to_string(),
+            "Run Refund against fresh task detail. For a one-time task, Failed(9) is the backend's post-chain refund result and may confirm completion even when no Tx Hash is exposed. Subscription Failed(9) remains cause-ambiguous.".to_string(),
             format!("  onchainos agent refund-prepare {job_id}  # Reconcile the lifecycle result and original-token refund"),
         ],
         Status::Close => vec![
-            "Task is Closed(7). Refund V2 distinguishes a zero-price close, a paid one-time escrow refund, and a subscription close; a Tx Hash is optional display metadata.".to_string(),
+            "Task is Closed(7). Refund distinguishes a zero-price close, a paid one-time escrow refund, and a subscription close; a Tx Hash is optional display metadata.".to_string(),
             format!("  onchainos agent refund-prepare {job_id}  # Reconcile the authoritative close result"),
         ],
         Status::Expired => vec![
@@ -370,7 +370,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                 Event::JobDisputed => "okx-a2a session history → dispute upload (auto-submit chat history + manifest deliverables) → onchainos agent user-notify (notify)",
                 Event::DisputeResolved => "onchainos agent user-notify (notify evaluation result)",
                 Event::JobRefunded => "onchainos agent user-notify (notify refund complete)",
-                Event::JobAutoRefunded => "onchainos agent user-notify (backend/Refund V2 settlement receipt)",
+                Event::JobAutoRefunded => "onchainos agent user-notify (backend/Refund settlement receipt)",
                 Event::JobAspAcceptExpire =>
                     "fresh Expired(8) details → terminal refund result (or terminal no-funds result for trial/zero amount)",
                 Event::JobAspRejectExpire =>
@@ -443,9 +443,9 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         Event::JobRefunded => super::flow_lifecycle::job_refunded(&ctx, message),
         Event::JobAutoRefunded => super::flow_lifecycle::job_auto_refunded(&ctx, message),
         Event::JobExpired => super::flow_lifecycle::job_expired(&ctx),
-        Event::JobAspAcceptExpire => super::flow_lifecycle::job_asp_accept_expire(&ctx),
+        Event::JobAspAcceptExpire => super::flow_lifecycle::job_asp_accept_expire(&ctx, message),
         Event::JobAspRejectClosed => super::flow_lifecycle::job_asp_reject_closed(&ctx, message),
-        Event::JobAspRejectExpire => super::flow_lifecycle::job_asp_reject_expire(&ctx),
+        Event::JobAspRejectExpire => super::flow_lifecycle::job_asp_reject_expire(&ctx, message),
         Event::JobClosed => super::flow_lifecycle::job_closed(&ctx, message),
         Event::SubmitExpired => super::flow_lifecycle::submit_expired(&ctx).await,
         Event::RejectExpired => super::flow_lifecycle::reject_expired(&ctx),
@@ -565,7 +565,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      **Semantic mapping** — decide which intent the user's reply means, then call the corresponding next-action.\n\n\
                      Two options:\n\
                      \x20\x20• **`approve_review`** — user accepts the deliverable (typical intents: A / 通过 / 同意 / 满意 / 接受 / 验收 / approve / accept / agree / OK / 行 / 可以 — anything meaning satisfaction with the deliverable).\n\
-                     \x20\x20• **`reject_review`** — compatibility route for a review reply already relayed to this task session. B or any unambiguous rejection opens a fresh, read-only Refund V2 confirmation. Preserve any user-authored wording verbatim as context.\n\n\
+                     \x20\x20• **`reject_review`** — compatibility route for a review reply already relayed to this task session. B or any unambiguous rejection opens a fresh, read-only Refund confirmation. Preserve any user-authored wording verbatim as context.\n\n\
                      If the reply approves or rejects → call:\n\
                      ```bash\n\
                      # For approve_review (no extra args needed):\n\
@@ -967,7 +967,7 @@ mod tests {
                     "tokenAddress": "0xtoken",
                 }),
             );
-        // Optional transaction metadata established by Refund V2's local
+        // Optional transaction metadata established by Refund's local
         // order reconciliation. The fresh backend lifecycle establishes the
         // one-time refund outcome even when this field is absent.
         context.verified_transaction_hash = Some(format!("0x{}", "ab".repeat(32)));
@@ -996,7 +996,7 @@ mod tests {
             );
         // Optional transaction metadata is display-only. Subscription refund
         // completion is disambiguated by fresh buyer-owned Failed(9) plus the
-        // durable local Refund V2 request receipt, never by this hash alone.
+        // durable local Refund request receipt, never by this hash alone.
         context.verified_transaction_hash = Some(format!("0x{}", "ab".repeat(32)));
         context.refund_request_provenance = true;
         context
@@ -1361,7 +1361,7 @@ mod tests {
     async fn subscription_refund_events_require_authoritative_terminal_handling() {
         // V2 sub_complete_notify owns its own authoritative fetch and
         // structured finalization. Refund-related Failed(9) notifications do
-        // not bypass Refund V2 finality or clean up a session by themselves.
+        // not bypass Refund finality or clean up a session by themselves.
         let mut ambiguous_failed = subscription_refund_prefetched(9, "12.34");
         ambiguous_failed.refund_request_provenance = false;
         let failed = run_with_prefetched(
@@ -1374,21 +1374,24 @@ mod tests {
         assert!(failed.contains("refund-prepare"), "{failed}");
         assert!(!failed.contains("session-cleanup"), "{failed}");
         assert!(!failed.contains(TERMINAL_NOTIFICATION_MARKER), "{failed}");
-        // `sub_cancel` only changes future conversion/renewal. Both a trial
-        // (trialType=1) and a formal current period continue, so neither branch
-        // is terminal or carries a cleanup hint.
+        // A successful trial cancellation revokes that trial, while formal
+        // cancellation only disables future renewal.
         let trial_cancel = run(
             "sub_cancel",
             json!({ "event": "sub_cancel", "jobId": JOB_ID, "cancelResult": "success", "trialType": 1 }),
         )
         .await;
         assert!(
-            trial_cancel.contains("continues unaffected"),
+            trial_cancel.contains("access ends immediately"),
             "{trial_cancel}"
         );
         assert!(
-            !trial_cancel.contains("session-cleanup"),
-            "sub_cancel trialType=1 keeps the trial live → NO cleanup hint"
+            trial_cancel.contains(TERMINAL_NOTIFICATION_MARKER),
+            "sub_cancel trialType=1 must be terminal"
+        );
+        assert!(
+            trial_cancel.contains("session-cleanup"),
+            "sub_cancel trialType=1 must clean up its scoped session"
         );
         let formal_cancel = run(
             "sub_cancel",
@@ -1742,7 +1745,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fresh_asp_accept_expiry_confirms_backend_refund() {
+    async fn fresh_asp_accept_expiry_renders_lark_copy_and_ends_session() {
         let detail = refund_prefetched(8, "12.34");
         let out = run_with_prefetched(
             "job_asp_accept_expire",
@@ -1750,9 +1753,16 @@ mod tests {
             &detail,
         )
         .await;
-        assert!(out.contains("[Refund Task Details]"), "{out}");
-        assert!(out.contains("Current status: Expired (8)"), "{out}");
-        assert!(out.contains("funds have reached your wallet"), "{out}");
+        assert!(out.contains("[Job Expired]"), "{out}");
+        assert!(
+            out.contains("The ASP did not accept Audit service within 3 hours"),
+            "{out}"
+        );
+        assert!(
+            out.contains("The escrowed amount of 12.34 USDT will be returned"),
+            "{out}"
+        );
+        assert!(out.contains("Job status: Expired"), "{out}");
         assert!(out.contains(TERMINAL_NOTIFICATION_MARKER), "{out}");
         assert!(out.contains("session-cleanup"), "{out}");
         assert!(!out.contains("finalize-expired-refund"), "{out}");
@@ -1777,22 +1787,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fresh_asp_reject_expiry_remains_failed9_provenance_rule() {
+    async fn fresh_asp_reject_expiry_keeps_failed9_gate_and_renders_lark_copy() {
         let detail = subscription_refund_prefetched(9, "12.34");
         let out = run_with_prefetched(
             "job_asp_reject_expire",
-            json!({ "event": "job_asp_reject_expire", "jobId": JOB_ID }),
+            json!({
+                "event": "job_asp_reject_expire",
+                "jobId": JOB_ID,
+                "rejectWindowEndsAt": 1_700_000_000_i64,
+            }),
             &detail,
         )
         .await;
-        assert!(out.contains("[Automatic Refund Settled]"), "{out}");
-        assert!(out.contains("Failed(9)"), "{out}");
+        assert!(out.contains("[Automatic Refund Processing]"), "{out}");
+        assert!(
+            out.contains("12.34 USDT will be returned to your wallet"),
+            "{out}"
+        );
+        assert!(
+            out.contains("Response deadline: 2023-11-14 22:13 UTC"),
+            "{out}"
+        );
+        assert!(out.contains("Job status: Failed"), "{out}");
         assert!(out.contains(TERMINAL_NOTIFICATION_MARKER), "{out}");
         assert!(out.contains("session-cleanup"), "{out}");
     }
 
     #[tokio::test]
-    async fn asp_reject_closed_reuses_strict_closed_refund_proof() {
+    async fn asp_reject_closed_keeps_fresh_closed_gate_and_renders_lark_copy() {
         let mut refund_detail = refund_prefetched(7, "12.34");
         refund_detail.payment_mode = Some(1);
         let complete = run_with_prefetched(
@@ -1811,7 +1833,11 @@ mod tests {
             &refund_detail,
         )
         .await;
-        assert!(complete.contains("[Refund Settled]"), "{complete}");
+        assert!(complete.contains("[ASP Declined]"), "{complete}");
+        assert!(
+            complete.contains("The escrowed amount of 12.34 USDT will be returned"),
+            "{complete}"
+        );
         assert!(
             complete.contains(TERMINAL_NOTIFICATION_MARKER),
             "{complete}"
@@ -1831,7 +1857,7 @@ mod tests {
             &refund_detail,
         )
         .await;
-        assert!(event_without_hash.contains("[Refund Settled]"));
+        assert!(event_without_hash.contains("[ASP Declined]"));
         assert!(event_without_hash.contains(TERMINAL_NOTIFICATION_MARKER));
 
         let mut without_transaction_hash = refund_detail.clone();
@@ -1847,11 +1873,11 @@ mod tests {
         )
         .await;
         assert!(
-            confirmed_without_hash.contains("[Refund Settled]"),
+            confirmed_without_hash.contains("[ASP Declined]"),
             "{confirmed_without_hash}"
         );
         assert!(
-            confirmed_without_hash.contains("Tx Hash: unavailable"),
+            !confirmed_without_hash.contains("Tx Hash:"),
             "{confirmed_without_hash}"
         );
         assert!(
@@ -1867,6 +1893,7 @@ mod tests {
             crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
                 &json!({
                     "jobType": 1,
+                    "trialType": 0,
                     "status": 7,
                     "title": "My Sub",
                     "buyerAgentId": AGENT_ID,
@@ -1895,15 +1922,19 @@ mod tests {
         )
         .await;
         assert!(
-            subscription_complete.contains("[Refund Settlement Detail Incomplete]"),
+            subscription_complete.contains("[ASP Declined]"),
             "{subscription_complete}"
         );
         assert!(
-            !subscription_complete.contains(TERMINAL_NOTIFICATION_MARKER),
+            subscription_complete.contains("the subscription did not begin"),
             "{subscription_complete}"
         );
         assert!(
-            !subscription_complete.contains("session-cleanup"),
+            subscription_complete.contains(TERMINAL_NOTIFICATION_MARKER),
+            "{subscription_complete}"
+        );
+        assert!(
+            subscription_complete.contains("session-cleanup"),
             "{subscription_complete}"
         );
 
@@ -1920,15 +1951,19 @@ mod tests {
         )
         .await;
         assert!(
-            zero_price_subscription.contains("[Refund Settlement Detail Incomplete]"),
+            zero_price_subscription.contains("[ASP Declined]"),
             "{zero_price_subscription}"
         );
         assert!(
-            !zero_price_subscription.contains(TERMINAL_NOTIFICATION_MARKER),
+            zero_price_subscription.contains("the subscription did not begin"),
             "{zero_price_subscription}"
         );
         assert!(
-            !zero_price_subscription.contains("session-cleanup"),
+            zero_price_subscription.contains(TERMINAL_NOTIFICATION_MARKER),
+            "{zero_price_subscription}"
+        );
+        assert!(
+            zero_price_subscription.contains("session-cleanup"),
             "{zero_price_subscription}"
         );
     }

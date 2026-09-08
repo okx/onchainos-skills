@@ -30,15 +30,18 @@ mod flow_negotiate;
 pub(crate) mod my_tasks;
 pub(crate) mod negotiate;
 mod query;
-pub(crate) mod refund_v2;
+pub(crate) mod refund;
+// Keep internal callers compiled while the upstream module rename from
+// `refund_v2` to `refund` is adopted incrementally across A2A flows.
+pub(crate) use refund as refund_v2;
 mod reject_apply;
 mod service_detail;
 pub(crate) mod service_param_update;
 pub(crate) mod subscription_list;
 pub(crate) mod subscription_ops;
-pub(crate) mod visibility;
 mod task_create_prepare;
 mod v2;
+pub(crate) mod visibility;
 
 use anyhow::Result;
 use clap::{Args, Subcommand};
@@ -259,13 +262,13 @@ pub enum TaskCommand {
     ConfirmAccept { job_id: String },
     /// Client confirms task complete and releases payment
     Complete { job_id: String },
-    /// Disabled direct rejection; use Refund V2 preparation and confirmation.
+    /// Disabled direct rejection; use Refund preparation and confirmation.
     Reject {
         job_id: String,
         #[arg(long)]
         reason: String,
     },
-    /// Read-only Refund V2 eligibility and next-action preparation.
+    /// Read-only Refund eligibility and next-action preparation.
     #[command(name = "refund-prepare")]
     RefundPrepare {
         job_id: String,
@@ -278,7 +281,7 @@ pub enum TaskCommand {
     RefundExecute {
         job_id: String,
         #[arg(long, value_enum)]
-        operation: refund_v2::RefundOperation,
+        operation: refund::RefundOperation,
         #[arg(long = "refund-context-id")]
         refund_context_id: String,
         /// Exact user-authored reason returned through the prepare action params.
@@ -288,7 +291,7 @@ pub enum TaskCommand {
         #[arg(long, default_value_t = false)]
         confirm: bool,
     },
-    /// Disabled legacy close. Use Refund V2 preparation.
+    /// Disabled legacy close. Use Refund preparation.
     Close {
         job_id: String,
         #[arg(long = "agent-id")]
@@ -301,7 +304,7 @@ pub enum TaskCommand {
         agent_id: Option<String>,
     },
     /// Disabled legacy write command. Use `refund-prepare`; a cause-specific
-    /// timeout claim requires a backend Refund V2 contract.
+    /// timeout claim requires a backend Refund contract.
     ClaimAutoRefund { job_id: String },
     /// Reject a provider's apply (on-chain pass-through; status stays `created`)
     RejectApply {
@@ -324,7 +327,7 @@ pub enum TaskCommand {
     /// Enable auto-renew on a subscription (needs EIP-712 terms signing)
     #[command(name = "start-autorenew")]
     StartAutorenew { sub_id: String },
-    /// Disabled direct subscription rejection; use Refund V2 preparation.
+    /// Disabled direct subscription rejection; use Refund preparation.
     #[command(name = "subscribe-reject")]
     SubscribeReject {
         sub_id: String,
@@ -383,18 +386,6 @@ pub enum TaskCommand {
         #[arg(long)]
         flag: String,
     },
-    /// Persist this device's explicitly user-confirmed subscription execution mode.
-    #[command(name = "subscription-execution-config-set")]
-    SubscriptionExecutionConfigSet {
-        #[arg(long = "service-id")]
-        service_id: String,
-        /// signal_only receives and displays signals; guide_direct permits Guide-driven execution.
-        #[arg(long = "execution-mode")]
-        execution_mode: String,
-        /// Replace an existing mode only after a fresh, explicit user confirmation.
-        #[arg(long)]
-        replace: bool,
-    },
     /// List the devices this agent is logged in on (paginated to completion).
     #[command(name = "device-list")]
     DeviceList { page: i64, page_size: i64 },
@@ -430,13 +421,9 @@ fn active_subscription_count(subscriptions: &serde_json::Value) -> u64 {
         .unwrap_or(0)
 }
 
-fn compose_post_login_subscriptions(
-    subscriptions: serde_json::Value,
-    subscriptions_empty: bool,
-    _devices: Option<serde_json::Value>,
-) -> Option<serde_json::Value> {
+fn compose_post_login_subscriptions(subscriptions: serde_json::Value) -> Option<serde_json::Value> {
     let active_count = active_subscription_count(&subscriptions);
-    if subscriptions_empty || active_count == 0 {
+    if active_count == 0 {
         return None;
     }
     Some(serde_json::json!({
@@ -1628,10 +1615,15 @@ async fn scoped_watch_autotrade_precheck_inner(
     Ok(result)
 }
 
-/// State captured before the login heartbeat registers this machine. Comparing
-/// against the pre-heartbeat device table is what lets login distinguish a
-/// genuinely new device from an existing device whose receipt was deliberately
-/// disabled by the user.
+pub(crate) async fn resolve_post_login_agentic_id() -> Result<String> {
+    create::resolve_user_agent()
+        .await
+        .map(|(agent_id, _)| agent_id)
+}
+
+/// State captured before the login heartbeat registers this machine. It keeps
+/// existing device routing intact while allowing a newly registered device to
+/// receive the active subscription routes after the heartbeat succeeds.
 pub(crate) struct PostLoginSubscriptionsPreparation {
     agent_id: String,
     current_device_id: String,
@@ -1653,96 +1645,40 @@ fn device_needs_default_routing(was_registered: bool, already_pending: bool) -> 
     already_pending || !was_registered
 }
 
-pub(crate) async fn resolve_post_login_agentic_id() -> Result<String> {
-    create::resolve_user_agent()
-        .await
-        .map(|(agent_id, _)| agent_id)
-}
-
-/// Fetch the device table before the registration heartbeat. Device-query
-/// failure deliberately suppresses only automatic routing/the login table; the
-/// login orchestrator still sends the heartbeat so device registration is never
-/// coupled to this optional classification step.
+/// Capture device routing state before the login heartbeat. Failure here is
+/// optional: wallet login still completes and the next login can retry setup.
 pub(crate) async fn prepare_post_login_subscriptions(
     agentic_id: &str,
 ) -> Option<PostLoginSubscriptionsPreparation> {
-    let agent_id = match select_subscription_agent_id(agentic_id, "") {
-        Ok(agent_id) => agent_id,
-        Err(e) => {
-            if cfg!(feature = "debug-log") {
-                eprintln!("[DEBUG][post-login] buyer identity unavailable: {e:#}");
-            }
-            return None;
-        }
-    };
+    let agent_id = select_subscription_agent_id(agentic_id, "").ok()?;
     let mut client = TaskApiClient::new();
-
-    let Some(current_device_id) = crate::device::id::get_cached_device_id().map(str::to_string)
-    else {
-        if cfg!(feature = "debug-log") {
-            eprintln!("[DEBUG][post-login] current device id unavailable");
-        }
-        return None;
-    };
-    let devices =
-        match device_routing::fetch_device_list_snapshot(&mut client, &agent_id, 1, 20).await {
-            Ok(snapshot) => snapshot,
-            Err(e) => {
-                if cfg!(feature = "debug-log") {
-                    eprintln!(
-                        "[DEBUG][post-login] pre-registration device snapshot unavailable: {e:#}"
-                    );
-                }
-                return None;
-            }
-        };
-    let Some(current_device_was_registered) =
-        device_snapshot_contains(&devices, &current_device_id)
-    else {
-        if cfg!(feature = "debug-log") {
-            eprintln!("[DEBUG][post-login] malformed pre-registration device snapshot");
-        }
-        return None;
-    };
-
-    let already_pending = match device_routing::new_device_routing_is_pending(
+    let current_device_id = crate::device::id::get_cached_device_id()?.to_string();
+    let devices = device_routing::fetch_device_list_snapshot(&mut client, &agent_id, 1, 20)
+        .await
+        .ok()?;
+    let current_device_was_registered = device_snapshot_contains(&devices, &current_device_id)?;
+    let already_pending = device_routing::new_device_routing_is_pending(
         &client.base_url,
         &agent_id,
         &current_device_id,
-    ) {
-        Ok(pending) => pending,
-        Err(e) => {
-            if cfg!(feature = "debug-log") {
-                eprintln!("[DEBUG][post-login] pending routing marker unavailable: {e:#}");
-            }
-            return None;
-        }
-    };
+    )
+    .ok()?;
     let current_device_needs_default_routing =
         device_needs_default_routing(current_device_was_registered, already_pending);
     if !current_device_was_registered && !already_pending {
-        if let Err(e) = device_routing::mark_new_device_routing_pending(
+        device_routing::mark_new_device_routing_pending(
             &client.base_url,
             &agent_id,
             &current_device_id,
-        ) {
-            if cfg!(feature = "debug-log") {
-                eprintln!("[DEBUG][post-login] cannot persist pending routing marker: {e:#}");
-            }
-            // Automatic routing cannot safely start without durable state. The
-            // login orchestrator still reports the device heartbeat.
-            return None;
-        }
+        )
+        .ok()?;
     } else if current_device_was_registered && !already_pending {
-        // A completed marker is not needed once this device is visible. Deletion
-        // is merely garbage collection: Completed never counts as pending.
         let _ = device_routing::clear_new_device_routing_state(
             &client.base_url,
             &agent_id,
             &current_device_id,
         );
     }
-
     Some(PostLoginSubscriptionsPreparation {
         agent_id,
         current_device_id,
@@ -1753,46 +1689,31 @@ pub(crate) async fn prepare_post_login_subscriptions(
     })
 }
 
-/// Complete new-device routing after the heartbeat. Existing devices are never
-/// rewritten, preserving any manual opt-out. A new device is merged into every
-/// explicit subscription list and only then is the login snapshot returned.
+/// Finish the optional new-device subscription routing after the login
+/// heartbeat, then return the same compact login subscription summary.
 pub(crate) async fn finalize_post_login_subscriptions(
     prepared: PostLoginSubscriptionsPreparation,
     device_registration_succeeded: bool,
 ) -> Option<serde_json::Value> {
     let mut client = TaskApiClient::new();
-    let snapshot = match subscription_ops::fetch_my_subscriptions_snapshot_for_agent(
+    let snapshot = subscription_ops::fetch_my_subscriptions_snapshot_for_agent(
         &mut client,
         subscription_ops::SubscriptionRole::Buyer,
         None,
         prepared.agent_id.clone(),
     )
     .await
-    {
-        Ok(snapshot) => snapshot,
-        Err(e) => {
-            if cfg!(feature = "debug-log") {
-                eprintln!("[DEBUG][post-login] subscription snapshot unavailable: {e:#}");
-            }
-            // Keep a new device's pending marker. The next login retries from a
-            // fresh subscription list; wallet login itself still succeeds.
-            return None;
-        }
-    };
+    .ok()?;
     if snapshot.is_empty {
         if prepared.current_device_needs_default_routing
             && (prepared.current_device_was_registered || device_registration_succeeded)
         {
-            if let Err(e) = device_routing::mark_new_device_routing_completed(
+            device_routing::mark_new_device_routing_completed(
                 &prepared.routing_api_base_url,
                 &prepared.agent_id,
                 &prepared.current_device_id,
-            ) {
-                if cfg!(feature = "debug-log") {
-                    eprintln!("[DEBUG][post-login] empty-list routing completion failed: {e:#}");
-                }
-                return None;
-            }
+            )
+            .ok()?;
             let _ = device_routing::clear_new_device_routing_state(
                 &prepared.routing_api_base_url,
                 &prepared.agent_id,
@@ -1801,22 +1722,15 @@ pub(crate) async fn finalize_post_login_subscriptions(
         }
         return None;
     }
-    let mut subscriptions = snapshot.data;
-
     if prepared.current_device_needs_default_routing
         && !prepared.current_device_was_registered
         && !device_registration_succeeded
     {
-        if cfg!(feature = "debug-log") {
-            eprintln!(
-                "[DEBUG][post-login] new device registration failed; suppressing subscription table"
-            );
-        }
         return None;
     }
-
-    let devices = if prepared.current_device_needs_default_routing {
-        match device_routing::add_new_device_to_all_subscriptions(
+    let mut subscriptions = snapshot.data;
+    if prepared.current_device_needs_default_routing {
+        device_routing::add_new_device_to_all_subscriptions(
             &mut client,
             &prepared.routing_api_base_url,
             &prepared.agent_id,
@@ -1824,117 +1738,55 @@ pub(crate) async fn finalize_post_login_subscriptions(
             &prepared.current_device_id,
         )
         .await
-        {
-            Ok(updated) => {
-                if cfg!(feature = "debug-log") {
-                    eprintln!(
-                        "[DEBUG][post-login] added new device to {updated} explicit subscription routes"
-                    );
-                }
-            }
-            Err(e) => {
-                if cfg!(feature = "debug-log") {
-                    eprintln!(
-                        "[DEBUG][post-login] new-device subscription routing unavailable: {e:#}"
-                    );
-                }
-                // The durable marker remains, so the next login retries only
-                // subscriptions whose fresh lists still lack this device.
-                return None;
-            }
-        }
-
-        if let Err(e) = device_routing::clear_new_device_routing_state(
+        .ok()?;
+        let _ = device_routing::clear_new_device_routing_state(
             &prepared.routing_api_base_url,
             &prepared.agent_id,
             &prepared.current_device_id,
-        ) {
-            if cfg!(feature = "debug-log") {
-                eprintln!("[DEBUG][post-login] routing completed; state cleanup deferred: {e:#}");
-            }
-        }
-
-        if prepared.current_device_was_registered {
-            Some(prepared.pre_registration_devices)
-        } else {
-            match device_routing::fetch_device_list_snapshot(&mut client, &prepared.agent_id, 1, 20)
-                .await
-            {
-                Ok(snapshot)
-                    if device_snapshot_contains(&snapshot, &prepared.current_device_id)
-                        == Some(true) =>
-                {
-                    Some(snapshot)
-                }
-                Ok(_) => {
-                    if cfg!(feature = "debug-log") {
-                        eprintln!(
-                            "[DEBUG][post-login] registered device not visible yet; using degraded render"
-                        );
-                    }
-                    None
-                }
-                Err(e) => {
-                    if cfg!(feature = "debug-log") {
-                        eprintln!(
-                            "[DEBUG][post-login] post-registration device snapshot unavailable; degrading: {e:#}"
-                        );
-                    }
-                    None
-                }
-            }
-        }
-    } else {
-        // Existing device with no pending onboarding marker: never rewrite its
-        // subscriptions, preserving every manual per-task opt-out.
-        Some(prepared.pre_registration_devices)
-    };
-
+        );
+        // Re-read is not needed for the compact count-only summary; retaining
+        // this snapshot does preserve the pre-registration distinction above.
+        let _ = prepared.pre_registration_devices;
+    }
     add_post_login_autotrade_prechecks(&mut client, &mut subscriptions, &prepared.agent_id).await;
-    compose_post_login_subscriptions(subscriptions, false, devices)
+    compose_post_login_subscriptions(subscriptions)
 }
 
-async fn handle_subscription_execution_config_set(
-    service_id: String,
-    execution_mode: String,
-    replace: bool,
-) -> Result<()> {
-    use crate::commands::agent_commerce::task::common::autotrade::subscription_config;
-
-    let (resolved_agent_id, _) = create::resolve_user_agent().await?;
-    let user_agent_id = crate::commands::agent_commerce::task::common::subscription_identity::select_subscription_agent_id(
-        &resolved_agent_id,
-        "",
-    )?;
-
-    let execution_mode = execution_mode.parse::<subscription_config::ExecutionMode>()?;
-    let outcome = subscription_config::save_execution_mode(
-        &user_agent_id,
-        &service_id,
-        execution_mode,
-        replace,
-    )?;
-    crate::output::success(serde_json::json!({
-        "userAgentId": user_agent_id,
-        "serviceId": service_id,
-        "executionMode": execution_mode.as_str(),
-        "outcome": outcome.as_str(),
-        "storage": "local",
-    }));
-    Ok(())
+/// Fetch the active-subscription count shown after login. This path is
+/// independent from device discovery and subscription receive routing.
+pub(crate) async fn fetch_post_login_subscriptions(agentic_id: &str) -> Option<serde_json::Value> {
+    let agent_id = match select_subscription_agent_id(agentic_id, "") {
+        Ok(agent_id) => agent_id,
+        Err(e) => {
+            if cfg!(feature = "debug-log") {
+                eprintln!("[DEBUG][post-login] buyer identity unavailable: {e:#}");
+            }
+            return None;
+        }
+    };
+    let mut client = TaskApiClient::new();
+    let snapshot = match subscription_ops::fetch_my_subscriptions_snapshot_for_agent(
+        &mut client,
+        subscription_ops::SubscriptionRole::Buyer,
+        None,
+        agent_id.clone(),
+    )
+    .await
+    {
+        Ok(snapshot) => snapshot,
+        Err(e) => {
+            if cfg!(feature = "debug-log") {
+                eprintln!("[DEBUG][post-login] subscription snapshot unavailable: {e:#}");
+            }
+            return None;
+        }
+    };
+    let mut subscriptions = snapshot.data;
+    add_post_login_autotrade_prechecks(&mut client, &mut subscriptions, &agent_id).await;
+    compose_post_login_subscriptions(subscriptions)
 }
 
 pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
-    // This command is intentionally local-only. Do not initialize the API
-    // client (and its credential/keyring dependencies) before persisting it.
-    let cmd = match cmd {
-        TaskCommand::SubscriptionExecutionConfigSet {
-            service_id,
-            execution_mode,
-            replace,
-        } => return handle_subscription_execution_config_set(service_id, execution_mode, replace).await,
-        cmd => cmd,
-    };
     let mut client = TaskApiClient::new();
 
     match cmd {
@@ -2118,11 +1970,11 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         }
         TaskCommand::Reject { job_id, reason: _ } => {
             anyhow::bail!(
-                "direct reject is disabled by Refund V2; run `onchainos agent refund-prepare {job_id} --reason <user-authored-reason>` and execute only the returned confirmed action"
+                "direct reject is disabled by Refund; run `onchainos agent refund-prepare {job_id} --reason <user-authored-reason>` and execute only the returned confirmed action"
             )
         }
         TaskCommand::RefundPrepare { job_id, reason } => {
-            refund_v2::handle_prepare(&mut client, &job_id, reason.as_deref()).await
+            refund::handle_prepare(&mut client, &job_id, reason.as_deref()).await
         }
         TaskCommand::RefundExecute {
             job_id,
@@ -2131,7 +1983,7 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             reason,
             confirm,
         } => {
-            refund_v2::handle_execute(
+            refund::handle_execute(
                 &mut client,
                 &job_id,
                 operation,
@@ -2190,11 +2042,6 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         TaskCommand::SubscribeOfflineUpdate { job_id, flag } => {
             offline_receive::handle_subscribe_offline_update(&mut client, &job_id, &flag).await
         }
-        TaskCommand::SubscriptionExecutionConfigSet {
-            service_id,
-            execution_mode,
-            replace,
-        } => handle_subscription_execution_config_set(service_id, execution_mode, replace).await,
         TaskCommand::DeviceList { page, page_size } => {
             device_routing::handle_device_list(&mut client, page, page_size).await
         }
@@ -2255,68 +2102,34 @@ mod post_login_tests {
 
     #[test]
     fn empty_subscriptions_produce_no_post_login_block() {
-        let block = compose_post_login_subscriptions(
-            json!({ "list": [] }),
-            true,
-            Some(json!({ "list": [{ "deviceId": "d1" }] })),
-        );
+        let block = compose_post_login_subscriptions(json!({ "list": [] }));
         assert!(block.is_none());
     }
 
     #[test]
     fn active_subscriptions_produce_a_count_only_hint() {
-        let block = compose_post_login_subscriptions(
-            json!({ "list": [{ "jobId": "j1", "status": 1 }] }),
-            false,
-            Some(json!({ "list": [{ "deviceId": "d1" }], "total": 1 })),
-        )
+        let block = compose_post_login_subscriptions(json!({
+            "list": [{ "jobId": "j1", "status": 1 }]
+        }))
         .expect("active subscriptions must produce a hint");
         assert_eq!(block, json!({ "activeSubscriptionCount": 1 }));
     }
 
     #[test]
     fn ended_only_subscriptions_produce_no_post_login_hint() {
-        let block = compose_post_login_subscriptions(
-            json!({ "list": [{ "jobId": "j1", "status": 6 }] }),
-            false,
-            None,
-        );
+        let block = compose_post_login_subscriptions(json!({
+            "list": [{ "jobId": "j1", "status": 6 }]
+        }));
         assert!(block.is_none());
     }
 
     #[test]
-    fn device_failure_does_not_block_an_active_subscription_hint() {
-        let block = compose_post_login_subscriptions(
-            json!({ "list": [{ "jobId": "j1", "statusName": "ACTIVE" }] }),
-            false,
-            None,
-        )
+    fn active_subscription_hint_does_not_need_device_data() {
+        let block = compose_post_login_subscriptions(json!({
+            "list": [{ "jobId": "j1", "statusName": "ACTIVE" }]
+        }))
         .expect("active subscription hint must not need device data");
         assert_eq!(block, json!({ "activeSubscriptionCount": 1 }));
-    }
-
-    #[test]
-    fn pre_heartbeat_device_snapshot_distinguishes_new_and_existing_devices() {
-        let devices = json!({
-            "list": [
-                { "deviceId": "d1", "deviceName": "Mac 1" },
-                { "deviceId": "d2", "deviceName": "Mac 2" }
-            ]
-        });
-        assert_eq!(device_snapshot_contains(&devices, "d1"), Some(true));
-        assert_eq!(device_snapshot_contains(&devices, "d-new"), Some(false));
-        assert_eq!(device_snapshot_contains(&json!({}), "d1"), None);
-    }
-
-    #[test]
-    fn only_new_or_interrupted_devices_need_default_routing() {
-        assert!(device_needs_default_routing(false, false));
-        assert!(device_needs_default_routing(false, true));
-        assert!(device_needs_default_routing(true, true));
-        assert!(
-            !device_needs_default_routing(true, false),
-            "ordinary re-login must preserve this device's manual opt-outs"
-        );
     }
 
     #[test]
@@ -2823,7 +2636,7 @@ mod post_login_tests {
     }
 
     #[tokio::test]
-    async fn post_login_preparation_rejects_blank_agentic_id_before_network() {
-        assert!(prepare_post_login_subscriptions("   ").await.is_none());
+    async fn post_login_subscription_lookup_rejects_blank_agentic_id_before_network() {
+        assert!(fetch_post_login_subscriptions("   ").await.is_none());
     }
 }

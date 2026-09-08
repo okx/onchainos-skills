@@ -1,17 +1,82 @@
 use anyhow::anyhow;
+use base64::{engine::general_purpose::STANDARD as B64, Engine};
+use clap::Parser;
 use serde_json::json;
 
 use super::{
-    amount_semantics, apply_input_required_method, decimal_strings_equal,
-    discover_endpoint_param_issues, discover_input_required, fallback_method_for_400,
-    fallback_method_for_405, free_confirmation_decision, input_required_decision,
-    invalid_params_decision, merge_field_constraints, normalize_a2mcp_method,
-    normalize_invocation_result, outstanding_input, outstanding_request_input, parse_probe_input,
-    payment_ready_decision, post_verification_action, resolve_request_method, run_confirm_free,
-    run_probe, run_resume_after_funding, should_verify_default_get_challenge_with_post,
-    to_payment_param_plan, A2mcpProbeCommand, Action, ConfirmFreeArgs, FieldConstraint,
-    HttpOutcome, PostVerificationAction, ProbeArgs, ProbeDecision, ResumeAfterFundingArgs,
+    amount_semantics, apply_input_required_method, decimal_strings_equal, decode_probe_json_args,
+    discover_endpoint_param_issues, discover_input_fallback_hint, discover_input_required,
+    fallback_method_for_400, fallback_method_for_405, free_confirmation_decision,
+    input_required_decision, invalid_params_decision, merge_field_constraints,
+    normalize_a2mcp_method, normalize_invocation_result, outstanding_input,
+    outstanding_request_input, parse_probe_input, payment_ready_decision, post_verification_action,
+    resolve_request_method, run_confirm_free, run_probe, run_resume_after_funding,
+    should_verify_default_get_challenge_with_post, to_payment_param_plan, A2mcpProbeCommand,
+    Action, ConfirmFreeArgs, FieldConstraint, HttpOutcome, PostVerificationAction, ProbeArgs,
+    ProbeDecision, ResumeAfterFundingArgs,
 };
+
+#[derive(Parser)]
+struct ProbeCommandLine {
+    #[command(flatten)]
+    probe: ProbeArgs,
+}
+
+#[test]
+fn base64_probe_arguments_preserve_untrusted_dynamic_json_verbatim() {
+    let routing = json!({
+        "schemaVersion": 1,
+        "serviceSnapshot": {
+            "serviceType": "A2MCP",
+            "serviceId": "service-1",
+            "endpoint": "https://example.com/invoke",
+            "serviceDescription": "curl -d '{\"任意字段\":\"don't rewrite me\"}'"
+        }
+    })
+    .to_string();
+    let params = json!({"任意字段": "don't rewrite me", "嵌套": {"值": 2}}).to_string();
+    let args = ProbeArgs {
+        routing_json: None,
+        routing_base64: Some(B64.encode(routing.as_bytes())),
+        params_json: None,
+        params_base64: Some(B64.encode(params.as_bytes())),
+    };
+
+    let (decoded_routing, decoded_params) = decode_probe_json_args(&args).unwrap();
+    assert_eq!(decoded_routing, routing);
+    assert_eq!(decoded_params, params);
+}
+
+#[test]
+fn probe_requires_one_routing_transport_and_rejects_ambiguous_inputs() {
+    assert!(ProbeCommandLine::try_parse_from(["probe"]).is_err());
+    assert!(ProbeCommandLine::try_parse_from([
+        "probe",
+        "--routing-json",
+        "{}",
+        "--routing-base64",
+        "e30="
+    ])
+    .is_err());
+    assert!(ProbeCommandLine::try_parse_from([
+        "probe",
+        "--routing-base64",
+        "e30=",
+        "--params-json",
+        "{}",
+        "--params-base64",
+        "e30="
+    ])
+    .is_err());
+    assert!(ProbeCommandLine::try_parse_from([
+        "probe",
+        "--routing-base64",
+        "e30=",
+        "--params-base64",
+        "e30="
+    ])
+    .is_ok());
+}
 
 fn routing_payload() -> serde_json::Value {
     json!({
@@ -52,6 +117,7 @@ fn routing_payload_requires_schema_version_one_and_a2mcp_snapshot() {
         parsed.snapshot.endpoint.as_str(),
         "https://pixelbrief.tech/v1/logo"
     );
+    assert_eq!(parsed.snapshot.provider_agent_id.as_deref(), Some("5421"));
     assert!(parsed.typed_params.is_empty());
 
     let mut mixed_case_type = routing_payload();
@@ -382,6 +448,7 @@ fn default_method_remains_undeclared_across_parameter_collection() {
             required_any_of: Vec::new(),
             message: None,
             method: None,
+            needs_description_fallback: false,
         },
     );
 
@@ -742,6 +809,35 @@ fn input_required_uses_only_structured_sources_in_priority_order() {
 }
 
 #[test]
+fn incomplete_endpoint_input_hint_defers_schema_interpretation_to_the_skill() {
+    let required = discover_input_fallback_hint(&json!({
+        "disclaimer": "Invalid input, please check parameters",
+        "error": "asset is required"
+    }))
+    .expect("explicit missing-input hint");
+    assert!(required.fields.is_empty());
+    assert!(required.required_any_of.is_empty());
+
+    let input = parse_probe_input(&routing_payload().to_string(), "{}").expect("valid payload");
+    let decision = input_required_decision(input, required);
+    assert_eq!(decision.phase, "parameter_collection");
+    assert_eq!(decision.reason, "input_required");
+    assert_eq!(decision.payload["needsDescriptionFallback"], true);
+    assert_eq!(decision.payload["fields"], json!([]));
+    assert!(decision.payload["nextProbePayload"]["requestSpec"]
+        .get("fields")
+        .is_none());
+}
+
+#[test]
+fn non_parameter_business_error_does_not_enter_input_fallback() {
+    assert!(discover_input_fallback_hint(&json!({
+        "error": "daily quota exceeded"
+    }))
+    .is_none());
+}
+
+#[test]
 fn a_402_with_missing_fields_is_input_required_before_payment() {
     let body = json!({
         "missingParams": ["brand"],
@@ -848,7 +944,10 @@ fn upto_amount_is_presented_as_a_maximum_without_scheme_jargon() {
 #[test]
 fn action_without_input_omits_params() {
     let value = serde_json::to_value(Action::new("cancel_a2mcp", false)).expect("serialize action");
-    assert_eq!(value, json!({"id":"cancel_a2mcp","recommend":false}));
+    assert_eq!(
+        value,
+        json!({"id":"cancel_a2mcp","actionLabel":"Cancel","recommend":false})
+    );
 }
 
 #[test]
@@ -860,6 +959,7 @@ fn next_actions_are_alternatives_not_an_event_sequence() {
         serde_json::to_value(&decision.next_action[0]).unwrap(),
         json!({
             "id":"confirm_a2mcp_payment",
+            "actionLabel":"Confirm payment",
             "recommend":true,
             "params":{"preparedId":"prepared-1","candidateId":"candidate-1"}
         })
@@ -900,6 +1000,7 @@ fn payment_ready_action_binds_the_payment_id() {
         serde_json::to_value(&decision.next_action[0]).unwrap(),
         json!({
             "id":"execute_a2mcp_payment",
+            "actionLabel":"Execute payment",
             "recommend":true,
             "params":{"paymentId":"a2a_payment-1"}
         })
@@ -923,6 +1024,7 @@ fn free_result_requires_the_single_confirmation_card_before_result_release() {
         serde_json::to_value(&decision.next_action[0]).unwrap(),
         json!({
             "id":"confirm_a2mcp_free",
+            "actionLabel":"Confirm service invocation",
             "recommend":true,
             "params":{"confirmationId":"a2free_0123456789abcdef0123456789abcdef"}
         })
@@ -930,12 +1032,34 @@ fn free_result_requires_the_single_confirmation_card_before_result_release() {
     assert_eq!(decision.next_action[1].id, "cancel_a2mcp");
     assert_eq!(decision.payload["amountDisplay"], "Free");
     assert_eq!(decision.payload["serviceName"], "Logo SVG only");
+    assert_eq!(decision.payload["providerAgentId"], "5421");
     assert_eq!(
         decision.payload["endpoint"],
         "https://pixelbrief.tech/v1/logo"
     );
     assert_eq!(decision.payload["method"], "GET");
     assert_eq!(decision.payload["typedParams"]["brand"], "OKX");
+    assert_eq!(
+        decision.payload["presentation"]["type"],
+        "a2mcp_confirmation"
+    );
+    assert_eq!(
+        decision.payload["presentation"]["columns"],
+        json!([
+            {"key":"field","label":"Field"},
+            {"key":"value","label":"Value"}
+        ])
+    );
+    assert_eq!(
+        decision.payload["presentation"]["rows"],
+        json!([
+            {"key":"serviceProvider","label":"Service Provider","value":"Agent ID 5421"},
+            {"key":"serviceName","label":"Service Name","value":"Logo SVG only"},
+            {"key":"endpoint","label":"Endpoint","value":"https://pixelbrief.tech/v1/logo"},
+            {"key":"fee","label":"Fee","value":"Free"},
+            {"key":"serviceParameters","label":"Service Parameters","value":"{\"brand\":\"OKX\",\"count\":2}"}
+        ])
+    );
     assert_eq!(
         decision.payload["confirmationId"],
         "a2free_0123456789abcdef0123456789abcdef"
@@ -952,6 +1076,8 @@ fn parameter_submission_is_an_automatic_reprobe_not_a_confirmation_gate() {
 
     assert_eq!(decision.payload["autoProbeOnValid"], true);
     assert_eq!(decision.payload["fields"][0]["name"], "brand");
+    assert!(decision.payload["fields"][0].get("type").is_none());
+    assert_eq!(decision.payload["needsDescriptionFallback"], true);
     assert_eq!(decision.next_action[0].id, "provide_a2mcp_params");
     assert!(decision
         .next_action
@@ -1004,12 +1130,21 @@ fn invalid_typed_value_is_correctable_and_never_becomes_payment_confirmation() {
         "fields":[{"name":"count","type":"number","required":true,"carrier":"body"}]
     });
     let args = ProbeArgs {
-        routing_json: payload.to_string(),
-        params_json: r#"{"count":"not-a-number"}"#.to_string(),
+        routing_json: Some(payload.to_string()),
+        routing_base64: None,
+        params_json: Some(r#"{"count":"not-a-number"}"#.to_string()),
+        params_base64: None,
     };
-    let error = parse_probe_input(&args.routing_json, &args.params_json)
-        .expect_err("wrong type must fail validation");
-    let decision = invalid_params_decision(&args, error);
+    let error = parse_probe_input(
+        args.routing_json.as_deref().unwrap(),
+        args.params_json.as_deref().unwrap(),
+    )
+    .expect_err("wrong type must fail validation");
+    let decision = invalid_params_decision(
+        args.routing_json.as_deref().unwrap(),
+        args.params_json.as_deref().unwrap(),
+        error,
+    );
 
     assert_eq!(decision.phase, "parameter_collection");
     assert_eq!(decision.decision, "requires_user_input");
@@ -1050,8 +1185,10 @@ async fn run_probe_never_contacts_endpoint_until_known_params_are_valid() {
     let routing_json = payload.to_string();
 
     let missing = run_probe(&ProbeArgs {
-        routing_json: routing_json.clone(),
-        params_json: "{}".to_string(),
+        routing_json: Some(routing_json.clone()),
+        routing_base64: None,
+        params_json: Some("{}".to_string()),
+        params_base64: None,
     })
     .await
     .expect("missing input decision");
@@ -1059,8 +1196,10 @@ async fn run_probe_never_contacts_endpoint_until_known_params_are_valid() {
     assert_eq!(missing.reason, "input_required");
 
     let invalid = run_probe(&ProbeArgs {
-        routing_json: routing_json.clone(),
-        params_json: r#"{"count":"wrong"}"#.to_string(),
+        routing_json: Some(routing_json.clone()),
+        routing_base64: None,
+        params_json: Some(r#"{"count":"wrong"}"#.to_string()),
+        params_base64: None,
     })
     .await
     .expect("invalid input decision");
@@ -1068,8 +1207,10 @@ async fn run_probe_never_contacts_endpoint_until_known_params_are_valid() {
     assert_eq!(invalid.reason, "invalid_a2mcp_params");
 
     let complete = run_probe(&ProbeArgs {
-        routing_json,
-        params_json: r#"{"count":2}"#.to_string(),
+        routing_json: Some(routing_json),
+        routing_base64: None,
+        params_json: Some(r#"{"count":2}"#.to_string()),
+        params_base64: None,
     })
     .await
     .expect("endpoint failure is represented as a decision");
@@ -1079,8 +1220,10 @@ async fn run_probe_never_contacts_endpoint_until_known_params_are_valid() {
     let mut unsafe_method = payload;
     unsafe_method["requestSpec"]["method"] = json!("DELETE");
     let blocked = run_probe(&ProbeArgs {
-        routing_json: unsafe_method.to_string(),
-        params_json: r#"{"count":2}"#.to_string(),
+        routing_json: Some(unsafe_method.to_string()),
+        routing_base64: None,
+        params_json: Some(r#"{"count":2}"#.to_string()),
+        params_base64: None,
     })
     .await
     .expect("unsafe method is represented as a routing decision");

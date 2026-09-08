@@ -196,10 +196,10 @@ pub struct PreFetchedTaskContext {
     pub period_end_time: Option<i64>,
     pub user_agent_address: Option<String>,
     pub token_address: Option<String>,
-    /// Optional transaction metadata verified by Refund V2's local order
+    /// Optional transaction metadata verified by Refund's local order
     /// reconciliation. Raw task-detail hash aliases never populate it.
     pub verified_transaction_hash: Option<String>,
-    /// Durable local proof that this checkout submitted a Refund V2 request
+    /// Durable local proof that this checkout submitted a Refund request
     /// for the exact task/payment snapshot now being displayed.
     /// Raw task/subscription API responses never populate this flag.
     pub refund_request_provenance: bool,
