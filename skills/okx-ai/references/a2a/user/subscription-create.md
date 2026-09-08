@@ -9,8 +9,8 @@ Collect the User's choice of `signal_only` or `guide_direct` without asking for
 a separate confirmation. `guide_direct` requires the exact Guide and collected
 Guide Consent; an absent Guide permits only `signal_only`. Do not default the
 mode or store it in `serviceParams` or Guide Consent. The final card below owns
-the one confirmation for the execution mode, Guide Consent, subscription, and
-payment together.
+the one confirmation for Guide Consent, subscription, and payment together.
+Do not expose the internal execution-mode value in that card.
 
 ## Business data and confirmation
 
@@ -27,7 +27,6 @@ disables it. Render only:
 | Service Price | exact subscription fee, token, and interval |
 | Trial | exact supported positive duration, otherwise No |
 | Auto-Renew | On or Off |
-| Execution Mode | collected `signal_only` or `guide_direct` |
 | Service Guide Consent | complete collected Guide Consent when the Guide is non-blank |
 
 Render the Provider with both the bound Provider name and Agent ID, exactly as
