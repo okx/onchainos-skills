@@ -24,7 +24,6 @@ pub(crate) mod notify;
 pub(crate) mod profile;
 pub(crate) mod schema;
 pub(crate) mod subscription;
-pub(crate) mod subscription_config;
 pub(crate) mod tooling;
 pub(crate) mod trade_kit;
 

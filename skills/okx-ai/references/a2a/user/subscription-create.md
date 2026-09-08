@@ -3,13 +3,6 @@
 Enter from `create-prepare.md` only when the authoritative payload supports a
 subscription. Complete `create-guide.md` when a non-blank Guide is present.
 
-## Execution mode
-
-Separately confirm `signal_only` or `guide_direct`, then end the turn.
-`guide_direct` requires the exact Guide and confirmed Guide Consent; an absent
-Guide permits only `signal_only`. Do not default the mode or store it in
-`serviceParams` or Guide Consent.
-
 ## Business data and confirmation
 
 Collect `title` (≤30 characters), Description (≤4096 characters), explicit
@@ -28,17 +21,6 @@ disables it. Render only:
 
 Guide Consent remains a separate confirmation. Continue only after explicit
 final confirmation and the one-time communication check defined by `create.md`.
-
-## Persist mode and create
-
-```bash
-onchainos agent subscription-execution-config-set \
-  --service-id <payload.serviceId> \
-  --execution-mode <guide_direct|signal_only>
-```
-
-Changing an existing mode requires another confirmation and `--replace`.
-Failure blocks creation.
 
 ```bash
 onchainos agent create-subscribe \

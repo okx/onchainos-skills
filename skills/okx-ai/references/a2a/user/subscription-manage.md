@@ -49,9 +49,8 @@ does not roll back creation and does not authorize a retry.
 5. Enter `../../runtime/watch.md` with sticky `--job-id <jobId>`. Never substitute
    a global watch or claim that starting watch proves a new signal exists.
 
-Restoring receipt does not recreate or modify Guide Consent. A missing Guide,
-Consent, or `guide_direct` mode keeps signals visible but disables local
-automatic execution.
+Restoring receipt does not recreate or modify Guide Consent. A missing Guide
+or Consent keeps signals visible but disables local automatic execution.
 
 ## Device and execution safety
 
