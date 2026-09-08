@@ -3,8 +3,8 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "查看 Agent #42 的评价和评分。",
-      "expected_output": "查询 Agent #42 的信誉，并展示返回的平均评分、评价总数和评价内容，不得改写数值。",
+      "prompt": "View Agent #42 feedback and ratings.",
+      "expected_output": "Query Agent #42 reputation and display the returned average rating, review count, and review content without changing numeric values.",
       "files": ["evals/fixtures/reputation-page-1.json"],
       "expectations": [
         "Calls `onchainos agent feedback-list --agent-id 42` exactly once.",
@@ -25,8 +25,8 @@
     },
     {
       "id": 2,
-      "prompt": "Market Maker 这个 Agent 的信誉怎么样？",
-      "expected_output": "要求用户提供 Agent ID，而不是根据 Agent 名称推断 ID。",
+      "prompt": "What is the reputation of the Market Maker Agent?",
+      "expected_output": "Ask the user for an Agent ID rather than inferring one from the Agent name.",
       "files": [],
       "expectations": [
         "Does not invoke `onchainos`.",
@@ -41,8 +41,8 @@
     },
     {
       "id": 3,
-      "prompt": "发布 Agent #42 到市场。",
-      "expected_output": "使用用户的中文语言偏好发布 Agent #42，并说明该上架申请已提交审核。",
+      "prompt": "Publish Agent #42 to the marketplace.",
+      "expected_output": "Publish Agent #42 using the user's language preference and state that the listing request was submitted for review.",
       "files": ["evals/fixtures/listing-submitted.json"],
       "expectations": [
         "Calls `onchainos agent activate --agent-id 42 --preferred-language zh-CN` exactly once.",
@@ -56,13 +56,13 @@
           "onchainos agent my-agents",
           "onchainos agent search"
         ],
-        "response_includes": ["审核"]
+        "response_includes": ["review"]
       }
     },
     {
       "id": 4,
-      "prompt": "查看我的订阅。",
-      "expected_output": "只读查询订阅列表，按 Active 和 Ended 展示规范字段、动态设备接收状态、无接收设备提醒，并从 nextAction.actionLabel 渲染后续选项。",
+      "prompt": "View my subscriptions.",
+      "expected_output": "Read the subscription list, render the standard Active and Ended fields, device-receipt state, no-receiver warnings, and next actions from nextAction.actionLabel.",
       "files": ["evals/fixtures/subscription-list.json"],
       "expectations": [
         "Calls `onchainos agent subscription-list --page-size 10` exactly once.",
@@ -81,18 +81,18 @@
           "Alpha Signal",
           "Old Signal",
           "2026-09-16 18:10 UTC",
-          "试用期",
+          "Trial",
           "MacBook Pro",
           "iPhone",
           "No Receiver Signal",
-          "1. 调整接收设备",
-          "2. 查看订阅详情",
-          "3. 取消订阅",
-          "4. 查看下一页"
+          "1. Adjust receiving devices",
+          "2. View subscription details",
+          "3. Cancel subscription",
+          "4. View next page"
         ],
         "response_excludes": [
-          "开始监听",
-          "推荐",
+          "Start watching",
+          "Recommend",
           "allowedJobIds",
           "next_subscription_page"
         ]

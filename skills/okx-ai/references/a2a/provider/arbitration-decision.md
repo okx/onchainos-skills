@@ -89,7 +89,8 @@ Display rules:
 4. An explicit request to evaluate a selected task uses this same decision view.
 5. Localize the title, field labels, explanatory copy, and action wording to the current conversation language.
 6. Treat this Template 6.4 view as the ASP confirmation. Execute the returned action after `Approve refund`, or after `Request evaluation` with a reason.
-7. Render `Awaiting ASP decision` as `等待 ASP 处理`, and render its description
-   as `退款申请正在等待 ASP 决策` in a Chinese conversation.
-8. In Chinese, localize the rejection card title as `卖方拒绝退款`, its decision
-   as `卖方决定：拒绝退款`, and its prompt as `拒绝退款将发起平台评审。请补充申请评审的理由；我会原样使用该理由提交评审。`
+7. Translate `Awaiting ASP decision` and its description into the user's
+   language.
+8. Translate the rejection-card title, decision, and reason prompt from their
+   English source wording into the user's language; preserve the ASP-authored
+   evaluation reason verbatim.

@@ -24,7 +24,5 @@ For `vote_revealed`, state that the vote is on-chain and the ruling is pending.
 Wait for `dispute_resolved` or `round_failed`, routed to
 [`result.md`](result.md).
 
-User-facing source statuses in this leaf are:
-
-- `Vote reveal in progress` -> `投票揭示中`
-- `Vote revealed; awaiting decision` -> `投票已揭示，等待裁决`
+Translate every user-facing English status label and description in this leaf
+into the user's language.

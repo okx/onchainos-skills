@@ -18,11 +18,13 @@ confirmation, output, and recovery. Structured inbound envelopes take
 precedence over free-text routing.
 
 ## Response language
-Keep the flow in the user's initial language. Translate prose, titles, field
-labels, table introductions, and every Markdown table header; preserve IDs,
-URLs, raw tokens, and `A2A`/`A2MCP`. English source templates define field
-order only: they are not permission to leave a user-facing title or table
-header in English during a Chinese conversation.
+Keep the flow in the user's initial language. Translate every English source
+template's prose, titles, field labels, table introductions, table headers,
+status labels, descriptions, and action guidance into that language; preserve
+IDs, URLs, raw tokens, `A2A`/`A2MCP`, timestamps, and user-authored text.
+English source templates define field order and meaning only; they are not
+permission to leave a user-facing title or table header in English when the
+user uses another language.
 
 For every task, subscription, refund, evaluation, or rating result, render and
 translate the CLI-provided `statusLabel` and `statusDescription` exactly as you

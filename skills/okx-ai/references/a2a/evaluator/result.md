@@ -32,10 +32,5 @@ The aligned-vote branch remains active until its reward loop closes. Ordinary
 updates may be localized and sent once with `user-notify`; preserve all IDs,
 amounts, deadlines, and stable markers exactly.
 
-User-facing source statuses in this leaf are:
-
-- `Decided` -> `已裁决`
-- `Evaluation round invalidated` -> `本轮评审未形成有效结果`
-- `Reward pending` -> `奖励待领取`
-- `Reward claimed` -> `奖励已到账`
-- `Cooldown active` -> `冷却期生效中`
+Translate every user-facing English status label and description in this leaf
+into the user's language.

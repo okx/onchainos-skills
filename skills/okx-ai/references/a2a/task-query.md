@@ -50,10 +50,10 @@ display rules:
 1. Display the complete `jobId`.
 2. Render Fee as `{tokenAmount} {tokenSymbol}`. Render `Free` when the exact
    amount is zero.
-3. Render the localized CLI `statusLabel`. The raw `statusName` remains a
-   protocol compatibility key and must not be shown. In a Chinese conversation,
-   render `Awaiting ASP acceptance` as `ASP 待接单`; for a one-time task with
-   raw status `failed` / code `9`, render `Refund completed` as `退款成功`.
+3. Translate the CLI `statusLabel` and `statusDescription` into the user's
+   language. The raw `statusName` remains a protocol compatibility key and
+   must not be shown. For a one-time task with raw status `failed` / code `9`,
+   use the CLI label `Refund completed` before translating it.
 4. Preserve the returned Job Description without rewriting it.
 
 ### Submitted one-time review recovery
@@ -170,13 +170,8 @@ display rules:
 2. Display every `jobId` in full.
 3. Render Fee as `{tokenAmount} {tokenSymbol}`. Render `Free` when the exact
    amount is zero.
-4. Localize the CLI-normalized `statusLabel`; retain `statusName` only as a raw
-   compatibility key. In a Chinese conversation use these concise values:
-   `Awaiting ASP acceptance` -> `ASP 待接单`, `In progress` -> `执行中`,
-   `Awaiting buyer review` -> `等待用户验收`, `Awaiting refund decision` ->
-   `等待退款处理`, `Evaluation in progress` -> `评审中`, `Stopped by platform`
-   -> `平台已终止`, `Completed` -> `已完成`, `Closed` -> `已关闭`, `Expired`
-   -> `已过期`, and `Refund completed` -> `退款成功`.
+4. Translate the CLI-normalized `statusLabel` into the user's language; retain
+   `statusName` only as a raw compatibility key.
 5. Preserve each returned page and its pagination.
 
 ## ASP tasks
@@ -269,21 +264,11 @@ Display rules:
 1. Render only fresh values from `payload.display`.
 2. Preserve the full Job ID and the original refund reason.
 3. Render each available optional value from `payload.display`.
-4. Localize `payload.display.statusLabel` and
-   `payload.display.statusDescription` into the conversation language. In a
-   Chinese conversation, use these refund result labels:
-   - `Awaiting ASP decision` -> `等待 ASP 处理`
-   - `Refund under evaluation` -> `退款评审中`
-   - `Refund completed` -> `退款成功`
-   - `Refund not issued` -> `未退款`
-   - `Closed without refund` -> `已关闭，未退款`
-   - `No refund required` -> `无需退款`
-   - `Refund result unavailable` -> `退款结果暂不可用`
+4. Translate `payload.display.statusLabel` and
+   `payload.display.statusDescription` into the conversation language.
 5. Render `Evaluation Result` and `Evaluation Reason` only when the CLI
-   returns them. For a Chinese conversation, use:
-   - `ASP won; refund not issued` -> `ASP 胜诉，未退款`
-   - `The Evaluation concluded in favor of the ASP. The task funds were released to the ASP and no refund was issued.` -> `本次仲裁已结束，任务款项已结算给 ASP，因此未退款。`
-   - `The Evaluation service did not return a specific evaluator rationale.` -> `评审服务未返回具体的评审员裁决理由。`
-   Never treat the original `Reason for Refund` as an evaluation reason.
+   returns them, then translate their English source wording into the
+   conversation language. Never treat the original `Reason for Refund` as an
+   evaluation reason.
 6. End a detail query result after the detail block.
 7. Render the fields defined by this template.

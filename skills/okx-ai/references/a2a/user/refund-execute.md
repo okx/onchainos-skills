@@ -26,7 +26,8 @@ submitted with the User's verbatim reason and that the ASP needs time. Do not
 render a CLI command, code block, or other internal implementation detail.
 Instead, give this friendly later-query guidance:
 
-> 退款申请已提交，原因：{refundReason}。需等待 ASP 处理。您可以让我查看指定任务详情，获取退款处理结果。
+> Refund request submitted. Reason: {refundReason}. Awaiting ASP handling. You
+> may ask me to view the selected task's details for the refund result.
 
 If the User later asks for the result, route through `task-query.md` and run
 the required status query internally.

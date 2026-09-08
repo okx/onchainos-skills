@@ -40,8 +40,9 @@ receipt has no write action.
 
 After a successful command, state that the evaluation request was submitted
 and that progress will update in the task. Display the current source status as
-`Evaluation request submitted`; in a Chinese conversation render it as
-`评审申请已提交` and say: `您可以让我查看指定任务详情，获取评审处理结果。` Do
+`Evaluation request submitted` and translate it into the user's language. Add
+a friendly sentence explaining that the user may ask to view the selected task's
+details for the result. Do
 not display a CLI command, code block, or other internal implementation detail.
 For a later explicit query, route through `arbitration-query.md` and run its
 detail query internally.

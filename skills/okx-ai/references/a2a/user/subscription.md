@@ -58,11 +58,7 @@ No subscriptions found.
 4. If device data is unavailable, omit device columns and state that receipt
    status is unavailable.
 5. Warn for each Active row with `hasNoReceivingDevices=true`.
-6. Localize each row's CLI-provided `statusLabel`. In a Chinese conversation,
-   use `初始化中`, `ASP 待接单`, `订阅生效中`, `等待 ASP 处理`, `评审中`, `已完成`,
-   `已关闭`, `已过期`, and `退款成功` for `Initializing`, `Awaiting ASP acceptance`, `Active`,
-   `Awaiting ASP decision`, `Evaluation in progress`, `Completed`, `Closed`,
-   `Expired`, and `Refund completed`, respectively.
+6. Translate each row's CLI-provided `statusLabel` into the user's language.
 
 ### Constraints
 
@@ -96,8 +92,9 @@ Render available optional items. Preserve `deviceList`: `null` means all
 logged-in devices by default, `[]` means none, and a non-empty array is an
 explicit allowlist.
 
-Localize `statusLabel` and `statusDescription` into the conversation language.
-For status code `9`, render `退款成功` and `退款已成功完成` in Chinese.
+Translate `statusLabel` and `statusDescription` into the conversation language.
+For status code `9`, use `Refund completed` and its matching success
+description before translating both.
 
 ### Constraints
 
