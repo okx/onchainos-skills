@@ -19,11 +19,14 @@ Run `wallet balance`, `wallet send`, `wallet contract-call`, `wallet history`, a
    1. **Wallet info** — the Account Info template (below), from the `poll` response.
    2. **Product intro** — On OKX.AI, you can search for a service to help you, swap tokens, or explore DApps.
    3. **Policy** — output the Policy Settings template ([portal-actions.md](wallet-portal-actions.md)) **only when `data.isNew == true`**; when `false`, skip it. `isNew == true` means a **first-ever** user — an existing user adding another account keeps `isNew == false` (the value comes from the wallet backend, not from client logic).
-   4. **Subscription status** — when `data.postLoginSubscriptions` is present and **non-empty**, enter through [okx-ai/SKILL.md](../../okx-ai/SKILL.md), then render it through [A2A subscription management](../../okx-ai/references/a2a/user/subscription-manage.md); when absent or empty, render nothing OKX.AI-related.
+   4. **Subscription** — when `data.postLoginSubscriptions.activeSubscriptionCount` is a positive integer, render:
+
+   > You have {activeSubscriptionCount} active subscription tasks.
+   > Reply `1` to view your subscription list.
 
    **NEVER**: run a separate `my-subscriptions` or `device-list` command after a successful poll — the poll response already carries what the display needs, and an extra call adds a model round on the normal path. **NEVER**: include Wallet Export in this post-login display — export is a user-triggered action only (§Policy & Wallet Export), never advertised in the login snapshot.
 
-   Behind the scenes the CLI always sends the device-registration heartbeat before returning; only when it resolves a non-empty User `agenticId` does it enter post-login subscription/device setup, and only when the pre-registration probe safely proves this is a new device does it add the device to every explicit subscription receive list (environment-scoped durable progress) and produce the mandatory post-login snapshot. An existing or unclassifiable device is never automatically re-enabled.
+   Behind the scenes the CLI always sends the best-effort device-registration heartbeat before returning. When it resolves a non-empty User `agenticId`, it independently queries subscriptions and includes `activeSubscriptionCount` only when the count is positive. Login does not query or update device routing.
 
 Login creates the first account automatically — never call `wallet add` for it. Use `wallet add` only when already logged in and the user explicitly wants another account (then output the Policy Settings template, see [portal-actions.md](wallet-portal-actions.md)).
 

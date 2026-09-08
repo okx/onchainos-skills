@@ -421,13 +421,9 @@ const MAX_CONSECUTIVE_TRANSIENT_POLLS: u32 = 5;
 const SOCIAL_LOGIN_TIMEOUT_DEFAULT_SECS: u64 = 300;
 /// Minimum accepted override; values below this fall back to the default.
 const SOCIAL_LOGIN_TIMEOUT_FLOOR_SECS: u64 = 10;
-/// The complete login-only device classification, heartbeat and routing flow
-/// shares one deadline instead of stacking three independent timeout budgets.
+/// The complete login-only heartbeat and subscription lookup share one deadline
+/// instead of stacking independent timeout budgets.
 const POST_LOGIN_SETUP_TIMEOUT_SECS: u64 = 15;
-/// Reserve most of the shared setup budget for heartbeat + routing. If device
-/// classification cannot finish quickly, heartbeat still runs and routing is
-/// safely suppressed because newness is unknown.
-const POST_LOGIN_PREPARE_TIMEOUT_SECS: u64 = 4;
 /// X Layer is the platform-default scope for the device-registration heartbeat.
 const LOGIN_HEARTBEAT_CHAIN_INDEX: u64 = 196;
 /// Device registration is best-effort and must not make login wait for the
@@ -563,42 +559,15 @@ fn validated_post_login_agentic_id(agentic_id: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Capture the pre-heartbeat device state within the same bounded budget used
-/// by the ordinary post-login snapshot. A timeout suppresses the optional table
-/// and skips registration so a later login can still detect the new device.
-async fn prepare_post_login_subscriptions_bounded(
+/// Fetch the optional active-subscription count within the shared post-login
+/// budget. Empty/error/timeout stays absent from the login response.
+async fn fetch_post_login_subscriptions_bounded(
     agentic_id: &str,
-    deadline: tokio::time::Instant,
-) -> Option<crate::commands::agent_commerce::task::user::PostLoginSubscriptionsPreparation> {
-    match tokio::time::timeout_at(
-        deadline,
-        crate::commands::agent_commerce::task::user::prepare_post_login_subscriptions(agentic_id),
-    )
-    .await
-    {
-        Ok(prepared) => prepared,
-        Err(_) => {
-            if cfg!(feature = "debug-log") {
-                eprintln!(
-                    "[DEBUG][post-login] pre-registration snapshot timed out after {POST_LOGIN_PREPARE_TIMEOUT_SECS}s"
-                );
-            }
-            None
-        }
-    }
-}
-
-async fn finalize_post_login_subscriptions_bounded(
-    prepared: crate::commands::agent_commerce::task::user::PostLoginSubscriptionsPreparation,
-    device_registration_succeeded: bool,
     deadline: tokio::time::Instant,
 ) -> Option<serde_json::Value> {
     match tokio::time::timeout_at(
         deadline,
-        crate::commands::agent_commerce::task::user::finalize_post_login_subscriptions(
-            prepared,
-            device_registration_succeeded,
-        ),
+        crate::commands::agent_commerce::task::user::fetch_post_login_subscriptions(agentic_id),
     )
     .await
     {
@@ -606,7 +575,7 @@ async fn finalize_post_login_subscriptions_bounded(
         Err(_) => {
             if cfg!(feature = "debug-log") {
                 eprintln!(
-                    "[DEBUG][post-login] device setup reached its shared {POST_LOGIN_SETUP_TIMEOUT_SECS}s deadline"
+                    "[DEBUG][post-login] subscription lookup timed out after {POST_LOGIN_SETUP_TIMEOUT_SECS}s"
                 );
             }
             None
@@ -652,44 +621,15 @@ async fn report_post_login_device(client: &mut WalletApiClient, access_token: &s
     }
 }
 
-/// Heartbeat is unconditional after a successful login. Optional preparation
-/// only controls whether subscription routing can be finalized safely.
-async fn report_device_and_finalize_post_login(
-    client: &mut WalletApiClient,
-    access_token: &str,
-    prepared: Option<
-        crate::commands::agent_commerce::task::user::PostLoginSubscriptionsPreparation,
-    >,
-    deadline: tokio::time::Instant,
-) -> Option<serde_json::Value> {
-    let device_registration_succeeded = report_post_login_device(client, access_token).await;
-    match prepared {
-        Some(prepared) => {
-            finalize_post_login_subscriptions_bounded(
-                prepared,
-                device_registration_succeeded,
-                deadline,
-            )
-            .await
-        }
-        None => None,
-    }
-}
-
 async fn run_post_login_setup(
     client: &mut WalletApiClient,
     access_token: &str,
     agentic_id: Option<&str>,
-    preparation_deadline: tokio::time::Instant,
     deadline: tokio::time::Instant,
 ) -> Option<serde_json::Value> {
-    let prepared = match validated_post_login_agentic_id(agentic_id) {
-        Some(agentic_id) => {
-            prepare_post_login_subscriptions_bounded(&agentic_id, preparation_deadline).await
-        }
-        None => None,
-    };
-    report_device_and_finalize_post_login(client, access_token, prepared, deadline).await
+    report_post_login_device(client, access_token).await;
+    let agentic_id = validated_post_login_agentic_id(agentic_id)?;
+    fetch_post_login_subscriptions_bounded(&agentic_id, deadline).await
 }
 
 /// Poll for the verify result, persist the session, and emit the account
@@ -710,11 +650,8 @@ async fn complete_login(
 
     let post_login_deadline =
         tokio::time::Instant::now() + Duration::from_secs(POST_LOGIN_SETUP_TIMEOUT_SECS);
-    let post_login_preparation_deadline =
-        tokio::time::Instant::now() + Duration::from_secs(POST_LOGIN_PREPARE_TIMEOUT_SECS);
-
     let resolved_agentic_id = tokio::time::timeout_at(
-        post_login_preparation_deadline,
+        post_login_deadline,
         crate::commands::agent_commerce::task::user::resolve_post_login_agentic_id(),
     )
     .await
@@ -722,15 +659,12 @@ async fn complete_login(
     .and_then(Result::ok);
     let post_login_agentic_id = validated_post_login_agentic_id(resolved_agentic_id.as_deref());
 
-    // Device registration is independent from optional subscription lookup.
-    // When classification failed we still report the heartbeat, but suppress
-    // automatic routing because newness is unknown and an existing device's
-    // explicit opt-out must never be overwritten.
+    // Heartbeat and subscription lookup are independent. Login never queries
+    // the device table or updates per-subscription device routing.
     let post_login = run_post_login_setup(
         client,
         &resp.access_token,
         post_login_agentic_id.as_deref(),
-        post_login_preparation_deadline,
         post_login_deadline,
     )
     .await;
@@ -747,8 +681,8 @@ async fn complete_login(
         obj.insert("isNew".to_string(), json!(resp.is_new));
     }
 
-    // Program-level post-condition: empty/error stays absent (zero-disturb); a
-    // post-update device-list failure stays `devices: null` for degraded render.
+    // Program-level post-condition: zero active subscriptions or a failed
+    // lookup stays absent from the login response.
     attach_post_login_subscriptions(&mut summary, post_login);
 
     output::success(summary);
@@ -1381,7 +1315,6 @@ mod tests {
             &mut client,
             "login-access-token",
             None,
-            tokio::time::Instant::now() + Duration::from_secs(5),
             tokio::time::Instant::now() + Duration::from_secs(5),
         )
         .await;

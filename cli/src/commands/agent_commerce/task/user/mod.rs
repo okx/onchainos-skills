@@ -420,11 +420,9 @@ fn active_subscription_count(subscriptions: &serde_json::Value) -> u64 {
 
 fn compose_post_login_subscriptions(
     subscriptions: serde_json::Value,
-    subscriptions_empty: bool,
-    _devices: Option<serde_json::Value>,
 ) -> Option<serde_json::Value> {
     let active_count = active_subscription_count(&subscriptions);
-    if subscriptions_empty || active_count == 0 {
+    if active_count == 0 {
         return None;
     }
     Some(serde_json::json!({
@@ -1616,44 +1614,17 @@ async fn scoped_watch_autotrade_precheck_inner(
     Ok(result)
 }
 
-/// State captured before the login heartbeat registers this machine. Comparing
-/// against the pre-heartbeat device table is what lets login distinguish a
-/// genuinely new device from an existing device whose receipt was deliberately
-/// disabled by the user.
-pub(crate) struct PostLoginSubscriptionsPreparation {
-    agent_id: String,
-    current_device_id: String,
-    routing_api_base_url: String,
-    current_device_was_registered: bool,
-    current_device_needs_default_routing: bool,
-    pre_registration_devices: serde_json::Value,
-}
-
-fn device_snapshot_contains(devices: &serde_json::Value, device_id: &str) -> Option<bool> {
-    let list = devices.get("list")?.as_array()?;
-    Some(
-        list.iter()
-            .any(|row| row.get("deviceId").and_then(serde_json::Value::as_str) == Some(device_id)),
-    )
-}
-
-fn device_needs_default_routing(was_registered: bool, already_pending: bool) -> bool {
-    already_pending || !was_registered
-}
-
 pub(crate) async fn resolve_post_login_agentic_id() -> Result<String> {
     create::resolve_user_agent()
         .await
         .map(|(agent_id, _)| agent_id)
 }
 
-/// Fetch the device table before the registration heartbeat. Device-query
-/// failure deliberately suppresses only automatic routing/the login table; the
-/// login orchestrator still sends the heartbeat so device registration is never
-/// coupled to this optional classification step.
-pub(crate) async fn prepare_post_login_subscriptions(
+/// Fetch the active-subscription count shown after login. This path is
+/// independent from device discovery and subscription receive routing.
+pub(crate) async fn fetch_post_login_subscriptions(
     agentic_id: &str,
-) -> Option<PostLoginSubscriptionsPreparation> {
+) -> Option<serde_json::Value> {
     let agent_id = match select_subscription_agent_id(agentic_id, "") {
         Ok(agent_id) => agent_id,
         Err(e) => {
@@ -1664,96 +1635,11 @@ pub(crate) async fn prepare_post_login_subscriptions(
         }
     };
     let mut client = TaskApiClient::new();
-
-    let Some(current_device_id) = crate::device::id::get_cached_device_id().map(str::to_string)
-    else {
-        if cfg!(feature = "debug-log") {
-            eprintln!("[DEBUG][post-login] current device id unavailable");
-        }
-        return None;
-    };
-    let devices =
-        match device_routing::fetch_device_list_snapshot(&mut client, &agent_id, 1, 20).await {
-            Ok(snapshot) => snapshot,
-            Err(e) => {
-                if cfg!(feature = "debug-log") {
-                    eprintln!(
-                        "[DEBUG][post-login] pre-registration device snapshot unavailable: {e:#}"
-                    );
-                }
-                return None;
-            }
-        };
-    let Some(current_device_was_registered) =
-        device_snapshot_contains(&devices, &current_device_id)
-    else {
-        if cfg!(feature = "debug-log") {
-            eprintln!("[DEBUG][post-login] malformed pre-registration device snapshot");
-        }
-        return None;
-    };
-
-    let already_pending = match device_routing::new_device_routing_is_pending(
-        &client.base_url,
-        &agent_id,
-        &current_device_id,
-    ) {
-        Ok(pending) => pending,
-        Err(e) => {
-            if cfg!(feature = "debug-log") {
-                eprintln!("[DEBUG][post-login] pending routing marker unavailable: {e:#}");
-            }
-            return None;
-        }
-    };
-    let current_device_needs_default_routing =
-        device_needs_default_routing(current_device_was_registered, already_pending);
-    if !current_device_was_registered && !already_pending {
-        if let Err(e) = device_routing::mark_new_device_routing_pending(
-            &client.base_url,
-            &agent_id,
-            &current_device_id,
-        ) {
-            if cfg!(feature = "debug-log") {
-                eprintln!("[DEBUG][post-login] cannot persist pending routing marker: {e:#}");
-            }
-            // Automatic routing cannot safely start without durable state. The
-            // login orchestrator still reports the device heartbeat.
-            return None;
-        }
-    } else if current_device_was_registered && !already_pending {
-        // A completed marker is not needed once this device is visible. Deletion
-        // is merely garbage collection: Completed never counts as pending.
-        let _ = device_routing::clear_new_device_routing_state(
-            &client.base_url,
-            &agent_id,
-            &current_device_id,
-        );
-    }
-
-    Some(PostLoginSubscriptionsPreparation {
-        agent_id,
-        current_device_id,
-        routing_api_base_url: client.base_url.clone(),
-        current_device_was_registered,
-        current_device_needs_default_routing,
-        pre_registration_devices: devices,
-    })
-}
-
-/// Complete new-device routing after the heartbeat. Existing devices are never
-/// rewritten, preserving any manual opt-out. A new device is merged into every
-/// explicit subscription list and only then is the login snapshot returned.
-pub(crate) async fn finalize_post_login_subscriptions(
-    prepared: PostLoginSubscriptionsPreparation,
-    device_registration_succeeded: bool,
-) -> Option<serde_json::Value> {
-    let mut client = TaskApiClient::new();
     let snapshot = match subscription_ops::fetch_my_subscriptions_snapshot_for_agent(
         &mut client,
         subscription_ops::SubscriptionRole::Buyer,
         None,
-        prepared.agent_id.clone(),
+        agent_id.clone(),
     )
     .await
     {
@@ -1762,124 +1648,12 @@ pub(crate) async fn finalize_post_login_subscriptions(
             if cfg!(feature = "debug-log") {
                 eprintln!("[DEBUG][post-login] subscription snapshot unavailable: {e:#}");
             }
-            // Keep a new device's pending marker. The next login retries from a
-            // fresh subscription list; wallet login itself still succeeds.
             return None;
         }
     };
-    if snapshot.is_empty {
-        if prepared.current_device_needs_default_routing
-            && (prepared.current_device_was_registered || device_registration_succeeded)
-        {
-            if let Err(e) = device_routing::mark_new_device_routing_completed(
-                &prepared.routing_api_base_url,
-                &prepared.agent_id,
-                &prepared.current_device_id,
-            ) {
-                if cfg!(feature = "debug-log") {
-                    eprintln!("[DEBUG][post-login] empty-list routing completion failed: {e:#}");
-                }
-                return None;
-            }
-            let _ = device_routing::clear_new_device_routing_state(
-                &prepared.routing_api_base_url,
-                &prepared.agent_id,
-                &prepared.current_device_id,
-            );
-        }
-        return None;
-    }
     let mut subscriptions = snapshot.data;
-
-    if prepared.current_device_needs_default_routing
-        && !prepared.current_device_was_registered
-        && !device_registration_succeeded
-    {
-        if cfg!(feature = "debug-log") {
-            eprintln!(
-                "[DEBUG][post-login] new device registration failed; suppressing subscription table"
-            );
-        }
-        return None;
-    }
-
-    let devices = if prepared.current_device_needs_default_routing {
-        match device_routing::add_new_device_to_all_subscriptions(
-            &mut client,
-            &prepared.routing_api_base_url,
-            &prepared.agent_id,
-            &mut subscriptions,
-            &prepared.current_device_id,
-        )
-        .await
-        {
-            Ok(updated) => {
-                if cfg!(feature = "debug-log") {
-                    eprintln!(
-                        "[DEBUG][post-login] added new device to {updated} explicit subscription routes"
-                    );
-                }
-            }
-            Err(e) => {
-                if cfg!(feature = "debug-log") {
-                    eprintln!(
-                        "[DEBUG][post-login] new-device subscription routing unavailable: {e:#}"
-                    );
-                }
-                // The durable marker remains, so the next login retries only
-                // subscriptions whose fresh lists still lack this device.
-                return None;
-            }
-        }
-
-        if let Err(e) = device_routing::clear_new_device_routing_state(
-            &prepared.routing_api_base_url,
-            &prepared.agent_id,
-            &prepared.current_device_id,
-        ) {
-            if cfg!(feature = "debug-log") {
-                eprintln!("[DEBUG][post-login] routing completed; state cleanup deferred: {e:#}");
-            }
-        }
-
-        if prepared.current_device_was_registered {
-            Some(prepared.pre_registration_devices)
-        } else {
-            match device_routing::fetch_device_list_snapshot(&mut client, &prepared.agent_id, 1, 20)
-                .await
-            {
-                Ok(snapshot)
-                    if device_snapshot_contains(&snapshot, &prepared.current_device_id)
-                        == Some(true) =>
-                {
-                    Some(snapshot)
-                }
-                Ok(_) => {
-                    if cfg!(feature = "debug-log") {
-                        eprintln!(
-                            "[DEBUG][post-login] registered device not visible yet; using degraded render"
-                        );
-                    }
-                    None
-                }
-                Err(e) => {
-                    if cfg!(feature = "debug-log") {
-                        eprintln!(
-                            "[DEBUG][post-login] post-registration device snapshot unavailable; degrading: {e:#}"
-                        );
-                    }
-                    None
-                }
-            }
-        }
-    } else {
-        // Existing device with no pending onboarding marker: never rewrite its
-        // subscriptions, preserving every manual per-task opt-out.
-        Some(prepared.pre_registration_devices)
-    };
-
-    add_post_login_autotrade_prechecks(&mut client, &mut subscriptions, &prepared.agent_id).await;
-    compose_post_login_subscriptions(subscriptions, false, devices)
+    add_post_login_autotrade_prechecks(&mut client, &mut subscriptions, &agent_id).await;
+    compose_post_login_subscriptions(subscriptions)
 }
 
 pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
@@ -2198,68 +1972,34 @@ mod post_login_tests {
 
     #[test]
     fn empty_subscriptions_produce_no_post_login_block() {
-        let block = compose_post_login_subscriptions(
-            json!({ "list": [] }),
-            true,
-            Some(json!({ "list": [{ "deviceId": "d1" }] })),
-        );
+        let block = compose_post_login_subscriptions(json!({ "list": [] }));
         assert!(block.is_none());
     }
 
     #[test]
     fn active_subscriptions_produce_a_count_only_hint() {
-        let block = compose_post_login_subscriptions(
-            json!({ "list": [{ "jobId": "j1", "status": 1 }] }),
-            false,
-            Some(json!({ "list": [{ "deviceId": "d1" }], "total": 1 })),
-        )
+        let block = compose_post_login_subscriptions(json!({
+            "list": [{ "jobId": "j1", "status": 1 }]
+        }))
         .expect("active subscriptions must produce a hint");
         assert_eq!(block, json!({ "activeSubscriptionCount": 1 }));
     }
 
     #[test]
     fn ended_only_subscriptions_produce_no_post_login_hint() {
-        let block = compose_post_login_subscriptions(
-            json!({ "list": [{ "jobId": "j1", "status": 6 }] }),
-            false,
-            None,
-        );
+        let block = compose_post_login_subscriptions(json!({
+            "list": [{ "jobId": "j1", "status": 6 }]
+        }));
         assert!(block.is_none());
     }
 
     #[test]
-    fn device_failure_does_not_block_an_active_subscription_hint() {
-        let block = compose_post_login_subscriptions(
-            json!({ "list": [{ "jobId": "j1", "statusName": "ACTIVE" }] }),
-            false,
-            None,
-        )
+    fn active_subscription_hint_does_not_need_device_data() {
+        let block = compose_post_login_subscriptions(json!({
+            "list": [{ "jobId": "j1", "statusName": "ACTIVE" }]
+        }))
         .expect("active subscription hint must not need device data");
         assert_eq!(block, json!({ "activeSubscriptionCount": 1 }));
-    }
-
-    #[test]
-    fn pre_heartbeat_device_snapshot_distinguishes_new_and_existing_devices() {
-        let devices = json!({
-            "list": [
-                { "deviceId": "d1", "deviceName": "Mac 1" },
-                { "deviceId": "d2", "deviceName": "Mac 2" }
-            ]
-        });
-        assert_eq!(device_snapshot_contains(&devices, "d1"), Some(true));
-        assert_eq!(device_snapshot_contains(&devices, "d-new"), Some(false));
-        assert_eq!(device_snapshot_contains(&json!({}), "d1"), None);
-    }
-
-    #[test]
-    fn only_new_or_interrupted_devices_need_default_routing() {
-        assert!(device_needs_default_routing(false, false));
-        assert!(device_needs_default_routing(false, true));
-        assert!(device_needs_default_routing(true, true));
-        assert!(
-            !device_needs_default_routing(true, false),
-            "ordinary re-login must preserve this device's manual opt-outs"
-        );
     }
 
     #[test]
@@ -2766,7 +2506,7 @@ mod post_login_tests {
     }
 
     #[tokio::test]
-    async fn post_login_preparation_rejects_blank_agentic_id_before_network() {
-        assert!(prepare_post_login_subscriptions("   ").await.is_none());
+    async fn post_login_subscription_lookup_rejects_blank_agentic_id_before_network() {
+        assert!(fetch_post_login_subscriptions("   ").await.is_none());
     }
 }
