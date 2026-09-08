@@ -678,6 +678,34 @@ pub fn session_send_with_timeout(
     Ok(())
 }
 
+/// Persist terminal subscription trade results in okx-a2a's local SQLite
+/// trade-record store. The caller supplies the documented input-json array;
+/// `deliveryId` is idempotent because okx-a2a inserts or replaces that row.
+pub fn trade_records_insert(input: &serde_json::Value) -> Result<()> {
+    if !input.is_array() {
+        anyhow::bail!("trade-records insert input must be a JSON array");
+    }
+    let input_json = serde_json::to_string(input)
+        .map_err(|error| anyhow::anyhow!("failed to serialize trade-record input: {error}"))?;
+    let command = npm_cli_command(
+        "okx-a2a",
+        &[
+            "trade-records",
+            "insert",
+            "--input-json",
+            &input_json,
+            "--json",
+        ],
+    );
+    let output = output_with_timeout(command, Duration::from_secs(5))?;
+    if !output.status.success() {
+        // Do not include stderr here: it may echo the raw Signal passed in
+        // `--input-json`.
+        anyhow::bail!("okx-a2a trade-records insert exited with {}", output.status);
+    }
+    Ok(())
+}
+
 /// Send a real peer-to-peer message through the running XMTP daemon.
 ///
 /// This is intentionally separate from `session_send`: that command queues a

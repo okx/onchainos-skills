@@ -290,7 +290,6 @@ fn now_ms() -> u64 {
 
 fn model_delivery_id(
     job_id: &str,
-    provider_agent_id: &str,
     saved_path: &str,
     transport_identity: Option<&A2aTransportIdentity>,
 ) -> String {
@@ -307,7 +306,7 @@ fn model_delivery_id(
         },
     };
     let digest = Sha256::digest(format!(
-        "subscription-signal-v1\0{job_id}\0{provider_agent_id}\0{source}\0{value}"
+        "subscription-signal-v1\0{job_id}\0{source}\0{value}"
     ));
     format!("msg:{}", hex::encode(digest))
 }
@@ -359,16 +358,24 @@ pub(crate) async fn route_subscription_delivery_to_skill(
     transport_identity: Option<&A2aTransportIdentity>,
 ) -> Option<String> {
     use crate::commands::agent_commerce::task::common::autotrade::{
-        card, consent, guide, notify, subscription,
+        card, consent, executor, guide, notify, subscription,
     };
     use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     use std::time::Duration;
     let mut client = TaskApiClient::new();
+    let delivery_id = model_delivery_id(job_id, saved_path, transport_identity);
     let active = match subscription::determine_active_delivery(&mut client, job_id, agent_id).await
     {
         Ok(active) => active,
         Err(error) => {
             let reason = error.to_string();
+            let _ = executor::record_signal_status(
+                job_id,
+                &delivery_id,
+                "not_followed",
+                &reason,
+                saved_path,
+            );
             crate::audit::log(
                 "cli",
                 "user/subscription_signal_admission",
@@ -400,12 +407,6 @@ pub(crate) async fn route_subscription_delivery_to_skill(
             return signal_only_prompt(&runtime_context);
         }
     };
-    let delivery_id = model_delivery_id(
-        job_id,
-        &active.provider_agent_id,
-        saved_path,
-        transport_identity,
-    );
     let received_at_ms = now_ms();
     let _delivery_context = match consent::register_delivery_context_with_path(
         job_id,
@@ -421,6 +422,13 @@ pub(crate) async fn route_subscription_delivery_to_skill(
         Ok(context) => context,
         Err(error) => {
             let reason = "delivery_context_unreadable";
+            let _ = executor::record_signal_status(
+                job_id,
+                &delivery_id,
+                "not_followed",
+                reason,
+                saved_path,
+            );
             crate::audit::log(
                 "cli",
                 "user/subscription_signal_context",
@@ -444,6 +452,7 @@ pub(crate) async fn route_subscription_delivery_to_skill(
     };
     let execution_path =
         crate::commands::agent_commerce::task::common::config::SubscriptionTradePath::AgentDirect;
+    let _ = executor::record_signal_status(job_id, &delivery_id, "received", "", saved_path);
     crate::audit::log(
         "cli",
         "user/subscription_signal_admission",
@@ -568,11 +577,25 @@ pub(crate) async fn resume_queued_subscription_delivery(
         Ok(active) => active,
         Err(AutoTradeError::Degrade(DegradeReason::LookupOff)) => {
             let _ = delivery_queue::schedule_retry(job_id, delivery_id);
+            let _ = executor::record_signal_status(
+                job_id,
+                delivery_id,
+                "queued",
+                "lookup_off",
+                &context.saved_path,
+            );
             return "[Queued auto-trade recovery deferred] Subscription lookup is temporarily unavailable. The delivery remains queued for bounded retry; do not submit an order and do not report it as skipped.".to_string();
         }
         Err(_) => {
             consent::clear_pending_delivery(job_id, delivery_id);
             let _ = delivery_queue::complete_and_advance(job_id, delivery_id);
+            let _ = executor::record_signal_status(
+                job_id,
+                delivery_id,
+                "not_followed",
+                "subscription_not_active",
+                &context.saved_path,
+            );
             return format!(
                 "[Queued subscription Signal] The saved delivery at {} is receive-and-display-only because the subscription is no longer Active. No order was submitted and no execution outcome was created.",
                 context.saved_path
@@ -582,6 +605,13 @@ pub(crate) async fn resume_queued_subscription_delivery(
     if active.provider_agent_id != context.provider_agent_id {
         consent::clear_pending_delivery(job_id, delivery_id);
         let _ = delivery_queue::complete_and_advance(job_id, delivery_id);
+        let _ = executor::record_signal_status(
+            job_id,
+            delivery_id,
+            "not_followed",
+            "provider_agent_mismatch",
+            &context.saved_path,
+        );
         return format!(
             "[Queued subscription Signal] The saved delivery at {} is receive-and-display-only because the Active subscription no longer matches this delivery. No order was submitted and no execution outcome was created.",
             context.saved_path
@@ -2055,9 +2085,9 @@ mod tests {
             source: "transport_id",
             origin_session_key: None,
         };
-        let first = model_delivery_id("sub-1", "asp-1", "/tmp/one", Some(&identity));
-        let retry = model_delivery_id("sub-1", "asp-1", "/tmp/two", Some(&identity));
-        let another = model_delivery_id("sub-2", "asp-1", "/tmp/one", Some(&identity));
+        let first = model_delivery_id("sub-1", "/tmp/one", Some(&identity));
+        let retry = model_delivery_id("sub-1", "/tmp/two", Some(&identity));
+        let another = model_delivery_id("sub-2", "/tmp/one", Some(&identity));
         assert_eq!(first, retry);
         assert_ne!(first, another);
         assert!(first.starts_with("msg:"));
