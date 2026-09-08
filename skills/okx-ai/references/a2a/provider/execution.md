@@ -15,7 +15,7 @@ apply/counter-offer flows. When the actual deliverable is ready, enter
 `delivery.md`.
 
 For `sub_asp_selected`, do not make a second acceptance decision. Continue only
-when fresh subscription detail is Active and enter `subscription-provider.md`.
+when fresh subscription detail is Active and enter `subscription.md`.
 
 When a command returns a non-empty funding bundle, use the wallet funding leaf
 and the exact returned chain, token, shortfall, and deposit address. Never ask
