@@ -132,6 +132,27 @@ Canonical English banner:
 
 English sessions use it verbatim. Other languages translate it faithfully, preserving the leading 🔔 and the sequence: started, backlog first, then new events.
 
+#### Creation-start monitoring note
+
+Only when this watch entry comes directly from the successful task-creation
+result in the same turn, render one additional paragraph immediately after the
+banner and before calling watch. Require all of these exact structured facts:
+
+- `phase=creation`;
+- `reason=broadcast_submitted`;
+- `nextAction.id=watch_task`;
+- `nextAction.params.jobId` equals `payload.jobId`.
+
+Use this English source and translate it into the user's initial locale,
+including a natural localized equivalent of the quoted reply phrase:
+
+> Note: Message monitoring may stop after the job is created, but the job will continue running. Reply “Resume message monitoring” to receive updates.
+
+Show this note exactly once for that creation-start entry. Do not show it for
+a trigger-phrase watch, an explicit-job watch, a continuation/rearm request,
+backlog/history access, dispatch resume, wake re-entry, or any later watch call
+in the same generation. The canonical banner remains its own paragraph.
+
 ❌ Violation examples:
 
 - Saying `I'll start watching now` (or any paraphrase) **without** the canonical banner in the same assistant message.
