@@ -218,12 +218,12 @@ fn subscription_interval_month_is_case_insensitive_no_p4() {
 
 #[test]
 fn subscription_tier_fee_not_plain_number_fails_p5() {
-    // A tier fee follows the SAME contract as the single-purchase fee (plain
-    // number, USDT implied, ≤6 decimals) — but a violation is P5 on the
+    // An A2A tier fee follows the SAME contract as its single-purchase fee
+    // (plain number, USDT implied, ≤2 decimals) — but a violation is P5 on the
     // subscription field, never P1 on the fee field (`fee` is legitimately empty
     // on a subscription-priced service, which is exactly why the codes differ).
-    // Covers: currency token, negotiation wording, empty tier fee, 7 decimals.
-    for tier_fee in &["10 USDT", "面议", "", "1.1234567"] {
+    // Covers: currency token, negotiation wording, empty tier fee, 3 decimals.
+    for tier_fee in &["10 USDT", "面议", "", "1.123"] {
         let service = format!(
             "[{{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"Does a thing.\",\"serviceGuide\":\"Choose a market.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{{\"interval\":\"month\",\"fee\":\"{tier_fee}\"}}]}}]"
         );
@@ -252,9 +252,9 @@ fn every_bad_subscription_tier_reports_p5() {
 
 #[test]
 fn subscription_tier_fee_edge_values_pass_p5() {
-    // Boundary of the shared fee contract: an integer, "0", and exactly 6
+    // Boundary of the A2A fee contract: an integer, "0", and exactly 2
     // decimals are all plain numbers → no P5.
-    for tier_fee in &["10", "0", "0.123456"] {
+    for tier_fee in &["10", "0", "0.12"] {
         let service = format!(
             "[{{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"Does a thing.\",\"serviceGuide\":\"Choose a market.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{{\"interval\":\"month\",\"fee\":\"{tier_fee}\"}}]}}]"
         );
@@ -467,6 +467,71 @@ fn bare_numeric_fee_ok() {
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     let c = codes(&r);
     assert!(!c.contains(&"P1".to_string()), "got {:?}", c);
+}
+
+#[test]
+fn a2a_pay_per_use_fee_allows_at_most_two_decimals() {
+    for fee in &["10", "0", "0.1", "0.12"] {
+        let service = svc(
+            "A2A Pricing Service",
+            "Does a thing.",
+            "A2A",
+            fee,
+            None,
+        );
+        let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+        assert!(
+            !codes(&r).contains(&"P1".to_string()),
+            "fee={fee} got {:?}",
+            codes(&r)
+        );
+    }
+
+    let service = svc(
+        "A2A Pricing Service",
+        "Does a thing.",
+        "A2A",
+        "0.123",
+        None,
+    );
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    let finding = r
+        .findings
+        .iter()
+        .find(|f| f.code == "P1")
+        .expect("3-decimal A2A fee must fail P1");
+    assert_eq!(finding.message, super::fe::FE12_A2A);
+}
+
+#[test]
+fn a2mcp_fee_keeps_six_decimal_precision() {
+    let valid = svc(
+        "MCP Pricing Service",
+        "Does a thing.",
+        "A2MCP",
+        "0.123456",
+        Some("https://example.com/mcp"),
+    );
+    let valid_result = run_validation("asp", Some("Agent Name"), None, Some(&valid));
+    assert!(
+        !codes(&valid_result).contains(&"P1".to_string()),
+        "got {:?}",
+        codes(&valid_result)
+    );
+
+    let invalid = svc(
+        "MCP Pricing Service",
+        "Does a thing.",
+        "A2MCP",
+        "0.1234567",
+        Some("https://example.com/mcp"),
+    );
+    let invalid_result = run_validation("asp", Some("Agent Name"), None, Some(&invalid));
+    assert!(
+        codes(&invalid_result).contains(&"P1".to_string()),
+        "got {:?}",
+        codes(&invalid_result)
+    );
 }
 
 #[test]
@@ -1700,10 +1765,10 @@ fn a2a_subscription_with_service_guide_passes_guide_check() {
 #[test]
 fn service_guide_display_width_limit_has_exact_boundaries() {
     for (guide, should_block) in [
-        ("x".repeat(2000), false),
-        ("x".repeat(2001), true),
-        ("中".repeat(1000), false),
-        ("中".repeat(1001), true),
+        ("x".repeat(10000), false),
+        ("x".repeat(10001), true),
+        ("中".repeat(5000), false),
+        ("中".repeat(5001), true),
     ] {
         let service = serde_json::json!([{
             "serviceName": "Signal Service",
@@ -1736,7 +1801,7 @@ fn delete_service_bypasses_service_guide_length_check() {
         "id": "9",
         "serviceName": "Signal Service",
         "serviceDescription": "Provides trading signals.",
-        "serviceGuide": "x".repeat(2001),
+        "serviceGuide": "x".repeat(10001),
         "serviceType": "A2A",
         "fee": "",
         "subscription": [{"interval": "month", "fee": "10"}]

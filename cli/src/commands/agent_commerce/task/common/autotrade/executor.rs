@@ -1,13 +1,12 @@
-//! Business-domain execution bridge for model-routed subscription trades.
+//! Durable coordination for model-routed subscription trades.
 //!
-//! The target CLI/plugin stays unchanged. This bridge runs a fixed executable
-//! for the selected venue (never a shell), captures its terminal result,
-//! persists a redacted outcome, and pushes a job-scoped idempotent UI notice.
+//! The selected Skill/tool owns its transaction command. This module admits a
+//! delivery exactly once, persists its bounded outcome, and pushes a
+//! job-scoped idempotent UI notice.
 
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
@@ -15,17 +14,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::process::Command;
-use tokio::time::timeout;
 
 use super::amount::Decimal;
-use super::{consent, grants, trade_kit};
+use super::{consent, grants, guide, trade_kit};
 use crate::asset_class::AssetClass;
 use crate::commands::agent_commerce::task::common::{okx_a2a, user_lang};
 
 const OUTCOME_VERSION: u32 = 1;
 const MAX_ARG_COUNT: usize = 96;
 const MAX_ARG_LEN: usize = 4096;
-const MAX_TIMEOUT_SEC: u64 = 600;
 const ONE_TIME_PERMIT_VERSION: u32 = 1;
 const ONE_TIME_PERMIT_TTL_SEC: u64 = 15 * 60;
 const NOTICE_REF_VERSION: u32 = 1;
@@ -67,9 +64,9 @@ struct ExecutionLatch {
     delivery_id: String,
     phase: ExecutionPhase,
     updated_at: u64,
-    /// Present only for the Agent-direct path. It binds finalization to the
-    /// resolved fixed or percentage policy amount without encoding or
-    /// inspecting a target venue command.
+    /// Retained only to read latches written by older releases. New
+    /// Guide-direct claims deliberately do not record a purported amount that
+    /// the coordinator cannot bind to the selected tool command.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     direct_amount: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -177,17 +174,6 @@ struct OutcomeNoticeRef {
 struct TerminalJournal {
     version: u32,
     outcome: ExecutionOutcome,
-}
-
-pub struct ExecuteRequest<'a> {
-    pub job_id: &'a str,
-    pub delivery_id: &'a str,
-    pub venue: &'a str,
-    pub action: &'a str,
-    pub amount: &'a str,
-    pub execution_mode: ExecutionMode,
-    pub command_json: &'a str,
-    pub timeout_sec: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -364,6 +350,39 @@ fn reserve_direct_execution(
     }
 }
 
+fn reserve_guide_direct_execution(job_id: &str, delivery_id: &str) -> Result<bool> {
+    let path = latch_path(job_id, delivery_id)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    match options.open(path) {
+        Ok(mut file) => {
+            file.write_all(&serde_json::to_vec_pretty(&ExecutionLatch {
+                version: EXECUTION_LATCH_VERSION,
+                job_id: job_id.to_string(),
+                delivery_id: delivery_id.to_string(),
+                // Claim happens immediately before the external call. An
+                // interruption is therefore always treated as non-retryable.
+                phase: ExecutionPhase::Spawned,
+                updated_at: now_secs(),
+                direct_amount: None,
+                direct_execution_mode: Some(ExecutionMode::Auto),
+            })?)?;
+            file.sync_all()?;
+            Ok(true)
+        }
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
 fn update_execution_phase(
     job_id: &str,
     delivery_id: &str,
@@ -371,7 +390,7 @@ fn update_execution_phase(
 ) -> Result<()> {
     let existing = read_execution_latch(job_id, delivery_id)?;
     let direct_amount = existing.as_ref().and_then(|latch| latch.direct_amount.clone());
-    let direct_execution_mode = existing.and_then(|latch| latch.direct_execution_mode);
+    let direct_execution_mode = existing.as_ref().and_then(|latch| latch.direct_execution_mode);
     crate::home::write_secure(
         &latch_path(job_id, delivery_id)?,
         &serde_json::to_vec_pretty(&ExecutionLatch {
@@ -473,9 +492,50 @@ fn terminal_reconciliation_complete(outcome: &ExecutionOutcome) -> bool {
     if sync_notice_ref(outcome).is_err() {
         return false;
     }
-    super::delivery_queue::contains_delivery(&outcome.job_id, &outcome.delivery_id)
+    if !super::delivery_queue::contains_delivery(&outcome.job_id, &outcome.delivery_id)
         .map(|present| !present)
         .unwrap_or(false)
+    {
+        return false;
+    }
+    sync_a2a_trade_record(outcome).is_ok()
+}
+
+fn sync_a2a_trade_record(outcome: &ExecutionOutcome) -> Result<()> {
+    let context = consent::load_delivery_context(&outcome.job_id, &outcome.delivery_id)
+        .context("trusted delivery context is unavailable for trade record")?;
+    let status = serde_json::to_value(outcome.status)?;
+    record_signal_status(
+        &outcome.job_id,
+        &outcome.delivery_id,
+        status.as_str().unwrap_or("unknown"),
+        outcome.reason.as_deref().unwrap_or(""),
+        &context.saved_path,
+    )
+}
+
+/// Write the current processing state of an A2A subscription Signal to the
+/// local trade-record store. `extra` is the original Signal JSON itself, not a
+/// nested wrapper, so its fields remain directly queryable. Plain-text Signals
+/// use `extra.content` so they are recorded as well.
+pub fn record_signal_status(
+    job_id: &str,
+    delivery_id: &str,
+    status: &str,
+    reason: &str,
+    saved_path: &str,
+) -> Result<()> {
+    let raw_signal = std::fs::read_to_string(saved_path)
+        .context("saved subscription Signal is unavailable for trade record")?;
+    let extra = serde_json::from_str(&raw_signal)
+        .unwrap_or_else(|_| serde_json::json!({ "content": raw_signal }));
+    okx_a2a::trade_records_insert(&serde_json::json!([{
+        "jobId": job_id,
+        "deliveryId": delivery_id,
+        "status": status,
+        "reason": reason,
+        "extra": extra,
+    }]))
 }
 
 fn parse_command(venue: &str, command_json: &str) -> Result<(PathBuf, Vec<String>)> {
@@ -493,16 +553,9 @@ fn parse_command(venue: &str, command_json: &str) -> Result<(PathBuf, Vec<String
     }) {
         bail!("invalid automatic execution argument");
     }
-    if args
-        .windows(2)
-        .any(|pair| pair[0] == "agent" && pair[1] == "autotrade-execute")
-    {
-        bail!("recursive automatic execution is not allowed");
-    }
-
     let program = match venue {
         "dex" => {
-            if args.get(0).map(String::as_str) != Some("swap")
+            if args.first().map(String::as_str) != Some("swap")
                 || args.get(1).map(String::as_str) != Some("execute")
             {
                 bail!("dex automatic execution requires `swap execute`");
@@ -514,7 +567,7 @@ fn parse_command(venue: &str, command_json: &str) -> Result<(PathBuf, Vec<String
         }
         "defi" => {
             let operation = args.get(1).map(String::as_str);
-            if args.get(0).map(String::as_str) != Some("defi")
+            if args.first().map(String::as_str) != Some("defi")
                 || !matches!(operation, Some("deposit" | "redeem" | "collect"))
             {
                 bail!("defi automatic execution requires a supported write operation");
@@ -887,7 +940,7 @@ fn validate_trade_kit_execution_settings(
                     bail!("Trade Kit order type does not match persisted signal-price limit policy")
                 }
                 consent::OrderPolicy::SignalPriceLimit
-                    if flag_value(args, "--px").map_or(true, str::is_empty) =>
+                    if flag_value(args, "--px").is_none_or(str::is_empty) =>
                 {
                     bail!("Trade Kit signal-price limit policy requires an explicit order price")
                 }
@@ -986,7 +1039,7 @@ fn receipt_from_stdout(venue: &str, stdout: &[u8]) -> Option<Value> {
     let value = json_from_stdout(stdout)?;
     let mut receipt = serde_json::Map::new();
     collect_receipt_fields(venue, &value, &mut receipt, 0);
-    (!receipt.is_empty()).then(|| Value::Object(receipt))
+    (!receipt.is_empty()).then_some(Value::Object(receipt))
 }
 
 fn structured_failure(stdout: &[u8]) -> Option<String> {
@@ -1582,6 +1635,63 @@ pub fn claim_direct(
     })
 }
 
+/// Claim a delivery for the Guide-driven flow. The runtime Agent determines the
+/// tool call from the exact local Guide, Consent, and saved Signal; the CLI
+/// verifies only the active Guide+Consent contract, the saved delivery, and
+/// exactly-once admission.
+pub fn claim_guide_direct(
+    job_id: &str,
+    delivery_id: &str,
+) -> Result<DirectClaimResult> {
+    use crate::commands::agent_commerce::task::common::config::SubscriptionTradePath;
+
+    let context = consent::load_delivery_context(job_id, delivery_id)
+        .context("trusted delivery context is unavailable")?;
+    if context.execution_path != SubscriptionTradePath::AgentDirect {
+        bail!("delivery is pinned to the legacy execution wrapper");
+    }
+    if !std::path::Path::new(&context.saved_path).is_file() {
+        bail!("saved subscription Signal is not available")
+    }
+    if !guide::has_active_execution_contract(job_id) {
+        bail!("active local Service Guide and Guide Consent are required")
+    }
+    let path = outcome_path(job_id, delivery_id)?;
+    if read_outcome(&path)?.is_some() {
+        return Ok(DirectClaimResult {
+            allowed: false,
+            status: "terminal".to_string(),
+            job_id: job_id.to_string(),
+            delivery_id: delivery_id.to_string(),
+            amount: None,
+            reason: Some("delivery already has a terminal outcome".to_string()),
+        });
+    }
+    if !reserve_guide_direct_execution(job_id, delivery_id)? {
+        return Ok(DirectClaimResult {
+            allowed: false,
+            status: "already_claimed".to_string(),
+            job_id: job_id.to_string(),
+            delivery_id: delivery_id.to_string(),
+            amount: None,
+            reason: Some("an earlier Guide-driven execution may have started; do not retry".to_string()),
+        });
+    }
+    let result = DirectClaimResult {
+        allowed: true,
+        status: "claimed".to_string(),
+        job_id: job_id.to_string(),
+        delivery_id: delivery_id.to_string(),
+        amount: None,
+        reason: None,
+    };
+    // Do not reverse a successfully persisted execution reservation when the
+    // auxiliary local trade-record store is temporarily unavailable. The
+    // `received` record remains until a later terminal update replaces it.
+    let _ = record_signal_status(job_id, delivery_id, &result.status, "", &context.saved_path);
+    Ok(result)
+}
+
 /// Persist a selected Skill/tool's documented terminal result. The coordinator
 /// accepts only bounded metadata; it never parses, rewrites, or executes the
 /// target command and never attempts a cross-path fallback.
@@ -1612,9 +1722,9 @@ pub fn finalize_direct(
     }
     let latch = read_execution_latch(job_id, delivery_id)?
         .context("direct execution was not claimed")?;
-    let amount = latch
-        .direct_amount
-        .context("direct execution claim amount is unavailable")?;
+    // New Guide-direct claims do not receive a coordinator-owned amount. Keep
+    // an amount written by an older latch for backward-compatible outcomes.
+    let amount = latch.direct_amount.unwrap_or_default();
     let execution_mode = latch
         .direct_execution_mode
         .context("direct execution claim mode is unavailable")?;
@@ -1675,35 +1785,6 @@ pub fn finalize_direct(
             updated_at: now,
         },
     )
-}
-
-fn make_outcome(
-    request: &ExecuteRequest<'_>,
-    amount: String,
-    status: OutcomeStatus,
-    receipt: Option<Value>,
-    reason: Option<String>,
-    created_at: u64,
-) -> ExecutionOutcome {
-    let failure_category = failure_category_for(request.venue, status, reason.as_deref());
-    ExecutionOutcome {
-        version: OUTCOME_VERSION,
-        job_id: request.job_id.to_string(),
-        delivery_id: request.delivery_id.to_string(),
-        venue: request.venue.to_string(),
-        action: request.action.to_string(),
-        amount,
-        execution_mode: request.execution_mode,
-        status,
-        receipt,
-        reason,
-        failure_category,
-        notification_pending: true,
-        notification_attempts: 0,
-        next_notification_attempt_at: 0,
-        created_at,
-        updated_at: now_secs(),
-    }
 }
 
 fn persist_and_notify(path: &Path, mut outcome: ExecutionOutcome) -> Result<ExecutionOutcome> {
@@ -1869,9 +1950,14 @@ fn notification(outcome: &ExecutionOutcome) -> String {
         (user_lang::Lang::Zh, OutcomeStatus::Skipped) => format!(
             "{zh_label} {}",
             if outcome.reason.as_deref()
+                == Some(super::GUIDE_EXECUTION_UNAVAILABLE_REASON)
+            {
+                "本次 Signal 已保存，仅接收和展示：该订阅没有有效的本地 Service Guide 与 Guide Consent 执行合约。不会提交订单，旧 execution Consent 不会生效。"
+                    .to_string()
+            } else if outcome.reason.as_deref()
                 == Some(super::EXECUTION_POLICY_NOT_CONFIGURED_REASON)
             {
-                "本次交付物已保存，但没有执行交易，因为该订阅当前没有有效的跟单执行策略。如需恢复或更新，请告诉我“更新这个订阅的跟单执行策略”。"
+                "本次交付物已保存并跳过：固定字段的旧执行策略已退役，不会创建或恢复执行配置。"
                     .to_string()
             } else {
                 format!(
@@ -1883,9 +1969,14 @@ fn notification(outcome: &ExecutionOutcome) -> String {
         (user_lang::Lang::En, OutcomeStatus::Skipped) => format!(
             "{en_label} {}",
             if outcome.reason.as_deref()
+                == Some(super::GUIDE_EXECUTION_UNAVAILABLE_REASON)
+            {
+                "The Signal was saved for receiving/display only: this subscription has no valid local Service Guide + active Guide Consent execution contract. No order was submitted and legacy execution Consent does not apply."
+                    .to_string()
+            } else if outcome.reason.as_deref()
                 == Some(super::EXECUTION_POLICY_NOT_CONFIGURED_REASON)
             {
-                "The deliverable was saved, but no trade was executed because this subscription has no active copy-trade execution policy. To restore or update it, tell me: “Update this subscription's copy-trade execution policy.”"
+                "The deliverable was saved and skipped: the fixed-field legacy execution policy is retired and cannot create or restore execution configuration."
                     .to_string()
             } else {
                 format!(
@@ -1957,175 +2048,6 @@ fn notify_and_persist(
     let _ = write_outcome(path, outcome);
 }
 
-pub async fn execute(request: ExecuteRequest<'_>) -> Result<ExecutionOutcome> {
-    use crate::commands::agent_commerce::task::common::config::SubscriptionTradePath;
-
-    let context = consent::load_delivery_context(request.job_id, request.delivery_id)
-        .context("trusted delivery context is unavailable")?;
-    if context.job_id != request.job_id || context.delivery_id != request.delivery_id {
-        bail!("trusted delivery context mismatch");
-    }
-    if context.execution_path != SubscriptionTradePath::LegacyWrapper {
-        bail!("delivery is pinned to Agent-direct execution");
-    }
-    let outcome_path = outcome_path(request.job_id, request.delivery_id)?;
-    if !reserve_execution(request.job_id, request.delivery_id)? {
-        if let Some(mut outcome) = read_outcome(&outcome_path)? {
-            if outcome.notification_pending {
-                notify_and_persist(
-                    &outcome_path,
-                    &mut outcome,
-                    false,
-                    Some(INITIAL_NOTIFY_TIMEOUT),
-                );
-            }
-            return Ok(outcome);
-        }
-        let (status, reason) = match recovery_state(request.job_id, request.delivery_id)? {
-            RecoveryState::PreSubmitInterrupted => (
-                OutcomeStatus::FailedBeforeSubmit,
-                "an earlier execution stopped before the transaction command started; no automatic retry will occur",
-            ),
-            RecoveryState::SubmissionUnknown | RecoveryState::TerminalOutcome => (
-                OutcomeStatus::UnknownAfterSubmit,
-                "an earlier execution may have started but has no terminal outcome; do not retry",
-            ),
-            RecoveryState::NoExecution => (
-                OutcomeStatus::FailedBeforeSubmit,
-                "execution reservation is unavailable; no transaction command was started",
-            ),
-        };
-        let outcome = make_outcome(
-            &request,
-            request.amount.chars().take(64).collect(),
-            status,
-            None,
-            Some(reason.to_string()),
-            now_secs(),
-        );
-        return persist_and_notify(&outcome_path, outcome);
-    }
-
-    let started = now_secs();
-    let prepared = (|| -> Result<(String, PathBuf, Vec<String>, Option<consent::TradeKitAuthMode>)> {
-        let (amount, authorized_settings) = authorize(
-            request.job_id,
-            request.delivery_id,
-            request.venue,
-            request.action,
-            request.amount,
-            request.execution_mode,
-        )?;
-        let (program, args) = parse_command(request.venue, request.command_json)?;
-        validate_bound_intent(
-            request.venue,
-            request.action,
-            &amount,
-            request.job_id,
-            request.execution_mode,
-            &args,
-        )?;
-        if request.venue == "trade_kit" {
-            let context = trade_kit_execution_context(&args)?;
-            let expected = authorized_settings
-                .environment
-                .context("Trade Kit execution requires a persisted live or demo environment")?;
-            if context.environment != expected {
-                bail!("Trade Kit command environment does not match persisted consent");
-            }
-            validate_trade_kit_execution_settings(&args, context, authorized_settings)?;
-            authorized_settings.auth_mode.context(
-                "Trade Kit authentication mode is not configured; choose oauth or api_key before execution",
-            )?;
-        }
-        Ok((amount, program, args, authorized_settings.auth_mode))
-    })();
-    let (amount, program, args, auth_mode) = match prepared {
-        Ok(prepared) => prepared,
-        Err(error) => {
-            let amount = Decimal::parse(request.amount)
-                .map(Decimal::to_plain_string)
-                .unwrap_or_else(|_| request.amount.chars().take(64).collect());
-            let outcome = make_outcome(
-                &request,
-                amount,
-                OutcomeStatus::FailedBeforeSubmit,
-                None,
-                Some(safe_reason(&error)),
-                started,
-            );
-            return persist_and_notify(&outcome_path, outcome);
-        }
-    };
-    if let Err(error) = update_execution_phase(
-        request.job_id,
-        request.delivery_id,
-        ExecutionPhase::Prepared,
-    ) {
-        let outcome = make_outcome(
-            &request,
-            amount,
-            OutcomeStatus::FailedBeforeSubmit,
-            None,
-            Some(format!("could not persist the prepared execution state: {error}")),
-            started,
-        );
-        return persist_and_notify(&outcome_path, outcome);
-    }
-    let mut command = Command::new(program);
-    command
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    if request.venue == "trade_kit" {
-        apply_trade_kit_auth_environment(&mut command, auth_mode);
-    }
-    if let Err(error) = update_execution_phase(
-        request.job_id,
-        request.delivery_id,
-        ExecutionPhase::Spawned,
-    ) {
-        let outcome = make_outcome(
-            &request,
-            amount,
-            OutcomeStatus::FailedBeforeSubmit,
-            None,
-            Some(format!("could not persist the execution start state: {error}")),
-            started,
-        );
-        return persist_and_notify(&outcome_path, outcome);
-    }
-    let duration = Duration::from_secs(request.timeout_sec.clamp(1, MAX_TIMEOUT_SEC));
-    let result = timeout(duration, command.output()).await;
-    let (status, receipt, reason) = match result {
-        Ok(Ok(output)) if output.status.success() => {
-            classify_success(request.venue, &output.stdout)
-        }
-        Ok(Ok(output)) => classify_nonzero(
-            request.venue,
-            output.status.code(),
-            &output.stdout,
-            &output.stderr,
-        ),
-        Ok(Err(error)) => (
-            OutcomeStatus::FailedBeforeSubmit,
-            None,
-            Some(format!("execution command could not start: {error}")),
-        ),
-        Err(_) => (
-            OutcomeStatus::UnknownAfterSubmit,
-            None,
-            Some("timeout".to_string()),
-        ),
-    };
-    persist_and_notify(
-        &outcome_path,
-        make_outcome(&request, amount, status, receipt, reason, started),
-    )
-}
-
 /// Persist and notify a terminal delivery result that occurs before a
 /// money-moving command exists (for example, a non-actionable signal or route
 /// preparation failure). Reserving the same delivery latch prevents a later
@@ -2141,14 +2063,41 @@ pub fn report_delivery(
     if context.job_id != job_id || context.delivery_id != delivery_id {
         bail!("trusted delivery context mismatch");
     }
-    let status = match status {
+    let mut status = match status {
         "skipped" => OutcomeStatus::Skipped,
         "failed_before_execution" => OutcomeStatus::FailedBeforeExecution,
         _ => bail!("delivery report status must be skipped or failed_before_execution"),
     };
+    // Older agents can still resume a persisted AgentDirect context after its
+    // Guide Consent disappeared. That is no longer a failed delivery: the
+    // Signal remains useful, but execution is disabled. Normalize both that
+    // stale context and the retired error wording before any latch/outcome is
+    // written so the user never sees "No active execution consent" again.
+    let contract_unavailable = matches!(
+        context.execution_path,
+        crate::commands::agent_commerce::task::common::config::SubscriptionTradePath::AgentDirect
+    ) && !guide::has_active_execution_contract(job_id);
+    let reason = if contract_unavailable || is_retired_execution_consent_reason(reason) {
+        status = OutcomeStatus::Skipped;
+        super::GUIDE_EXECUTION_UNAVAILABLE_REASON.to_string()
+    } else {
+        safe_text(reason)
+    };
     let outcome_path = outcome_path(job_id, delivery_id)?;
     if !reserve_execution(job_id, delivery_id)? {
         if let Some(mut outcome) = read_outcome(&outcome_path)? {
+            let normalize_existing = is_retired_execution_consent_reason(
+                outcome.reason.as_deref().unwrap_or_default(),
+            ) || (contract_unavailable && outcome.status == OutcomeStatus::FailedBeforeExecution);
+            if normalize_existing {
+                outcome.status = OutcomeStatus::Skipped;
+                outcome.reason = Some(super::GUIDE_EXECUTION_UNAVAILABLE_REASON.to_string());
+                outcome.notification_pending = true;
+                outcome.notification_attempts = 0;
+                outcome.next_notification_attempt_at = 0;
+                outcome.updated_at = now_secs();
+                write_outcome(&outcome_path, &outcome)?;
+            }
             if outcome.notification_pending {
                 notify_and_persist(
                     &outcome_path,
@@ -2174,7 +2123,7 @@ pub fn report_delivery(
             execution_mode: ExecutionMode::Auto,
             status,
             receipt: None,
-            reason: Some(safe_text(reason)),
+            reason: Some(reason),
             failure_category: None,
             notification_pending: true,
             notification_attempts: 0,
@@ -2183,6 +2132,14 @@ pub fn report_delivery(
             updated_at: now,
         },
     )
+}
+
+fn is_retired_execution_consent_reason(reason: &str) -> bool {
+    let normalized = reason.to_ascii_lowercase();
+    normalized.contains("active execution consent")
+        || normalized.contains("automatic execution consent")
+        || normalized.contains("copy-trade consent")
+        || normalized.contains("auto-trade consent")
 }
 
 /// Convert an abandoned execution gateway invocation into a durable terminal
@@ -2513,7 +2470,7 @@ mod tests {
     }
 
     #[test]
-    fn unconfigured_policy_skip_notification_invites_an_explicit_policy_update() {
+    fn unconfigured_legacy_policy_skip_notification_does_not_offer_restore() {
         let _guard = crate::home::TEST_ENV_MUTEX
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -2541,16 +2498,16 @@ mod tests {
 
         let rendered = notification(&outcome);
         assert!(rendered.contains("deliverable was saved"));
-        assert!(rendered.contains("no active copy-trade execution policy"));
-        assert!(rendered.contains("Update this subscription's copy-trade execution policy"));
+        assert!(rendered.contains("fixed-field legacy execution policy is retired"));
+        assert!(rendered.contains("cannot create or restore execution configuration"));
+        assert!(!rendered.contains("Update this subscription's copy-trade execution policy"));
         std::env::remove_var("ONCHAINOS_HOME");
     }
 
     #[test]
-    fn command_parser_never_accepts_a_shell_or_recursive_agent_command() {
+    fn legacy_command_parser_never_accepts_a_shell() {
         assert!(parse_command("dex", r#"["swap","execute","--from","usdt"]"#).is_ok());
         assert!(parse_command("dex", r#"["sh","-c","anything"]"#).is_err());
-        assert!(parse_command("dex", r#"["agent","autotrade-execute","--job-id","x"]"#).is_err());
         let (program, _) =
             parse_command("hyperliquid", r#"["order","--coin","BTC","--confirm"]"#).unwrap();
         assert_eq!(program, PathBuf::from("hyperliquid-plugin"));
@@ -3382,47 +3339,6 @@ mod tests {
         .unwrap_err()
         .to_string()
         .contains("legacy execution wrapper"));
-        std::env::remove_var("ONCHAINOS_HOME");
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn legacy_wrapper_refuses_an_agent_direct_delivery() {
-        use crate::commands::agent_commerce::task::common::config::SubscriptionTradePath;
-
-        let _guard = crate::home::TEST_ENV_MUTEX
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let temp = test_tempdir();
-        std::env::set_var("ONCHAINOS_HOME", temp.path());
-        consent::register_delivery_context_with_path(
-            "job-direct-no-fallback",
-            "7",
-            "8",
-            None,
-            "delivery-1",
-            "/tmp/signal.txt",
-            "text",
-            1,
-            SubscriptionTradePath::AgentDirect,
-        )
-        .unwrap();
-        let error = execute(ExecuteRequest {
-            job_id: "job-direct-no-fallback",
-            delivery_id: "delivery-1",
-            venue: "dex",
-            action: "buy",
-            amount: "10",
-            execution_mode: ExecutionMode::Auto,
-            command_json: r#"["swap","execute"]"#,
-            timeout_sec: 1,
-        })
-        .await
-        .unwrap_err();
-        assert!(error.to_string().contains("Agent-direct execution"));
-        assert_eq!(
-            recovery_state("job-direct-no-fallback", "delivery-1").unwrap(),
-            RecoveryState::NoExecution
-        );
         std::env::remove_var("ONCHAINOS_HOME");
     }
 

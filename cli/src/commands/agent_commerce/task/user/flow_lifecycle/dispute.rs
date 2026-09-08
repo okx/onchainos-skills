@@ -1,7 +1,17 @@
 //! Rejection / evaluation prompt generators.
 
-use super::super::flow::{FlowContext, notify_and_end};
+use super::super::flow::{notify_and_end, FlowContext, TERMINAL_NOTIFICATION_MARKER};
 use crate::commands::agent_commerce::task::common::okx_a2a;
+
+fn event_job_type(message: Option<&serde_json::Value>) -> Option<i64> {
+    message
+        .and_then(|value| value.get("jobType"))
+        .and_then(|value| {
+            value
+                .as_i64()
+                .or_else(|| value.as_str().and_then(|raw| raw.parse().ok()))
+        })
+}
 
 pub(crate) fn job_rejected(ctx: &FlowContext<'_>) -> String {
     let content = super::super::content::job_rejected_user_notify(ctx.job_id, ctx.title_display);
@@ -20,8 +30,8 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
     {
         Some(s) => s,
         None => return format!(
-            "[job_disputed] prefetched.provider_agent_id missing for job {job_id}; cannot fetch chat history for dispute evidence.\n\n\
-             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
+            "[job_disputed] prefetched.provider_agent_id missing for job {job_id}; cannot fetch chat history for evaluation evidence.\n\n\
+             Enter through skills/okx-ai/SKILL.md, then see skills/okx-ai/references/runtime/recovery.md §2 — push `cli_failed` decision.\n"
         ),
     };
     let chat_block = match okx_a2a::session_history(job_id, provider_id) {
@@ -33,10 +43,12 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
                 trimmed.to_string()
             }
         }
-        Err(e) => return format!(
-            "[job_disputed] `okx-a2a session history` failed: {e}\n\n\
-             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
-        ),
+        Err(e) => {
+            return format!(
+                "[job_disputed] `okx-a2a session history` failed: {e}\n\n\
+             Enter through skills/okx-ai/SKILL.md, then see skills/okx-ai/references/runtime/recovery.md §2 — push `cli_failed` decision.\n"
+            )
+        }
     };
 
     format!(
@@ -55,33 +67,34 @@ pub(crate) fn job_disputed(ctx: &FlowContext<'_>) -> String {
      {chat_block}\n\
      ```\n\n\
      **Step 2 — Extract a `--text` body from the chat history above** (≤16 KB):\n\
-     Keep ONLY the key checkpoints — task-detail discussion / deliverable messages + both sides' key dispute points. Prepend `(key checkpoints extracted)` so the evaluator knows it was trimmed. If history is genuinely empty, pass a minimal placeholder like `(no chat history available)`.\n\n\
+     Keep ONLY the key checkpoints — task-detail discussion / deliverable messages + both sides' key evaluation points. Prepend `(key checkpoints extracted)` so the evaluator knows it was trimmed. If history is genuinely empty, pass a minimal placeholder like `(no chat history available)`.\n\n\
      **Step 3 — Upload (off-chain multipart):**\n\
      ```bash\n\
      onchainos agent dispute upload {job_id} --role user --agent-id {agent_id} --text \"<chat history block from Step 2>\"\n\
      ```\n\
-     The CLI auto-attaches every entry under `~/.onchainos/deliverables/user/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers all locally-saved deliverables / attachments. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 4 — the on-chain dispute will continue without off-chain evidence and the evaluator rules on what is available.\n\n\
+     The CLI auto-attaches every entry under `~/.onchainos/deliverables/user/{job_id}/manifest.json` as multipart `files[]` parts — **do NOT pass `--file`**; the manifest covers all locally-saved deliverables / attachments. If the upload fails, retry up to 3 times; if it keeps failing, still proceed to Step 4 — the on-chain evaluation will continue with the available evidence.\n\n\
      **Step 4 — Notify the user via `onchainos agent user-notify` (after upload returns):**\n\
      **Localize first** — translate the content below into the user's language before sending.\n\
      ```bash\n\
      onchainos agent user-notify --content \"<localized content>\"\n\
      ```\n\
      Content:\n\
-     \x20\x20\x20\x20[Dispute opened] Evaluation for **{title_display}** (`{job_id}`) is on-chain. The system has automatically submitted your evidence (chat history + locally-saved deliverables). Awaiting the evaluator's verdict.\n\n\
+     \x20\x20\x20\x20[Evaluation opened] Evaluation for **{title_display}** (`{job_id}`) is on-chain.\n\
+     \x20\x20\x20\x20- Evaluation status: Evidence preparation\n\
+     \x20\x20\x20\x20- Status description: Evidence was submitted and the evidence stage is in progress.\n\
+     \x20\x20\x20\x20Awaiting the evaluator's verdict.\n\n\
      **Step 5 — End this turn.** Do NOT send any message to the ASP.\n\n\
 "
     )
 }
 
-pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
+pub(crate) fn dispute_resolved(
+    ctx: &FlowContext<'_>,
+    message: Option<&serde_json::Value>,
+) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
-    let title_display = ctx.title_display;
     let terminal_session_hint = &ctx.terminal_session_hint;
-
-    let dispute_won = super::super::content::dispute_won_user_notify(job_id, title_display);
-    let dispute_lost = super::super::content::dispute_lost_user_notify(job_id, title_display);
-    let rating_notify = super::super::content::rating_submitted_user_notify(job_id, title_display);
 
     // dispute_resolved fires when the chain has settled the evaluation —
     // prefetched.status MUST be 6 (Completed, ASP wins) or 9 (Failed, user
@@ -92,28 +105,103 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
         Some(p) => p,
         None => return format!(
             "[dispute_resolved] no prefetched task context for job {job_id}; cannot decide winner.\n\n\
-             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
+             Enter through skills/okx-ai/SKILL.md, then see skills/okx-ai/references/runtime/recovery.md §2 — push `cli_failed` decision.\n"
         ),
     };
+    if !matches!(p.job_type, Some(0 | 1)) {
+        return format!(
+            "[dispute_resolved] fresh detail has unsupported or missing jobType {:?} for job {job_id}; do not announce a verdict, rate, notify, or clean up.\n\n\
+             Enter through skills/okx-ai/SKILL.md, then see skills/okx-ai/references/runtime/recovery.md §2 — push `cli_failed` decision.\n",
+            p.job_type
+        );
+    }
+    if event_job_type(message).is_some_and(|job_type| Some(job_type) != p.job_type) {
+        return format!(
+            "[dispute_resolved] event jobType conflicts with fresh composed detail for job {job_id}; do not announce a verdict, rate, notify, or clean up.\n\n\
+             Enter through skills/okx-ai/SKILL.md, then see skills/okx-ai/references/runtime/recovery.md §2 — push `cli_failed` decision.\n"
+        );
+    }
+    if p.user_agent_id.as_deref() != Some(agent_id) {
+        return format!(
+            "[dispute_resolved] fresh detail does not bind job {job_id} to User Agent {agent_id}; do not announce a verdict, rate, notify, or clean up.\n\n\
+             Enter through skills/okx-ai/SKILL.md, then see skills/okx-ai/references/runtime/recovery.md §2 — push `cli_failed` decision.\n"
+        );
+    }
     let user_won = match p.status {
         Some(9) => true,
         Some(6) => false,
         Some(other) => return format!(
             "[dispute_resolved] unexpected prefetched status {other} for job {job_id}; expected 6 (completed/ASP wins) or 9 (failed/user wins).\n\n\
-             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
+             Enter through skills/okx-ai/SKILL.md, then see skills/okx-ai/references/runtime/recovery.md §2 — push `cli_failed` decision.\n"
         ),
         None => return format!(
             "[dispute_resolved] prefetched.status missing for job {job_id}; cannot decide winner.\n\n\
-             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
+             Enter through skills/okx-ai/SKILL.md, then see skills/okx-ai/references/runtime/recovery.md §2 — push `cli_failed` decision.\n"
         ),
     };
+    if !p.refund_request_provenance {
+        return format!(
+            "[dispute_resolved] fresh terminal status has no durable local refund-request provenance for job {job_id}; do not treat an ordinary completion/failure as an evaluation verdict, rate, notify, or clean up. Run `onchainos agent refund-prepare {job_id}` to reconcile.\n"
+        );
+    }
+    let refund_evidence = user_won
+        .then(|| super::super::refund::verify_final_refund_event(message, Some(p), 9, ctx.agent_id))
+        .and_then(Result::ok);
+    if user_won && refund_evidence.is_none() {
+        return format!(
+            "[dispute_resolved] fresh Failed(9) detail does not prove a buyer-owned refund outcome for job {job_id}; do not announce a verdict, rate, notify, or clean up. Run `onchainos agent refund-prepare {job_id}` to reconcile.\n"
+        );
+    }
+    let refund_settled = refund_evidence.is_some();
     let provider_id = match p.provider_agent_id.as_deref().filter(|s| !s.is_empty()) {
         Some(s) => s,
         None => return format!(
             "[dispute_resolved] prefetched.provider_agent_id missing for job {job_id}; auto-rate cannot run.\n\n\
-             See _shared/exception-escalation.md §2 — push `cli_failed` decision.\n"
+             Enter through skills/okx-ai/SKILL.md, then see skills/okx-ai/references/runtime/recovery.md §2 — push `cli_failed` decision.\n"
         ),
     };
+    let title_display = p
+        .title
+        .trim()
+        .is_empty()
+        .then_some("Task title unavailable")
+        .unwrap_or(p.title.trim());
+    let rating_notify = super::super::content::rating_submitted_user_notify(job_id, title_display);
+    let provider_name = p.provider_name.as_deref();
+    let service_name = p
+        .service_name
+        .as_deref()
+        .or_else(|| p.service_id.as_deref())
+        .or(Some("service unavailable"));
+    // A dispute result is a verdict, not by itself a subscription refund cause.
+    // Always display the fresh original payment; never relabel refundAmount
+    // (which may be zero on an ASP win) as the original amount.
+    let amount = (!p.token_amount.is_empty()).then_some(p.token_amount.as_str());
+    let symbol =
+        (!p.token_symbol.is_empty() && p.token_symbol != "?").then_some(p.token_symbol.as_str());
+
+    let dispute_won = super::super::content::dispute_won_user_notify(
+        job_id,
+        title_display,
+        provider_name,
+        Some(provider_id),
+        service_name,
+        amount,
+        symbol,
+        refund_settled,
+        refund_evidence
+            .as_ref()
+            .and_then(|evidence| evidence.tx_hash.as_deref()),
+    );
+    let dispute_lost = super::super::content::dispute_lost_user_notify(
+        job_id,
+        title_display,
+        provider_name,
+        Some(provider_id),
+        service_name,
+        amount,
+        symbol,
+    );
 
     let winner_line = if user_won {
         "**Evaluation outcome: user WINS** (chain status = 9/failed).\n\n"
@@ -122,11 +210,24 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
     };
     // Deliberate reuse: subscription evaluation results render the existing online
     // task-level notice rather than subscription-specific copy.
-    let dispatch_content = if user_won { &dispute_won } else { &dispute_lost };
+    let dispatch_content = if user_won && refund_settled {
+        format!("{TERMINAL_NOTIFICATION_MARKER} {dispute_won}")
+    } else if user_won {
+        dispute_won
+    } else {
+        format!("{TERMINAL_NOTIFICATION_MARKER} {dispute_lost}")
+    };
     let score_guide = if user_won {
         "provider at fault → 0.00–2.00"
     } else {
         "provider delivered adequately → 3.00–5.00"
+    };
+    let wrap_up = if user_won && !refund_settled {
+        format!(
+            "Do not run terminal cleanup yet. Run `onchainos agent refund-prepare {job_id}` to follow refund settlement, and follow only its returned actions."
+        )
+    } else {
+        format!("{terminal_session_hint}\nEvaluation flow fully complete.")
     };
 
     format!(
@@ -148,7 +249,7 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
      ```\n\
      Record whether feedback-submit succeeded (output contains `txHash`) or failed; the result decides whether the rating half is included in Step 3.\n\n\
      **Step 3 — Notify the user with a SINGLE consolidated message:**\n\
-     **Localize first** — translate the composed content into the user's language before sending.\n\
+     **Localize first** — translate the human-readable content into the user's language. Preserve any exact {TERMINAL_NOTIFICATION_MARKER} prefix.\n\
      ```bash\n\
      onchainos agent user-notify --content \"<localized content>\"\n\
      ```\n\
@@ -158,9 +259,8 @@ pub(crate) fn dispute_resolved(ctx: &FlowContext<'_>) -> String {
      ▸ Rating info (include ONLY if Step 2's feedback-submit succeeded; if it failed, omit this entire half):\n\
      \x20\x20{rating_notify}\n\
      \x20\x20(fill `<score>` with the X.XX value used in Step 2, `<description>` with the comment from Step 2, `<title>` with the task title above)\n\n\
-     **Step 4 — Terminal wrap-up (keep the sub session):**\n\
-     {terminal_session_hint}\n\
-     Evaluation flow fully complete.\n",
+     **Step 4 — Settlement-aware wrap-up:**\n\
+     {wrap_up}\n",
         title = p.title,
         amt = p.token_amount,
         sym = p.token_symbol,

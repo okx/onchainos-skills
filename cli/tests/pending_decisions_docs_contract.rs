@@ -2,87 +2,65 @@ mod common;
 
 use common::onchainos;
 
-const REFERENCE: &str = include_str!("../../skills/okx-ai/references/task-cli-reference.md");
-
-fn section(start: &str, end: &str) -> &'static str {
-    let from = REFERENCE
-        .find(start)
-        .unwrap_or_else(|| panic!("missing documentation section: {start}"));
-    let rest = &REFERENCE[from..];
-    let to = rest
-        .find(end)
-        .unwrap_or_else(|| panic!("missing documentation boundary: {end}"));
-    &rest[..to]
-}
+const REQUEST: &str = include_str!("../../skills/okx-ai/references/runtime/decision-request.md");
+const RELAY: &str = include_str!("../../skills/okx-ai/references/runtime/decision-relay.md");
+const BACKLOG: &str = include_str!("../../skills/okx-ai/references/runtime/backlog.md");
+const PROVIDER_ARBITRATION_DECISION: &str =
+    include_str!("../../skills/okx-ai/references/a2a/provider/arbitration-decision.md");
 
 fn help(args: &[&str]) -> String {
-    let output = onchainos()
-        .args(args)
-        .output()
-        .unwrap_or_else(|e| panic!("failed to run onchainos help: {e}"));
+    let output = onchainos().args(args).output().expect("run help");
     assert!(
         output.status.success(),
-        "help command failed: {}",
+        "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    String::from_utf8(output.stdout).expect("help output must be UTF-8")
+    String::from_utf8(output.stdout).expect("UTF-8 help")
 }
 
 #[test]
-fn pending_decisions_reference_lists_the_cli_subcommands() {
-    let cli_help = help(&["agent", "pending-decisions-v2", "--help"]);
-    let intro = section("### pending-decisions-v2", "#### request");
+fn durable_decision_docs_use_existing_cli_surface() {
+    let root = help(&["agent", "pending-decisions-v2", "--help"]);
     for command in [
         "request",
         "request-prompt",
-        "resolve",
-        "resolve-with-sessionkey",
         "resolve-prompt",
         "pick",
         "list",
-        "cancel",
     ] {
-        assert!(cli_help.contains(command), "CLI help is missing {command}");
-        assert!(
-            intro.contains(command),
-            "reference intro is missing {command}"
-        );
+        assert!(root.contains(command));
     }
-    assert!(!intro.contains("four subcommands"));
+    assert!(REQUEST.contains("pending-decisions-v2 request"));
+    assert!(REQUEST.contains("request-prompt"));
+    assert!(BACKLOG.contains("pending-decisions-v2 list --format markdown"));
 }
 
 #[test]
-fn request_reference_matches_content_input_flags() {
-    let cli_help = help(&["agent", "pending-decisions-v2", "request", "--help"]);
-    let docs = section("#### request", "#### request-prompt");
-
-    for flag in ["--user-content", "--user-content-file"] {
-        assert!(cli_help.contains(flag), "CLI help is missing {flag}");
-        assert!(docs.contains(flag), "request reference is missing {flag}");
-    }
-    assert!(!cli_help.contains("--continuation-id"));
-    assert!(!docs.contains("--continuation-id"));
-    assert!(docs.contains("Required unless `--user-content-file`"));
-    assert!(docs.contains("Required unless `--user-content`"));
-}
-
-#[test]
-fn request_prompt_reference_matches_flags_and_single_pass_contract() {
-    let cli_help = help(&["agent", "pending-decisions-v2", "request-prompt", "--help"]);
-    let docs = section("#### request-prompt", "#### resolve-prompt");
-
+fn request_and_relay_flags_match_cli_help() {
+    let request_help = help(&["agent", "pending-decisions-v2", "request", "--help"]);
     for flag in [
+        "--job-id",
+        "--role",
+        "--agent-id",
         "--user-content",
-        "--user-content-file",
-        "--template-vars-b64",
+        "--list-label",
     ] {
-        assert!(cli_help.contains(flag), "CLI help is missing {flag}");
-        assert!(
-            docs.contains(flag),
-            "request-prompt reference is missing {flag}"
-        );
+        assert!(request_help.contains(flag));
+        assert!(REQUEST.contains(flag));
     }
-    assert!(docs.contains("originates in an input template"));
-    assert!(docs.contains("inserted literally and is not scanned or expanded again"));
-    assert!(!docs.contains("a literal placeholder can never be pushed"));
+    assert!(RELAY.contains("okx-a2a user check --todo-ids <id> --json"));
+    assert!(RELAY.contains("claim first"));
+}
+
+#[test]
+fn encoded_prompt_flags_match_cli_help_and_refund_decision_docs() {
+    let prompt_help = help(&["agent", "pending-decisions-v2", "request-prompt", "--help"]);
+    for flag in [
+        "--user-content-b64",
+        "--list-label-b64",
+        "--refund-display-b64",
+    ] {
+        assert!(prompt_help.contains(flag));
+        assert!(PROVIDER_ARBITRATION_DECISION.contains(flag));
+    }
 }

@@ -4,6 +4,7 @@
 //! here are deliberately small and dependency-light.
 
 use anyhow::{anyhow, bail, Context as _, Result};
+use chrono::TimeZone;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -12,7 +13,7 @@ use crate::wallet_api::{UnsignedInfoResponse, WalletApiClient};
 
 use super::models::{AgentCard, AgentService, ServiceOperation};
 
-pub(super) const SERVICE_GUIDE_MAX_DISPLAY_WIDTH: usize = 2_000;
+pub(super) const SERVICE_GUIDE_MAX_DISPLAY_WIDTH: usize = 10_000;
 
 // ─── HTTP client ──────────────────────────────────────────────────────────
 
@@ -235,7 +236,7 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
         && display_width(&service.service_guide) > SERVICE_GUIDE_MAX_DISPLAY_WIDTH
     {
         bail!(
-            "The service guide for [{}] exceeds the length limit. Shorten it to no more than 1,000 full-width Chinese/Japanese characters or 2,000 Latin characters, then resubmit.",
+            "The service guide for [{}] exceeds the length limit. Shorten it to no more than 5,000 full-width Chinese/Japanese characters or 10,000 Latin characters, then resubmit.",
             service.service_name
         );
     }
@@ -253,7 +254,8 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
     // currency token / symbol / any extra text is rejected (validate-listing
     // surfaces the same rule as a P1 finding; create/update bypass validate so
     // we enforce it here too). The single-purchase `fee` and every
-    // subscription-tier `fee` share this contract.
+    // subscription-tier `fee` share the A2A two-decimal contract. A2MCP keeps
+    // its six-decimal contract.
     match service.service_type.as_str() {
         "A2A" => {
             // Product spec: A2A services do not have an endpoint field.
@@ -281,14 +283,14 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
                         tier.interval
                     );
                 }
-                if !is_plain_number(&tier.fee) {
-                    bail!("invalid subscription fee in --service: must be a plain number (USDT is the default currency)");
+                if !is_plain_number(&tier.fee, 2) {
+                    bail!("invalid subscription fee in --service: must be a plain number with up to 2 decimal places (USDT is the default currency)");
                 }
             }
             // A real single price must be a plain number; an empty `fee` (the
             // subscription model) is exempt (it is not a price).
-            if has_single_fee && !is_plain_number(&service.fee) {
-                bail!("invalid fee in --service: must be a plain number (USDT is the default currency)");
+            if has_single_fee && !is_plain_number(&service.fee, 2) {
+                bail!("invalid fee in --service for A2A: must be a plain number with up to 2 decimal places (USDT is the default currency)");
             }
             // An empty `fee` is the explicit "no single price" marker (the
             // subscription model); it is forwarded verbatim as `""`. The CLI
@@ -315,8 +317,8 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
             if service.fee.is_empty() {
                 bail!("missing required field in --service for A2MCP: fee");
             }
-            if !is_plain_number(&service.fee) {
-                bail!("invalid fee in --service: must be a plain number (USDT is the default currency)");
+            if !is_plain_number(&service.fee, 6) {
+                bail!("invalid fee in --service for A2MCP: must be a plain number with up to 6 decimal places (USDT is the default currency)");
             }
             if service.endpoint.is_none() {
                 bail!("missing required field in --service for A2MCP: endpoint");
@@ -346,17 +348,17 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
     Ok(service)
 }
 
-/// True when `s` is a plain decimal number: `^\d+(\.\d{1,6})?$` (up to 6
-/// fractional digits). No sign, no currency token, no whitespace. Shared by
-/// `normalize_service` (create/update) and `validate::check_fee` (QA) so both
-/// paths enforce the identical fee contract.
-pub(super) fn is_plain_number(s: &str) -> bool {
+/// True when `s` is a plain decimal number with at most `max_decimals`
+/// fractional digits. No sign, currency token, or whitespace. Shared by
+/// create/update normalization and listing QA so both paths enforce the same
+/// service-type-specific fee contract (A2A: 2, A2MCP: 6).
+pub(super) fn is_plain_number(s: &str, max_decimals: usize) -> bool {
     match s.split_once('.') {
         None => !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()),
         Some((int, frac)) => {
             !int.is_empty()
                 && int.bytes().all(|b| b.is_ascii_digit())
-                && (1..=6).contains(&frac.len())
+                && (1..=max_decimals).contains(&frac.len())
                 && frac.bytes().all(|b| b.is_ascii_digit())
         }
     }
@@ -567,7 +569,7 @@ pub(super) fn ensure_asp_has_service(card: &AgentCard) -> Result<()> {
 }
 
 /// ASPs MUST carry an uploaded avatar — there is no default fallback (see
-/// references/identity-register.md §5). user / evaluator may keep the default
+/// references/identity/register.md §5). user / evaluator may keep the default
 /// (empty `--picture` → on-chain default image), so the check is ASP-only.
 /// The skill uploads the image first (`agent upload`) and passes the returned
 /// CDN URL as `--picture`; this gate is the CLI backstop if it doesn't.
@@ -582,7 +584,7 @@ pub(super) fn ensure_asp_has_avatar(card: &AgentCard) -> Result<()> {
 /// `(label, mime)` for a supported format (PNG / JPEG / WebP) or `None` for
 /// anything else. Detection is content-based — a `.png`-renamed PDF still maps
 /// to `None`, because extensions are attacker-controlled and reqwest never sees
-/// the path anyway. Keep the accepted set in sync with references/identity-register.md §5.
+/// the path anyway. Keep the accepted set in sync with references/identity/register.md §5.
 pub(super) fn detect_image_kind(bytes: &[u8]) -> Option<(&'static str, &'static str)> {
     // PNG: 89 50 4E 47 0D 0A 1A 0A
     if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
@@ -852,7 +854,7 @@ fn enrich_agent_row(row: &mut Value) {
 
 // ─── `card`: ordered, ready-to-render detail-card rows ────────────────────
 //
-// Mirrors `skills/okx-ai/references/identity-discover.md §detail` exactly:
+// Mirrors `skills/okx-ai/references/identity/profile.md §Agent detail`:
 // one ordered `{ "label": <canonical-English>, "value": <string> }` row per
 // visible field, omitting a row when its value is unavailable (same omit
 // rules the skill uses today). Service rows are ASP-ONLY — the
@@ -972,8 +974,8 @@ fn unpriced_fee_label(is_a2mcp: bool) -> String {
     }
 }
 
-/// Format a single ASP service into its card value string, mirroring
-/// references/identity-discover.md §detail's `<ServiceName> — <Type>, <Fee or free>[, <Endpoint>]`.
+/// Format a single ASP service into its card value string for
+/// references/identity/profile.md §Detail for explicit Agent IDs.
 /// A subscription-priced A2A service shows its monthly tier(s) in the fee slot
 /// (`<N> USDT / month`) instead of a single-purchase price.
 /// `Type` maps `A2MCP`→"API service" / `A2A`→"agent-to-agent" (verbatim
@@ -1030,7 +1032,7 @@ fn format_service_value(service: &Value) -> Option<String> {
     Some(format!("{name} — {}", segments.join(", ")))
 }
 
-/// Assemble the ordered `card` array per references/identity-discover.md §detail.
+/// Assemble the ordered `card` array per references/identity/profile.md §Agent detail.
 fn build_agent_card(map: &serde_json::Map<String, Value>) -> Vec<Value> {
     let mut card: Vec<Value> = Vec::new();
 
@@ -1140,10 +1142,10 @@ fn build_agent_card(map: &serde_json::Map<String, Value>) -> Vec<Value> {
 // Labels are canonical English; the skill localizes them. All formatting
 // (truncation, ★ stars, A2A fee, type labels, `—` fallbacks) is done HERE so
 // the skill renders the table by simply laying out cells. Mirrors:
-//   • references/identity-discover.md   §list          → `build_agent_list_cells`
-//   • references/identity-discover.md   §service-list  → `build_service_cells`
-//   • skills/okx-guide/references/registered-home.md §2 → `build_search_table`
-//   • references/identity-reviews.md    §feedback-list → `build_feedback_cells`
+//   • references/identity/profile.md    §My Agents    → `build_agent_list_cells`
+//   • references/identity/profile.md    §Services for an explicit Agent ID → `build_service_cells`
+//   • Search results                              → `build_search_table`
+//   • references/identity/reputation.md §Result       → `build_feedback_cells`
 // All builders are additive: raw fields + existing `card`/labels stay intact.
 // The `cells` insert is an intentional unconditional overwrite — see the
 // overwrite NOTE in the `agent get` row-enrichment section above.
@@ -1177,13 +1179,9 @@ fn read_agent_id(map: &serde_json::Map<String, Value>) -> Option<String> {
 
 // ─── §1 agent-list row cells ──────────────────────────────────────────────
 //
-// Columns (references/identity-discover.md §list), in order:
+// Columns (references/identity/profile.md §My Agents), in order:
 //   Agent ID | Name | Role | Status | Approval status | Rating
-// Mirrors §1's rules: Name truncate-20; Role/Status via computed labels;
-// Approval status via approval_label, with `Review failed (reason: <remark>)`
-// when approvalDisplayStatus==5 and approvalRemark non-empty; Rating
-// `★ <ratingStars> (<count>)` or `No rating yet` (count 0 / no stars).
-// Unknown role/status/approval → `—` (a row keeps all columns).
+// Status and approval apply only to ASPs; other roles render `—`.
 fn build_agent_list_cells(map: &serde_json::Map<String, Value>) -> Vec<Value> {
     let agent_id = read_agent_id(map)
         .map(|id| format!("#{id}"))
@@ -1203,32 +1201,33 @@ fn build_agent_list_cells(map: &serde_json::Map<String, Value>) -> Vec<Value> {
         .unwrap_or("—")
         .to_string();
 
-    let status = map
-        .get("status")
-        .and_then(status_label)
-        .unwrap_or("—")
-        .to_string();
-
-    // Approval status: approval_label, with §1's rejection parenthetical.
-    let approval_code = map.get("approvalDisplayStatus").and_then(Value::as_u64);
-    let approval = match approval_code.and_then(approval_label) {
-        Some(label) => {
-            let remark = map
-                .get("approvalRemark")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|s| !s.is_empty());
-            match (approval_code, remark) {
-                (Some(5), Some(remark)) => format!("Review failed (reason: {remark})"),
-                (Some(5), None) => "Review failed".to_string(),
-                _ => label.to_string(),
+    let (status, approval) = if role == "ASP" {
+        let status = map
+            .get("status")
+            .and_then(status_label)
+            .unwrap_or("—")
+            .to_string();
+        let approval_code = map.get("approvalDisplayStatus").and_then(Value::as_u64);
+        let approval = match approval_code.and_then(approval_label) {
+            Some(label) => {
+                let remark = map
+                    .get("approvalRemark")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
+                match (approval_code, remark) {
+                    (Some(5), Some(remark)) => format!("Review failed (reason: {remark})"),
+                    (Some(5), None) => "Review failed".to_string(),
+                    _ => label.to_string(),
+                }
             }
-        }
-        None => "—".to_string(),
+            None => "—".to_string(),
+        };
+        (status, approval)
+    } else {
+        ("—".to_string(), "—".to_string())
     };
 
-    // Rating: `★ <ratingStars> (<count>)`, else `No rating yet`. §1 forbids
-    // `—` here — always `No rating yet` when there is no usable rating.
     let rating = match map.get("reputation").and_then(rating_stars) {
         Some(stars) => {
             let count = map
@@ -1273,7 +1272,7 @@ pub(super) use precheck::{build_precheck, collect_owned_agents};
 // ─── §6 search-result table ────────────────────────────────────────────
 //
 // Search uses a DIFFERENT backend schema than
-// `agent get`. Columns (skills/okx-guide/references/registered-home.md §2), in order:
+// `agent get`. Search-result columns, in order:
 //   Agent ID | Name | Sold Count | Rating | Min price | Top service
 // Critical schema differences handled HERE:
 //   • Rating source is `feedbackRate`, a backend 0–100 score converted to
@@ -1434,19 +1433,19 @@ pub(super) fn build_search_table(v: &Value) -> Value {
 
 // ─── §4 service-list row cells ────────────────────────────────────────────
 //
-// Cells (references/identity-discover.md §service-list), in order:
+// Cells (references/identity/profile.md §Services for an explicit Agent ID), in order:
 //   # | Name | Type | Fee | Subscription | Free trial | Endpoint | Description
 // Read-only service-list never exposes Service guide for any service type;
 // serviceGuide is handled only by the guided register/update flows.
 // service-list returns PascalCase keys
 // (`ServiceName` / `ServiceType` / `Fee` / `Endpoint`); we read tolerantly.
-// Type: A2MCP → "API service", A2A → "agent-to-agent" (verbatim otherwise).
+// Type: display the canonical service type (`A2MCP` or `A2A`) verbatim.
 // Fee: `<n> USDT`; subscription-priced A2A → `—`; unpriced A2MCP → `—`, other
 // unpriced → `free`. Subscription: each
 // monthly tier `<n> USDT / month`, or `—` when there is none (or A2MCP). Free
 // trial: `<n> days`/`hours` when a subscription trial is set, else `—` (single
 // fee / A2MCP never have one). Endpoint: `—` for A2A, the URL for A2MCP.
-// Description: truncated per references/identity-discover.md §service-list (≤ 80 chars).
+// Description: truncated for the discovery Service list (≤ 80 chars).
 fn build_service_cells(index: usize, service: &Value) -> Option<Vec<Value>> {
     let Value::Object(s) = service else {
         return None;
@@ -1455,8 +1454,8 @@ fn build_service_cells(index: usize, service: &Value) -> Option<Vec<Value>> {
 
     let raw_type = first_str(s, &["serviceType", "ServiceType", "servicetype"]).unwrap_or("");
     let (type_label, is_a2a) = match raw_type.to_ascii_uppercase().as_str() {
-        "A2MCP" => ("API service".to_string(), false),
-        "A2A" => ("agent-to-agent".to_string(), true),
+        "A2MCP" => ("A2MCP".to_string(), false),
+        "A2A" => ("A2A".to_string(), true),
         "" => ("—".to_string(), false),
         other => (other.to_string(), false),
     };
@@ -1511,12 +1510,13 @@ fn build_service_cells(index: usize, service: &Value) -> Option<Vec<Value>> {
     ])
 }
 
-/// Add `cells` (per §4) to every service. The `#` column is 1-based over the
-/// rendered services. Tolerates BOTH shapes:
+/// Add `cells` (per §4) to every service and derive `hasMore` for paginated
+/// wrappers. The `#` column is 1-based over the rendered services. Tolerates
+/// BOTH shapes:
 ///   • live backend: `data` is an ARRAY of `{ agentInfo, list:[service…] }`
 ///     wrappers — services live under each wrapper's `list`.
 ///   • older/synthetic: a single object carrying a flat `services` array.
-/// No-op when neither shape matches. Additive.
+/// Cell enrichment is a no-op when neither service-array shape matches.
 pub(super) fn add_service_list_cells(v: &mut Value) {
     match v {
         Value::Array(wrappers) => {
@@ -1528,12 +1528,13 @@ pub(super) fn add_service_list_cells(v: &mut Value) {
     }
 }
 
-/// Locate this node's service array (under `list` then `services`) and stamp a
-/// `cells` array onto each service object. No-op when no service array exists.
+/// Derive pagination metadata, then locate this node's service array (under
+/// `list` then `services`) and stamp `cells` onto each service object.
 fn add_service_cells_to_node(node: &mut Value) {
     let Some(map) = node.as_object_mut() else {
         return;
     };
+    derive_has_more(map);
     let key = ["list", "services"]
         .into_iter()
         .find(|k| map.get(*k).map(Value::is_array).unwrap_or(false));
@@ -1570,62 +1571,102 @@ fn add_service_cells_to_node(node: &mut Value) {
     }
 }
 
+fn pagination_value(value: Option<&Value>) -> Option<u64> {
+    match value? {
+        Value::Number(number) => number.as_u64(),
+        Value::String(value) => value.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+fn derive_has_more(map: &mut serde_json::Map<String, Value>) {
+    if let (Some(page), Some(page_size), Some(total)) = (
+        pagination_value(map.get("page")),
+        pagination_value(map.get("pageSize")),
+        pagination_value(map.get("total")),
+    ) {
+        map.insert(
+            "hasMore".to_string(),
+            Value::Bool(page.saturating_mul(page_size) < total),
+        );
+    }
+}
+
 // ─── §5 feedback-list row cells ───────────────────────────────────────────
 //
-// references/identity-reviews.md §feedback-list is a prose entry per review rather than a strict
-// table, but we surface the same fields as ordered cells so the skill can lay
-// them out directly. Fields (per §feedback-list):
-//   Score (`★ <score>` — score is ALREADY a 0.00–5.00 float, set by
-//     convert_feedback_list_scores; render directly, trailing zeros trimmed),
-//   Reviewer (creatorId → `#<id>`), Task (taskId), Date (createdAt),
-//   Comment (description verbatim, or `(no comment)` when empty).
+// references/identity/reputation.md §Display results renders these
+// ordered cells directly. Fields:
+//   Score (`valueString` / `value` divided by 20 and displayed on a 5-point
+//     scale without a suffix; legacy `score` stays supported as an
+//     already-normalized 5-point value),
+//   Reviewer (`agentName`, with legacy creatorId → `#<id>` fallback),
+//   Date (`time` Unix milliseconds → local date, with legacy createdAt fallback),
+//   Comment (`content`, with legacy description fallback).
 // Missing optional fields render `—` (the row keeps all cells) EXCEPT comment
 // which uses §5's `(no comment)` placeholder.
 fn build_feedback_cells(map: &serde_json::Map<String, Value>) -> Vec<Value> {
-    // score: already a 0.00–5.00 float (convert_feedback_list_scores ran).
-    let score = match map.get("score") {
-        Some(Value::Number(n)) => match n.as_f64() {
-            Some(v) => format!("★ {}", format_search_rate(v)),
-            None => "—".to_string(),
-        },
-        _ => "—".to_string(),
-    };
-
-    let reviewer = map
-        .get("creatorId")
-        .and_then(|v| {
-            v.as_u64()
-                .map(|n| n.to_string())
-                .or_else(|| v.as_str().map(str::to_string))
+    let score_100 = ["valueString", "value"].into_iter().find_map(|key| {
+        map.get(key).and_then(|value| match value {
+            Value::String(value) => {
+                value
+                    .trim()
+                    .strip_suffix("/100")
+                    .unwrap_or(value.trim())
+                    .parse::<f64>()
+                    .ok()
+            }
+            Value::Number(value) => value.as_f64(),
+            _ => None,
         })
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .map(|id| format!("#{id}"))
+    });
+    let score = score_100
+        .map(|value| format_search_rate(value / 20.0))
+        .or_else(|| {
+            map.get("score")
+                .and_then(Value::as_f64)
+                .map(format_search_rate)
+        })
         .unwrap_or_else(|| "—".to_string());
 
-    let task = map
-        .get("taskId")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
+    let reviewer = first_str(map, &["agentName"])
         .map(str::to_string)
+        .or_else(|| {
+            map.get("creatorId")
+                .and_then(|value| {
+                    value
+                        .as_u64()
+                        .map(|number| number.to_string())
+                        .or_else(|| value.as_str().map(str::to_string))
+                })
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .map(|id| format!("#{id}"))
+        })
         .unwrap_or_else(|| "—".to_string());
 
-    let date = map
-        .get("createdAt")
-        .and_then(|v| {
-            v.as_str()
-                .map(str::to_string)
-                .or_else(|| v.as_u64().map(|n| n.to_string()))
+    let date = map.get("time")
+        .and_then(|value| {
+            value
+                .as_i64()
+                .or_else(|| value.as_str().and_then(|value| value.trim().parse().ok()))
         })
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+        .and_then(|timestamp| chrono::Local.timestamp_millis_opt(timestamp).single())
+        .map(|date_time| date_time.format("%Y-%m-%d").to_string())
+        .or_else(|| {
+            map.get("createdAt")
+                .and_then(|value| {
+                    value
+                        .as_str()
+                        .map(str::to_string)
+                        .or_else(|| value.as_u64().map(|number| number.to_string()))
+                })
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
         .unwrap_or_else(|| "—".to_string());
 
     // Comment: §5 placeholder `(no comment)` when empty / missing.
-    let comment = map
-        .get("description")
-        .and_then(Value::as_str)
+    let comment = first_str(map, &["content", "description"])
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
@@ -1634,7 +1675,6 @@ fn build_feedback_cells(map: &serde_json::Map<String, Value>) -> Vec<Value> {
     vec![
         cell("Score", score),
         cell("Reviewer", reviewer),
-        cell("Task", task),
         cell("Date", date),
         cell("Comment", comment),
     ]
@@ -1649,6 +1689,7 @@ pub(super) fn add_feedback_list_cells(v: &mut Value) {
     let Value::Object(map) = v else {
         return;
     };
+    derive_has_more(map);
     for key in ["items", "list"] {
         if let Some(items) = map.get_mut(key).and_then(Value::as_array_mut) {
             for item in items.iter_mut() {

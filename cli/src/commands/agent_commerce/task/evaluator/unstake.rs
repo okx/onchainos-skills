@@ -30,9 +30,9 @@ pub async fn handle_request_unstake(
         bail!("--amount must be numeric (OKB amount in UI units, no precision suffix), got: {trimmed}");
     }
     // > 0 check via cmp instead of f64 to handle extreme cases like "0.0000000000000000001"
-    if decimal_str::cmp(trimmed, "0")
-        .map_err(|e| anyhow::anyhow!("--amount parse failed (invalid format), got: {trimmed}: {e}"))?
-        != Ordering::Greater
+    if decimal_str::cmp(trimmed, "0").map_err(|e| {
+        anyhow::anyhow!("--amount parse failed (invalid format), got: {trimmed}: {e}")
+    })? != Ordering::Greater
     {
         bail!("--amount must be > 0, got: {trimmed}");
     }
@@ -43,21 +43,25 @@ pub async fn handle_request_unstake(
     // Fetch my-stake / staking-config (any failure → abort; no best-effort guessing).
     let m = staking_types::get_my_stake(client, &agent_id)
         .await
-        .map_err(|e| anyhow::anyhow!("failed to fetch my-stake, cannot validate request-unstake preconditions: {e}"))?;
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "failed to fetch my-stake, cannot validate request-unstake preconditions: {e}"
+            )
+        })?;
 
     // active dispute blocker
     let active_disputes = m.active_disputes.parse::<u64>().unwrap_or(0);
     if active_disputes > 0 {
         bail!(
-            "{active_disputes} unresolved dispute(s) in progress; unstake is not allowed. Wait until disputes are settled before unstaking."
+            "{active_disputes} evaluation(s) are in progress; unstake becomes available after they are settled."
         );
     }
 
     let active = &m.active_stake_okb;
     // amount must not exceed activeStake
-    if decimal_str::cmp(trimmed, active).map_err(|e| {
-        anyhow::anyhow!("activeStake parse failed ({active}): {e}")
-    })? == Ordering::Greater
+    if decimal_str::cmp(trimmed, active)
+        .map_err(|e| anyhow::anyhow!("activeStake parse failed ({active}): {e}"))?
+        == Ordering::Greater
     {
         bail!(
             "--amount {trimmed} OKB exceeds current activeStake {active} OKB; max unstake is {active} OKB (full redemption)."
@@ -66,7 +70,11 @@ pub async fn handle_request_unstake(
 
     let cfg = staking_types::get_staking_config(client, &agent_id)
         .await
-        .map_err(|e| anyhow::anyhow!("failed to fetch staking-config, cannot validate partial-unstake min retain: {e}"))?;
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "failed to fetch staking-config, cannot validate partial-unstake min retain: {e}"
+            )
+        })?;
     let retain = &cfg.partial_unstake_min_retain_okb;
     // After a partial redemption the remainder must be >= partialUnstakeMinRetainOkb
     // (a full redemption where amt == active is exempt). All arithmetic runs in
@@ -85,9 +93,9 @@ pub async fn handle_request_unstake(
         .map(|o| o == Ordering::Equal)
         .unwrap_or(false);
     if !is_full_unstake {
-        let below_retain = decimal_str::cmp(&remaining, retain)
-            .map_err(|e| anyhow::anyhow!("partialUnstakeMinRetainOkb parse failed ({retain}): {e}"))?
-            == Ordering::Less;
+        let below_retain = decimal_str::cmp(&remaining, retain).map_err(|e| {
+            anyhow::anyhow!("partialUnstakeMinRetainOkb parse failed ({retain}): {e}")
+        })? == Ordering::Less;
         if below_retain {
             bail!(
                 "partial unstake would leave {remaining} OKB, below min retain {retain} OKB (partialUnstakeMinRetainOkb). \
@@ -98,9 +106,7 @@ pub async fn handle_request_unstake(
 
     let path = "/priapi/v1/aieco/task/staking/requestUnstake";
     let body = serde_json::json!({ "amount": trimmed });
-    let resp = client
-        .post_with_identity(path, &body, &agent_id)
-        .await?;
+    let resp = client.post_with_identity(path, &body, &agent_id).await?;
 
     let tx_hash = signing::sign_uop_and_broadcast(
         client,
@@ -144,10 +150,7 @@ pub async fn handle_request_unstake(
 
 /// Claim unstaked OKB after the cooldown ends. The contract internally knows
 /// the amount and unlock time; the request body is empty.
-pub async fn handle_claim_unstake(
-    client: &mut TaskApiClient,
-    agent_id: &str,
-) -> Result<()> {
+pub async fn handle_claim_unstake(client: &mut TaskApiClient, agent_id: &str) -> Result<()> {
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
 
@@ -167,9 +170,7 @@ pub async fn handle_claim_unstake(
 
     let path = "/priapi/v1/aieco/task/staking/claimUnstake";
     let body = serde_json::json!({});
-    let resp = client
-        .post_with_identity(path, &body, &agent_id)
-        .await?;
+    let resp = client.post_with_identity(path, &body, &agent_id).await?;
 
     let tx_hash = signing::sign_uop_and_broadcast(
         client,
@@ -202,10 +203,7 @@ pub async fn handle_claim_unstake(
     Ok(())
 }
 
-pub async fn handle_cancel_unstake(
-    client: &mut TaskApiClient,
-    agent_id: &str,
-) -> Result<()> {
+pub async fn handle_cancel_unstake(client: &mut TaskApiClient, agent_id: &str) -> Result<()> {
     let (account_id, address, agent_id) =
         signing::resolve_wallet_and_agent_for_evaluator(agent_id).await?;
 
@@ -224,9 +222,7 @@ pub async fn handle_cancel_unstake(
 
     let path = "/priapi/v1/aieco/task/staking/cancelUnstake";
     let body = serde_json::json!({});
-    let resp = client
-        .post_with_identity(path, &body, &agent_id)
-        .await?;
+    let resp = client.post_with_identity(path, &body, &agent_id).await?;
 
     let tx_hash = signing::sign_uop_and_broadcast(
         client,

@@ -6,9 +6,9 @@
 //! State file: `~/.onchainos/task/{jobId}/negotiate-state.json`.
 //! Cleanup: after the user successfully runs `confirm-accept`.
 
-use std::time::Duration;
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 use crate::audit;
 use crate::commands::agent_commerce::task::common::DEBUG_LOG;
@@ -25,9 +25,6 @@ pub struct ProviderInfo {
     pub credit_score: i64,
     pub capability_summary: String,
     pub completed_task_count: i64,
-    /// true = x402 payment mode; false = escrow/direct.
-    #[serde(default)]
-    pub support_a2mcp: bool,
     #[serde(default)]
     pub services: Vec<ServiceInfo>,
 }
@@ -42,8 +39,6 @@ pub struct ServiceInfo {
     pub service_description: String,
     /// Service type, e.g. "A2A".
     pub service_type: String,
-    /// Service endpoint URL.
-    pub endpoint: String,
     #[serde(default)]
     pub sort_order: i64,
     /// Fee amount.
@@ -76,9 +71,7 @@ pub struct NegotiateState {
 // ─── Paths ────────────────────────────────────────────────────────────
 
 fn state_dir(job_id: &str) -> Result<std::path::PathBuf> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("could not resolve HOME directory"))?;
-    Ok(home.join(".onchainos").join("task").join(job_id))
+    crate::home::task_state_dir(job_id)
 }
 
 fn state_path(job_id: &str) -> Result<std::path::PathBuf> {
@@ -94,9 +87,7 @@ pub fn save(job_id: &str, providers: Vec<ProviderInfo>, page: usize) -> Result<(
     let dir = state_dir(job_id)?;
     std::fs::create_dir_all(&dir)?;
 
-    let existing_failed = load(job_id)
-        .map(|s| s.failed_providers)
-        .unwrap_or_default();
+    let existing_failed = load(job_id).map(|s| s.failed_providers).unwrap_or_default();
 
     let state = NegotiateState {
         job_id: job_id.to_string(),
@@ -116,7 +107,9 @@ pub fn save(job_id: &str, providers: Vec<ProviderInfo>, page: usize) -> Result<(
 pub fn load(job_id: &str) -> Result<NegotiateState> {
     let path = state_path(job_id)?;
     if !path.exists() {
-        bail!("Negotiation state not found; run `onchainos agent asp-match --job-id {job_id}` first");
+        bail!(
+            "Negotiation state not found; run `onchainos agent asp-match --job-id {job_id}` first"
+        );
     }
     let raw = std::fs::read_to_string(&path)?;
     let state: NegotiateState = serde_json::from_str(&raw)?;
@@ -143,17 +136,10 @@ pub fn next(job_id: &str) -> Result<Option<ProviderInfo>> {
 
 /// Save the designated provider (specified via `create-task --provider`; on `job_created` we skip `asp-match`).
 pub fn save_designated_provider(job_id: &str, provider_agent_id: &str) -> Result<()> {
-    save_designated_provider_with_endpoint(job_id, provider_agent_id, None)
-}
-
-pub fn save_designated_provider_with_endpoint(job_id: &str, provider_agent_id: &str, endpoint: Option<&str>) -> Result<()> {
     let dir = state_dir(job_id)?;
     std::fs::create_dir_all(&dir)?;
     let path = dir.join("designated-provider.json");
-    let mut json = serde_json::json!({ "agentId": provider_agent_id });
-    if let Some(ep) = endpoint.filter(|s| !s.is_empty()) {
-        json["endpoint"] = serde_json::Value::String(ep.to_string());
-    }
+    let json = serde_json::json!({ "agentId": provider_agent_id });
     std::fs::write(path, serde_json::to_string_pretty(&json)?)?;
     Ok(())
 }
@@ -177,22 +163,18 @@ pub fn get_designated_provider(job_id: &str) -> Result<Option<String>> {
     }
     let raw = std::fs::read_to_string(&path)?;
     let v: serde_json::Value = serde_json::from_str(&raw)?;
-    let result = v["agentId"].as_str().filter(|s| !s.is_empty()).map(|s| s.to_string());
+    let result = v["agentId"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
     if cfg!(feature = "debug-log") {
-        eprintln!("[designated-provider] path={} agentId={:?}", path.display(), result);
+        eprintln!(
+            "[designated-provider] path={} agentId={:?}",
+            path.display(),
+            result
+        );
     }
     Ok(result)
-}
-
-/// Read the persisted endpoint for the designated provider (if saved).
-pub fn get_designated_endpoint(job_id: &str) -> Result<Option<String>> {
-    let path = state_dir(job_id)?.join("designated-provider.json");
-    if !path.exists() {
-        return Ok(None);
-    }
-    let raw = std::fs::read_to_string(&path)?;
-    let v: serde_json::Value = serde_json::from_str(&raw)?;
-    Ok(v["endpoint"].as_str().filter(|s| !s.is_empty()).map(|s| s.to_string()))
 }
 
 /// Remove the designated-provider file (used when mark-failed matches the current designated provider).
@@ -246,7 +228,9 @@ pub fn mark_failed(job_id: &str, provider_agent_id: &str) -> Result<()> {
         if dp == provider_agent_id {
             let _ = clear_designated_provider(job_id);
             if DEBUG_LOG {
-                eprintln!("[mark-failed] cleared designated-provider (matched {provider_agent_id})");
+                eprintln!(
+                    "[mark-failed] cleared designated-provider (matched {provider_agent_id})"
+                );
             }
         }
     }
@@ -256,9 +240,7 @@ pub fn mark_failed(job_id: &str, provider_agent_id: &str) -> Result<()> {
 
 /// Load the failed-provider list.
 pub fn load_failed(job_id: &str) -> Vec<String> {
-    load(job_id)
-        .map(|s| s.failed_providers)
-        .unwrap_or_default()
+    load(job_id).map(|s| s.failed_providers).unwrap_or_default()
 }
 
 /// Clean up negotiation state files (called after accept success).
@@ -292,15 +274,13 @@ mod tests {
         let missing: ServiceInfo = serde_json::from_value(serde_json::json!({
             "serviceId": "service-1",
             "serviceName": "service",
-            "serviceType": "A2MCP",
-            "endpoint": "https://example.invalid/x402"
+            "serviceType": "A2A"
         }))
         .unwrap();
         let zero: ServiceInfo = serde_json::from_value(serde_json::json!({
             "serviceId": "service-1",
             "serviceName": "service",
-            "serviceType": "A2MCP",
-            "endpoint": "https://example.invalid/x402",
+            "serviceType": "A2A",
             "feeAmount": 0
         }))
         .unwrap();

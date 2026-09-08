@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${ONCHAINOS_EVAL_FIXTURES:?ONCHAINOS_EVAL_FIXTURES is required}"
+
+if [[ -n "${ONCHAINOS_EVAL_LOG:-}" ]]; then
+  printf '%s\n' "$*" >> "$ONCHAINOS_EVAL_LOG"
+fi
+
+case "$*" in
+  "preflight --skill-version 5.8.3-beta")
+    printf '%s\n' '{"data":{"action":null}}'
+    ;;
+  "agent feedback-list --agent-id 42")
+    cat "$ONCHAINOS_EVAL_FIXTURES/reputation-page-1.json"
+    ;;
+  "agent activate --agent-id 42 --preferred-language zh-CN")
+    cat "$ONCHAINOS_EVAL_FIXTURES/listing-submitted.json"
+    ;;
+  "agent subscription-list --page-size 10")
+    cat "$ONCHAINOS_EVAL_FIXTURES/subscription-list.json"
+    ;;
+  *)
+    printf 'Unexpected onchainos invocation: %s\n' "$*" >&2
+    exit 64
+    ;;
+esac

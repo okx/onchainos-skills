@@ -1,53 +1,21 @@
-//! Close task.
+//! Disabled legacy close command.
 //!
-//! User action: close task — `onchainos agent close`.
-//! Related: claim arbitration reward (`onchainos agent arbitration-claim`).
+//! Closing a funded V2 task is a refund-related funds mutation. It must use
+//! Refund preparation, confirmation, and reconciliation instead of this
+//! context-free legacy entry point.
 
 use anyhow::Result;
-use std::time::Duration;
 
-use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-use crate::commands::agent_commerce::task::common::DEBUG_LOG;
-use crate::commands::agent_commerce::task::signing;
 
-/// close — close the task.
-pub async fn handle_close(client: &mut TaskApiClient, job_id: &str, explicit_agent_id: Option<&str>) -> Result<()> {
-    let (account_id, address, agent_id) =
-        signing::resolve_wallet_and_agent_for_task(client, job_id, explicit_agent_id).await?;
-
-    let resp = client.post_with_identity(
-        &client.endpoint(job_id, "close"),
-        &serde_json::json!({}),
-        &agent_id,
-    ).await?;
-
-    let tx_hash = signing::sign_uop_and_broadcast(
-        client, &resp["uopData"], &account_id, &address,
-        job_id, signing::extract_biz_type(&resp), &agent_id,
-        None,
-    ).await?;
-
-    audit::log(
-        "cli",
-        "user/close_submitted",
-        true,
-        Duration::default(),
-        Some(vec![
-            format!("jobId={job_id}"),
-            format!("agentId={agent_id}"),
-            format!("txHash={tx_hash}"),
-        ]),
-        None,
-    );
-
-    println!("✓ Task closed; status → close.");
-    println!("  txHash: {tx_hash}");
-
-    if let Err(e) = super::negotiate::cleanup(job_id) {
-        if DEBUG_LOG {
-            eprintln!("⚠ failed to clean up negotiation state (safe to ignore): {e}");
-        }
-    }
-    Ok(())
+/// Reject direct use and preserve deterministic migration guidance.
+pub async fn handle_close(
+    client: &mut TaskApiClient,
+    job_id: &str,
+    explicit_agent_id: Option<&str>,
+) -> Result<()> {
+    let _ = (client, explicit_agent_id);
+    anyhow::bail!(
+        "direct close is disabled for V2 tasks; run `onchainos agent refund-prepare {job_id}` and execute only the returned confirmed action"
+    )
 }

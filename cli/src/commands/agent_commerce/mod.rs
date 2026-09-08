@@ -1,3 +1,4 @@
+pub mod a2mcp_probe;
 pub mod chat;
 pub mod identity;
 pub mod task;
@@ -13,6 +14,13 @@ use task::common::DEBUG_LOG;
 /// Shared `agent` namespace for identity + task-system commands.
 #[derive(Subcommand)]
 pub enum AgentCommand {
+    /// Stateless OKX.AI A2MCP direct invocation (probe / balance refresh / prepare).
+    #[command(name = "a2mcp-probe")]
+    A2mcpProbe {
+        #[command(subcommand)]
+        command: a2mcp_probe::A2mcpProbeCommand,
+    },
+
     // ── Identity ────────────────────────────────────────────────────────────
     /// Register a new Agent identity
     Create(identity::CreateArgs),
@@ -52,15 +60,15 @@ pub enum AgentCommand {
     /// Search public Agents
     Search(identity::SearchArgs),
 
-    /// Query an Agent's services
+    /// Query an Agent's services (optional --page / --page-size; defaults 1 / 3)
     #[command(name = "service-list")]
     ServiceList(identity::ServiceListArgs),
 
     /// Search marketplace Services for task matching
     #[command(
         name = "service-match",
-        long_about = "Search marketplace Services by capability, ASP, Service ID, Service name, or price range.\n\nInitial requests may omit all search filters. Continuation requests use --search-after and cannot repeat initial-search filters. --agentic-id is sent as the agenticId request header and may be used on both initial and continuation requests. Results include searchAfter, hasMore, unmatchReason, Services, pricing, trial information, and ASP summaries.",
-        after_long_help = "Examples:\n  Initial request:\n    onchainos agent service-match --keywords \"smart contract\" audit --min-payment-token-amount 5 --max-payment-token-amount 20 --limit 2\n\n  Initial request without filters:\n    onchainos agent service-match --agentic-id <user-agent-id>\n\n  Continuation request:\n    onchainos agent service-match --search-after <cursor> --agentic-id <user-agent-id> --limit 2"
+        long_about = "Search marketplace Services by capability, ASP, Service ID, Service name, or price range.\n\nInitial requests may omit all search filters. Continuation requests use --search-after and cannot repeat initial-search filters. Results include searchAfter, hasMore, unmatchReason, action, tip, Services, pricing, trial information, and ASP summaries.",
+        after_long_help = "Examples:\n  Initial request:\n    onchainos agent service-match --keywords \"smart contract\" audit --min-payment-token-amount 5 --max-payment-token-amount 20\n\n  Initial request without filters:\n    onchainos agent service-match\n\n  Continuation request:\n    onchainos agent service-match --search-after <cursor>"
     )]
     ServiceMatch(identity::ServiceMatchArgs),
 
@@ -89,42 +97,45 @@ pub enum AgentCommand {
     #[command(name = "create-task")]
     CreateTask {
         #[arg(long)]
+        title: String,
+        #[arg(long)]
         description: String,
-        #[arg(long)]
-        budget: f64,
-        #[arg(long = "max-budget")]
-        max_budget: f64,
-        #[arg(long)]
-        currency: String,
-        #[arg(long)]
-        title: Option<String>,
-        /// Specified provider agentId (required; skip asp-match, negotiate directly with this provider or x402 accept)
-        #[arg(long)]
-        provider: String,
-        /// Designated service endpoint (persisted for multi-service providers)
-        #[arg(long)]
-        endpoint: Option<String>,
+        #[arg(long = "description-summary")]
+        description_summary: Option<String>,
+        #[arg(long = "provider-agent-id")]
+        provider_agent_id: String,
+        #[arg(long = "payment-token-symbol")]
+        payment_token_symbol: String,
+        #[arg(long = "payment-token-amount")]
+        payment_token_amount: String,
         /// Local file paths to attach to the task after creation.
         #[arg(long = "file")]
         attachments: Option<Vec<String>>,
-        /// Payment mode to set at creation time (required; escrow / x402).
-        #[arg(long = "payment-mode")]
-        payment_mode: String,
-        /// Service ID from asp/match response (required)
         #[arg(long = "service-id")]
         service_id: String,
-        /// Service input parameters (natural language string)
-        #[arg(long = "service-params")]
-        service_params: Option<String>,
-        /// Service token contract address
+        #[arg(long = "service-params", default_value = "{}")]
+        service_params: String,
         #[arg(long = "service-token-address")]
-        service_token_address: Option<String>,
-        /// Service price (from asp/match feeAmount)
+        service_token_address: String,
         #[arg(long = "service-token-amount")]
-        service_token_amount: Option<String>,
-        /// Accepted for compatibility but ignored — user identity is auto-resolved.
-        #[arg(long = "agentId", alias = "agent-id", hide = true)]
-        _agent_id: Option<String>,
+        service_token_amount: String,
+        #[arg(long = "category-code")]
+        category_code: Option<String>,
+        #[arg(long = "min-credit-score")]
+        min_credit_score: Option<f64>,
+        #[arg(long, default_value = "private", value_parser = ["private", "public"])]
+        visibility: String,
+        #[arg(long = "chain-id", default_value_t = 196)]
+        chain_id: u64,
+        /// Exact provider service Guide. Stored locally before broadcast.
+        #[arg(long = "service-guide")]
+        service_guide: Option<String>,
+        /// SHA-256 of the exact service Guide when supplied by the provider.
+        #[arg(long = "service-guide-hash")]
+        service_guide_hash: Option<String>,
+        /// User-confirmed values for the matching Guide.
+        #[arg(long = "guide-consent-json")]
+        guide_consent_json: Option<String>,
     },
 
     /// Create a subscription task
@@ -146,63 +157,40 @@ pub enum AgentCommand {
         title: String,
         #[arg(long)]
         description: String,
+        /// Local file paths to attach to the subscription after creation.
+        #[arg(long = "file")]
+        attachments: Option<Vec<String>>,
         #[arg(long = "provider-agent-id")]
-        provider_agent_id: Option<String>,
-        /// Exact service description returned by asp-match. Only bounded
-        /// asset/tool hints are persisted; the raw prose is never executed.
-        #[arg(long = "service-description", default_value = "")]
-        service_description: String,
+        provider_agent_id: String,
+        /// Exact provider service Guide. Stored locally before broadcast.
+        #[arg(long = "service-guide")]
+        service_guide: Option<String>,
+        /// SHA-256 of the exact service Guide when supplied by the provider.
+        #[arg(long = "service-guide-hash")]
+        service_guide_hash: Option<String>,
+        /// User-confirmed values for the matching Guide.
+        #[arg(long = "guide-consent-json")]
+        guide_consent_json: Option<String>,
         #[arg(long = "service-interval", default_value = "month")]
         service_interval: String,
-        /// Explicit signal handling mode (`auto` or `notify_only`).
-        #[arg(long = "autotrade-mode")]
-        autotrade_mode: Option<String>,
-        /// Fixed quote amount used for every delivered signal.
-        /// [UNIT: human-readable decimal selected by --autotrade-quote; number only,
-        /// e.g. 20.5; never minimal units; do not include a USDT/USDC suffix.]
-        #[arg(long = "autotrade-amount")]
-        autotrade_amount: Option<String>,
-        /// Per-delivery automatic-execution quote cap.
-        /// [UNIT: human-readable decimal selected by --autotrade-quote; number only,
-        /// e.g. 50; never minimal units; do not include a USDT/USDC suffix.]
-        #[arg(long = "autotrade-cap")]
-        autotrade_cap: Option<String>,
-        /// Quote currency for amount/cap (`usdt` or `usdc`).
-        #[arg(long = "autotrade-quote")]
-        autotrade_quote: Option<String>,
-        /// User-authorized Trade Kit environment (`live` or `demo`).
-        #[arg(long = "autotrade-environment")]
-        autotrade_environment: Option<String>,
-        /// User-authorized Trade Kit derivative margin mode.
-        #[arg(long = "autotrade-margin-mode")]
-        autotrade_margin_mode: Option<String>,
-        /// User-authorized signal-entry order policy.
-        #[arg(long = "autotrade-order-policy")]
-        autotrade_order_policy: Option<String>,
-        /// User-selected Trade Kit credential source.
-        #[arg(long = "autotrade-auth-mode")]
-        autotrade_auth_mode: Option<String>,
-        /// User-confirmed settings as one JSON object. Stable product fields
-        /// stay flat; unknown fields must use typed entries under `extra`.
-        #[arg(long = "autotrade-settings-json")]
-        autotrade_settings_json: Option<String>,
-        /// Execution fields that the selected service requires the subscriber
-        /// to confirm. Repeat per field. Core names and matching value flags:
-        /// mode (--autotrade-mode), tradeAmount (--autotrade-amount),
-        /// cap (--autotrade-cap), quote (--autotrade-quote), environment
-        /// (--autotrade-environment), marginMode (--autotrade-margin-mode),
-        /// orderPolicy (--autotrade-order-policy), authMode
-        /// (--autotrade-auth-mode). Stable fields use their top-level name;
-        /// unknown fields use extra.<key> and a typed object in
-        /// --autotrade-settings-json. tradeAmountU is accepted only as a
-        /// deprecated alias for the public tradeAmount name.
-        #[arg(long = "autotrade-required-field")]
-        autotrade_required_fields: Vec<String>,
         #[arg(long, default_value = "")]
         format: String,
-        /// Legacy compatibility input. Create-time device selection is rejected.
-        #[arg(long = "exclude-device", hide = true)]
-        exclude_device: Option<Vec<String>>,
+    },
+
+    /// Replace the complete serviceParams during a v2 provider clarification round.
+    #[command(name = "service-param-update")]
+    ServiceParamUpdate {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        #[arg(long = "task-type", value_enum)]
+        task_type: task::user::service_param_update::ServiceParamTaskType,
+        #[arg(long = "request-id")]
+        request_id: String,
+        #[arg(long, value_parser = clap::value_parser!(u8).range(1..=3))]
+        round: u8,
+        #[arg(long = "service-params")]
+        service_params: String,
     },
 
     /// Cancel a subscription (unified: trial cancel + close auto-renew)
@@ -213,7 +201,7 @@ pub enum AgentCommand {
     #[command(name = "start-autorenew")]
     StartAutorenew { sub_id: String },
 
-    /// Reject a subscription delivery
+    /// Disabled legacy subscription rejection. Use Refund preparation.
     #[command(name = "subscribe-reject")]
     SubscribeReject {
         sub_id: String,
@@ -297,6 +285,14 @@ pub enum AgentCommand {
     #[command(name = "task-service-select")]
     TaskServiceSelect(task::user::TaskServiceSelectArgs),
 
+    /// Fetch one current marketplace Service by sid.
+    #[command(name = "service-detail")]
+    ServiceDetail(task::user::ServiceDetailArgs),
+
+    /// Run deterministic task-creation checks for a selected Service
+    #[command(name = "task-create-prepare")]
+    TaskCreatePrepare(task::user::TaskCreatePrepareArgs),
+
     /// Set/replace ASP + service on existing task (off-chain, triggers job_asp_selected)
     #[command(name = "set-asp")]
     SetAsp {
@@ -370,10 +366,37 @@ pub enum AgentCommand {
         #[arg(long, value_enum, default_value_t = task::user::subscription_ops::SubscriptionRole::Buyer)]
         role: task::user::subscription_ops::SubscriptionRole,
         /// Optional status filter, applied client-side. Accepts a status code
-        /// (-1/1/3/4/6/7/9) or a case-insensitive name (INIT/ACTIVE/REJECTED/
-        /// DISPUTED/COMPLETED/CLOSED/FAILED).
+        /// (-1/0/1/3/4/6/7/8/9) or a case-insensitive name
+        /// (INIT/CREATED/ACTIVE/REJECTED/DISPUTED/COMPLETED/CLOSED/EXPIRED/FAILED).
         #[arg(long, value_parser = task::user::subscription_ops::parse_status_filter)]
         status: Option<i32>,
+    },
+
+    /// List display-ready refund tasks for a buyer or pending refund requests for a provider.
+    #[command(name = "refund-list")]
+    RefundList {
+        /// Query viewpoint.
+        #[arg(long, value_enum)]
+        role: task::refund_list::RefundListRole,
+        /// Buyer query scope. Providers support requested only.
+        #[arg(long, value_enum)]
+        scope: task::refund_list::RefundListScope,
+        #[arg(long, default_value = "1")]
+        page: u32,
+        #[arg(long = "page-size", default_value = "20")]
+        page_size: u32,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
+    },
+
+    /// Show one display-ready refund request.
+    #[command(name = "refund-detail")]
+    RefundDetail {
+        job_id: String,
+        #[arg(long, value_enum)]
+        role: task::refund_list::RefundListRole,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
     },
 
     /// List subscription and one-time tasks for the current User identity.
@@ -409,83 +432,87 @@ pub enum AgentCommand {
         page_size: u32,
     },
 
+    /// List the current User's subscription tasks in one combined, cursor-paginated view.
+    #[command(name = "subscription-list")]
+    SubscriptionList {
+        /// Opaque cursor returned by the preceding subscription-list response.
+        #[arg(long)]
+        cursor: Option<String>,
+        /// Rows per combined page (1-100). Must match the cursor's page size.
+        #[arg(
+            long = "page-size",
+            default_value_t = 10,
+            value_parser = clap::value_parser!(u32).range(1..=100)
+        )]
+        page_size: u32,
+    },
+
+    /// Change a task's visibility through the marketplace task API.
+    #[command(name = "task-visibility-update")]
+    TaskVisibilityUpdate {
+        /// Task job ID.
+        #[arg(long = "job-id")]
+        job_id: String,
+        /// Target visibility: public or private.
+        #[arg(long, value_enum)]
+        visibility: task::user::visibility::TaskVisibility,
+    },
+
     /// Aggregated non-terminal tasks across **all agents under the current
     /// active account**, with `myRole` / `counterpartyAgentId` annotations so
     /// the user-session can route ad-hoc user instructions to the correct sub
     /// session (via `okx-a2a session query` → `okx-a2a session send --no-wait`).
     /// Status filter: includes 0 created / 1 accepted / 2 submitted / 3 refused
-    /// / 4 disputed by default; pass `--include-terminal` to also list 5-9.
+    /// / 4 disputed by default. Pass `--include-terminal` to include terminal
+    /// rows, including 8 expired.
     #[command(name = "active-tasks")]
     ActiveTasks {
         /// Optional role filter: user | asp | evaluator
         #[arg(long)]
         role: Option<String>,
-        /// Include terminal statuses (complete / close / expired / rejected / admin_stopped)
+        /// Include terminal statuses (admin_stopped / complete / close / failed)
         #[arg(long = "include-terminal")]
         include_terminal: bool,
+    },
+
+    /// List evaluation cases visible to one User or ASP identity.
+    #[command(name = "arbitration-list")]
+    ArbitrationList {
+        /// User or ASP agentId used as the agenticId request header.
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
+        page: u32,
+        #[arg(long = "page-size", default_value_t = 20, value_parser = clap::value_parser!(u32).range(1..))]
+        page_size: u32,
+    },
+
+    /// Show the current evaluation state visible to one User or ASP identity.
+    #[command(name = "arbitration-detail")]
+    ArbitrationDetail {
+        job_id: String,
+        /// User or ASP agentId used as the agenticId request header.
+        #[arg(long = "agent-id")]
+        agent_id: String,
     },
 
     /// Set payment mode on-chain (standalone, before confirm-accept)
     #[command(name = "set-payment-mode")]
     SetPaymentMode {
         job_id: String,
-        /// escrow / x402
+        /// Escrow only. Legacy task-based x402/A2MCP is no longer supported.
         #[arg(long = "payment-mode")]
         payment_mode: Option<String>,
         #[arg(long = "token-symbol")]
         token_symbol: Option<String>,
         #[arg(long = "token-amount")]
         token_amount: Option<String>,
-        /// x402 service endpoint URL
-        #[arg(long)]
-        endpoint: Option<String>,
     },
 
     /// Client confirms provider and executes payment (setPaymentMode must be done first).
     /// All parameters are auto-resolved from the task detail API.
     #[command(name = "confirm-accept")]
     ConfirmAccept { job_id: String },
-
-    /// x402 Phase 2: x402_pay signing + direct/accept + endpoint replay
-    #[command(name = "task-402-pay")]
-    Task402Pay {
-        job_id: String,
-        #[arg(long = "provider-agent-id")]
-        provider_agent_id: String,
-        /// JSON accepts array from the HTTP 402 response
-        #[arg(long)]
-        accepts: String,
-        /// x402 provider endpoint URL (for replay after signing)
-        #[arg(long)]
-        endpoint: String,
-        #[arg(long = "token-symbol")]
-        token_symbol: String,
-        #[arg(long = "token-amount")]
-        token_amount: String,
-        /// Payer address (optional)
-        #[arg(long)]
-        from: Option<String>,
-        /// JSON business body to POST during replay (for endpoints that require business parameters)
-        #[arg(long)]
-        body: Option<String>,
-        /// Bypass the confirming gate and broadcast the on-chain accept immediately (FR-7.3)
-        #[arg(long, default_value_t = false)]
-        force: bool,
-    },
-
-    /// Validate an x402 endpoint and extract pricing info
-    #[command(name = "x402-check")]
-    X402Check {
-        /// x402 provider endpoint URL
-        #[arg(long)]
-        endpoint: String,
-        /// User agent ID (used for auth on token detail queries)
-        #[arg(long = "agent-id")]
-        agent_id: Option<String>,
-        /// JSON business body to POST (for endpoints that require business parameters to return 402)
-        #[arg(long)]
-        body: Option<String>,
-    },
 
     /// Designated-provider routing: service-list + profile in one call
     #[command(name = "designated-route")]
@@ -496,42 +523,44 @@ pub enum AgentCommand {
         /// Target registered service ID (preferred for exact selection)
         #[arg(long = "service-id")]
         service_id: Option<String>,
-        /// Target service endpoint (for multi-service providers)
-        #[arg(long)]
-        endpoint: Option<String>,
-    },
-
-    /// Validate x402 endpoint + price match + budget check in one call
-    #[command(name = "x402-validate")]
-    X402Validate {
-        /// x402 provider endpoint URL
-        #[arg(long)]
-        endpoint: String,
-        /// User agent ID
-        #[arg(long = "agent-id")]
-        agent_id: String,
-        /// Job ID (for budget lookup)
-        #[arg(long = "job-id")]
-        job_id: String,
-        /// Registered fee amount from designated-route
-        #[arg(long = "fee-amount")]
-        fee_amount: String,
-        /// Registered fee token symbol from designated-route
-        #[arg(long = "fee-token")]
-        fee_token: String,
     },
 
     /// Client confirms task complete and releases payment
     Complete { job_id: String },
 
-    /// Client rejects deliverable
+    /// Disabled legacy rejection. Use Refund preparation.
     Reject {
         job_id: String,
         #[arg(long)]
         reason: String,
     },
 
-    /// Client closes task (only valid while Open)
+    /// Read-only Refund eligibility and next-action preparation
+    #[command(name = "refund-prepare")]
+    RefundPrepare {
+        job_id: String,
+        /// User-authored refund reason. Required only for an active refundable task.
+        #[arg(long)]
+        reason: Option<String>,
+    },
+
+    /// Execute an explicitly confirmed Refund operation
+    #[command(name = "refund-execute")]
+    RefundExecute {
+        job_id: String,
+        #[arg(long, value_enum)]
+        operation: task::user::refund::RefundOperation,
+        #[arg(long = "refund-context-id")]
+        refund_context_id: String,
+        /// Exact user-authored reason returned through refund-prepare.
+        #[arg(long)]
+        reason: Option<String>,
+        /// Explicitly confirms the current prepared refund operation.
+        #[arg(long, default_value_t = false)]
+        confirm: bool,
+    },
+
+    /// Disabled legacy close. Use Refund preparation.
     Close {
         job_id: String,
         #[arg(long = "agent-id")]
@@ -581,6 +610,11 @@ pub enum AgentCommand {
         role: String,
     },
 
+    /// Advisory read-only check of the local A2A communication runtime.
+    /// A not-ready result is reported in JSON but never blocks the caller.
+    #[command(name = "communication-check")]
+    CommunicationCheck,
+
     /// Prepare-create: validate fields + gate-check + designated-route in one call.
     /// Returns structured JSON for the confirmation form. Does NOT create the task.
     #[command(name = "prepare-create")]
@@ -603,7 +637,7 @@ pub enum AgentCommand {
     /// to current account). Wrapper over `agent get-agents --agent-ids` that flattens
     /// the `list[].agentList[]` nesting and returns the matched agent as a
     /// single flat object. Used for verifying peer / designated provider
-    /// identities (e.g. user-sub-playbook.md Provider validation).
+    /// identities (e.g. `references/a2a/peer.md` Provider validation).
     ///
     /// `ok: false` when not found / agentId malformed; otherwise `data` is
     /// the agent object `{agentId, name, role, status, ownerAddress,
@@ -632,8 +666,6 @@ pub enum AgentCommand {
         job_id: String,
         #[arg(long, default_value = "")]
         file: String,
-        #[arg(long, default_value = "Task completed, please review")]
-        message: String,
         /// Text deliverable content for auto-save. When non-empty and --file is empty,
         /// the CLI writes this to a temp file and persists it as a text deliverable.
         #[arg(long = "deliverable-text", default_value = "")]
@@ -641,10 +673,6 @@ pub enum AgentCommand {
         /// Provider agentId (required). Beta backend rejects empty agenticId header → 3001 auth fail.
         #[arg(long = "agent-id")]
         agent_id: String,
-        /// Deprecated compatibility argument. Accepted but ignored; only the
-        /// explicit text/file deliverable is sent and processed.
-        #[arg(long, default_value = "")]
-        autotrade: String,
     },
 
     /// Check deterministic local Trade Kit CLI/version/capability compatibility.
@@ -727,9 +755,6 @@ pub enum AgentCommand {
         /// `plugin-approved` alias is retained for compatibility).
         #[arg(long)]
         plugin: Option<String>,
-        /// Deprecated. Model routes are persisted with `subscription-route-set`.
-        #[arg(long)]
-        tool: Option<String>,
         /// Quote stablecoin dex trades pay with / settle into: `usdc` | `usdt`.
         /// Pass ONLY when the user named one; omitted keeps the stored choice
         /// (or the default, USDT).
@@ -831,53 +856,15 @@ pub enum AgentCommand {
         amount: String,
     },
 
-    /// Execute one admitted delivery through a venue-specific CLI and
-    /// deterministically report its terminal result to the job UI.
-    #[command(name = "autotrade-execute", hide = true)]
-    AutotradeExecute {
-        #[arg(long = "job-id")]
-        job_id: String,
-        #[arg(long = "delivery-id")]
-        delivery_id: String,
-        /// dex | defi | trade_kit | polymarket | hyperliquid
-        #[arg(long)]
-        venue: String,
-        /// buy | sell
-        #[arg(long)]
-        action: String,
-        /// Exact persisted policy amount.
-        #[arg(long)]
-        amount: String,
-        /// `auto` for persisted grant execution; `one_time` for an exact
-        /// over-cap permit. `manual` is accepted only to fail closed for legacy callers.
-        #[arg(long = "execution-mode", default_value = "auto")]
-        execution_mode: String,
-        /// JSON array containing only the target CLI's argv (no program/shell).
-        #[arg(long = "command-json")]
-        command_json: String,
-        #[arg(long = "timeout-sec", default_value_t = 120)]
-        timeout_sec: u64,
-    },
-
     /// Reserve an Agent-direct delivery immediately before the selected
-    /// Skill/tool performs its money-moving call. This command validates local
-    /// authorization and idempotency but never accepts or executes target argv.
+    /// Skill/tool performs its money-moving call. This command validates the
+    /// active Guide+Consent contract and idempotency but never executes target argv.
     #[command(name = "autotrade-direct-claim", hide = true)]
     AutotradeDirectClaim {
         #[arg(long = "job-id")]
         job_id: String,
         #[arg(long = "delivery-id")]
         delivery_id: String,
-        /// Resolved quote amount used as authorization metadata.
-        #[arg(long)]
-        amount: String,
-        /// Current tool-account available quote amount. Required when the
-        /// persisted policy uses a percentage amount.
-        #[arg(long = "available-amount")]
-        available_amount: Option<String>,
-        /// auto | one_time (`manual` is legacy and rejected by authorization)
-        #[arg(long = "execution-mode", default_value = "auto")]
-        execution_mode: String,
     },
 
     /// Persist the documented result returned by an Agent-selected Skill/tool.
@@ -926,32 +913,6 @@ pub enum AgentCommand {
         reason: String,
     },
 
-    /// Persist a bounded model-selected route for an Active subscription.
-    #[command(name = "subscription-route-set", hide = true)]
-    SubscriptionRouteSet {
-        #[arg(long = "job-id")]
-        job_id: String,
-        #[arg(long = "asset-class")]
-        asset_class: String,
-        #[arg(long = "skill-id")]
-        skill_id: String,
-        #[arg(long = "plugin-id")]
-        plugin_id: Option<String>,
-        #[arg(long)]
-        protocol: Option<String>,
-        #[arg(long = "requirement")]
-        requirements: Vec<String>,
-        #[arg(long = "delivery-id")]
-        delivery_id: String,
-    },
-
-    /// Clear cached model routes after an explicit incompatibility or reset.
-    #[command(name = "subscription-route-clear", hide = true)]
-    SubscriptionRouteClear {
-        #[arg(long = "job-id")]
-        job_id: String,
-    },
-
     /// Read-only first-entry gate for an explicitly scoped subscription watch.
     #[command(name = "autotrade-watch-precheck", hide = true)]
     AutotradeWatchPrecheck {
@@ -994,6 +955,42 @@ pub enum AgentCommand {
         reason: String,
     },
 
+    /// Accept a designated one-time task created and funded by the buyer.
+    #[command(name = "accept-job-by-provider")]
+    AcceptJobByProvider {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+    },
+
+    /// Decline a designated one-time task and trigger its refund flow.
+    #[command(name = "decline-job-by-provider")]
+    DeclineJobByProvider {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        #[arg(long)]
+        reason: String,
+    },
+
+    /// Accept a designated subscription created and funded by the buyer.
+    #[command(name = "accept-subscription")]
+    AcceptSubscription {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+    },
+
+    /// Decline a designated subscription and trigger its refund flow.
+    #[command(name = "decline-subscription")]
+    DeclineSubscription {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        #[arg(long)]
+        reason: String,
+    },
+
     /// ASP: list my still-active subscription jobs (continuous-delivery phase) as a JSON array
     /// — the resident dispatch script's fan-out set. Source: GET /subscribe/my.
     #[command(name = "subscribe-active")]
@@ -1026,22 +1023,23 @@ pub enum AgentCommand {
         agent_id: String,
     },
 
-    /// ASP: raise arbitration for a rejected subscription period via the §2.10 single combined
+    /// ASP: request evaluation for a rejected subscription period via the §2.10 single combined
     /// endpoint (POST /task/{jobId}/dispute/approveAndCreateDispute → sign → broadcast). The
     /// "dispute" outcome of a `sub_user_reject` decision.
     #[command(name = "subscribe-dispute")]
     SubscribeDispute {
         job_id: String,
-        /// ASP's dispute reason — persisted on-chain via the broadcast bizContext (like
-        /// `dispute confirm`). Optional; omitted → empty reason.
+        /// ASP's non-empty evaluation reason — sent to the task session for evidence and
+        /// persisted on-chain via the broadcast bizContext (like `dispute confirm`).
         #[arg(long = "reason")]
-        reason: Option<String>,
+        reason: String,
         /// ASP agentId (required)
         #[arg(long = "agent-id")]
         agent_id: String,
     },
 
-    /// Client claims auto-refund after provider timeout
+    /// Disabled legacy write command. Use `refund-prepare`; a cause-specific
+    /// timeout claim requires a backend Refund contract.
     #[command(name = "claim-auto-refund")]
     ClaimAutoRefund { job_id: String },
 
@@ -1160,7 +1158,7 @@ pub enum AgentCommand {
     },
 
     // ── Task system (sub-groups) ────────────────────────────────────────────
-    /// Dispute actions (provider): raise, evidence, info, upload
+    /// Evaluation actions (ASP): request, confirm, and upload evidence.
     #[command(subcommand)]
     Dispute(task::asp::DisputeCommand),
 
@@ -1172,7 +1170,7 @@ pub enum AgentCommand {
     // Historically wrapped as `Evaluator(EvaluatorCommand)`; flattened to the top level in 2026-05
     // to align with the user/provider style. The `agent evaluator <sub>` form is no longer supported;
     // see the file header comment in `evaluator/mod.rs` for per-command correspondence.
-    /// Fetch dispute evidence: each side's `reason` (provider = dispute-raise reason; client =
+    /// Fetch evaluation evidence: each side's `reason` (provider = evaluation-request reason; client =
     /// reject-delivery reason), `texts[]` (free text), and `files[]` (any file type, downloaded
     /// locally **without extensions** — the evaluator agent probes type itself via `file
     /// --mime-type` per the playbook). Backend resolves the active dispute round from jobId —
@@ -1203,7 +1201,7 @@ pub enum AgentCommand {
         #[arg(long)]
         vote: u8,
         /// Full verdict text produced by Step 5 per the Verdict template defined in
-        /// `references/evaluator-decision-rubric.md` (whichever heading the user-customized
+        /// `skills/okx-ai/references/a2a/evaluator/rubric.md` (whichever heading the user-customized
         /// rubric uses to define it; required). Sent to backend in the broadcast bizContext as
         /// `voteReport` — the human-readable on-chain audit trail; whatever fields the rubric's
         /// Verdict template prescribes. Flatten to a single line with `\n` / `\t` / `\r` / `\\` / `\"`
@@ -1231,7 +1229,7 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")]
         agent_id: String,
     },
-    /// Claim arbitration reward after task/dispute resolved. Account-level pull — one call drains
+    /// Claim evaluation reward after an evaluation resolves. Account-level pull — one call drains
     /// every pending reward across all settled disputes (POST /task/claim, no jobId).
     /// Distinct from user's `claim` (which pulls per-job refund/reward).
     #[command(name = "arbitration-claim")]
@@ -1240,7 +1238,7 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")]
         agent_id: String,
     },
-    /// List account-level claimable arbitration rewards across all settled disputes
+    /// List account-level claimable evaluation rewards across all settled disputes
     /// (GET /task/claimable). Read-only; no tx.
     #[command(name = "arbitration-claimable")]
     ArbitrationClaimable {
@@ -1294,7 +1292,7 @@ pub enum AgentCommand {
         #[arg(long = "agent-id")]
         agent_id: String,
     },
-    /// Read platform staking & arbitration config (Apollo-driven, JWT auth, no body).
+    /// Read platform staking and evaluation config (Apollo-driven, JWT auth, no body).
     /// Mirrors GET /priapi/v1/aieco/task/staking/config.
     #[command(name = "staking-config", visible_alias = "stakingconfig")]
     StakingConfig {
@@ -1318,14 +1316,17 @@ pub enum AgentCommand {
 
     /// Get next-step instruction prompt for current job state.
     ///
-    /// Invocation contract — exactly **three** flags:
+    /// Invocation contract — three core flags, plus `--a2a-file` for a
+    /// `deliverable_received` envelope:
     ///   `--role <user|asp|evaluator|auto>` — playbook routing role
     ///   `--agentId <agentId>`                    — receiving agent
     ///   `--message <envelope JSON>`              — the full `message` object
     ///                                              from the inbound notification
     ///
     /// All other inputs (`jobId`, `event`, `code`, `jobTitle`, `provider`, `data`,
-    /// `peerTaskMinVersion`, etc.) are extracted from inside the `--message` JSON.
+    /// etc.) are extracted from inside the `--message` JSON. Evaluation-decision
+    /// relays also carry their validated `decisionId`, `selectedActionId`, and
+    /// `params` in that same object.
     /// This keeps the LLM-facing surface minimal: copy the envelope through, the
     /// CLI parses out whatever it needs.
     #[command(name = "next-action")]
@@ -1337,9 +1338,13 @@ pub enum AgentCommand {
         /// resolve the role from `--agentId` (saves a separate `agent profile` round-trip).
         #[arg(long)]
         role: String,
-        /// Full system event envelope as a JSON string — the entire `message` object.
+        /// Complete current `message` object serialized as JSON.
         /// Required. Must contain at least `event` and `jobId`; optional fields the
-        /// CLI reads: `code` / `jobTitle` / `provider` / `data` / `taskMinVersion`
+        /// CLI reads: `code` / `jobTitle` / `provider` / `data`. A
+        /// `user_decision_job_rejected` or `user_decision_sub_user_reject`
+        /// message also contains `decisionId`, `selectedActionId`, and `params`;
+        /// an evaluation action carries the user's non-empty reason in
+        /// `params.reason`.
         /// (plus any task-detail fields like `paymentMode` /
         /// `tokenAmount` / `tokenSymbol` / `serviceParams` that downstream scenes
         /// may consume directly).
@@ -1427,9 +1432,9 @@ pub enum AgentCommand {
         agent_ids: Vec<String>,
     },
 
-    /// Terminal-state session cleanup: cancel pending decisions + output
-    /// `okx-a2a session delete` instructions. Replaces the multi-step
-    /// manual cleanup in terminal playbooks.
+    /// Terminal-state session cleanup: cancel pending decisions, clear cached
+    /// task prompts, and delete the internal `okx-a2a` conversation unless
+    /// KEEP_SESSION is enabled. Replaces manual terminal cleanup.
     #[command(name = "session-cleanup")]
     SessionCleanup {
         #[arg(long = "job-id")]
@@ -1473,6 +1478,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
     );
 
     match cmd {
+        AgentCommand::A2mcpProbe { command } => a2mcp_probe::run(command, ctx).await,
         // ── Identity ────────────────────────────────────────────────
         AgentCommand::Create(args) => identity::create(args, ctx).await,
         AgentCommand::Update(args) => identity::update(args, ctx).await,
@@ -1495,36 +1501,45 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         // ── Client (user) task commands ────────────────────────────
         AgentCommand::CreateTask {
-            description,
-            budget,
-            max_budget,
-            currency,
             title,
-            provider,
-            endpoint,
+            description,
+            description_summary,
+            provider_agent_id,
+            payment_token_symbol,
+            payment_token_amount,
             attachments,
-            payment_mode,
             service_id,
             service_params,
             service_token_address,
             service_token_amount,
-            _agent_id: _,
+            category_code,
+            min_credit_score,
+            visibility,
+            chain_id,
+            service_guide,
+            service_guide_hash,
+            guide_consent_json,
         } => {
             task::user::run_task(
                 T::Create {
-                    description,
-                    budget,
-                    max_budget,
-                    currency,
                     title,
-                    provider,
-                    endpoint,
+                    description,
+                    description_summary,
+                    provider_agent_id,
+                    payment_token_symbol,
+                    payment_token_amount,
                     attachments,
-                    payment_mode,
                     service_id,
                     service_params,
                     service_token_address,
                     service_token_amount,
+                    category_code,
+                    min_credit_score,
+                    visibility,
+                    chain_id,
+                    service_guide,
+                    service_guide_hash,
+                    guide_consent_json,
                 },
                 ctx,
             )
@@ -1540,21 +1555,13 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             auto_renew,
             title,
             description,
+            attachments,
             provider_agent_id,
-            service_description,
+            service_guide,
+            service_guide_hash,
+            guide_consent_json,
             service_interval,
-            autotrade_mode,
-            autotrade_amount,
-            autotrade_cap,
-            autotrade_quote,
-            autotrade_environment,
-            autotrade_margin_mode,
-            autotrade_order_policy,
-            autotrade_auth_mode,
-            autotrade_settings_json,
-            autotrade_required_fields,
             format,
-            exclude_device,
         } => {
             task::user::run_task(
                 T::CreateSubscribe {
@@ -1566,23 +1573,36 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     auto_renew,
                     title,
                     description,
+                    attachments,
                     provider_agent_id,
-                    service_description,
+                    service_guide,
+                    service_guide_hash,
+                    guide_consent_json,
                     service_interval,
-                    autotrade_mode,
-                    autotrade_amount,
-                    autotrade_cap,
-                    autotrade_quote,
-                    autotrade_environment,
-                    autotrade_margin_mode,
-                    autotrade_order_policy,
-                    autotrade_auth_mode,
-                    autotrade_settings_json,
-                    autotrade_required_fields,
                     format,
-                    exclude_device,
                 },
                 ctx,
+            )
+            .await
+        }
+
+        AgentCommand::ServiceParamUpdate {
+            job_id,
+            agent_id,
+            task_type,
+            request_id,
+            round,
+            service_params,
+        } => {
+            let mut client = task::common::network::task_api_client::TaskApiClient::new();
+            task::user::service_param_update::handle(
+                &mut client,
+                &job_id,
+                &agent_id,
+                task_type,
+                &request_id,
+                round,
+                &service_params,
             )
             .await
         }
@@ -1647,6 +1667,14 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::TaskServiceSelect(args) => {
             task::user::run_task(T::TaskServiceSelect(args), ctx).await
+        }
+
+        AgentCommand::ServiceDetail(args) => {
+            task::user::run_task(T::ServiceDetail(args), ctx).await
+        }
+
+        AgentCommand::TaskCreatePrepare(args) => {
+            task::user::run_task(T::TaskCreatePrepare(args), ctx).await
         }
 
         AgentCommand::SetAsp {
@@ -1732,6 +1760,40 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::user::run_task(T::MySubscriptions { role, status }, ctx).await
         }
 
+        AgentCommand::RefundList {
+            role,
+            scope,
+            page,
+            page_size,
+            agent_id,
+        } => {
+            let mut client = task::common::network::task_api_client::TaskApiClient::new();
+            task::refund_list::handle_refund_list(
+                &mut client,
+                role,
+                scope,
+                page,
+                page_size,
+                agent_id.as_deref().unwrap_or(""),
+            )
+            .await
+        }
+
+        AgentCommand::RefundDetail {
+            job_id,
+            role,
+            agent_id,
+        } => {
+            let mut client = task::common::network::task_api_client::TaskApiClient::new();
+            task::refund_list::handle_refund_detail(
+                &mut client,
+                &job_id,
+                role,
+                agent_id.as_deref().unwrap_or(""),
+            )
+            .await
+        }
+
         AgentCommand::MyTasks {
             task_type,
             status_type,
@@ -1750,6 +1812,14 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             .await
         }
 
+        AgentCommand::SubscriptionList { cursor, page_size } => {
+            task::user::run_task(T::SubscriptionList { cursor, page_size }, ctx).await
+        }
+
+        AgentCommand::TaskVisibilityUpdate { job_id, visibility } => {
+            task::user::run_task(T::TaskVisibilityUpdate { job_id, visibility }, ctx).await
+        }
+
         AgentCommand::ActiveTasks {
             role,
             include_terminal,
@@ -1759,12 +1829,26 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 .await
         }
 
+        AgentCommand::ArbitrationList {
+            agent_id,
+            page,
+            page_size,
+        } => {
+            let mut client = task::common::network::task_api_client::TaskApiClient::new();
+            task::arbitration::handle_arbitration_list(&mut client, &agent_id, page, page_size)
+                .await
+        }
+
+        AgentCommand::ArbitrationDetail { job_id, agent_id } => {
+            let mut client = task::common::network::task_api_client::TaskApiClient::new();
+            task::arbitration::handle_arbitration_detail(&mut client, &job_id, &agent_id).await
+        }
+
         AgentCommand::SetPaymentMode {
             job_id,
             payment_mode,
             token_symbol,
             token_amount,
-            endpoint,
         } => {
             task::user::run_task(
                 T::SetPaymentMode {
@@ -1772,7 +1856,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     payment_mode,
                     token_symbol,
                     token_amount,
-                    endpoint,
                 },
                 ctx,
             )
@@ -1783,79 +1866,10 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::user::run_task(T::ConfirmAccept { job_id }, ctx).await
         }
 
-        AgentCommand::Task402Pay {
-            job_id,
-            provider_agent_id,
-            accepts,
-            endpoint,
-            token_symbol,
-            token_amount,
-            from,
-            body,
-            force,
-        } => {
-            task::user::run_task(
-                T::Task402Pay {
-                    job_id,
-                    provider_agent_id,
-                    accepts,
-                    endpoint,
-                    token_symbol,
-                    token_amount,
-                    from,
-                    body,
-                    force,
-                },
-                ctx,
-            )
-            .await
-        }
-
-        AgentCommand::X402Check {
-            endpoint,
-            agent_id,
-            body,
-        } => {
-            task::user::run_task(
-                T::X402Check {
-                    endpoint,
-                    agent_id,
-                    body,
-                },
-                ctx,
-            )
-            .await
-        }
-
         AgentCommand::DesignatedRoute {
             provider,
             service_id,
-            endpoint,
-        } => {
-            task::common::handle_designated_route(
-                &provider,
-                service_id.as_deref(),
-                endpoint.as_deref(),
-            )
-            .await
-        }
-
-        AgentCommand::X402Validate {
-            endpoint,
-            agent_id,
-            job_id,
-            fee_amount,
-            fee_token,
-        } => {
-            task::common::handle_x402_validate(
-                &endpoint,
-                &agent_id,
-                &job_id,
-                &fee_amount,
-                &fee_token,
-            )
-            .await
-        }
+        } => task::common::handle_designated_route(&provider, service_id.as_deref()).await,
 
         AgentCommand::Complete { job_id } => {
             task::user::run_task(T::Complete { job_id }, ctx).await
@@ -1863,6 +1877,30 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::Reject { job_id, reason } => {
             task::user::run_task(T::Reject { job_id, reason }, ctx).await
+        }
+
+        AgentCommand::RefundPrepare { job_id, reason } => {
+            task::user::run_task(T::RefundPrepare { job_id, reason }, ctx).await
+        }
+
+        AgentCommand::RefundExecute {
+            job_id,
+            operation,
+            refund_context_id,
+            reason,
+            confirm,
+        } => {
+            task::user::run_task(
+                T::RefundExecute {
+                    job_id,
+                    operation,
+                    refund_context_id,
+                    reason,
+                    confirm,
+                },
+                ctx,
+            )
+            .await
         }
 
         AgentCommand::Close { job_id, agent_id } => {
@@ -1976,6 +2014,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::GateCheck { role } => task::common::handle_preflight(&role).await,
 
+        AgentCommand::CommunicationCheck => task::common::handle_communication_check().await,
+
         AgentCommand::PrepareCreate {
             description,
             title,
@@ -2018,19 +2058,15 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::Deliver {
             job_id,
             file,
-            message,
             deliverable_text,
             agent_id,
-            autotrade,
         } => {
             task::asp::run_provider(
                 task::asp::ProviderCommand::Deliver {
                     job_id,
                     file,
-                    message,
                     deliverable_text,
                     agent_id,
-                    autotrade,
                 },
                 ctx,
             )
@@ -2048,7 +2084,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 task::common::autotrade::trade_kit::TradeEnvironment::parse(&environment)
                     .map_err(anyhow::Error::msg)?;
             let result =
-                task::common::autotrade::trade_kit::probe_runtime(&asset_classes, environment).await;
+                task::common::autotrade::trade_kit::probe_runtime(&asset_classes, environment)
+                    .await;
             crate::output::success(result);
             Ok(())
         }
@@ -2101,37 +2138,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             Ok(())
         }
 
-        AgentCommand::SubscriptionRouteSet {
-            job_id,
-            asset_class,
-            skill_id,
-            plugin_id,
-            protocol,
-            requirements,
-            delivery_id,
-        } => {
-            let asset_class = asset_class
-                .parse::<crate::asset_class::AssetClass>()
-                .map_err(anyhow::Error::msg)?;
-            let route = task::common::autotrade::profile::write_model_route(
-                &job_id,
-                asset_class,
-                &skill_id,
-                plugin_id.as_deref(),
-                protocol.as_deref(),
-                &requirements,
-                &delivery_id,
-            )?;
-            crate::output::success(route);
-            Ok(())
-        }
-
-        AgentCommand::SubscriptionRouteClear { job_id } => {
-            task::common::autotrade::profile::clear_model_routes(&job_id)?;
-            crate::output::success_empty();
-            Ok(())
-        }
-
         AgentCommand::AutotradeWatchPrecheck {
             job_id,
             review_existing,
@@ -2151,88 +2157,38 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             delivery_id,
             signal_type: _,
         } => {
-            use task::common::autotrade::{consent, executor};
-            let policy = consent::load_consent(&job_id)?;
-            if policy
-                .as_ref()
-                .is_some_and(|policy| policy.mode == consent::ConsentMode::Auto)
-            {
-                crate::output::success(serde_json::json!({
-                    "decision": false,
-                    "decisionPushed": false,
-                    "status": "policy_ready",
-                    "reason": "auto_authorization_already_persisted",
-                    "jobId": job_id,
-                    "deliveryId": delivery_id,
-                    "consentMode": "auto",
-                    "terminal": false,
-                    "guidance": "Re-read this delivery, run the normal grant/readiness checks, and execute only through autotrade-execute if eligible.",
-                }));
-                return Ok(());
-            }
+            use task::common::autotrade::executor;
+            // This hidden command is reached only from an in-flight legacy
+            // decision. A fixed-field Consent cannot satisfy the Guide +
+            // Guide Consent + resolved Signal contract, so never advertise a
+            // resumable execution path here.
             let outcome = executor::report_delivery(
                 &job_id,
                 &delivery_id,
                 "skipped",
-                task::common::autotrade::EXECUTION_POLICY_NOT_CONFIGURED_REASON,
+                task::common::autotrade::GUIDE_EXECUTION_UNAVAILABLE_REASON,
             )?;
             let _ = task::common::okx_a2a::mark_retired_autotrade_mode_decisions_handled(&job_id);
             crate::output::success(serde_json::json!({
                 "decision": false,
                 "decisionPushed": false,
                 "status": "skipped",
-                "reason": task::common::autotrade::EXECUTION_POLICY_NOT_CONFIGURED_REASON,
+                "reason": task::common::autotrade::GUIDE_EXECUTION_UNAVAILABLE_REASON,
                 "jobId": job_id,
                 "deliveryId": delivery_id,
                 "terminal": true,
                 "outcome": outcome,
-                "guidance": "The deliverable was saved and no transaction was submitted. This subscription is notify-only because it has no active automatic execution policy. Do not create a per-delivery execution decision. The user may explicitly update the subscription for future automatic execution.",
+                "guidance": "The Signal remains saved for receive/display only. This retired Consent flow cannot authorize Guide-driven execution; do not create another execution decision.",
             }));
-            Ok(())
-        }
-
-        AgentCommand::AutotradeExecute {
-            job_id,
-            delivery_id,
-            venue,
-            action,
-            amount,
-            execution_mode,
-            command_json,
-            timeout_sec,
-        } => {
-            let outcome = task::common::autotrade::executor::execute(
-                task::common::autotrade::executor::ExecuteRequest {
-                    job_id: &job_id,
-                    delivery_id: &delivery_id,
-                    venue: &venue,
-                    action: &action,
-                    amount: &amount,
-                    execution_mode:
-                        task::common::autotrade::executor::ExecutionMode::parse(&execution_mode)?,
-                    command_json: &command_json,
-                    timeout_sec,
-                },
-            )
-            .await?;
-            crate::output::success(outcome);
             Ok(())
         }
 
         AgentCommand::AutotradeDirectClaim {
             job_id,
             delivery_id,
-            amount,
-            available_amount,
-            execution_mode,
         } => {
-            let result = task::common::autotrade::executor::claim_direct(
-                &job_id,
-                &delivery_id,
-                &amount,
-                available_amount.as_deref(),
-                task::common::autotrade::executor::ExecutionMode::parse(&execution_mode)?,
-            )?;
+            let result =
+                task::common::autotrade::executor::claim_guide_direct(&job_id, &delivery_id)?;
             crate::output::success(result);
             Ok(())
         }
@@ -2262,13 +2218,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             delivery_id,
             amount,
         } => {
-            crate::output::success(
-                task::common::autotrade::executor::authorize_one_time(
-                    &job_id,
-                    &delivery_id,
-                    &amount,
-                )?,
-            );
+            crate::output::success(task::common::autotrade::executor::authorize_one_time(
+                &job_id,
+                &delivery_id,
+                &amount,
+            )?);
             Ok(())
         }
 
@@ -2351,10 +2305,10 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             settings_json,
             cancel,
         } => {
+            use task::common::autotrade::consent;
             use task::common::autotrade::continuation::{
                 self, ExplicitValues, Origin, SelectedMode, StartBinding,
             };
-            use task::common::autotrade::consent;
             if cancel {
                 if mode.is_some()
                     || origin.is_some()
@@ -2374,9 +2328,9 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 {
                     anyhow::bail!("--cancel does not accept configuration arguments");
                 }
-                let continuation_id = continuation_id
-                    .as_deref()
-                    .ok_or_else(|| anyhow::anyhow!("--continuation-id is required with --cancel"))?;
+                let continuation_id = continuation_id.as_deref().ok_or_else(|| {
+                    anyhow::anyhow!("--continuation-id is required with --cancel")
+                })?;
                 continuation::cancel(&job_id, &agent_id, continuation_id)?;
                 crate::output::success(serde_json::json!({
                     "jobId": job_id,
@@ -2386,10 +2340,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 return Ok(());
             }
 
-            let selected_mode = mode
-                .as_deref()
-                .map(SelectedMode::parse)
-                .transpose()?;
+            let selected_mode = mode.as_deref().map(SelectedMode::parse).transpose()?;
             let values = ExplicitValues {
                 trade_amount_u: trade_amount.as_deref(),
                 cap_u: cap.as_deref(),
@@ -2465,8 +2416,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         original_delivery_id: delivery_id.as_deref(),
                         required_fields: Some(&effective_required_fields),
                         service_guide_hash: restore_context.service_guide_hash.as_deref(),
-                        service_guide_hash_resolved: restore_context
-                            .service_guide_hash_resolved,
+                        service_guide_hash_resolved: restore_context.service_guide_hash_resolved,
                         seed_consent: seed_consent.as_ref(),
                     }),
                     &job_id,
@@ -2487,11 +2437,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     );
                 }
                 let continuation_id = continuation_id.as_deref().expect("checked above");
-                let existing = continuation::load_for_resume(
-                    &job_id,
-                    &agent_id,
-                    continuation_id,
-                )?;
+                let existing = continuation::load_for_resume(&job_id, &agent_id, continuation_id)?;
                 if existing.origin == Origin::SubscriptionRestore {
                     let asset_class = existing
                         .signal_type
@@ -2537,7 +2483,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             agent_id,
             ttl_sec,
             plugin,
-            tool,
             quote,
             environment,
             margin_mode,
@@ -2567,13 +2512,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 .as_deref()
                 .map(consent::TradeKitAuthMode::parse)
                 .transpose()?;
-            let dynamic_settings = consent::parse_dynamic_settings_json(
-                settings_json.as_deref(),
-                "--settings-json",
-            )?;
-            if tool.is_some() {
-                anyhow::bail!("--tool is deprecated; use subscription-route-set");
-            }
+            let dynamic_settings =
+                consent::parse_dynamic_settings_json(settings_json.as_deref(), "--settings-json")?;
             let auto_continuation_id =
                 auto_write_continuation_id(&mode, continuation_id.as_deref())?;
             if mode == "pause" {
@@ -2593,9 +2533,8 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 grants::clear_grant(&job_id);
                 consent::clear_pending_signal(&job_id);
                 task::common::autotrade::continuation::clear(&job_id);
-                let _ = task::common::okx_a2a::mark_retired_autotrade_mode_decisions_handled(
-                    &job_id,
-                );
+                let _ =
+                    task::common::okx_a2a::mark_retired_autotrade_mode_decisions_handled(&job_id);
                 crate::output::success(
                     serde_json::json!({"consentMode":"pause","cleared":true,"jobId":job_id}),
                 );
@@ -2816,8 +2755,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 task::common::autotrade::continuation::clear(&job_id);
             }
             consent::clear_pending_signal(&job_id);
-            crate::output::success(
-                serde_json::json!({
+            crate::output::success(serde_json::json!({
                     "consentMode": if mode_enum == consent::ConsentMode::Auto { "auto" } else { "notify_only" },
                     "cap": cap,
                     "tradeEnvironment": persisted_environment,
@@ -2825,8 +2763,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     "orderPolicy": persisted_order_policy,
                     "authMode": persisted_auth_mode,
                     "replayed": false
-                }),
-            );
+            }));
             Ok(())
         }
         AgentCommand::AgreeRefund { job_id, agent_id } => {
@@ -2844,6 +2781,54 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         } => {
             task::asp::run_provider(
                 task::asp::ProviderCommand::AspReject {
+                    job_id,
+                    agent_id,
+                    reason,
+                },
+                ctx,
+            )
+            .await
+        }
+
+        AgentCommand::AcceptJobByProvider { job_id, agent_id } => {
+            task::asp::run_provider(
+                task::asp::ProviderCommand::AcceptJobByProvider { job_id, agent_id },
+                ctx,
+            )
+            .await
+        }
+
+        AgentCommand::DeclineJobByProvider {
+            job_id,
+            agent_id,
+            reason,
+        } => {
+            task::asp::run_provider(
+                task::asp::ProviderCommand::DeclineJobByProvider {
+                    job_id,
+                    agent_id,
+                    reason,
+                },
+                ctx,
+            )
+            .await
+        }
+
+        AgentCommand::AcceptSubscription { job_id, agent_id } => {
+            task::asp::run_provider(
+                task::asp::ProviderCommand::AcceptSubscription { job_id, agent_id },
+                ctx,
+            )
+            .await
+        }
+
+        AgentCommand::DeclineSubscription {
+            job_id,
+            agent_id,
+            reason,
+        } => {
+            task::asp::run_provider(
+                task::asp::ProviderCommand::DeclineSubscription {
                     job_id,
                     agent_id,
                     reason,
@@ -2871,13 +2856,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             agent_id,
         } => {
             let mut client = task::common::network::task_api_client::TaskApiClient::new();
-            task::asp::subscription::handle_dispute(
-                &mut client,
-                &job_id,
-                reason.as_deref().unwrap_or(""),
-                &agent_id,
-            )
-            .await
+            task::asp::subscription::handle_dispute(&mut client, &job_id, &reason, &agent_id).await
         }
 
         // ── Sub-groups ──────────────────────────────────────────────
@@ -3031,17 +3010,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             let job_title: Option<String> = msg_str("jobTitle");
             let provider: Option<String> = msg_str("provider");
             let data: Option<String> = msg_str("data");
-            let peer_task_min_version: Option<u32> = parsed_message
-                .get("taskMinVersion")
-                .and_then(|v| v.as_u64())
-                .and_then(|v| u32::try_from(v).ok())
-                .or_else(|| {
-                    parsed_message
-                        .get("payload")
-                        .and_then(|p| p.get("taskMinVersion"))
-                        .and_then(|v| v.as_u64())
-                        .and_then(|v| u32::try_from(v).ok())
-                });
             let parsed_message = Some(parsed_message);
             if !job_id.is_empty() {
                 if let Err(msg) = task::common::util::validate_job_id(&job_id) {
@@ -3050,46 +3018,11 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             }
             if DEBUG_LOG {
                 eprintln!(
-                    "[next-action] received system notification: job_id={job_id}, event={event}, role={role}, agent_id={agent_id}, code={code}, title={title}, provider={provider}, peer_task_min_version={peer_min}",
+                    "[next-action] received system notification: job_id={job_id}, event={event}, role={role}, agent_id={agent_id}, code={code}, title={title}, provider={provider}",
                     title = job_title.as_deref().unwrap_or("(none)"),
                     provider = provider.as_deref().unwrap_or("(none)"),
-                    peer_min = peer_task_min_version.map(|v| v.to_string()).unwrap_or_else(|| "(none)".to_string()),
                 );
             }
-
-            // Version handshake: when peer's required minimum version is higher than the local TASK_MIN_VERSION,
-            // only prepend a notice line at the top of the script (so the agent can push an upgrade suggestion to the user);
-            // **do not block the flow** — the role flow continues to execute under the current protocol, and any actual
-            // compatibility issues (if any) are escalated when subsequent CLI / business layer errors surface.
-            let version_notice: Option<String> = if let Some(peer_min) = peer_task_min_version {
-                let local = task::common::config::TASK_MIN_VERSION;
-                if local < peer_min {
-                    if task::common::version_notice::should_show() {
-                        if DEBUG_LOG {
-                            eprintln!(
-                                "[next-action] version notice (non-blocking): local TASK_MIN_VERSION={local} < peer.taskMinVersion={peer_min}"
-                            );
-                        }
-                        task::common::version_notice::mark_shown();
-                        Some("Before executing the scene below, run `onchainos agent user-notify` to notify the user (recommend upgrade but do **not** halt the flow). The `--content` template below is a sample — translate it to the user's language before sending:\n\
-                             ```bash\n\
-                             onchainos agent user-notify --content 'Your local task-system protocol version is outdated. Please run `onchainos upgrade` to upgrade for the best compatibility with peers.'\n\
-                             ```\n\
-                             Then proceed to the scene below normally.\n\n".to_string())
-                    } else {
-                        if DEBUG_LOG {
-                            eprintln!(
-                                "[next-action] version notice suppressed (last shown within 48h): local TASK_MIN_VERSION={local} < peer.taskMinVersion={peer_min}"
-                            );
-                        }
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
 
             // When --provider is passed, write the designated-provider file so generate_next_action takes the specified-provider path
             if let Some(ref pid) = provider {
@@ -3100,14 +3033,17 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 }
             }
 
-            // code ≠ 0 → tx failed; output the failure script directly and skip the event match
-            if code != 0 {
+            // A caller-supplied timeout envelope cannot veto a fresh backend
+            // Expired(8) projection. Defer these events to the authoritative
+            // status/ownership read below; other transaction results retain
+            // the legacy nonzero-code failure gate.
+            if code != 0 && !expired_timeout_uses_authoritative_status(&event) {
                 let label = tx_failure_label(&event);
                 let title_part = match job_title.as_deref() {
                     Some(t) => format!(" **{t}**"),
                     None => " ".to_string(),
                 };
-                println!(
+                let failure = format!(
                     "【交易失败】{label}（code={code}）\n\n\
                      运行 `onchainos agent user-notify` 通知用户：\n\
                      ```bash\n\
@@ -3115,6 +3051,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                      ```\n\
                      → 结束 turn。"
                 );
+                println!("{failure}");
                 return Ok(());
             }
 
@@ -3196,7 +3133,18 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             // Status mismatch → block script output (to prevent sub from running an old script on-chain based on a stale event).
             // Only skip validation for PSEUDO_EVENTS / unknown / network failure; under normal conditions enforce strictly.
             let (freshness_warning, prefetched) =
-                check_status_freshness(&job_id, &event, &agent_id).await;
+                if handler_fetches_own_task_detail(&resolved_role, &event) {
+                    (None, None)
+                } else {
+                    check_status_freshness(
+                        &job_id,
+                        &event,
+                        &agent_id,
+                        &resolved_role,
+                        parsed_message.as_ref(),
+                    )
+                    .await
+                };
             if let Some(w) = freshness_warning {
                 println!("{w}");
                 return Ok(());
@@ -3219,22 +3167,10 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                         ]),
                         None,
                     );
-                    // x402 (paymentMode=3): the user paid the ASP at request time via
-                    // the A2MCP service endpoint, so the on-chain events are pure
-                    // receipts — provider has no business action for any of them.
-                    // Route every x402 event to the observer-only a2mcp playbook.
-                    let use_a2mcp = matches!(payment_mode, Some(3));
-                    if use_a2mcp {
-                        task::asp::flow::generate_a2mcp_next_action(
-                            &job_id,
-                            &event,
-                            &agent_id,
-                            title_ref,
-                            data.as_deref(),
-                            prefetched.as_ref(),
-                            parsed_message.as_ref(),
+                    if should_block_legacy_a2mcp_flow(payment_mode, &event) {
+                        format!(
+                            "legacy_a2mcp_flow_removed: task-based A2MCP processing is disabled for job {job_id}. Stop; do not deliver, complete, sign, or pay."
                         )
-                        .await
                     } else {
                         task::asp::flow::generate_next_action(
                             &job_id,
@@ -3298,9 +3234,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 }
                 other => anyhow::bail!("--role 必须是 asp/user/evaluator，当前: {other}"),
             };
-            if let Some(notice) = &version_notice {
-                print!("{notice}");
-            }
             println!("{prompt}");
             Ok(())
         }
@@ -3408,6 +3341,13 @@ fn tx_failure_label(event: &str) -> &'static str {
     task::common::state_machine::Event::parse(event).failure_label()
 }
 
+fn expired_timeout_uses_authoritative_status(event: &str) -> bool {
+    matches!(
+        event,
+        "job_expired" | "submit_expired" | "job_asp_accept_expire"
+    )
+}
+
 /// Escape raw ASCII control chars (LF / CR / TAB) that appear inside JSON string
 /// scope, leaving everything else untouched. Tracks `"`/`\\` state to differentiate
 /// "inside string" from "outside string". Used as a one-shot repair for
@@ -3447,26 +3387,28 @@ pub(crate) fn escape_control_chars_in_strings(s: &str) -> String {
     out
 }
 
+fn is_path_under_canonical_dir(path: &std::path::Path, dir: &std::path::Path) -> bool {
+    let Ok(c_path) = path.canonicalize() else {
+        return false;
+    };
+    let Ok(c_dir) = dir.canonicalize() else {
+        return false;
+    };
+    c_path.starts_with(c_dir)
+}
+
 fn is_safe_a2a_file_path(path: &std::path::Path) -> bool {
     if path.as_os_str().is_empty() {
         return false;
     }
-    let c_path = match path.canonicalize() {
-        Ok(p) => p,
-        Err(_) => return false,
-    };
     let tmp_dir = std::env::temp_dir();
-    if let Ok(c_tmp) = tmp_dir.canonicalize() {
-        if c_path.starts_with(c_tmp) {
-            return true;
-        }
+    if is_path_under_canonical_dir(path, &tmp_dir) {
+        return true;
     }
     #[cfg(unix)]
     {
-        if let Ok(c_tmp) = std::path::Path::new("/tmp").canonicalize() {
-            if c_path.starts_with(c_tmp) {
-                return true;
-            }
+        if is_path_under_canonical_dir(path, std::path::Path::new("/tmp")) {
+            return true;
         }
     }
     #[cfg(test)]
@@ -3474,32 +3416,16 @@ fn is_safe_a2a_file_path(path: &std::path::Path) -> bool {
         let test_tmp = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join("test_tmp");
-        if let Ok(c_tmp) = test_tmp.canonicalize() {
-            if c_path.starts_with(c_tmp) {
-                return true;
-            }
+        if is_path_under_canonical_dir(path, &test_tmp) {
+            return true;
         }
     }
     false
 }
 
 fn parse_a2a_json_arg(raw: &str) -> anyhow::Result<serde_json::Value> {
-    match serde_json::from_str(raw) {
-        Ok(v) => Ok(v),
-        Err(strict_err) => {
-            let repaired = escape_control_chars_in_strings(raw);
-            match serde_json::from_str::<serde_json::Value>(&repaired) {
-                Ok(v) => {
-                    eprintln!(
-                        "[next-action] --a2a-file payload had raw control chars inside string values; \
-                         auto-repaired. Strict parse error was: {strict_err}"
-                    );
-                    Ok(v)
-                }
-                Err(_) => anyhow::bail!("--a2a-file payload is not valid JSON: {strict_err}"),
-            }
-        }
-    }
+    serde_json::from_str(raw)
+        .map_err(|error| anyhow::anyhow!("--a2a-file payload is not valid JSON: {error}"))
 }
 
 fn write_secure_temp_file(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
@@ -3599,16 +3525,17 @@ fn validate_a2a_file_arg(
     if !is_safe_a2a_file_path(fp) {
         anyhow::bail!("--a2a-file must point to a file under the OS temp directory");
     }
+    let metadata = std::fs::symlink_metadata(fp)
+        .map_err(|e| anyhow::anyhow!("--a2a-file metadata read failed: {e}"))?;
+    if !metadata.file_type().is_file() {
+        anyhow::bail!("--a2a-file must be a regular file, not a symlink or directory");
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(fp)
-            .map_err(|e| anyhow::anyhow!("--a2a-file metadata read failed: {e}"))?
-            .permissions()
-            .mode()
-            & 0o777;
-        if mode & 0o077 != 0 {
-            anyhow::bail!("--a2a-file must not be readable, writable, or executable by group/others; use chmod 600");
+        let mode = metadata.permissions().mode() & 0o777;
+        if mode != 0o600 {
+            anyhow::bail!("--a2a-file must have mode 0600; run chmod 600");
         }
     }
     let raw =
@@ -3634,19 +3561,35 @@ fn validate_a2a_file_arg(
             "--a2a-file payload jobId {pj} does not match --message jobId {message_job_id}"
         );
     }
-    if let Some(receiver) = payload.get("receiverAgentId").and_then(|v| v.as_str()) {
-        if receiver != agent_id {
-            anyhow::bail!(
-                "--a2a-file receiverAgentId {receiver} does not match --agentId {agent_id}"
-            );
-        }
+    let receiver = payload
+        .get("receiverAgentId")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("--a2a-file payload.receiverAgentId is required"))?;
+    if receiver != agent_id {
+        anyhow::bail!("--a2a-file receiverAgentId {receiver} does not match --agentId {agent_id}");
     }
     let content = payload
         .get("content")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("--a2a-file payload.content is required"))?;
-    if !content.contains("[intent:deliver]") {
-        anyhow::bail!("--a2a-file content must contain [intent:deliver]");
+    if content
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .map(str::trim)
+        != Some("[intent:deliver]")
+    {
+        anyhow::bail!("--a2a-file content must end with [intent:deliver]");
+    }
+    let embedded_job_id = content
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("jobId:"))
+        .map(str::trim)
+        .ok_or_else(|| anyhow::anyhow!("--a2a-file content.jobId is required"))?;
+    if embedded_job_id != pj {
+        anyhow::bail!(
+            "--a2a-file content jobId {embedded_job_id} does not match payload jobId {pj}"
+        );
     }
     let canonical = serde_json::to_string(&payload)?;
     persist_validated_a2a_spool(pj, &canonical)
@@ -3665,7 +3608,6 @@ mod auto_consent_permit_tests {
             agent_id: Some("7".to_string()),
             ttl_sec: 3600,
             plugin: None,
-            tool: None,
             quote: None,
             environment: None,
             margin_mode: None,
@@ -3698,11 +3640,10 @@ mod auto_consent_permit_tests {
             "plugin-ready-check",
         ] {
             assert_eq!(auto_write_continuation_id(mode, None).unwrap(), None);
-            assert!(auto_write_continuation_id(
-                mode,
-                Some("atc_0123456789abcdef0123456789abcdef")
-            )
-            .is_err());
+            assert!(
+                auto_write_continuation_id(mode, Some("atc_0123456789abcdef0123456789abcdef"))
+                    .is_err()
+            );
         }
     }
 
@@ -3719,9 +3660,7 @@ mod auto_consent_permit_tests {
         let consent = final_writer
             .find("write_consent_policy_with_dynamic_settings")
             .expect("consent write");
-        let grant = final_writer
-            .find("write_auto_grant")
-            .expect("grant write");
+        let grant = final_writer.find("write_auto_grant").expect("grant write");
         let consume = final_writer
             .find("consume_auto_write")
             .expect("permit consumption");
@@ -3753,7 +3692,9 @@ mod auto_consent_permit_tests {
         };
 
         let missing = run(auto_command(None), &ctx).await.unwrap_err();
-        assert!(missing.to_string().contains("--continuation-id is required"));
+        assert!(missing
+            .to_string()
+            .contains("--continuation-id is required"));
         assert!(consent::load_consent("job-1").unwrap().is_none());
         assert!(grants::check_grant("job-1", "trade_kit", "buy", "1").is_err());
 
@@ -3781,12 +3722,9 @@ mod auto_consent_permit_tests {
         .unwrap();
         assert!(completed.complete);
 
-        run(
-            auto_command(Some(completed.continuation_id.clone())),
-            &ctx,
-        )
-        .await
-        .unwrap();
+        run(auto_command(Some(completed.continuation_id.clone())), &ctx)
+            .await
+            .unwrap();
         assert_eq!(
             consent::load_consent("job-1").unwrap().unwrap().mode,
             ConsentMode::Auto
@@ -3796,9 +3734,7 @@ mod auto_consent_permit_tests {
         let replay = run(auto_command(Some(completed.continuation_id)), &ctx)
             .await
             .unwrap_err();
-        assert!(replay
-            .to_string()
-            .contains("no live consent continuation"));
+        assert!(replay.to_string().contains("no live consent continuation"));
 
         std::env::remove_var("ONCHAINOS_HOME");
         let _ = std::fs::remove_dir_all(dir);
@@ -3807,7 +3743,10 @@ mod auto_consent_permit_tests {
 
 #[cfg(test)]
 mod escape_control_chars_tests {
-    use super::{escape_control_chars_in_strings, validate_a2a_file_arg};
+    use super::{
+        escape_control_chars_in_strings, handler_fetches_own_task_detail,
+        should_block_legacy_a2mcp_flow, validate_a2a_file_arg,
+    };
 
     #[test]
     fn escapes_raw_lf_inside_string() {
@@ -3911,22 +3850,16 @@ mod escape_control_chars_tests {
     }
 
     #[test]
-    fn canonicalizes_repaired_a2a_file_arg_for_downstream_strict_parse() {
+    fn rejects_a2a_file_arg_with_raw_control_char_json() {
         let path = write_temp_a2a(
             "raw-control-char.json",
             "{ \"msgType\":\"a2a-agent-chat\", \"jobId\":\"0xabc123\", \"receiverAgentId\":\"1696\", \"content\":\"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]\" }",
         );
 
-        let original = std::fs::read_to_string(&path).unwrap();
-        let got = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696").unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
-        let rewritten = std::fs::read_to_string(&got).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&rewritten).unwrap();
-        assert_eq!(
-            parsed["content"].as_str().unwrap().lines().next(),
-            Some("jobId: 0xabc123")
-        );
-        std::fs::remove_file(got).ok();
+        let error = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("current A2A envelope must be strict JSON")
+            .to_string();
+        assert!(error.contains("payload is not valid JSON"));
     }
 
     #[test]
@@ -3982,7 +3915,7 @@ mod escape_control_chars_tests {
         let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
             .expect_err("missing intent must fail")
             .to_string();
-        assert!(err.contains("content must contain [intent:deliver]"));
+        assert!(err.contains("content must end with [intent:deliver]"));
     }
 
     #[test]
@@ -4015,6 +3948,43 @@ mod escape_control_chars_tests {
         assert!(err.contains("chmod 600"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn rejects_a2a_file_arg_with_non_exact_private_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = write_temp_a2a(
+            "owner-executable.json",
+            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","receiverAgentId":"1696","content":"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#,
+        );
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("the new envelope contract requires exact mode 0600")
+            .to_string();
+        assert!(err.contains("mode 0600"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_a2a_file_arg_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let target = write_temp_a2a(
+            "symlink-target.json",
+            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","receiverAgentId":"1696","content":"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#,
+        );
+        let link = target.with_file_name("symlink-envelope.json");
+        std::fs::remove_file(&link).ok();
+        symlink(&target, &link).unwrap();
+
+        let err = validate_a2a_file_arg(link.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("symlinked envelopes must fail closed")
+            .to_string();
+        assert!(err.contains("regular file"));
+        std::fs::remove_file(link).ok();
+    }
+
     #[test]
     fn rejects_a2a_file_arg_for_wrong_receiver() {
         let path = write_temp_a2a(
@@ -4027,16 +3997,404 @@ mod escape_control_chars_tests {
             .to_string();
         assert!(err.contains("receiverAgentId 8779 does not match --agentId 1696"));
     }
+
+    #[test]
+    fn rejects_a2a_file_arg_without_receiver() {
+        let path = write_temp_a2a(
+            "missing-receiver.json",
+            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","content":"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#,
+        );
+
+        let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("missing receiver must fail")
+            .to_string();
+        assert!(err.contains("payload.receiverAgentId is required"));
+    }
+
+    #[test]
+    fn rejects_a2a_file_arg_with_mismatched_embedded_job_id() {
+        let path = write_temp_a2a(
+            "wrong-embedded-job.json",
+            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","receiverAgentId":"1696","content":"jobId: 0xother\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#,
+        );
+
+        let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("embedded jobId mismatch must fail")
+            .to_string();
+        assert!(err.contains("content jobId 0xother does not match payload jobId 0xabc123"));
+    }
+
+    #[test]
+    fn completion_handlers_own_their_task_detail_requests() {
+        assert!(handler_fetches_own_task_detail("user", "job_completed"));
+        assert!(handler_fetches_own_task_detail("asp", "job_completed"));
+        assert!(!handler_fetches_own_task_detail(
+            "evaluator",
+            "job_completed"
+        ));
+        assert!(handler_fetches_own_task_detail(
+            "user",
+            "sub_complete_notify"
+        ));
+        assert!(!handler_fetches_own_task_detail(
+            "asp",
+            "sub_complete_notify"
+        ));
+        assert!(!handler_fetches_own_task_detail("user", "sub_close_notify"));
+    }
+
+    #[test]
+    fn asp_subscription_completion_never_blocks_as_legacy_a2mcp() {
+        assert!(!should_block_legacy_a2mcp_flow(
+            Some(3),
+            "sub_complete_notify"
+        ));
+    }
+
+    #[test]
+    fn job_completed_never_uses_a2mcp_flow() {
+        assert!(!should_block_legacy_a2mcp_flow(Some(3), "job_completed"));
+    }
+
+    #[test]
+    fn other_payment_mode_three_events_block_as_legacy_a2mcp() {
+        assert!(should_block_legacy_a2mcp_flow(Some(3), "job_submitted"));
+    }
 }
 
-/// Returns a warning text when inconsistent (used to prepend to the top of the script output).
+fn handler_fetches_own_task_detail(role: &str, event: &str) -> bool {
+    (matches!(role, "user" | "asp") && event == "job_completed")
+        || (role == "user" && event == "sub_complete_notify")
+}
+
+fn should_block_legacy_a2mcp_flow(payment_mode: Option<i64>, event: &str) -> bool {
+    matches!(payment_mode, Some(3)) && !matches!(event, "sub_complete_notify" | "job_completed")
+}
+
+fn detail_path_for_event(
+    client: &task::common::network::task_api_client::TaskApiClient,
+    job_id: &str,
+    event: &str,
+) -> String {
+    if event.starts_with("sub_") || event == "user_decision_sub_user_reject" {
+        client.subscribe_path(job_id)
+    } else {
+        client.task_path(job_id)
+    }
+}
+
+fn subscription_acceptance_status(detail: &serde_json::Value) -> Option<i64> {
+    detail["subStatus"]
+        .as_i64()
+        .or_else(|| {
+            detail["subStatus"]
+                .as_str()
+                .and_then(|value| value.parse().ok())
+        })
+        .or_else(|| detail["status"].as_i64())
+        .or_else(|| {
+            detail["status"]
+                .as_str()
+                .and_then(|value| value.parse().ok())
+        })
+}
+
+fn subscription_event_block_reason(
+    detail: &serde_json::Value,
+    event: &str,
+    expected_status: i64,
+    expected_name: &str,
+) -> Option<String> {
+    match subscription_acceptance_status(detail) {
+        Some(status) if status == expected_status => None,
+        Some(status) => Some(format!(
+            "[next-action blocked] Latest subscription status is {status}, not {expected_name}({expected_status}). Do not execute the {event} flow."
+        )),
+        None => Some(
+            format!(
+                "[next-action blocked] Latest subscription detail has no valid subStatus/status. Do not execute the {event} flow."
+            ),
+        ),
+    }
+}
+
+#[cfg(test)]
+fn subscription_refund_final_block_reason(
+    detail: &serde_json::Value,
+    event: &str,
+) -> Option<String> {
+    (subscription_acceptance_status(detail) != Some(9)).then(|| {
+        format!(
+            "[next-action blocked] Latest subscription status is not FAILED(9), so {event} cannot prove final refund settlement."
+        )
+    })
+}
+
+/// Refund-related timeout/result notifications shared by one-time and
+/// subscription tasks. `bool=true` means the event claims a terminal settlement
+/// and therefore needs final refund proof in addition to status.
+fn refund_event_status_policy(event: &str) -> Option<(i64, bool)> {
+    match event {
+        "job_closed" | "job_asp_reject_closed" => Some((7, true)),
+        "job_refunded" | "job_auto_refunded" | "sub_asp_agree" | "sub_reject_refund_notify" => {
+            Some((9, true))
+        }
+        "job_expired" | "submit_expired" | "job_asp_accept_expire" => Some((8, false)),
+        "job_asp_reject_expire" => Some((9, true)),
+        _ => None,
+    }
+}
+
+/// Refund composes task/subscription detail and enforces buyer ownership.
+/// Applying that policy with an ASP agentId would reject legitimate provider
+/// notifications before their display-only handler runs.
+fn buyer_refund_event_status_policy(role: &str, event: &str) -> Option<(i64, bool)> {
+    (role == "user")
+        .then(|| refund_event_status_policy(event))
+        .flatten()
+}
+
+fn asp_refund_context_block_reason(
+    context: &task::common::PreFetchedTaskContext,
+    event: &str,
+    expected_asp_agent_id: &str,
+) -> Option<String> {
+    let (expected_status, _) = refund_event_status_policy(event)?;
+    if context.provider_agent_id.as_deref() != Some(expected_asp_agent_id) {
+        return Some(format!(
+            "[next-action blocked] Fresh task detail does not bind {event} to ASP {expected_asp_agent_id}. Do not notify or clean up a provider session from caller-supplied event data."
+        ));
+    }
+    (context.status != Some(expected_status)).then(|| {
+        format!(
+            "[next-action blocked] Fresh task detail status {:?} does not match {event} expected status {expected_status}. Do not notify or clean up a provider session from stale event data.",
+            context.status
+        )
+    })
+}
+
+fn subscription_side_effect_event_status_policy(event: &str) -> Option<i64> {
+    match event {
+        "sub_user_reject" => Some(3),
+        "sub_asp_dispute" => Some(4),
+        "sub_complete_notify" => Some(6),
+        "sub_close_notify" => Some(7),
+        "sub_failed_notify" => Some(9),
+        _ => None,
+    }
+}
+
+fn subscription_side_effect_context_block_reason(
+    context: &task::common::PreFetchedTaskContext,
+    event: &str,
+    role: &str,
+    expected_agent_id: &str,
+) -> Option<String> {
+    let expected_status = subscription_side_effect_event_status_policy(event)?;
+    let authoritative_owner = match role {
+        "user" => context.user_agent_id.as_deref(),
+        "asp" => context.provider_agent_id.as_deref(),
+        _ => {
+            return Some(format!(
+                "[next-action blocked] Role {role} cannot process subscription lifecycle event {event}."
+            ));
+        }
+    };
+    if authoritative_owner != Some(expected_agent_id) {
+        return Some(format!(
+            "[next-action blocked] Fresh subscription detail does not bind {event} to {role} Agent {expected_agent_id}. Do not run notification, evidence-upload, decision, or cleanup side effects from caller-supplied event data."
+        ));
+    }
+    (context.status != Some(expected_status)).then(|| {
+        format!(
+            "[next-action blocked] Fresh subscription status {:?} does not match {event} expected status {expected_status}. Do not run lifecycle side effects from stale event data.",
+            context.status
+        )
+    })
+}
+
+fn refund_final_context_ready(
+    context: &task::common::PreFetchedTaskContext,
+    event: &str,
+    expected_user_agent_id: &str,
+) -> bool {
+    let expected_status = refund_event_status_policy(event)
+        .map(|(status, _)| status)
+        .unwrap_or(9);
+    let closed_refund_event = expected_status == 7;
+    if context.status != Some(expected_status)
+        || context.user_agent_id.as_deref() != Some(expected_user_agent_id)
+    {
+        return false;
+    }
+
+    if closed_refund_event
+        && context.job_type == Some(0)
+        && task::user::refund::is_zero_decimal(context.token_amount.trim())
+    {
+        return true;
+    }
+
+    task::user::refund::refund_event_settlement_confirmed(context, expected_status, event)
+}
+
+/// Whether the outer freshness retry has enough authoritative context to hand
+/// a buyer-side refund lifecycle event to its handler.
 ///
-/// Trigger scenarios: delayed system event, prior CLI operations have already advanced the status further;
-/// returns None on network/parse failure (does not block script output, graceful fallback).
+/// `job_asp_reject_closed` is overloaded across task kinds. For a subscription,
+/// Closed(7) proves only that the service lifecycle closed; its existing handler
+/// deliberately renders closure without claiming refund settlement. Requiring
+/// final refund proof here would only exhaust the retry window before reaching
+/// that safe handler. A one-time close still needs the normal refund-finality
+/// check before the retry loop considers it ready.
+fn buyer_refund_freshness_ready(
+    context: &task::common::PreFetchedTaskContext,
+    event: &str,
+    expected_user_agent_id: &str,
+    expected_status: i64,
+    requires_confirmed_outcome: bool,
+) -> bool {
+    if context.status != Some(expected_status)
+        || context.user_agent_id.as_deref() != Some(expected_user_agent_id)
+    {
+        return false;
+    }
+
+    if !requires_confirmed_outcome
+        || (event == "job_asp_reject_closed" && context.job_type == Some(1))
+    {
+        return true;
+    }
+
+    refund_final_context_ready(context, event, expected_user_agent_id)
+}
+
+/// A user-side evaluation result is allowed to emit verdict, rating,
+/// notification, and cleanup side effects only after a fresh composed
+/// task/subscription read binds the job to the current buyer. Subscription
+/// Failed(9) is ambiguous in the legacy backend, so it additionally needs the
+/// durable Refund request provenance consumed by
+/// `refund_event_settlement_confirmed`.
+fn dispute_result_context_block_reason(
+    context: &task::common::PreFetchedTaskContext,
+    expected_user_agent_id: &str,
+) -> Option<String> {
+    if !matches!(context.job_type, Some(0 | 1)) {
+        return Some(
+            "[next-action blocked] Fresh evaluation detail is missing a supported jobType. Do not announce a verdict, rate, notify, or clean up from caller-supplied event data."
+                .to_string(),
+        );
+    }
+    if context.user_agent_id.as_deref() != Some(expected_user_agent_id) {
+        return Some(format!(
+            "[next-action blocked] Fresh evaluation detail does not bind dispute_resolved to User Agent {expected_user_agent_id}. Do not announce a verdict, rate, notify, or clean up from caller-supplied event data."
+        ));
+    }
+    if !context.refund_request_provenance {
+        return Some(
+            "[next-action blocked] Fresh terminal status has no durable local refund-request provenance. Do not treat an ordinary completion/failure as an evaluation verdict or run rating/cleanup side effects."
+                .to_string(),
+        );
+    }
+    match context.status {
+        Some(6) => None,
+        Some(9)
+            if task::user::refund::refund_event_settlement_confirmed(
+                context,
+                9,
+                "dispute_resolved",
+            ) =>
+        {
+            None
+        }
+        Some(9) => Some(
+            "[next-action blocked] Fresh subscription Failed(9) is ambiguous and has no durable local refund-request provenance. Do not announce an evaluation refund or clean up; reconcile with refund-prepare."
+                .to_string(),
+        ),
+        status => Some(format!(
+            "[next-action blocked] Fresh evaluation status {status:?} is not Completed(6) or a confirmed user-refund Failed(9). Do not announce a verdict, rate, notify, or clean up."
+        )),
+    }
+}
+
+fn subscription_failed_context_block_reason(
+    context: &task::common::PreFetchedTaskContext,
+    expected_user_agent_id: &str,
+) -> Option<String> {
+    if context.job_type != Some(1) {
+        return Some(
+            "[next-action blocked] Fresh detail does not identify a subscription for sub_failed_notify. Do not notify or clean up from a task-type-mismatched event."
+                .to_string(),
+        );
+    }
+    if context.user_agent_id.as_deref() != Some(expected_user_agent_id) {
+        return Some(format!(
+            "[next-action blocked] Fresh subscription detail does not bind sub_failed_notify to User Agent {expected_user_agent_id}. Do not notify or clean up from caller-supplied event data."
+        ));
+    }
+    (context.status != Some(9)).then(|| {
+        format!(
+            "[next-action blocked] Fresh subscription status {:?} is not Failed(9). Do not notify or clean up from a stale sub_failed_notify event.",
+            context.status
+        )
+    })
+}
+
+fn arbitration_decision_source(event: &str) -> Option<&'static str> {
+    match event {
+        "job_rejected" | "user_decision_job_rejected" => Some(task::arbitration::JOB_REJECTED),
+        "sub_user_reject" | "user_decision_sub_user_reject" => {
+            Some(task::arbitration::SUB_USER_REJECT)
+        }
+        _ => None,
+    }
+}
+
+fn arbitration_decision_is_stale(
+    source_event: &str,
+    message: Option<&serde_json::Value>,
+    detail: &serde_json::Value,
+) -> bool {
+    let scalar = |value: Option<&serde_json::Value>| task::arbitration::scalar_string(value);
+    match source_event {
+        task::arbitration::JOB_REJECTED => scalar(detail.get("status")).as_deref() != Some("3"),
+        task::arbitration::SUB_USER_REJECT => {
+            let status = scalar(detail.get("subStatus")).or_else(|| scalar(detail.get("status")));
+            let relay_binding = message
+                .and_then(|value| value.get("params"))
+                .and_then(|params| {
+                    Some((
+                        params.get("decisionBindingKey")?.as_str()?,
+                        params.get("decisionBindingValue")?.as_str()?,
+                    ))
+                });
+            let period_matches = if let Some((key, expected)) = relay_binding {
+                scalar(detail.get(key)).as_deref() == Some(expected)
+            } else {
+                ["periodIndex", "subStartTime", "subEndTime"]
+                    .into_iter()
+                    .all(
+                        |key| match scalar(message.and_then(|value| value.get(key))) {
+                            Some(expected) => scalar(detail.get(key)) == Some(expected),
+                            None => true,
+                        },
+                    )
+            };
+            status.as_deref() != Some("3") || !period_matches
+        }
+        _ => true,
+    }
+}
+
+/// Most network failures degrade to no prefetch. Active-subscription startup
+/// notifications are stricter: they require authoritative detail and are blocked
+/// on fetch error.
 async fn check_status_freshness(
     job_id: &str,
     job_status_or_event: &str,
     agent_id: &str,
+    role: &str,
+    message: Option<&serde_json::Value>,
 ) -> (Option<String>, Option<task::common::PreFetchedTaskContext>) {
     use task::common::network::task_api_client::TaskApiClient;
     use task::common::state_machine::{parse_status_or_event, status_when_event, Event, Status};
@@ -4049,9 +4407,10 @@ async fn check_status_freshness(
         "job_provider_reject",
         "attachment_added",
         "provider_conversation",
-        // Subscription lifecycle: display-class notifications with no corresponding
-        // standard task status — freshness check is meaningless (task stays `accepted`
-        // while sub events flow on top), but prefetch is kept for service_name fallback.
+        // Subscription lifecycle events use subscription status rather than the
+        // standard task status. Keep prefetching here; the strict CREATED/ACTIVE
+        // checks for sub_open/sub_created/sub_asp_selected run below.
+        "sub_open",
         "sub_created",
         "sub_cancel",
         "sub_user_reject",
@@ -4073,10 +4432,13 @@ async fn check_status_freshness(
         "approve_review",
         "reject_review",
         "user_attachment_received",
-        "close",
         "job_user_reject",
+        "raise_arbitration",
         "dispute_raise",
         "agree_refund",
+        "raise_subscription_arbitration",
+        "sub_dispute",
+        "sub_agree_refund",
         "staked",
         "unstake_requested",
         "unstake_claimed",
@@ -4092,9 +4454,16 @@ async fn check_status_freshness(
         "round_failed",
         "reward_claimed",
         "wakeup_notify",
+        // Self-contained display event. Its message carries every copy field, and
+        // no task-status freshness check or detail request is required.
+        "sub_asp_claim_notify",
     ];
 
+    let arbitration_source = arbitration_decision_source(job_status_or_event);
+    let is_arbitration_relay =
+        job_status_or_event.starts_with("user_decision_") && arbitration_source.is_some();
     let is_prefetch_only = PREFETCH_ONLY_EVENTS.contains(&job_status_or_event);
+    let refund_status_policy = buyer_refund_event_status_policy(role, job_status_or_event);
 
     if SKIP_ALL_EVENTS.contains(&job_status_or_event) {
         return (None, None);
@@ -4103,32 +4472,314 @@ async fn check_status_freshness(
     // For non-skip events, parse and check if the event is recognized.
     let event = parse_status_or_event(job_status_or_event);
     let expected = status_when_event(&event);
-    // Display-class subscription events (sub_*) are notification-only: they emit no on-chain
-    // action script and hold no task status of their own (status_when_event maps them all to the
-    // synthetic "subscription" status that no real task ever reports). The freshness gate exists
-    // to stop a sub from running a STALE on-chain action; it must NOT gate these, or every sub_*
-    // notification is dropped on a live subscription (whose real status is accepted/closed/...).
-    // Skip the gate but keep the pre-fetched context so the notification still renders title/service name.
-    let is_display_only_sub = matches!(expected, Status::Other(ref s) if s == "subscription");
-    if !is_prefetch_only && matches!(expected, Status::Other(ref s) if s == "unknown") {
+    // Subscription events use a separate subStatus lifecycle, so skip the generic
+    // task-status gate. Strict event-specific checks below require CREATED(0) for
+    // sub_open and ACTIVE(1) for sub_created/sub_asp_selected.
+    let is_subscription_event = matches!(expected, Status::Other(ref s) if s == "subscription");
+    if !is_prefetch_only
+        && !is_arbitration_relay
+        && matches!(expected, Status::Other(ref s) if s == "unknown")
+    {
         if DEBUG_LOG {
             eprintln!("[check-freshness] 跳过校验: 未识别的 event={job_status_or_event}");
         }
         return (None, None);
     }
 
-    // Fetch task data — shared by both freshness-check and pre-fetch paths.
+    // Refund lifecycle events use Refund's exact task/subscription parser
+    // and buyer-ownership checks. A short bounded re-read absorbs the common
+    // race where the event arrives just before lifecycle/order reconciliation.
+    // Acceptance and delivery timeout remain at Expired(8). After a fresh
+    // ownership read, that status is the terminal refund result for paid tasks
+    // (or terminal no-funds result for trial/zero-amount tasks). It never
+    // authorizes a Buyer claim/finalize write.
     let mut c = TaskApiClient::new();
-    let resp = match c.get_with_identity(&c.task_path(job_id), agent_id).await {
-        Ok(r) => r,
+    const REFUND_RETRY_DELAYS_MS: [u64; 3] = [250, 750, 1_500];
+
+    // `dispute_resolved` has two legitimate terminal statuses and may target a
+    // subscription. The ordinary task-only freshness path cannot safely
+    // distinguish subscription Failed(9), while the caller-provided event JSON
+    // is not authoritative. Always compose task + subscription facts and bind
+    // them to the current buyer before emitting any verdict side effects.
+    if role == "user" && job_status_or_event == "dispute_resolved" {
+        let mut latest_context = None;
+        let mut latest_error = None;
+        for attempt in 0..=REFUND_RETRY_DELAYS_MS.len() {
+            match task::user::refund::fetch_authoritative_refund_context(
+                &mut c, job_id, agent_id,
+            )
+            .await
+            {
+                Ok(context) => {
+                    let ready = dispute_result_context_block_reason(&context, agent_id).is_none();
+                    latest_context = Some(context);
+                    latest_error = None;
+                    if ready {
+                        break;
+                    }
+                }
+                Err(error) => latest_error = Some(error),
+            }
+            if let Some(delay_ms) = REFUND_RETRY_DELAYS_MS.get(attempt) {
+                tokio::time::sleep(std::time::Duration::from_millis(*delay_ms)).await;
+            }
+        }
+
+        let Some(context) = latest_context else {
+            let diagnostic = latest_error
+                .map(|error| format!("{error:#}"))
+                .unwrap_or_else(|| "authoritative evaluation detail unavailable".to_string());
+            return (
+                Some(format!(
+                    "[next-action blocked] Cannot fetch composed buyer-owned evaluation detail for dispute_resolved: {diagnostic}. Do not announce a verdict, rate, notify, or clean up."
+                )),
+                None,
+            );
+        };
+        if let Some(reason) = dispute_result_context_block_reason(&context, agent_id) {
+            return (Some(reason), Some(context));
+        }
+        return (None, Some(context));
+    }
+
+    // Failed(9) does not identify the failure cause in the unchanged backend.
+    // Fetch the same composed facts as Refund so the handler can render a
+    // read-only reconciliation notice without trusting the event's claimed
+    // task type, owner, or failure/refund semantics.
+    if role == "user" && job_status_or_event == "sub_failed_notify" {
+        let mut latest_context = None;
+        let mut latest_error = None;
+        for attempt in 0..=REFUND_RETRY_DELAYS_MS.len() {
+            match task::user::refund::fetch_authoritative_refund_context(
+                &mut c, job_id, agent_id,
+            )
+            .await
+            {
+                Ok(context) => {
+                    let ready =
+                        subscription_failed_context_block_reason(&context, agent_id).is_none();
+                    latest_context = Some(context);
+                    latest_error = None;
+                    if ready {
+                        break;
+                    }
+                }
+                Err(error) => latest_error = Some(error),
+            }
+            if let Some(delay_ms) = REFUND_RETRY_DELAYS_MS.get(attempt) {
+                tokio::time::sleep(std::time::Duration::from_millis(*delay_ms)).await;
+            }
+        }
+
+        let Some(context) = latest_context else {
+            let diagnostic = latest_error
+                .map(|error| format!("{error:#}"))
+                .unwrap_or_else(|| "authoritative subscription detail unavailable".to_string());
+            return (
+                Some(format!(
+                    "[next-action blocked] Cannot fetch composed buyer-owned subscription detail for sub_failed_notify: {diagnostic}. Do not notify or clean up."
+                )),
+                None,
+            );
+        };
+        if let Some(reason) = subscription_failed_context_block_reason(&context, agent_id) {
+            return (Some(reason), Some(context));
+        }
+        return (None, Some(context));
+    }
+
+    if let Some((expected_status, requires_confirmed_outcome)) = refund_status_policy {
+        let mut latest_context = None;
+        let mut latest_error = None;
+        for attempt in 0..=REFUND_RETRY_DELAYS_MS.len() {
+            match task::user::refund::fetch_authoritative_refund_context(
+                &mut c, job_id, agent_id,
+            )
+            .await
+            {
+                Ok(context) => {
+                    let ready = buyer_refund_freshness_ready(
+                        &context,
+                        job_status_or_event,
+                        agent_id,
+                        expected_status,
+                        requires_confirmed_outcome,
+                    );
+                    latest_context = Some(context);
+                    latest_error = None;
+                    if ready {
+                        break;
+                    }
+                }
+                Err(error) => latest_error = Some(error),
+            }
+            if let Some(delay_ms) = REFUND_RETRY_DELAYS_MS.get(attempt) {
+                tokio::time::sleep(std::time::Duration::from_millis(*delay_ms)).await;
+            }
+        }
+
+        let Some(context) = latest_context else {
+            let diagnostic = latest_error
+                .map(|error| format!("{error:#}"))
+                .unwrap_or_else(|| "authoritative refund detail unavailable".to_string());
+            return (
+                Some(format!(
+                    "[next-action blocked] Cannot fetch the Refund authoritative detail for {job_status_or_event}: {diagnostic}. Run `onchainos agent refund-prepare {job_id}` before processing this refund lifecycle notice."
+                )),
+                None,
+            );
+        };
+        if context.status != Some(expected_status)
+            || context.user_agent_id.as_deref() != Some(agent_id)
+        {
+            return (
+                Some(format!(
+                    "[next-action blocked] The {job_status_or_event} event does not match fresh buyer-owned Refund status {:?}; expected {expected_status}. Run `onchainos agent refund-prepare {job_id}` to reconcile and do not report completion.",
+                    context.status
+                )),
+                Some(context),
+            );
+        }
+        return (None, Some(context));
+    }
+
+    // The shared job_* refund/timeout events may describe a subscription even
+    // though their names lack the sub_ prefix. Provider-side notification and
+    // cleanup therefore use the same task+subscription composition as Refund
+    // V2, but validate provider ownership instead of buyer ownership.
+    if role == "asp" {
+        if let Some((expected_status, _)) = refund_event_status_policy(job_status_or_event) {
+            let mut latest_context = None;
+            let mut latest_error = None;
+            for attempt in 0..=REFUND_RETRY_DELAYS_MS.len() {
+                match task::user::refund::fetch_authoritative_refund_context_for_provider(
+                    &mut c, job_id, agent_id,
+                )
+                .await
+                {
+                    Ok(context) => {
+                        let ready = context.status == Some(expected_status)
+                            && context.provider_agent_id.as_deref() == Some(agent_id);
+                        latest_context = Some(context);
+                        latest_error = None;
+                        if ready {
+                            break;
+                        }
+                    }
+                    Err(error) => latest_error = Some(error),
+                }
+                if let Some(delay_ms) = REFUND_RETRY_DELAYS_MS.get(attempt) {
+                    tokio::time::sleep(std::time::Duration::from_millis(*delay_ms)).await;
+                }
+            }
+
+            let Some(context) = latest_context else {
+                let diagnostic = latest_error
+                    .map(|error| format!("{error:#}"))
+                    .unwrap_or_else(|| "authoritative provider detail unavailable".to_string());
+                return (
+                    Some(format!(
+                        "[next-action blocked] Cannot fetch composed task/subscription detail for {job_status_or_event}: {diagnostic}. Do not notify or clean up an ASP session from caller-supplied event data."
+                    )),
+                    None,
+                );
+            };
+            if let Some(reason) =
+                asp_refund_context_block_reason(&context, job_status_or_event, agent_id)
+            {
+                return (Some(reason), Some(context));
+            }
+            return (None, Some(context));
+        }
+    }
+
+    // Non-refund events keep their established single authoritative endpoint.
+    let detail_path = detail_path_for_event(&c, job_id, job_status_or_event);
+    let detail_result = c.get_with_identity(&detail_path, agent_id).await;
+    let resp = match detail_result {
+        Ok(detail) => detail,
+        Err(error) if arbitration_source.is_some() => {
+            return (
+                Some(task::arbitration::blocked_result(
+                    "status_unavailable",
+                    job_id,
+                    serde_json::json!({
+                        "sourceEvent": job_status_or_event,
+                        "error": error.to_string(),
+                    }),
+                )),
+                None,
+            )
+        }
+        Err(error)
+            if matches!(
+                job_status_or_event,
+                "job_accepted" | "sub_open" | "sub_created" | "sub_asp_selected"
+            ) || (role == "asp"
+                && refund_event_status_policy(job_status_or_event).is_some())
+                || (matches!(role, "user" | "asp")
+                    && subscription_side_effect_event_status_policy(job_status_or_event)
+                        .is_some()) =>
+        {
+            return (
+                Some(format!(
+                    "[next-action blocked] Cannot fetch latest task detail for {job_status_or_event}: {error:#}. Do not process this lifecycle notice from stale or incomplete event data."
+                )),
+                None,
+            );
+        }
         Err(_) => return (None, None),
     };
+
+    let subscription_status_expectation = match job_status_or_event {
+        "sub_open" => Some((0, "CREATED")),
+        "sub_created" | "sub_asp_selected" => Some((1, "ACTIVE")),
+        _ => None,
+    };
+    if let Some((expected_status, expected_name)) = subscription_status_expectation {
+        if let Some(reason) = subscription_event_block_reason(
+            &resp,
+            job_status_or_event,
+            expected_status,
+            expected_name,
+        ) {
+            return (Some(reason), None);
+        }
+    }
     let mut ctx = PreFetchedTaskContext::from_api_response(&resp);
 
+    if let Some(reason) =
+        subscription_side_effect_context_block_reason(&ctx, job_status_or_event, role, agent_id)
+    {
+        return (Some(reason), Some(ctx));
+    }
+
+    // Provider-side refund/timeout handlers may notify and clean up a live ASP
+    // session. Their event JSON is caller-provided, so require fresh status and
+    // provider ownership before allowing those side effects.
+    if role == "asp" {
+        if let Some(reason) = asp_refund_context_block_reason(&ctx, job_status_or_event, agent_id) {
+            return (Some(reason), Some(ctx));
+        }
+    }
+
+    if let Some(source_event) = arbitration_source {
+        if arbitration_decision_is_stale(source_event, message, &resp) {
+            return (
+                Some(task::arbitration::blocked_result(
+                    "stale_event",
+                    job_id,
+                    serde_json::json!({"sourceEvent": job_status_or_event}),
+                )),
+                Some(ctx),
+            );
+        }
+        return (None, Some(ctx));
+    }
+
     // For job_submitted: prefer an unprocessed spool delivery over an existing
-    // manifest. Subscription manifests are append-only, so checking the
-    // manifest first could keep selecting an old delivery forever while a new
-    // inbound signal remained stranded in the spool.
+    // manifest. This event belongs to a one-time task; subscription deliveries
+    // use their own event flow and must never be routed from this recovery path.
     //   ① temp file present → recover + save the oldest unprocessed delivery
     //   ② manifest present  → populate the newest saved delivery
     //   ③ neither           → leave ctx.deliverable=None; prompt outputs "wait"
@@ -4156,20 +4807,7 @@ async fn check_status_freshness(
                 original_name: String::new(),
                 text_content: recovered.text_content.clone(),
             });
-            if let Some(prompt) = task::user::route_subscription_delivery_to_skill(
-                job_id,
-                agent_id,
-                &recovered.saved_path,
-                &recovered.deliverable_type,
-                "recover",
-                recovered.transport_identity.as_ref(),
-            )
-            .await
-            {
-                return (Some(prompt), Some(ctx));
-            }
-        } else if let Ok(Some(manifest)) =
-            task::common::deliverables::read_manifest("user", job_id)
+        } else if let Ok(Some(manifest)) = task::common::deliverables::read_manifest("user", job_id)
         {
             if let Some(entry) = manifest.entries.last() {
                 let dir = task::common::deliverables::deliverables_dir("user", job_id)
@@ -4195,14 +4833,17 @@ async fn check_status_freshness(
     let prefetched = Some(ctx);
 
     // Pre-fetch-only events + display-class sub_* events: return data without freshness validation.
-    if is_prefetch_only || is_display_only_sub {
+    if is_prefetch_only || is_subscription_event {
         return (None, prefetched);
     }
 
     // Freshness validation for chain events.
     let actual = match resp
         .get("status")
-        .and_then(|v| v.as_i64())
+        .and_then(|v| {
+            v.as_i64()
+                .or_else(|| v.as_str().and_then(|value| value.parse().ok()))
+        })
         .and_then(|v| i32::try_from(v).ok())
     {
         Some(s) => Status::from_int(s),
@@ -4234,4 +4875,587 @@ async fn check_status_freshness(
          **MUST NOT**: do NOT guess the next step; do NOT call any task CLI before getting a fresh playbook; do NOT push this warning to the user via `onchainos agent user-notify`.\n",
         expected_str = expected.as_str(),
     )), prefetched)
+}
+
+#[cfg(test)]
+mod authoritative_detail_path_tests {
+    use super::{
+        asp_refund_context_block_reason, buyer_refund_event_status_policy,
+        buyer_refund_freshness_ready, detail_path_for_event, dispute_result_context_block_reason,
+        expired_timeout_uses_authoritative_status, refund_event_status_policy,
+        refund_final_context_ready, subscription_acceptance_status,
+        subscription_event_block_reason, subscription_failed_context_block_reason,
+        subscription_refund_final_block_reason, subscription_side_effect_context_block_reason,
+        subscription_side_effect_event_status_policy,
+    };
+    use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+
+    #[test]
+    fn lifecycle_events_use_authoritative_detail_endpoint() {
+        let client = TaskApiClient::new();
+        assert_eq!(
+            detail_path_for_event(&client, "job-1", "job_accepted"),
+            "/priapi/v1/aieco/task/job-1"
+        );
+        assert_eq!(
+            detail_path_for_event(&client, "job-1", "sub_open"),
+            "/priapi/v1/aieco/task/subscribe/job-1"
+        );
+        assert_eq!(
+            detail_path_for_event(&client, "job-1", "sub_created"),
+            "/priapi/v1/aieco/task/subscribe/job-1"
+        );
+        assert_eq!(
+            detail_path_for_event(&client, "job-1", "sub_asp_selected"),
+            "/priapi/v1/aieco/task/subscribe/job-1"
+        );
+        assert_eq!(
+            detail_path_for_event(&client, "job-1", "sub_reject_refund_notify"),
+            "/priapi/v1/aieco/task/subscribe/job-1"
+        );
+    }
+
+    #[test]
+    fn subscription_events_require_their_authoritative_status() {
+        assert_eq!(
+            subscription_acceptance_status(&serde_json::json!({"subStatus": 1})),
+            Some(1)
+        );
+        assert_eq!(
+            subscription_acceptance_status(&serde_json::json!({"status": "1"})),
+            Some(1)
+        );
+        assert_eq!(
+            subscription_acceptance_status(&serde_json::json!({"subStatus": 0})),
+            Some(0)
+        );
+        assert_eq!(subscription_acceptance_status(&serde_json::json!({})), None);
+        assert!(subscription_event_block_reason(
+            &serde_json::json!({"subStatus": 0}),
+            "sub_open",
+            0,
+            "CREATED"
+        )
+        .is_none());
+        assert!(subscription_event_block_reason(
+            &serde_json::json!({"subStatus": 1}),
+            "sub_open",
+            0,
+            "CREATED"
+        )
+        .is_some());
+        assert!(subscription_event_block_reason(
+            &serde_json::json!({"subStatus": 1}),
+            "sub_created",
+            1,
+            "ACTIVE"
+        )
+        .is_none());
+        assert!(subscription_event_block_reason(
+            &serde_json::json!({}),
+            "sub_asp_selected",
+            1,
+            "ACTIVE"
+        )
+        .is_some());
+        assert!(subscription_event_block_reason(
+            &serde_json::json!({"subStatus": 1}),
+            "sub_asp_selected",
+            1,
+            "ACTIVE"
+        )
+        .is_none());
+        let blocked = subscription_event_block_reason(
+            &serde_json::json!({"subStatus": 0}),
+            "sub_asp_selected",
+            1,
+            "ACTIVE",
+        )
+        .unwrap();
+        assert!(blocked.contains("sub_asp_selected"));
+    }
+
+    #[test]
+    fn subscription_refund_final_requires_failed_authoritative_status() {
+        assert!(subscription_refund_final_block_reason(
+            &serde_json::json!({"subStatus": "9"}),
+            "sub_asp_agree"
+        )
+        .is_none());
+        let blocked = subscription_refund_final_block_reason(
+            &serde_json::json!({"subStatus": 4}),
+            "sub_reject_refund_notify",
+        )
+        .unwrap();
+        assert!(blocked.contains("FAILED(9)"));
+        assert!(blocked.contains("sub_reject_refund_notify"));
+    }
+
+    #[test]
+    fn refund_final_readiness_uses_lifecycle_plus_legacy_subscription_event() {
+        let detail =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &serde_json::json!({
+                    "jobType": 0,
+                    "status": 9,
+                    "buyerAgentId": "buyer-1",
+                    "providerAgentId": "asp-1",
+                    "serviceId": "svc-1",
+                    "paymentTokenAmount": "10",
+                    "paymentTokenSymbol": "USDT",
+                    "paymentTokenAddress": "0xtoken",
+                }),
+            );
+        assert!(refund_final_context_ready(
+            &detail,
+            "job_auto_refunded",
+            "buyer-1"
+        ));
+        assert!(!refund_final_context_ready(
+            &detail,
+            "job_auto_refunded",
+            "buyer-2"
+        ));
+
+        let mut subscription = detail.clone();
+        subscription.job_type = Some(1);
+        subscription.verified_transaction_hash = Some(format!("0x{}", "ab".repeat(32)));
+        subscription.refund_request_provenance = true;
+        assert!(refund_final_context_ready(
+            &subscription,
+            "sub_reject_refund_notify",
+            "buyer-1"
+        ));
+        assert!(!refund_final_context_ready(
+            &subscription,
+            "sub_failed_notify",
+            "buyer-1"
+        ));
+    }
+
+    #[test]
+    fn dispute_result_requires_composed_buyer_and_durable_request_provenance() {
+        let mut context =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &serde_json::json!({
+                    "jobType": 1,
+                    "subStatus": 6,
+                    "userAgentId": "buyer-1",
+                    "providerAgentId": "asp-1",
+                }),
+            );
+        let no_provenance = dispute_result_context_block_reason(&context, "buyer-1").unwrap();
+        assert!(no_provenance.contains("no durable local refund-request provenance"));
+
+        context.refund_request_provenance = true;
+        assert!(dispute_result_context_block_reason(&context, "buyer-1").is_none());
+        assert!(dispute_result_context_block_reason(&context, "buyer-2")
+            .unwrap()
+            .contains("does not bind"));
+
+        context.status = Some(9);
+        context.token_amount = "5".to_string();
+        context.token_symbol = "USDT".to_string();
+        assert!(dispute_result_context_block_reason(&context, "buyer-1").is_none());
+
+        context.job_type = None;
+        assert!(dispute_result_context_block_reason(&context, "buyer-1")
+            .unwrap()
+            .contains("jobType"));
+    }
+
+    #[test]
+    fn subscription_failed_notice_requires_subscription_status_and_buyer() {
+        let context =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &serde_json::json!({
+                    "jobType": 1,
+                    "subStatus": 9,
+                    "userAgentId": "buyer-1",
+                }),
+            );
+        assert!(subscription_failed_context_block_reason(&context, "buyer-1").is_none());
+        assert!(
+            subscription_failed_context_block_reason(&context, "buyer-2")
+                .unwrap()
+                .contains("does not bind")
+        );
+
+        let mut wrong_type = context.clone();
+        wrong_type.job_type = Some(0);
+        assert!(
+            subscription_failed_context_block_reason(&wrong_type, "buyer-1")
+                .unwrap()
+                .contains("subscription")
+        );
+
+        let mut stale = context;
+        stale.status = Some(1);
+        assert!(subscription_failed_context_block_reason(&stale, "buyer-1")
+            .unwrap()
+            .contains("Failed(9)"));
+    }
+
+    #[test]
+    fn shared_refund_events_have_explicit_status_and_finality_policy() {
+        for event in ["job_expired", "submit_expired", "job_asp_accept_expire"] {
+            assert!(expired_timeout_uses_authoritative_status(event));
+        }
+        for event in ["job_closed", "job_auto_refunded", "job_asp_reject_expire"] {
+            assert!(!expired_timeout_uses_authoritative_status(event));
+        }
+
+        assert_eq!(
+            refund_event_status_policy("job_asp_accept_expire"),
+            Some((8, false))
+        );
+        assert_eq!(
+            refund_event_status_policy("job_asp_reject_expire"),
+            Some((9, true))
+        );
+        assert_eq!(refund_event_status_policy("job_expired"), Some((8, false)));
+        assert_eq!(
+            refund_event_status_policy("submit_expired"),
+            Some((8, false))
+        );
+        assert_eq!(
+            refund_event_status_policy("job_asp_reject_closed"),
+            Some((7, true))
+        );
+
+        let expired =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &serde_json::json!({
+                    "jobType": 0,
+                    "status": 8,
+                    "buyerAgentId": "buyer-1",
+                    "paymentTokenAmount": "10",
+                }),
+            );
+        assert!(refund_final_context_ready(
+            &expired,
+            "job_asp_accept_expire",
+            "buyer-1"
+        ));
+        assert!(buyer_refund_freshness_ready(
+            &expired,
+            "job_expired",
+            "buyer-1",
+            8,
+            false,
+        ));
+
+        let trial_expired =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &serde_json::json!({
+                    "jobType": 1,
+                    "trialType": 1,
+                    "status": 8,
+                    "buyerAgentId": "buyer-1",
+                    "paymentTokenAmount": "10",
+                }),
+            );
+        assert!(!refund_final_context_ready(
+            &trial_expired,
+            "job_asp_accept_expire",
+            "buyer-1"
+        ));
+        assert!(buyer_refund_freshness_ready(
+            &trial_expired,
+            "job_asp_accept_expire",
+            "buyer-1",
+            8,
+            false,
+        ));
+
+        let closed =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &serde_json::json!({
+                    "jobType": 0,
+                    "status": 7,
+                    "buyerAgentId": "buyer-1",
+                    "providerAgentId": "asp-1",
+                    "serviceId": "svc-1",
+                    "paymentMode": 1,
+                    "paymentTokenAmount": "10",
+                    "paymentTokenSymbol": "USDT",
+                    "paymentTokenAddress": "0xtoken",
+                }),
+            );
+        assert!(refund_final_context_ready(
+            &closed,
+            "job_asp_reject_closed",
+            "buyer-1"
+        ));
+
+        let subscription_closed =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &serde_json::json!({
+                    "jobType": 1,
+                    "status": 7,
+                    "buyerAgentId": "buyer-1",
+                    "providerAgentId": "asp-1",
+                    "serviceId": "svc-1",
+                    "paymentTokenAmount": "10",
+                    "paymentTokenSymbol": "USDT",
+                    "paymentTokenAddress": "0xtoken",
+                }),
+            );
+        assert!(!refund_final_context_ready(
+            &subscription_closed,
+            "job_asp_reject_closed",
+            "buyer-1"
+        ));
+
+        let mut zero_price_subscription_closed = subscription_closed;
+        zero_price_subscription_closed.token_amount = "0".to_string();
+        assert!(!refund_final_context_ready(
+            &zero_price_subscription_closed,
+            "job_asp_reject_closed",
+            "buyer-1"
+        ));
+    }
+
+    #[test]
+    fn subscription_asp_reject_closed_freshness_requires_only_buyer_owned_closed() {
+        let subscription_closed =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &serde_json::json!({
+                    "jobType": 1,
+                    "status": 7,
+                    "buyerAgentId": "buyer-1",
+                    "paymentTokenAmount": "10",
+                    "paymentTokenSymbol": "USDT",
+                    "paymentTokenAddress": "0xtoken",
+                }),
+            );
+
+        // Subscription Closed(7) is fresh enough for the safe close handler,
+        // even though it deliberately does not prove refund finality.
+        assert!(!refund_final_context_ready(
+            &subscription_closed,
+            "job_asp_reject_closed",
+            "buyer-1"
+        ));
+        assert!(buyer_refund_freshness_ready(
+            &subscription_closed,
+            "job_asp_reject_closed",
+            "buyer-1",
+            7,
+            true,
+        ));
+
+        let mut stale = subscription_closed.clone();
+        stale.status = Some(1);
+        assert!(!buyer_refund_freshness_ready(
+            &stale,
+            "job_asp_reject_closed",
+            "buyer-1",
+            7,
+            true,
+        ));
+        assert!(!buyer_refund_freshness_ready(
+            &subscription_closed,
+            "job_asp_reject_closed",
+            "buyer-2",
+            7,
+            true,
+        ));
+
+        // The exception is event-specific; a generic subscription job_closed
+        // still does not become refund-final merely because status is Closed.
+        assert!(!buyer_refund_freshness_ready(
+            &subscription_closed,
+            "job_closed",
+            "buyer-1",
+            7,
+            true,
+        ));
+
+        // One-time paid closes retain the existing final-refund requirement.
+        let one_time_unconfirmed =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &serde_json::json!({
+                    "jobType": 0,
+                    "status": 7,
+                    "buyerAgentId": "buyer-1",
+                    "paymentMode": 3,
+                    "paymentTokenAmount": "10",
+                    "paymentTokenSymbol": "USDT",
+                    "paymentTokenAddress": "0xtoken",
+                }),
+            );
+        assert!(!buyer_refund_freshness_ready(
+            &one_time_unconfirmed,
+            "job_asp_reject_closed",
+            "buyer-1",
+            7,
+            true,
+        ));
+    }
+
+    #[test]
+    fn buyer_refund_policy_does_not_apply_buyer_ownership_to_asp_notifications() {
+        assert_eq!(
+            buyer_refund_event_status_policy("user", "job_refunded"),
+            Some((9, true))
+        );
+        assert_eq!(
+            buyer_refund_event_status_policy("asp", "job_refunded"),
+            None
+        );
+        assert_eq!(
+            buyer_refund_event_status_policy("asp", "sub_asp_agree"),
+            None
+        );
+    }
+
+    #[test]
+    fn asp_refund_notifications_require_fresh_provider_ownership_and_status() {
+        let valid =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &serde_json::json!({
+                    "status": 8,
+                    "providerAgentId": "asp-1",
+                }),
+            );
+        assert!(
+            asp_refund_context_block_reason(&valid, "job_asp_accept_expire", "asp-1").is_none()
+        );
+        assert!(
+            asp_refund_context_block_reason(&valid, "job_asp_accept_expire", "asp-2")
+                .unwrap()
+                .contains("does not bind")
+        );
+        for event in ["job_expired", "submit_expired"] {
+            assert!(asp_refund_context_block_reason(&valid, event, "asp-1").is_none());
+            assert!(asp_refund_context_block_reason(&valid, event, "asp-2")
+                .unwrap()
+                .contains("does not bind"));
+        }
+
+        let stale =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &serde_json::json!({
+                    "status": 1,
+                    "providerAgentId": "asp-1",
+                }),
+            );
+        assert!(
+            asp_refund_context_block_reason(&stale, "job_asp_accept_expire", "asp-1")
+                .unwrap()
+                .contains("expected status 8")
+        );
+    }
+
+    #[test]
+    fn subscription_side_effects_require_fresh_status_and_role_owner() {
+        assert_eq!(
+            subscription_side_effect_event_status_policy("sub_close_notify"),
+            Some(7)
+        );
+        assert_eq!(
+            subscription_side_effect_event_status_policy("sub_asp_dispute"),
+            Some(4)
+        );
+        let active =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &serde_json::json!({
+                    "subStatus": 1,
+                    "userAgentId": "buyer-1",
+                    "providerAgentId": "asp-1",
+                }),
+            );
+        let stale = subscription_side_effect_context_block_reason(
+            &active,
+            "sub_close_notify",
+            "user",
+            "buyer-1",
+        )
+        .unwrap();
+        assert!(stale.contains("expected status 7"), "{stale}");
+        let premature_dispute = subscription_side_effect_context_block_reason(
+            &active,
+            "sub_asp_dispute",
+            "user",
+            "buyer-1",
+        )
+        .unwrap();
+        assert!(
+            premature_dispute.contains("expected status 4"),
+            "{premature_dispute}"
+        );
+        assert!(subscription_side_effect_context_block_reason(
+            &active,
+            "sub_user_reject",
+            "user",
+            "buyer-2"
+        )
+        .unwrap()
+        .contains("does not bind"));
+
+        let closed =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &serde_json::json!({
+                    "subStatus": 7,
+                    "userAgentId": "buyer-1",
+                    "providerAgentId": "asp-1",
+                }),
+            );
+        assert!(subscription_side_effect_context_block_reason(
+            &closed,
+            "sub_close_notify",
+            "user",
+            "buyer-1"
+        )
+        .is_none());
+        assert!(subscription_side_effect_context_block_reason(
+            &closed,
+            "sub_close_notify",
+            "user",
+            "buyer-2"
+        )
+        .unwrap()
+        .contains("does not bind"));
+    }
+}
+
+#[cfg(test)]
+mod arbitration_freshness_tests {
+    use super::{arbitration_decision_is_stale, arbitration_decision_source};
+
+    #[test]
+    fn decision_relay_rechecks_task_and_subscription_state() {
+        assert_eq!(
+            arbitration_decision_source("user_decision_job_rejected"),
+            Some("job_rejected")
+        );
+        assert!(!arbitration_decision_is_stale(
+            "job_rejected",
+            None,
+            &serde_json::json!({"status": 3})
+        ));
+        assert!(arbitration_decision_is_stale(
+            "job_rejected",
+            None,
+            &serde_json::json!({"status": 4})
+        ));
+
+        let relay = serde_json::json!({
+            "params": {
+                "decisionBindingKey": "periodIndex",
+                "decisionBindingValue": "2"
+            }
+        });
+        assert!(!arbitration_decision_is_stale(
+            "sub_user_reject",
+            Some(&relay),
+            &serde_json::json!({"subStatus": 3, "periodIndex": 2})
+        ));
+        assert!(arbitration_decision_is_stale(
+            "sub_user_reject",
+            Some(&relay),
+            &serde_json::json!({"subStatus": 3, "periodIndex": 3})
+        ));
+    }
 }

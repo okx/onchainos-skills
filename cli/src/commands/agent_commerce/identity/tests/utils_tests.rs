@@ -505,7 +505,7 @@ fn build_agent_list_cells_full_asp_row() {
 }
 
 #[test]
-fn build_agent_list_cells_count_zero_no_rating_and_truncates_name() {
+fn build_agent_list_cells_user_role_and_truncated_name() {
     let row = json!({
         "agentId": "58",
         "name": "A really long agent name that exceeds twenty",
@@ -523,13 +523,10 @@ fn build_agent_list_cells_count_zero_no_rating_and_truncates_name() {
         ("Name".to_string(), "A really long agent …".to_string())
     );
     assert_eq!(pairs[2].1, "User");
-    // count 0 → No rating yet (never `—` in list view).
-    assert_eq!(
-        pairs[5],
-        ("Rating".to_string(), "No rating yet".to_string())
-    );
-    // no approvalDisplayStatus → `—`.
+    // User status and approval are not applicable.
+    assert_eq!(pairs[3], ("Status".to_string(), "—".to_string()));
     assert_eq!(pairs[4], ("Approval status".to_string(), "—".to_string()));
+    assert_eq!(pairs[5], ("Rating".to_string(), "No rating yet".to_string()));
 }
 
 #[test]
@@ -706,7 +703,7 @@ fn build_search_table_has_fixed_columns_and_walks_flat_list() {
 
 #[test]
 fn build_service_cells_a2mcp_pascalcase() {
-    // service-list returns PascalCase keys per references/identity-discover.md §service-list.
+    // service-list returns PascalCase keys per references/identity/profile.md §Services for an explicit Agent ID.
     let svc = json!({
         "ServiceName": "TVL Query",
         "ServiceType": "A2MCP",
@@ -720,7 +717,7 @@ fn build_service_cells_a2mcp_pascalcase() {
         vec![
             ("#".to_string(), "1".to_string()),
             ("Name".to_string(), "TVL Query".to_string()),
-            ("Type".to_string(), "API service".to_string()),
+            ("Type".to_string(), "A2MCP".to_string()),
             ("Fee".to_string(), "10 USDT".to_string()),
             ("Subscription".to_string(), "—".to_string()),
             ("Free trial".to_string(), "—".to_string()),
@@ -970,9 +967,8 @@ fn build_feedback_cells_full_entry() {
     assert_eq!(
         cell_pairs(&Value::Array(cells)),
         vec![
-            ("Score".to_string(), "★ 5".to_string()),
+            ("Score".to_string(), "5".to_string()),
             ("Reviewer".to_string(), "#88".to_string()),
-            ("Task".to_string(), "0xabc03e8".to_string()),
             ("Date".to_string(), "2026-04-20".to_string()),
             (
                 "Comment".to_string(),
@@ -983,7 +979,7 @@ fn build_feedback_cells_full_entry() {
 }
 
 #[test]
-fn build_feedback_cells_no_comment_and_missing_task() {
+fn build_feedback_cells_no_comment() {
     let item = json!({
         "creatorId": 77,
         "score": 4.45,
@@ -991,14 +987,58 @@ fn build_feedback_cells_no_comment_and_missing_task() {
     });
     let cells = build_feedback_cells(item.as_object().unwrap());
     let pairs = cell_pairs(&Value::Array(cells));
-    assert_eq!(pairs[0], ("Score".to_string(), "★ 4.45".to_string()));
-    // missing taskId → `—`.
-    assert_eq!(pairs[2], ("Task".to_string(), "—".to_string()));
+    assert_eq!(pairs[0], ("Score".to_string(), "4.45".to_string()));
     // empty/missing description → `(no comment)`.
     assert_eq!(
-        pairs[4],
+        pairs[3],
         ("Comment".to_string(), "(no comment)".to_string())
     );
+}
+
+#[test]
+fn build_feedback_cells_accepts_live_agent_name_and_content() {
+    let time = 1_751_587_200_000_i64;
+    let expected_date = chrono::Local
+        .timestamp_millis_opt(time)
+        .single()
+        .unwrap()
+        .format("%Y-%m-%d")
+        .to_string();
+    let item = json!({
+        "agentName": "ScoutGate Buyer",
+        "content": "x402 completion confirmed; no replay issues",
+        "valueString": "100",
+        "time": time,
+    });
+    let cells = build_feedback_cells(item.as_object().unwrap());
+    let pairs = cell_pairs(&Value::Array(cells));
+    assert_eq!(pairs[0], ("Score".to_string(), "5".to_string()));
+    assert_eq!(
+        pairs[1],
+        ("Reviewer".to_string(), "ScoutGate Buyer".to_string())
+    );
+    assert_eq!(pairs[2], ("Date".to_string(), expected_date));
+    assert_eq!(
+        pairs[3],
+        (
+            "Comment".to_string(),
+            "x402 completion confirmed; no replay issues".to_string()
+        )
+    );
+}
+
+#[test]
+fn build_feedback_cells_accepts_numeric_live_value() {
+    let item = json!({ "value": 70 });
+    let cells = build_feedback_cells(item.as_object().unwrap());
+    assert_eq!(cells[0], json!({ "label": "Score", "value": "3.5" }));
+}
+
+#[test]
+fn build_feedback_cells_accepts_suffixed_live_value_string() {
+    let item = json!({ "valueString": "90/100" });
+    let cells = build_feedback_cells(item.as_object().unwrap());
+    assert_eq!(cells[0], json!({ "label": "Score", "value": "4.5" }));
 }
 
 #[test]
@@ -1011,8 +1051,8 @@ fn add_feedback_list_cells_walks_items() {
         ],
     });
     add_feedback_list_cells(&mut resp);
-    assert_eq!(resp["items"][0]["cells"].as_array().unwrap().len(), 5);
-    assert_eq!(resp["items"][0]["cells"][0]["value"], json!("★ 4.5"));
+    assert_eq!(resp["items"][0]["cells"].as_array().unwrap().len(), 4);
+    assert_eq!(resp["items"][0]["cells"][0]["value"], json!("4.5"));
 }
 
 #[test]
@@ -1184,13 +1224,75 @@ fn add_service_list_cells_walks_array_of_wrappers_with_list_key() {
     );
     assert_eq!(
         svcs[0]["cells"][2],
-        json!({ "label": "Type", "value": "API service" })
+        json!({ "label": "Type", "value": "A2MCP" })
     );
     assert_eq!(svcs[1]["cells"][0], json!({ "label": "#", "value": "2" }));
     assert_eq!(
         svcs[1]["cells"][2],
-        json!({ "label": "Type", "value": "agent-to-agent" })
+        json!({ "label": "Type", "value": "A2A" })
     );
+    assert_eq!(data[0]["page"], json!(1));
+    assert_eq!(data[0]["pageSize"], json!(20));
+    assert_eq!(data[0]["total"], json!(2));
+    assert_eq!(data[0]["hasMore"], json!(false));
+}
+
+#[test]
+fn add_service_list_cells_preserves_empty_page_metadata() {
+    for total in [0, 12] {
+        let mut data = json!([{
+            "agentInfo": { "agentId": "392", "name": "Agent 392" },
+            "list": [],
+            "page": 3,
+            "pageSize": 5,
+            "total": total,
+        }]);
+
+        add_service_list_cells(&mut data);
+
+        assert_eq!(data[0]["list"], json!([]));
+        assert_eq!(data[0]["page"], json!(3));
+        assert_eq!(data[0]["pageSize"], json!(5));
+        assert_eq!(data[0]["total"], json!(total));
+        assert_eq!(data[0]["hasMore"], json!(false));
+    }
+}
+
+#[test]
+fn add_service_list_cells_derives_has_more_from_pagination() {
+    for (page, page_size, total, expected) in [
+        (1, 3, 7, true),
+        (2, 3, 7, true),
+        (3, 3, 7, false),
+        (1, 3, 3, false),
+        (1, 3, 0, false),
+    ] {
+        let mut data = json!([{
+            "list": [],
+            "page": page,
+            "pageSize": page_size,
+            "total": total,
+            "hasMore": !expected,
+        }]);
+
+        add_service_list_cells(&mut data);
+
+        assert_eq!(data[0]["hasMore"], json!(expected));
+    }
+}
+
+#[test]
+fn add_service_list_cells_derives_has_more_from_string_metadata() {
+    let mut data = json!([{
+        "list": [],
+        "page": "2",
+        "pageSize": "3",
+        "total": "7",
+    }]);
+
+    add_service_list_cells(&mut data);
+
+    assert_eq!(data[0]["hasMore"], json!(true));
 }
 
 #[test]
@@ -1205,9 +1307,46 @@ fn add_feedback_list_cells_walks_list_key() {
     });
     add_feedback_list_cells(&mut data);
     let cells = &data["list"][0]["cells"];
-    assert_eq!(cells[0], json!({ "label": "Score", "value": "★ 5" }));
+    assert_eq!(cells[0], json!({ "label": "Score", "value": "5" }));
     assert_eq!(cells[1], json!({ "label": "Reviewer", "value": "#88" }));
-    assert_eq!(cells[4], json!({ "label": "Comment", "value": "Great" }));
+    assert_eq!(cells[3], json!({ "label": "Comment", "value": "Great" }));
+}
+
+#[test]
+fn add_feedback_list_cells_derives_has_more_from_pagination() {
+    for (page, page_size, total, expected) in [
+        (1, 3, 7, true),
+        (2, 3, 7, true),
+        (3, 3, 7, false),
+        (1, 3, 3, false),
+        (1, 3, 0, false),
+    ] {
+        let mut data = json!({
+            "list": [],
+            "page": page,
+            "pageSize": page_size,
+            "total": total,
+            "hasMore": !expected,
+        });
+
+        add_feedback_list_cells(&mut data);
+
+        assert_eq!(data["hasMore"], json!(expected));
+    }
+}
+
+#[test]
+fn add_feedback_list_cells_derives_has_more_from_string_metadata() {
+    let mut data = json!({
+        "items": [],
+        "page": "2",
+        "pageSize": "3",
+        "total": "7",
+    });
+
+    add_feedback_list_cells(&mut data);
+
+    assert_eq!(data["hasMore"], json!(true));
 }
 
 // ─── build_precheck (registration §2 uniqueness) ─────────────────────
@@ -1579,7 +1718,7 @@ fn parse_services_a2a_subscription_trims_and_preserves_service_guide() {
 
 #[test]
 fn parse_services_enforces_service_guide_display_width_limit() {
-    for guide in ["x".repeat(2000), "中".repeat(1000)] {
+    for guide in ["x".repeat(10000), "中".repeat(5000)] {
         let raw = json!([{
             "serviceName": "Yield",
             "serviceDescription": "yields",
@@ -1592,7 +1731,7 @@ fn parse_services_enforces_service_guide_display_width_limit() {
         assert!(parse_services(Some(&raw)).is_ok());
     }
 
-    for guide in ["x".repeat(2001), "中".repeat(1001)] {
+    for guide in ["x".repeat(10001), "中".repeat(5001)] {
         let raw = json!([{
             "serviceName": "Yield",
             "serviceDescription": "yields",
@@ -2264,6 +2403,41 @@ fn normalize_a2a_bad_subscription_fee_is_err() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("subscription fee"), "expected sub-fee error; got: {err}");
+}
+
+#[test]
+fn normalize_a2a_prices_allow_at_most_two_decimals() {
+    assert!(normalize_service(a2a_with("0.12", vec![])).is_ok());
+    let single_err = normalize_service(a2a_with("0.123", vec![]))
+        .unwrap_err()
+        .to_string();
+    assert!(single_err.contains("2 decimal places"), "got: {single_err}");
+
+    assert!(normalize_service(a2a_with("", vec![("month", "0.12")])).is_ok());
+    let subscription_err = normalize_service(a2a_with("", vec![("month", "0.123")]))
+        .unwrap_err()
+        .to_string();
+    assert!(subscription_err.contains("2 decimal places"), "got: {subscription_err}");
+}
+
+#[test]
+fn normalize_a2mcp_fee_keeps_six_decimal_precision() {
+    let build = |fee: &str| AgentService {
+        id: None,
+        service_name: "Price feed svc".to_string(),
+        service_description: "desc".to_string(),
+        service_guide: String::new(),
+        fee: fee.to_string(),
+        service_type: "A2MCP".to_string(),
+        subscription: vec![],
+        free_trial: None,
+        operation: None,
+        endpoint: Some("https://api.example.com/mcp".to_string()),
+    };
+
+    assert!(normalize_service(build("0.123456")).is_ok());
+    let err = normalize_service(build("0.1234567")).unwrap_err().to_string();
+    assert!(err.contains("6 decimal places"), "got: {err}");
 }
 
 #[test]

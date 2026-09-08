@@ -6,7 +6,7 @@
 //! helpers; it no longer parses or executes delivered signal text.
 //!
 //! This module is shared by:
-//! - the retired ASP `agent deliver --autotrade` argument (accepted but ignored);
+//! - legacy ASP delivery metadata is no longer accepted by `agent deliver`;
 //! - the Active-subscription route cache and consent/grant commands used by the
 //!   model-selected Skill/tool;
 //! - compatibility rendering for decisions produced by earlier releases.
@@ -19,6 +19,7 @@ pub(crate) mod continuation;
 pub(crate) mod delivery_queue;
 pub(crate) mod executor;
 pub(crate) mod grants;
+pub(crate) mod guide;
 pub(crate) mod notify;
 pub(crate) mod profile;
 pub(crate) mod schema;
@@ -28,10 +29,15 @@ pub(crate) mod trade_kit;
 
 pub const DEFAULT_AUTOTRADE_TTL_SEC: u64 = 31_536_000;
 
-/// Terminal skip reason used when a delivery arrives without a live execution
-/// policy. The outcome notifier renders this code as localized guidance for
-/// restoring or updating the subscription's execution policy.
+/// Compatibility skip reason for a retired fixed-field execution-policy flow.
+/// It never restores or updates an execution policy.
 pub const EXECUTION_POLICY_NOT_CONFIGURED_REASON: &str = "execution_policy_not_configured";
+
+/// A Signal cannot enter execution until a locally persisted Service Guide and
+/// matching active Guide Consent form one valid contract. This is a normal
+/// signal-only state, including for subscriptions created before Guide-driven
+/// execution existed.
+pub const GUIDE_EXECUTION_UNAVAILABLE_REASON: &str = "guide_execution_unavailable";
 
 /// Delivery-time mode/configuration prompts removed from the current flow.
 /// Replies from older releases are retained only long enough to fail closed;

@@ -1,66 +1,67 @@
-//! Raise dispute (ASP) step 2 — onchainos agent dispute confirm <jobId>
+//! Compatibility entrypoint for the retired second evaluation transaction.
 //!
-//! Step 2 of the two-stage on-chain dispute flow. Preconditions:
-//!   1. `dispute raise` has been run (stage 1 approve on-chain)
-//!   2. On-chain `dispute_approved` system notification has been received
-//!
-//! This command calls POST /aieco/task/{jobId}/dispute → uopData → sign + broadcast.
-//! After completion, wait for the on-chain `job_disputed` notification, then call next-action to enter the evidence preparation window.
+//! New one-time and subscription requests both use the combined
+//! `approveAndCreateDispute` endpoint. This command remains parseable for older
+//! callers and exits before any API or on-chain write.
 
 use anyhow::{bail, Context, Result};
-use std::time::Duration;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL, Engine as _};
 
-use crate::audit;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-use crate::commands::agent_commerce::task::signing;
 
 const MAX_REASON_CHARS: usize = 2000;
 
+pub(super) fn decode_reason_input(
+    reason: Option<&str>,
+    reason_b64: Option<&str>,
+) -> Result<String> {
+    match (reason, reason_b64) {
+        (Some(_), Some(_)) => bail!("Pass exactly one of --reason or --reason-b64"),
+        (Some(reason), None) => Ok(reason.to_string()),
+        (None, Some(encoded)) => {
+            let bytes = BASE64_URL
+                .decode(encoded)
+                .context("--reason-b64 is not valid URL-safe base64")?;
+            String::from_utf8(bytes).context("--reason-b64 does not contain UTF-8 text")
+        }
+        (None, None) => bail!("Evaluation reason is required. Pass --reason or --reason-b64."),
+    }
+}
+
 pub async fn handle_dispute_confirm(
-    client: &mut TaskApiClient,
-    job_id: &str,
+    _client: &mut TaskApiClient,
+    _job_id: &str,
     reason: &str,
     agent_id: &str,
 ) -> Result<()> {
     if agent_id.is_empty() {
         bail!("--agent-id is required (pass the ASP's own agentId; beta backend rejects empty agenticId header)");
     }
-    if reason.chars().count() > MAX_REASON_CHARS {
-        bail!("Dispute reason exceeds {MAX_REASON_CHARS} characters. Please shorten it and try again.");
+    if reason.trim().is_empty() {
+        bail!("Evaluation reason is required. Pass the original evaluation reason with --reason or --reason-b64.");
     }
-    let (account_id, address) = signing::resolve_wallet_by_agent_id(agent_id).await?;
-    let body = serde_json::json!({});
+    if reason.chars().count() > MAX_REASON_CHARS {
+        bail!("Evaluation reason exceeds {MAX_REASON_CHARS} characters. Please shorten it and try again.");
+    }
+    bail!(
+        "dispute confirm has been retired. Use `onchainos agent dispute raise <jobId> --reason <reason> --agent-id <aspAgentId>`; it completes approve and evaluation creation in one transaction"
+    )
+}
 
-    let dispute_resp = client.post_with_identity(
-        &client.endpoint(job_id, "dispute"), &body, agent_id,
-    ).await
-        .context("dispute confirm (stage 2): dispute API request failed")?;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn reason_b64_round_trips_exact_utf8_text() {
+        let reason = "The delivery met the agreed requirements";
+        let encoded = BASE64_URL.encode(reason.as_bytes());
+        assert_eq!(decode_reason_input(None, Some(&encoded)).unwrap(), reason);
+    }
 
-    let reason_json = serde_json::json!({ "reason": reason });
-    let dispute_tx = signing::sign_uop_and_broadcast(
-        client, &dispute_resp["uopData"], &account_id, &address,
-        job_id, signing::extract_biz_type(&dispute_resp), agent_id,
-        Some(&reason_json),
-    ).await
-        .context("dispute confirm (stage 2): dispute on-chain broadcast failed")?;
-
-    audit::log(
-        "cli",
-        "ASP/dispute_confirm_submitted",
-        true,
-        Duration::default(),
-        Some(vec![
-            format!("jobId={job_id}"),
-            format!("agentId={agent_id}"),
-            format!("txHash={dispute_tx}"),
-        ]),
-        None,
-    );
-
-    println!("✓ Dispute stage 2: dispute on-chain");
-    println!("  txHash: {dispute_tx}");
-    println!();
-    println!("⚠️  Stage 2 complete — **end this turn** and wait for the on-chain `job_disputed` system notification:");
-    println!("    - Once you receive the `job_disputed` notification, proceed with the evidence upload script");
-    Ok(())
+    #[test]
+    fn reason_input_requires_exactly_one_source() {
+        assert!(decode_reason_input(None, None).is_err());
+        assert!(decode_reason_input(Some("reason"), Some("cmVhc29u")).is_err());
+        assert!(decode_reason_input(None, Some("%%%invalid%%%")).is_err());
+    }
 }

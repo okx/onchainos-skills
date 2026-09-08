@@ -71,6 +71,14 @@ pub async fn get_by_address(args: GetByAddressArgs, ctx: &Context) -> Result<()>
 
 async fn get_my_agents_impl(args: &GetMyAgentsArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
+    get_my_agents_with_access_token(args, ctx, &access_token).await
+}
+
+pub(super) async fn get_my_agents_with_access_token(
+    args: &GetMyAgentsArgs,
+    ctx: &Context,
+    access_token: &str,
+) -> Result<Value> {
     let mut client = wallet_client(ctx)?;
 
     // Product spec: agent-list identifies the user via JWT; `from` is never needed.
@@ -98,14 +106,14 @@ async fn get_my_agents_impl(args: &GetMyAgentsArgs, ctx: &Context) -> Result<Val
         "[agent-identity] get-my-agents request: url={} access_token_len={} access_token_prefix={} query={:?}",
         reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent/agent-list", &query_refs),
         access_token.len(),
-        redact_token_for_debug(&access_token),
+        redact_token_for_debug(access_token),
         query_refs,
     );
 
     let result = client
         .get_authed(
             "/priapi/v5/wallet/agentic/agent/agent-list",
-            &access_token,
+            access_token,
             &query_refs,
         )
         .await;
@@ -129,7 +137,7 @@ async fn get_my_agents_impl(args: &GetMyAgentsArgs, ctx: &Context) -> Result<Val
     // approvalDisplayStatus / reputation are left intact.
     enrich_agent_get_rows(&mut out);
     // Additive: add a ready-to-render `cells` array per row (the list-table
-    // analog of `card`; references/identity-discover.md §list columns). `agent get` is
+    // analog of `card`; references/identity/profile.md §My Agents columns). `agent get` is
     // now list-only — filtered by `--role` / `--owner-address` — so cells are
     // always meaningful.
     add_agent_list_cells(&mut out);
@@ -193,7 +201,7 @@ async fn get_impl(args: &GetArgs, ctx: &Context) -> Result<Value> {
     // approvalDisplayStatus / reputation are left intact.
     enrich_agent_get_rows(&mut out);
     // Additive: in LIST mode (no --agent-ids) add a ready-to-render `cells`
-    // array per row (references/identity-discover.md §list columns). Detail mode (with
+    // array per row (references/identity/profile.md §My Agents columns). Detail mode (with
     // --agent-ids) already carries the `card`; the list-table `cells` are the
     // row analog and only meaningful for the list view.
     if args.agent_ids.is_none() {
@@ -331,16 +339,24 @@ async fn search_impl(args: &SearchArgs, ctx: &Context) -> Result<Value> {
 
 // ─── `agent service-list` ─────────────────────────────────────────────────
 
-/// Query params for `/agent/services` — only fields the backend contract
-/// defines: `agentId` (required) plus the optional `serviceId` filter.
+/// Query params for `/agent/services`: `agentId` (required), pagination, and
+/// the optional `serviceId` filter.
 /// A provided-but-blank `serviceId` is an error rather than a silent drop:
 /// dropping it would return the full unfiltered listing, and a caller that
 /// reads one service's detail from the response would get the wrong service.
 fn build_service_list_query(
     agent_id: &str,
     service_id: Option<&str>,
+    page: Option<&str>,
+    page_size: Option<&str>,
 ) -> Result<Vec<(String, String)>> {
-    let mut query = vec![("agentId".to_string(), agent_id.to_string())];
+    let page = parse_u32_arg(page, "--page", 1, Some(1), None, false)?;
+    let page_size = parse_u32_arg(page_size, "--page-size", 3, Some(1), None, false)?;
+    let mut query = vec![
+        ("agentId".to_string(), agent_id.to_string()),
+        ("page".to_string(), page.to_string()),
+        ("pageSize".to_string(), page_size.to_string()),
+    ];
     match service_id.map(str::trim) {
         Some("") => bail!("invalid parameter: --service-id must not be blank"),
         Some(service_id) => query.push(("serviceId".to_string(), service_id.to_string())),
@@ -353,7 +369,12 @@ async fn service_list_impl(args: &ServiceListArgs, ctx: &Context) -> Result<Valu
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
     let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?;
-    let query = build_service_list_query(agent_id, args.service_id.as_deref())?;
+    let query = build_service_list_query(
+        agent_id,
+        args.service_id.as_deref(),
+        args.page.as_deref(),
+        args.page_size.as_deref(),
+    )?;
     let query_refs: Vec<(&str, &str)> = query
         .iter()
         .map(|(key, value)| (key.as_str(), value.as_str()))
@@ -394,30 +415,30 @@ async fn service_list_impl(args: &ServiceListArgs, ctx: &Context) -> Result<Valu
 
 // ─── `agent feedback-list` ────────────────────────────────────────────────
 
+fn build_feedback_list_query(
+    agent_id: &str,
+    page: Option<&str>,
+    page_size: Option<&str>,
+) -> Result<Vec<(String, String)>> {
+    let page = parse_u32_arg(page, "--page", 1, Some(1), None, false)?;
+    let page_size = parse_u32_arg(page_size, "--page-size", 5, Some(1), Some(50), true)?;
+    Ok(vec![
+        ("agentId".to_string(), agent_id.to_string()),
+        ("pageNo".to_string(), page.to_string()),
+        ("pageSize".to_string(), page_size.to_string()),
+    ])
+}
+
 async fn feedback_list_impl(args: &FeedbackListArgs, ctx: &Context) -> Result<Value> {
     let access_token = ensure_tokens_refreshed().await?;
     let mut client = wallet_client(ctx)?;
 
-    // agentId is required; page / pageSize are optional — omit when not provided, let the backend use its defaults
-    let mut query = vec![(
-        "agentId".to_string(),
-        require_non_empty(args.agent_id.as_deref(), "--agent-id")?.to_string(),
-    )];
-    if let Some(page_raw) = args.page.as_deref() {
-        let page = parse_u32_arg(Some(page_raw), "--page", 1, Some(1), None, false)?;
-        query.push(("pageNo".to_string(), page.to_string()));
-    }
-    if let Some(page_size_raw) = args.page_size.as_deref() {
-        let page_size = parse_u32_arg(
-            Some(page_size_raw),
-            "--page-size",
-            20,
-            Some(1),
-            Some(50),
-            true,
-        )?;
-        query.push(("pageSize".to_string(), page_size.to_string()));
-    }
+    let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?;
+    let query = build_feedback_list_query(
+        agent_id,
+        args.page.as_deref(),
+        args.page_size.as_deref(),
+    )?;
     let query_refs: Vec<(&str, &str)> = query
         .iter()
         .map(|(key, value)| (key.as_str(), value.as_str()))
@@ -607,19 +628,34 @@ mod tests {
     }
 
     #[test]
-    fn service_list_query_sends_only_agent_id_by_default() {
-        let query = build_service_list_query("1921", None).unwrap();
-        assert_eq!(query, vec![("agentId".to_string(), "1921".to_string())]);
+    fn service_list_query_uses_documented_defaults() {
+        let query = build_service_list_query("1921", None, None, None).unwrap();
+        assert_eq!(
+            query,
+            vec![
+                ("agentId".to_string(), "1921".to_string()),
+                ("page".to_string(), "1".to_string()),
+                ("pageSize".to_string(), "3".to_string()),
+            ]
+        );
     }
 
     #[test]
     fn service_list_query_appends_service_id_filter_when_given() {
         let query =
-            build_service_list_query("1921", Some("4a7f30a7-46fb-4695-80a1-25d160da33b3")).unwrap();
+            build_service_list_query(
+                "1921",
+                Some("4a7f30a7-46fb-4695-80a1-25d160da33b3"),
+                None,
+                None,
+            )
+            .unwrap();
         assert_eq!(
             query,
             vec![
                 ("agentId".to_string(), "1921".to_string()),
+                ("page".to_string(), "1".to_string()),
+                ("pageSize".to_string(), "3".to_string()),
                 (
                     "serviceId".to_string(),
                     "4a7f30a7-46fb-4695-80a1-25d160da33b3".to_string()
@@ -630,7 +666,64 @@ mod tests {
 
     #[test]
     fn service_list_query_rejects_blank_service_id() {
-        let err = build_service_list_query("1921", Some("  ")).unwrap_err();
+        let err = build_service_list_query("1921", Some("  "), None, None).unwrap_err();
         assert!(err.to_string().contains("--service-id must not be blank"));
+    }
+
+    #[test]
+    fn service_list_query_forwards_explicit_pagination() {
+        let query = build_service_list_query("42", None, Some("3"), Some("20")).unwrap();
+        assert_eq!(
+            query,
+            vec![
+                ("agentId".to_string(), "42".to_string()),
+                ("page".to_string(), "3".to_string()),
+                ("pageSize".to_string(), "20".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn service_list_query_rejects_invalid_pagination_values() {
+        for (page, page_size) in [
+            (Some("0"), Some("5")),
+            (Some("1"), Some("0")),
+            (Some("abc"), Some("5")),
+            (Some("1"), Some("abc")),
+        ] {
+            assert!(build_service_list_query("42", None, page, page_size).is_err());
+        }
+    }
+
+    #[test]
+    fn feedback_list_query_uses_documented_defaults() {
+        let query = build_feedback_list_query("42", None, None).unwrap();
+        assert_eq!(
+            query,
+            vec![
+                ("agentId".to_string(), "42".to_string()),
+                ("pageNo".to_string(), "1".to_string()),
+                ("pageSize".to_string(), "5".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn feedback_list_query_forwards_explicit_pagination() {
+        let query = build_feedback_list_query("42", Some("3"), Some("20")).unwrap();
+        assert_eq!(
+            query,
+            vec![
+                ("agentId".to_string(), "42".to_string()),
+                ("pageNo".to_string(), "3".to_string()),
+                ("pageSize".to_string(), "20".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn feedback_list_query_clamps_page_size_to_fifty() {
+        let query = build_feedback_list_query("42", None, Some("51")).unwrap();
+        assert_eq!(query[2], ("pageSize".to_string(), "50".to_string()));
     }
 }

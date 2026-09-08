@@ -2,23 +2,6 @@
 
 13 commands for token search, metadata, detailed pricing, liquidity pools, hot token lists, holder distribution, advanced token info, top trader analysis, filtered trade history, holder cluster analysis, and supported chain lookup.
 
-## Keyword Glossary
-
-> If the user's query contains Chinese text (中文), read `references/token-keyword-glossary.md` for keyword-to-command mappings.
-
-## Related Workflows
-
-When one of the following commands is used, show the related workflow hint after displaying results:
-
-| Command | Workflow | File |
-|---------|----------|------|
-| `token info`, `token price-info`, `token report`, `token holders`, `token cluster-overview`, `token top-trader` | Token Research | `~/.onchainos/workflows/token-research.md` |
-| `token hot-tokens` | Daily Brief | `~/.onchainos/workflows/daily-brief.md` |
-| `token advanced-info` | New Token Screening | `~/.onchainos/workflows/new-token-screening.md` |
-| `token price-info` | Portfolio Check | `~/.onchainos/workflows/portfolio-check.md` |
-
-> Hint format: *"You can also try out our **[workflow name]** workflow for more comprehensive results. Would you like to try it?"*
-
 ## Commands
 
 | # | Command | Use When |
@@ -37,9 +20,7 @@ When one of the following commands is used, show the related workflow hint after
 | 12 | `onchainos token cluster-list --address <address>` | Holder cluster list (clusters of top 300 holders with address details) |
 | 13 | `onchainos token cluster-supported-chains` | Chains supported by holder cluster analysis |
 
-<IMPORTANT>
-"Is this token safe / honeypot / 貔貅盘" → always redirect to `okx-agentic-wallet` (`onchainos security token-scan`). Do not attempt to answer safety questions from token data alone.
-</IMPORTANT>
+> **Mandatory routing rule:** Any token-safety or honeypot request redirects to `okx-agentic-wallet` (`onchainos security token-scan`). Do not answer safety questions from token data alone.
 
 ### Step 1: Collect Parameters
 
@@ -57,52 +38,9 @@ When one of the following commands is used, show the related workflow hint after
 - Indicate `communityRecognized` status for trust signaling
 - Price info: show market cap, liquidity, and volume together
 
-### Step 3: Suggest Next Steps
-
-Present next actions conversationally — never expose command paths to the user.
-
-| After | Suggest |
-|---|---|
-| `token search` | `token price-info`, `token holders` |
-| `token info` | `token price-info`, `token holders` |
-| `token price-info` | `token holders`, `market kline`, `swap execute` |
-| `token holders` | `token advanced-info`, `token top-trader` |
-| `token liquidity` | `token holders`, `token advanced-info` |
-| `token hot-tokens` | `token price-info`, `token liquidity`, `token advanced-info` |
-| `token advanced-info` | `token holders`, `token top-trader`, `token cluster-overview` |
-| `token top-trader` | `token advanced-info`, `token trades` |
-| `token trades` | `token top-trader`, `token advanced-info` |
-| `token cluster-supported-chains` | `token cluster-overview` |
-| `token cluster-overview` | `token cluster-top-holders`, `token cluster-list`, `token advanced-info` |
-| `token cluster-top-holders` | `token cluster-list`, `token holders` |
-| `token cluster-list` | `token top-trader`, `token advanced-info` |
-
 ## Data Freshness
 
 Render `requestTime` (Unix ms) as-is — it is the upstream data snapshot time. Do NOT chain off a previous response's `requestTime`; for a relative window use `--since` where the command supports it.
-
-## Additional Resources
-
-For detailed params and return field schemas for a specific command:
-- Run: `grep -A 80 "## [0-9]*\. onchainos token <command>" references/token-cli-reference.md`
-- Only read the full `references/token-cli-reference.md` if you need multiple command details at once.
-
-## Real-time WebSocket Monitoring
-
-For real-time token data streaming, use the `onchainos ws` CLI:
-
-```bash
-# Detailed price info (market cap, volume, liquidity, holders)
-onchainos ws start --channel price-info --token-pair 1:0xdac17f958d2ee523a2206206994597c13d831ec7
-
-# Real-time trade feed (every buy/sell)
-onchainos ws start --channel trades --token-pair 1:0xdac17f958d2ee523a2206206994597c13d831ec7
-
-# Poll events
-onchainos ws poll --id <ID>
-```
-
-For custom WebSocket scripts/bots, read **`references/token-ws-protocol.md`** for the complete protocol specification.
 
 ## Security Rules
 
@@ -120,12 +58,3 @@ For custom WebSocket scripts/bots, read **`references/token-ws-protocol.md`** fo
 - Use appropriate precision: 2 decimals for high-value, significant digits for low-value
 - Market cap / liquidity in shorthand ($1.2B, $45M)
 - 24h change with sign and color hint (+X% / -X%)
-
-## Troubleshooting
-
-> Edge cases, error codes, and region restrictions: read `references/token-troubleshooting.md`.
-
-## Global Notes
-
-- EVM addresses must be **all lowercase**
-- The CLI handles authentication internally via environment variables — see Prerequisites step 4 for default values

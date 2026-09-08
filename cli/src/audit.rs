@@ -274,12 +274,20 @@ const REDACT_FULL: &[&str] = &[
     // business params can carry sensitive challenge / order data — never log them.
     "--payload",
     "--param",
+    // Free-form request bodies can contain user or challenge data across
+    // payment transports; keep the generic redaction after removing the old
+    // task-based A2MCP command.
+    "--body",
+    // A2MCP invocation: service snapshots and typed business params may contain
+    // user input. The prepared ID is a short-lived capability into local state.
+    "--routing-json",
+    "--routing-base64",
+    "--params-json",
+    "--params-base64",
+    "--prepared-id",
     // subscribe-device-update batch blob embeds jobIds; addr-prefix/suffix of the
     // JSON is meaningless, so redact wholesale.
     "--items",
-    // x402 task-402-pay replay business body: a free-form JSON blob POSTed to the
-    // ASP endpoint that can carry order / challenge data — never log it (SR-5).
-    "--body",
     // pending-decisions-v2 request / request-prompt template payload: the Base64
     // JSON carries the untrusted task title. Redact wholesale so the title never
     // lands in the audit log.
@@ -456,6 +464,20 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
 fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
     use crate::commands::agent_commerce::AgentCommand;
     match cmd {
+        // Keep opaque routing/prepared JSON out of the audit command label.
+        AgentCommand::A2mcpProbe { command } => {
+            use crate::commands::agent_commerce::a2mcp_probe::A2mcpProbeCommand;
+            match command {
+                A2mcpProbeCommand::Probe(_) => "a2mcp-probe probe".into(),
+                A2mcpProbeCommand::ConfirmFree(_) => "a2mcp-probe confirm-free".into(),
+                A2mcpProbeCommand::RefreshBalance(_) => "a2mcp-probe refresh-balance".into(),
+                A2mcpProbeCommand::Funding(_) => "a2mcp-probe funding".into(),
+                A2mcpProbeCommand::ResumeAfterFunding(_) => {
+                    "a2mcp-probe resume-after-funding".into()
+                }
+                A2mcpProbeCommand::PreparePayment(_) => "a2mcp-probe prepare-payment".into(),
+            }
+        }
         // Identity
         AgentCommand::Create(_) => "create".into(),
         AgentCommand::Update(_) => "update".into(),
@@ -481,12 +503,11 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::Tasks { .. } => "tasks".into(),
         AgentCommand::SetPaymentMode { .. } => "set-payment-mode".into(),
         AgentCommand::ConfirmAccept { .. } => "confirm-accept".into(),
-        AgentCommand::Task402Pay { .. } => "task-402-pay".into(),
-        AgentCommand::X402Check { .. } => "x402-check".into(),
         AgentCommand::DesignatedRoute { .. } => "designated-route".into(),
-        AgentCommand::X402Validate { .. } => "x402-validate".into(),
         AgentCommand::Complete { .. } => "complete".into(),
         AgentCommand::Reject { .. } => "reject".into(),
+        AgentCommand::RefundPrepare { .. } => "refund-prepare".into(),
+        AgentCommand::RefundExecute { .. } => "refund-execute".into(),
         AgentCommand::Close { .. } => "close".into(),
         AgentCommand::Payment { .. } => "payment".into(),
         AgentCommand::ClaimAutoRefund { .. } => "claim-auto-refund".into(),
@@ -498,7 +519,11 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::TaskAttach { .. } => "task-attach".into(),
         AgentCommand::ListAttachments { .. } => "list-attachments".into(),
         AgentCommand::MySubscriptions { .. } => "my-subscriptions".into(),
+        AgentCommand::RefundList { .. } => "refund-list".into(),
+        AgentCommand::RefundDetail { .. } => "refund-detail".into(),
         AgentCommand::MyTasks { .. } => "my-tasks".into(),
+        AgentCommand::SubscriptionList { .. } => "subscription-list".into(),
+        AgentCommand::TaskVisibilityUpdate { .. } => "task-visibility-update".into(),
         AgentCommand::SubscribeDetail { .. } => "subscribe-detail".into(),
         AgentCommand::ClaimAutoComplete { .. } => "claim-auto-complete".into(),
         AgentCommand::AspClaimable { .. } => "asp-claimable".into(),
@@ -514,14 +539,11 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::AutotradeConsentSet { .. } => "autotrade-consent-set".into(),
         AgentCommand::AutotradeConsentContinue { .. } => "autotrade-consent-continue".into(),
         AgentCommand::AutotradeConsentRequest { .. } => "autotrade-consent-request".into(),
-        AgentCommand::AutotradeExecute { .. } => "autotrade-execute".into(),
         AgentCommand::AutotradeDirectClaim { .. } => "autotrade-direct-claim".into(),
         AgentCommand::AutotradeDirectFinalize { .. } => "autotrade-direct-finalize".into(),
         AgentCommand::AutotradeOnceAuthorize { .. } => "autotrade-once-authorize".into(),
         AgentCommand::AutotradeOutcomeFlush { .. } => "autotrade-outcome-flush".into(),
         AgentCommand::AutotradeDeliveryReport { .. } => "autotrade-delivery-report".into(),
-        AgentCommand::SubscriptionRouteSet { .. } => "subscription-route-set".into(),
-        AgentCommand::SubscriptionRouteClear { .. } => "subscription-route-clear".into(),
         AgentCommand::AutotradeWatchPrecheck { .. } => "autotrade-watch-precheck".into(),
         AgentCommand::AutotradeCapAdjustRequest { .. } => "autotrade-cap-adjust-request".into(),
         AgentCommand::AgreeRefund { .. } => "agree-refund".into(),
@@ -557,8 +579,11 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::MarkFailed { .. } => "mark-failed".into(),
         AgentCommand::MyAgents { .. } => "my-agents".into(),
         AgentCommand::GateCheck { .. } => "gate-check".into(),
+        AgentCommand::CommunicationCheck => "communication-check".into(),
         AgentCommand::PrepareCreate { .. } => "prepare-create".into(),
         AgentCommand::ActiveTasks { .. } => "active-tasks".into(),
+        AgentCommand::ArbitrationList { .. } => "arbitration-list".into(),
+        AgentCommand::ArbitrationDetail { .. } => "arbitration-detail".into(),
         AgentCommand::Profile { .. } => "profile".into(),
         AgentCommand::PendingDecisionsV2(_) => "pending-decisions-v2".into(),
         AgentCommand::TaskDeliverableSave { .. } => "task-deliverable-save".into(),
@@ -566,6 +591,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::SessionCleanup { .. } => "session-cleanup".into(),
         AgentCommand::TaskInProgress { .. } => "task-in-progress".into(),
         AgentCommand::CreateSubscribe { .. } => "create-subscribe".into(),
+        AgentCommand::ServiceParamUpdate { .. } => "service-param-update".into(),
         AgentCommand::SubscribeCancel { .. } => "subscribe-cancel".into(),
         AgentCommand::StartAutorenew { .. } => "start-autorenew".into(),
         AgentCommand::SubscribeReject { .. } => "subscribe-reject".into(),
@@ -575,10 +601,16 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::DeviceList { .. } => "device-list".into(),
         AgentCommand::AspMatch { .. } => "asp-match".into(),
         AgentCommand::ServiceMatch(_) => "service-match".into(),
+        AgentCommand::ServiceDetail(_) => "service-detail".into(),
         AgentCommand::TaskServiceSelect(_) => "task-service-select".into(),
+        AgentCommand::TaskCreatePrepare(_) => "task-create-prepare".into(),
         AgentCommand::SetAsp { .. } => "set-asp".into(),
         AgentCommand::ResetAsp { .. } => "reset-asp".into(),
         AgentCommand::UserReject { .. } => "user-reject".into(),
+        AgentCommand::AcceptJobByProvider { .. } => "accept-job-by-provider".into(),
+        AgentCommand::DeclineJobByProvider { .. } => "decline-job-by-provider".into(),
+        AgentCommand::AcceptSubscription { .. } => "accept-subscription".into(),
+        AgentCommand::DeclineSubscription { .. } => "decline-subscription".into(),
     }
 }
 
@@ -732,11 +764,12 @@ fn wallet_sub(c: &WalletCommand) -> &'static str {
         WalletCommand::Switch { .. } => "switch",
         WalletCommand::Status { .. } => "status",
         WalletCommand::Addresses { .. } => "addresses",
-        WalletCommand::Qrcode { .. } => "qrcode",
+        WalletCommand::Receive { .. } => "receive",
         WalletCommand::Logout => "logout",
         WalletCommand::Chains => "chains",
         WalletCommand::Geoblock => "geoblock",
         WalletCommand::Balance { .. } => "balance",
+        WalletCommand::FundingCheck { .. } => "funding-check",
         WalletCommand::Send { .. } => "send",
         WalletCommand::History { .. } => "history",
         WalletCommand::Inscription { .. } => "inscription",
@@ -1165,26 +1198,40 @@ mod tests {
     }
 
     #[test]
-    fn redact_body_full() {
-        // x402 task-402-pay --body carries a free-form business JSON blob and must
-        // be fully redacted (SR-5). Two-arg form.
-        let args = vec_s(&[
-            "onchainos",
-            "agent",
-            "task-402-pay",
-            "job_1",
-            "--provider-agent-id",
-            "1506",
-            "--body",
-            r#"{"orderId":"secret-42","challenge":"abc"}"#,
-        ]);
+    fn redact_a2mcp_invocation_payloads() {
+        let args = vec![
+            "onchainos".into(),
+            "agent".into(),
+            "a2mcp-probe".into(),
+            "probe".into(),
+            "--routing-json".into(),
+            r#"{"serviceSnapshot":{"endpoint":"https://merchant.example"}}"#.into(),
+            r#"--params-json={"brand":"private input"}"#.into(),
+            "--prepared-id".into(),
+            "a2prep_private".into(),
+            "--routing-base64".into(),
+            "cm91dGluZy1wcml2YXRl".into(),
+            "--params-base64=cGFyYW1zLXByaXZhdGU=".into(),
+        ];
         let out = redact_args(&args);
-        assert_eq!(out[6], "--body");
-        assert_eq!(out[7], "[REDACTED]");
-        // Equals form.
-        let args = vec_s(&["onchainos", "agent", "task-402-pay", "--body={\"a\":1}"]);
-        let out = redact_args(&args);
-        assert_eq!(out[3], "--body=[REDACTED]");
+        for secret in [
+            "merchant.example",
+            "private input",
+            "a2prep_private",
+            "cm91dGluZy1wcml2YXRl",
+            "cGFyYW1zLXByaXZhdGU=",
+        ] {
+            assert!(
+                !out.iter().any(|value| value.contains(secret)),
+                "audit argv leaked {secret}: {out:?}"
+            );
+        }
+        assert_eq!(
+            out.iter()
+                .filter(|value| value.contains("[REDACTED]"))
+                .count(),
+            5
+        );
     }
 
     #[test]

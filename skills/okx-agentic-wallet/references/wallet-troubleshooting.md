@@ -3,7 +3,7 @@
 Load on a wallet operation failure or edge case.
 
 ## Send
-- **Insufficient balance**: only after the send command returns a backend insufficient-balance error, show the returned message and current balance; for EVM, include the returned gas estimate when available. Do not preemptively require a native-token top-up because backend-sponsored transactions may still succeed.
+- **Insufficient balance**: route the insufficient-balance intent to [funding.md](funding.md).
 - **Wrong chain for token**: `--contract-token` must exist on the specified chain.
 
 ## History
@@ -19,7 +19,9 @@ Load on a wallet operation failure or edge case.
 
 ## Common
 - **Region restriction (error code 50125 or 80001)**: do NOT show the raw code. Display: "Service is not available in your region. Please switch to a supported region and try again."
-- **Not logged in** (`not logged in`): session expired or store missing. **MUST**: recover by running `wallet login --phase init`, then the `nextSteps.completeLogin` command it returns (`wallet login --phase poll --session-id <authSessionId>`).
+- **Not logged in** (`not logged in`): session expired or store missing.
+  Recover with the complete login flow in [wallet.md](wallet.md), beginning
+  with `wallet login --phase init`.
 - **Credentials corrupted** (`Credentials corrupted. Please login again`): the credential store (`keyring.enc` / session) exists but is unreadable — distinct from *not logged in*. Do not retry the failing command blindly (it keeps hitting the same unreadable store); have the user re-authenticate with `wallet login`, which overwrites the unreadable store with a fresh one. If `wallet login` itself still errors, run `wallet logout` first (it clears the store without reading it) and then `wallet login`.
 - **Confirming response (exit code 2, error code 81362)**: not an error — the backend needs confirmation. Handle via SKILL.md → Confirming Response.
 

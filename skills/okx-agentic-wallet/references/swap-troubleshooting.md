@@ -35,6 +35,6 @@ Diagnostic Summary:
 
 ## Edge Cases
 
-- **Insufficient balance**: check balance first, show current balance, suggest adjusting the amount.
+- **Insufficient balance**: route the insufficient-balance intent to [funding.md](funding.md).
 - **Network error**: retry once, then produce the diagnostic summary and prompt the user.
 - **Region restriction (error code 50125 or 80001)**: do NOT show the raw code. Display: "⚠️ Service is not available in your region. Please switch to a supported region and try again."

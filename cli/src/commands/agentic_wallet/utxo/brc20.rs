@@ -255,10 +255,16 @@ pub async fn cmd_brc20_transferable(
         .brc20_transferable_utxos(&context, &token_address)
         .await?;
     let transferable = parse_brc20_transferable_utxos(&snapshot)?;
-    let choices = transferable
+    let mut choices = transferable
         .iter()
         .map(|utxo| utxo.build_choice(&token_address, decimals))
         .collect::<Result<Vec<_>>>()?;
+    let outpoints = transferable
+        .iter()
+        .map(|utxo| utxo.outpoint.clone())
+        .collect::<Vec<_>>();
+    let asset_records = api.brc20_utxo_asset_info(&context, &outpoints).await?;
+    enrich_brc20_choice_assets(&mut choices, &asset_records);
     let selection_plan = readable_amount
         .map(|amount| build_brc20_selection_plan(&transferable, &choices, amount, decimals))
         .transpose()?;
@@ -283,6 +289,38 @@ pub async fn cmd_brc20_transferable(
         "brc20Transferable": snapshot,
     }));
     Ok(())
+}
+
+/// Adds non-empty BRC-20 asset lists to the matching transferable UTXO choices.
+fn enrich_brc20_choice_assets(choices: &mut [Value], asset_records: &[Value]) {
+    let assets_by_outpoint = asset_records
+        .iter()
+        .filter_map(|record| {
+            let assets = record.get("assets")?.as_array()?;
+            if assets.is_empty() {
+                return None;
+            }
+            let tx_hash = record.get("txHash")?.as_str()?;
+            let vout_index = record.get("voutIndex")?;
+            let vout_index = vout_index
+                .as_u64()
+                .map(|index| index.to_string())
+                .or_else(|| vout_index.as_str().map(str::to_string))?;
+            Some((format!("{tx_hash}:{vout_index}"), Value::Array(assets.clone())))
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    for choice in choices {
+        let Some(selection) = choice.get("selection").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(assets) = assets_by_outpoint.get(selection).cloned() else {
+            continue;
+        };
+        if let Some(fields) = choice.as_object_mut() {
+            fields.insert("assets".to_string(), assets);
+        }
+    }
 }
 
 /// Resolves unique user-selected outpoints against the latest transferable snapshot.
@@ -544,6 +582,32 @@ mod tests {
         assert_eq!(choice["tokenAmount"], "1");
         assert_eq!(choice["utxoAmountSats"], "546");
         assert_eq!(choice["selection"], format!("{tx_hash}:2"));
+    }
+
+    #[test]
+    fn transferable_choice_only_includes_non_empty_bound_assets() {
+        let bound_hash = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+        let plain_hash = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+        let mut choices = vec![
+            json!({"selection": format!("{bound_hash}:2")}),
+            json!({"selection": format!("{plain_hash}:3")}),
+        ];
+        let asset_records = vec![
+            json!({
+                "txHash": bound_hash,
+                "voutIndex": 2,
+                "assets": [{"protocol": "BRC20", "symbol": "pizza", "readableAmount": "1"}]
+            }),
+            json!({"txHash": plain_hash, "voutIndex": "3", "assets": []}),
+        ];
+
+        enrich_brc20_choice_assets(&mut choices, &asset_records);
+
+        assert_eq!(
+            choices[0]["assets"][0]["symbol"].as_str(),
+            Some("pizza")
+        );
+        assert!(choices[1].get("assets").is_none());
     }
 
     #[test]
