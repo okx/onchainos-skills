@@ -1,6 +1,6 @@
 use crate::commands::agent_commerce::task::common::{
-    has_same_agent_owner, network::task_api_client::TaskApiClient, PreFetchedTaskContext,
-    TERMINAL_NOTIFICATION_MARKER,
+    has_same_agent_owner, network::task_api_client::TaskApiClient, onchainos_self,
+    PreFetchedTaskContext, DEBUG_LOG, TERMINAL_NOTIFICATION_MARKER,
 };
 
 pub(crate) async fn handle(job_id: &str, agent_id: &str) -> String {
@@ -8,7 +8,39 @@ pub(crate) async fn handle(job_id: &str, agent_id: &str) -> String {
     let response = client
         .get_with_identity(&client.task_path(job_id), agent_id)
         .await;
-    result_from_task_detail(job_id, agent_id, response)
+    let result = result_from_task_detail(job_id, agent_id, response);
+    let Ok(mut parsed) = serde_json::from_str::<serde_json::Value>(&result) else {
+        return result;
+    };
+    if parsed["payload"]["rating"]["required"].as_bool() == Some(true) {
+        let feedback_exists = onchainos_self::task_feedback_exists(agent_id, job_id);
+        preserve_existing_provider_rating(&mut parsed, feedback_exists);
+    }
+    parsed.to_string()
+}
+
+fn preserve_existing_provider_rating(
+    result: &mut serde_json::Value,
+    feedback_exists: anyhow::Result<bool>,
+) {
+    match feedback_exists {
+        Ok(false) => return,
+        Ok(true) => {}
+        Err(error) => {
+            if DEBUG_LOG {
+                eprintln!(
+                    "[asp_job_completed] feedback lookup failed for {}: {error}",
+                    result["payload"]["jobId"].as_str().unwrap_or("unknown"),
+                );
+            }
+        }
+    }
+
+    result["reason"] = serde_json::json!("notification_required");
+    result["payload"]["rating"]["required"] = serde_json::json!(false);
+    if let Some(payload) = result["payload"].as_object_mut() {
+        payload.remove("ratingResultNotification");
+    }
 }
 
 fn result_from_task_detail(
@@ -79,7 +111,7 @@ fn blocked_result(job_id: &str, reason: &str) -> String {
 
 fn completion_notification(job_id: &str, task: &PreFetchedTaskContext) -> String {
     format!(
-        "{TERMINAL_NOTIFICATION_MARKER} [💰 Job Completed] Job {job_id} ({}) — approved by the User Agent; funds received.\n      - Income: {} {}\n      - User Agent: {}\n    \n    This job is complete.",
+        "{TERMINAL_NOTIFICATION_MARKER} [💰 Job Completed] Job {job_id} ({}) — approved by the User Agent; funds received.\n      - Income: {} {}\n      - User Agent: {}\n    \n    This job is complete.\n\n    To rate the User Agent, reply \"Rate User Agent\". Your rating for Job ID `{job_id}` replaces the AI-generated rating.",
         title(task),
         task.token_amount,
         task.token_symbol,
@@ -133,12 +165,34 @@ mod tests {
         );
         assert_eq!(
             output["payload"]["notification"],
-            "[onchainos:task-terminal] [💰 Job Completed] Job job-1 (Audit report) — approved by the User Agent; funds received.\n      - Income: 12 USDT\n      - User Agent: user-1\n    \n    This job is complete."
+            "[onchainos:task-terminal] [💰 Job Completed] Job job-1 (Audit report) — approved by the User Agent; funds received.\n      - Income: 12 USDT\n      - User Agent: user-1\n    \n    This job is complete.\n\n    To rate the User Agent, reply \"Rate User Agent\". Your rating for Job ID `job-1` replaces the AI-generated rating."
         );
         assert!(output["payload"]["ratingResultNotification"]
             .as_str()
             .unwrap()
             .contains("<score>"));
+        assert!(output["payload"]["notification"]
+            .as_str()
+            .unwrap()
+            .contains("reply \"Rate User Agent\""));
+    }
+
+    #[test]
+    fn existing_provider_rating_is_not_overwritten_by_completion_ai() {
+        let task = serde_json::json!({
+            "jobId": "job-1",
+            "status": 6,
+            "title": "Audit report",
+            "buyerAgentId": "user-1"
+        });
+        let raw = result_from_task_detail("job-1", "provider-1", Ok(task));
+        let mut output: serde_json::Value = serde_json::from_str(&raw).unwrap();
+
+        preserve_existing_provider_rating(&mut output, Ok(true));
+
+        assert_eq!(output["reason"], "notification_required");
+        assert_eq!(output["payload"]["rating"]["required"], false);
+        assert!(output["payload"].get("ratingResultNotification").is_none());
     }
 
     #[test]
