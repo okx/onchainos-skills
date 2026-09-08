@@ -16,6 +16,7 @@ const AUTOTRADE_ACTIVE_STATUS: i64 = 1;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveSubscription {
     pub provider_agent_id: String,
+    pub service_id: String,
 }
 
 /// Read an integer that the backend may serialize as a JSON number or a string.
@@ -48,7 +49,11 @@ pub fn decide_active(data: &Value) -> Result<ActiveSubscription, AutoTradeError>
     }
 
     let provider_agent_id = as_string(data.get("providerAgentId")).unwrap_or_default();
-    Ok(ActiveSubscription { provider_agent_id })
+    let service_id = as_string(data.get("serviceId")).unwrap_or_default();
+    Ok(ActiveSubscription {
+        provider_agent_id,
+        service_id,
+    })
 }
 
 async fn determine(

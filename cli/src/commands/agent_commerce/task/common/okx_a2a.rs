@@ -455,19 +455,23 @@ pub fn user_notify_scoped_with_timeout(
 /// Sub-side replacement for the MCP `xmtp_prompt_user` tool. Pushes a
 /// decision card into the okx-a2a CLI's SQLite `user_attention` table so the
 /// user-session can surface it and relay the user's reply back later.
-/// All routing fields (job_id / role / agent_id / to_agent_id / source_event)
-/// are encoded inside `llm_content` by the caller (see `resolve_llm_content_cli`).
-pub fn user_decision_request(user_content: &str, llm_content: &str) -> Result<()> {
-    let out = Command::new("okx-a2a")
-        .args([
-            "user",
-            "decision-request",
-            "--user-content",
-            user_content,
-            "--llm-content",
-            llm_content,
-            "--json",
-        ])
+/// Routing fields remain encoded inside `llm_content` by the caller (see
+/// `resolve_llm_content_cli`). `job_id` and `idempotency_key` are supplied for
+/// decision types that need durable cross-session lookup and database-level
+/// deduplication, such as the Buyer deliverable-review card.
+pub fn user_decision_request(
+    user_content: &str,
+    llm_content: &str,
+    job_id: Option<&str>,
+    idempotency_key: Option<&str>,
+) -> Result<()> {
+    let mut command = user_decision_request_command(
+        user_content,
+        llm_content,
+        job_id,
+        idempotency_key,
+    );
+    let out = command
         .output()
         .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
     if !out.status.success() {
@@ -478,6 +482,31 @@ pub fn user_decision_request(user_content: &str, llm_content: &str) -> Result<()
         );
     }
     Ok(())
+}
+
+fn user_decision_request_command(
+    user_content: &str,
+    llm_content: &str,
+    job_id: Option<&str>,
+    idempotency_key: Option<&str>,
+) -> Command {
+    let mut command = Command::new("okx-a2a");
+    command.args([
+        "user",
+        "decision-request",
+        "--user-content",
+        user_content,
+        "--llm-content",
+        llm_content,
+    ]);
+    if let Some(job_id) = job_id.filter(|value| !value.trim().is_empty()) {
+        command.args(["--job-id", job_id]);
+    }
+    if let Some(idempotency_key) = idempotency_key.filter(|value| !value.trim().is_empty()) {
+        command.args(["--idempotency-key", idempotency_key]);
+    }
+    command.arg("--json");
+    command
 }
 
 // ── Session management ────────────────────────────────────────────────────
@@ -678,6 +707,73 @@ pub fn session_send_with_timeout(
     Ok(())
 }
 
+/// Persist terminal subscription trade results in okx-a2a's local SQLite
+/// trade-record store. The caller supplies the documented input-json array;
+/// `deliveryId` is idempotent because okx-a2a inserts or replaces that row.
+pub fn trade_records_insert(input: &serde_json::Value) -> Result<()> {
+    if !input.is_array() {
+        anyhow::bail!("trade-records insert input must be a JSON array");
+    }
+    let input_json = serde_json::to_string(input)
+        .map_err(|error| anyhow::anyhow!("failed to serialize trade-record input: {error}"))?;
+    let command = npm_cli_command(
+        "okx-a2a",
+        &[
+            "trade-records",
+            "insert",
+            "--input-json",
+            &input_json,
+            "--json",
+        ],
+    );
+    let output = output_with_timeout(command, Duration::from_secs(5))?;
+    if !output.status.success() {
+        // Do not include stderr here: it may echo the raw Signal passed in
+        // `--input-json`.
+        anyhow::bail!("okx-a2a trade-records insert exited with {}", output.status);
+    }
+    Ok(())
+}
+
+/// Send a real peer-to-peer message through the running XMTP daemon.
+///
+/// This is intentionally separate from `session_send`: that command queues a
+/// message into a local AI session and does not transport it to the peer.
+pub fn xmtp_send(job_id: &str, to_agent_id: &str, message: &str) -> Result<()> {
+    let args = xmtp_send_args(job_id, to_agent_id, message);
+    let out = Command::new("okx-a2a")
+        .args(&args)
+        .output()
+        .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        anyhow::bail!(
+            "okx-a2a xmtp-send exit {status}: {stderr}",
+            status = out.status
+        );
+    }
+
+    let response: serde_json::Value = serde_json::from_slice(&out.stdout)
+        .map_err(|e| anyhow::anyhow!("okx-a2a xmtp-send stdout not valid JSON: {e}"))?;
+    if response.get("ok").and_then(|value| value.as_bool()) != Some(true) {
+        anyhow::bail!("okx-a2a xmtp-send returned an unsuccessful response: {response}");
+    }
+    Ok(())
+}
+
+fn xmtp_send_args(job_id: &str, to_agent_id: &str, message: &str) -> Vec<String> {
+    vec![
+        "xmtp-send".into(),
+        "--job-id".into(),
+        job_id.into(),
+        "--to-agent-id".into(),
+        to_agent_id.into(),
+        "--message".into(),
+        message.into(),
+        "--json".into(),
+    ]
+}
+
 /// Dispatch to one exact AI session. Used only with a session key captured
 /// from the trusted inbound delivery envelope.
 pub fn session_send_exact(session_key: &str, content: &str, message_id: &str) -> Result<()> {
@@ -735,37 +831,6 @@ pub fn session_delete(job_id: &str, to_agent_id: Option<&str>) -> Result<()> {
         let stderr = String::from_utf8_lossy(&out.stderr);
         anyhow::bail!(
             "okx-a2a session delete exit {status}: {stderr}",
-            status = out.status
-        );
-    }
-    Ok(())
-}
-
-// ── XMTP wire messages ────────────────────────────────────────────────────
-
-/// Bridge equivalent: `xmtp_send '{sessionKey, content, payload?}'`
-/// Real-business XMTP message (payload is silently dropped by the bridge, so
-/// we don't expose it here). Note the API divergence:
-/// - CLI uses `--message` (not `--content`, unlike user_notify / session_send).
-/// - `--my-agent-id` / `--from-agent-id` were removed from the CLI spec —
-///   the daemon resolves the local agent from session metadata.
-pub fn xmtp_send(job_id: &str, to_agent_id: &str, message: &str) -> Result<()> {
-    let out = Command::new("okx-a2a")
-        .args([
-            "xmtp-send",
-            "--job-id",
-            job_id,
-            "--to-agent-id",
-            to_agent_id,
-            "--message",
-            message,
-        ])
-        .output()
-        .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        anyhow::bail!(
-            "okx-a2a xmtp-send exit {status}: {stderr}",
             status = out.status
         );
     }
@@ -844,7 +909,7 @@ pub fn task_reject_by_job(job_id: &str, content: Option<&str>) -> Result<()> {
 /// Result of `okx-a2a file upload`. The 5 encryption fields (digest / salt /
 /// nonce / secret / fileKey) plus filename are what the receiving peer needs
 /// to download and decrypt the file later — they are typically embedded in
-/// the next `xmtp_send` payload so the peer can call `file_download`.
+/// the next `session send` payload so the peer can call `file_download`.
 #[derive(Debug, Clone)]
 pub struct FileUploadResult {
     pub file_key: String,
@@ -986,6 +1051,64 @@ pub fn file_download(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn xmtp_send_uses_peer_transport_contract() {
+        assert_eq!(
+            xmtp_send_args("job-1", "agent-2", "deliverable"),
+            vec![
+                "xmtp-send",
+                "--job-id",
+                "job-1",
+                "--to-agent-id",
+                "agent-2",
+                "--message",
+                "deliverable",
+                "--json",
+            ]
+        );
+    }
+
+    #[test]
+    fn buyer_review_decision_request_carries_job_and_idempotency_key() {
+        let command = user_decision_request_command(
+            "Review card",
+            "Handle review",
+            Some("job-1"),
+            Some("buyer-review:job-1:job_submitted"),
+        );
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            args,
+            vec![
+                "user",
+                "decision-request",
+                "--user-content",
+                "Review card",
+                "--llm-content",
+                "Handle review",
+                "--job-id",
+                "job-1",
+                "--idempotency-key",
+                "buyer-review:job-1:job_submitted",
+                "--json",
+            ]
+        );
+    }
+
+    #[test]
+    fn ordinary_decision_request_keeps_legacy_unscoped_shape() {
+        let command = user_decision_request_command("Question", "Handle", None, None);
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(!args.iter().any(|arg| arg == "--job-id"));
+        assert!(!args.iter().any(|arg| arg == "--idempotency-key"));
+    }
 
     #[test]
     fn retired_mode_cleanup_matches_only_mode_and_configuration_cards() {

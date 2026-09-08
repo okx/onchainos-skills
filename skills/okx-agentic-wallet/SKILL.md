@@ -4,7 +4,7 @@ description: "Use this skill whenever the user wants to use OKX Onchain OS / onc
 license: MIT
 metadata:
   author: okx
-  version: "4.8.4-beta"
+  version: "4.9.0-beta"
   homepage: "https://web3.okx.com"
 ---
 
@@ -19,7 +19,8 @@ Match the user intent to a row, then **read that row's linked file first** — i
 | User Intent | Reference |
 | --- | --- |
 | Sign in / connect / social login (Google / Apple / Email) / logout; add / switch account; login status | [wallet](references/wallet.md) |
-| My wallet address / QR code; check my (logged-in) balance / holdings, including BTC or a BRC-20 ticker | [wallet](references/wallet.md) |
+| Deposit / top up / receive a token; my receive address or QR code | [funding](references/funding.md) |
+| Check my (logged-in) balance / holdings, including BTC or a BRC-20 ticker | [wallet](references/wallet.md) |
 | Bitcoin UTXO-specific queries, management, or FAQ / definitions | [utxo-cli-reference](references/utxo-cli-reference.md) |
 | Send / transfer native, ERC-20, SPL, BTC, BRC-20, or SUI tokens | [wallet](references/wallet.md) |
 | Call a contract (approve / deposit / withdraw / custom function), including a SUI PTB | [wallet](references/wallet.md) |
@@ -44,7 +45,7 @@ At the start of each thread, complete the checks in [_shared/preflight.md](_shar
 ## Build the Command
 
 1. **Read the matched row's linked file first** (per the Intent Routing table) — it carries the flow and the commands you need. Never guess subcommand, flag, or file names.
-2. **Learn exact syntax from the CLI, not from memory.** Run `onchainos --help` for command groups and `onchainos <group> <subcommand> --help` for exact flags and defaults. Load the matched domain's `-cli-reference.md` only when its return-field schema or examples are needed.
+2. **Use the matched reference as the command contract.** Run CLI `--help` only when the matched reference does not provide the required syntax, the installed CLI rejects the documented command or flag, or version drift is suspected. Do not run `--help` routinely before a command whose syntax is already explicit and verified in the current thread. Load the matched domain's `-cli-reference.md` only when its return-field schema or examples are needed.
 3. **Confirm before any state-changing command.** Display the prompt, get an explicit affirmative, and follow the Confirming Response rule below. For native BTC, direct BRC-20, and SUI transfers, follow the chain-specific confirmation flow; a BRC-20 transfer inscription confirms before signing and broadcast.
 
 ## Chain Name Support

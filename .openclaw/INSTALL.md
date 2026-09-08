@@ -1,67 +1,38 @@
-# Installing onchainos Skills for OpenClaw
-
-Enable onchainos skills in OpenClaw via native skill discovery. Just clone, symlink.
+# Install OnchainOS for OpenClaw
 
 ## Prerequisites
 
 - Git
-- OKX API credentials from [OKX Developer Portal](https://web3.okx.com/onchain-os/dev-portal)
+- Node.js (includes `npx`)
+- OpenClaw
 
-## Installation
+Install the OnchainOS CLI, skills, and A2A runtime together:
 
-1. **Clone the repository:**
+```bash
+npx -y oc-onchainos install
+```
 
-   ```bash
-   git clone https://github.com/okx/onchainos-skills ~/.openclaw/onchainos-skills
-   ```
+To use the beta channel:
 
-2. **Create the skills symlink:**
+```bash
+npx -y oc-onchainos install --beta
+```
 
-   ```bash
-   mkdir -p ~/.agents/skills
-   ln -s ~/.openclaw/onchainos-skills/skills ~/.agents/skills/onchainos-skills
-   ```
-
-   **Windows (PowerShell):**
-
-   ```powershell
-   New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.agents\skills"
-   cmd /c mklink /J "$env:USERPROFILE\.agents\skills\onchainos-skills" "$env:USERPROFILE\.openclaw\onchainos-skills\skills"
-   ```
-
-3. **Restart OpenClaw** (quit and relaunch) to discover the skills.
+Restart OpenClaw after installation so it discovers the installed skills.
 
 ## Verify
 
 ```bash
-ls -la ~/.agents/skills/onchainos-skills
+onchainos --version
 ```
 
-You should see the skill directories: `okx-agentic-wallet`, `okx-dex-market`, `okx-defi`,
-`okx-ai`, `okx-guide`.
+The install includes skills such as `okx-agentic-wallet`, `okx-dex-market`,
+`okx-defi`, `okx-ai`, and `okx-guide`.
 
-## Available Skills
+## Update
 
-| Skill                    | When to Use                                                                                                                                               |
-|--------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `okx-agentic-wallet`     | Wallet, swap, bridge, gateway, portfolio, security, audit — all wallet & on-chain execution                                                               |
-| `okx-dex-market`         | Read-only on-chain DEX data: token prices/K-line/trade history, token search/rankings/holder distribution, crypto news/sentiment ranking/vibe/KOL chatter |
-| `okx-defi`               | Earn yield: deposit/withdraw, stake, claim rewards, DeFi positions & portfolio                                                                            |
-| `okx-ai`                 | ERC-8004 Agent identity + task marketplace (publish/accept/deliver/dispute) + task-progress monitor                                                       |
-| `okx-guide`              | Onboarding & guide hub: Onchain OS intro, OKX.AI, customer support                                                                                        |
-
-## Updating
+Run the same command again:
 
 ```bash
-cd ~/.openclaw/onchainos-skills && git pull
+npx -y oc-onchainos install
 ```
-
-Skills update instantly through the symlink.
-
-## Uninstalling
-
-```bash
-rm ~/.agents/skills/onchainos-skills
-```
-
-Optionally delete the clone: `rm -rf ~/.openclaw/onchainos-skills`.

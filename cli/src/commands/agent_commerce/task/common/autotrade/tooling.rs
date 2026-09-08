@@ -1,9 +1,10 @@
 //! Subscription-time execution-tool preflight (`autoTradePreflight`).
 //!
-//! Deterministic, local, non-networked classification of a service description
-//! into a bounded `AssetClass` set, plus a local inventory of candidate tools and
-//! a deterministic post-selection Trade Kit probe directive. Attached to every
-//! `asp-match` service (see [`super::super::user::asp_ops`]).
+//! Deterministic, local, non-networked classification of a Service Guide (or,
+//! when no Guide is present, a service description) into a bounded `AssetClass`
+//! set, plus a local inventory of candidate tools and a deterministic
+//! post-selection Trade Kit probe directive. Attached to every `asp-match`
+//! service (see [`super::super::user::asp_ops`]).
 //!
 //! Safety model (FR-5 / org GR_RESTRICTED_FILE_ACCESS, GR_DATA_LEAKAGE): readiness
 //! probes inspect ONLY presence of skill dirs and executables — never credential
@@ -714,6 +715,24 @@ pub fn build_preflight(desc: &str, inv: &ToolInventory) -> AutoTradePreflight {
     assemble(&outcome.classes, &outcome.explicit, outcome.evidence, inv)
 }
 
+/// Build a service preflight from its executable Guide when one exists.
+///
+/// The Guide is the source for Guide-driven execution. The description is only
+/// a discovery summary and remains the fallback for services without a Guide.
+/// This output is still advisory: it must never replace local Guide-projection
+/// validation or Guide-defined Consent collection.
+pub fn build_service_preflight(
+    service_guide: Option<&str>,
+    service_description: &str,
+    inv: &ToolInventory,
+) -> AutoTradePreflight {
+    let source = service_guide
+        .map(str::trim)
+        .filter(|guide| !guide.is_empty())
+        .unwrap_or(service_description);
+    build_preflight(source, inv)
+}
+
 /// Reserved RUNTIME reuse entry (FR-8): build a preflight from an ALREADY-PARSED
 /// `AssetClass` set (does NOT re-parse text). Shared by the future signal pipeline.
 #[allow(dead_code)] // FR-8: reserved for runtime signal pipeline wiring (follow-up)
@@ -1419,6 +1438,22 @@ mod tests {
             let pf = build_preflight(desc, &inv);
             assert_eq!(pf.is_trading_signal, !pf.asset_classes.is_empty());
         }
+    }
+
+    #[test]
+    fn service_preflight_prefers_the_guide_over_the_listing_summary() {
+        let inv = ready_inventory();
+        let guide = "Trade Kit perpetual futures signal: buy or sell a swap contract entry.";
+        let listing = "Read-only market commentary with no trading signals.";
+
+        let from_guide = build_service_preflight(Some(guide), listing, &inv);
+        assert!(from_guide.is_trading_signal);
+        assert_eq!(from_guide.asset_classes, vec![AssetClass::Perp]);
+        assert_eq!(from_guide.explicit_tools, vec![ExecutionTool::TradeKit]);
+
+        let fallback = build_service_preflight(None, listing, &inv);
+        assert!(!fallback.is_trading_signal);
+        assert!(fallback.tools.is_empty());
     }
 
     // ── local preflight: installation is never authorization readiness ─────

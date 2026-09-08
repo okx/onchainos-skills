@@ -3,6 +3,8 @@
 //! Top-level CLI entry is exposed uniformly via `agent_commerce::AgentCommand`;
 //! this module only provides the user / asp / evaluator / common / signing submodule implementations.
 
+pub mod arbitration;
+pub mod refund_list;
 pub mod user;
 pub mod common;
 pub mod evaluator;

@@ -1,7 +1,9 @@
 //! Queries available, unavailable, and user-released Bitcoin UTXOs.
 
+use std::collections::HashMap;
+
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 
 use crate::commands::agentic_wallet::shared::adapters::bitcoin::{
     api::BtcApi,
@@ -88,10 +90,12 @@ pub async fn cmd_available() -> Result<()> {
 async fn query_utxos(mode: UtxoQueryMode) -> Result<()> {
     let context = BtcContext::load(None).await?;
     let mut api = BtcApi::new()?;
-    let snapshot = api
+    let mut snapshot = api
         .availability_details(&context, mode.query_type())
         .await?;
     let outpoints = mode.collect_response_outpoints(&snapshot);
+    let asset_records = brc20_asset_info(&mut api, &context, &outpoints).await?;
+    enrich_brc20_assets(&mut snapshot, &asset_records);
     let mut result = json!({
         "message": mode.result_message(),
         "queryType": mode.query_type(),
@@ -100,26 +104,7 @@ async fn query_utxos(mode: UtxoQueryMode) -> Result<()> {
         "address": context.address.address,
     });
     result[mode.result_key()] = snapshot;
-    if mode == UtxoQueryMode::Unavailable {
-        let _ = brc20_asset_info(&mut api, &context, &outpoints).await;
-    }
     output::success(result);
-    Ok(())
-}
-
-/// Refreshes unavailable Bitcoin UTXOs and probes their bound BRC-20 assets.
-///
-/// BTC balance calls this read without adding the asset-detail response to its
-/// current output.
-pub async fn probe_unavailable_brc20_asset_info() -> Result<()> {
-    let context = BtcContext::load(None).await?;
-    let mut api = BtcApi::new()?;
-    let snapshot = api
-        .availability_details(&context, UtxoQueryMode::Unavailable.query_type())
-        .await?;
-    let outpoints = UtxoQueryMode::Unavailable.collect_response_outpoints(&snapshot);
-
-    let _ = brc20_asset_info(&mut api, &context, &outpoints).await;
     Ok(())
 }
 
@@ -128,13 +113,61 @@ async fn brc20_asset_info(
     api: &mut BtcApi,
     context: &BtcContext,
     outpoints: &[BtcOutPoint],
-) -> Result<Value> {
-    let records = api.brc20_utxo_asset_info(context, outpoints).await?;
-    Ok(json!({
-        "assetProtocols": ["BRC20"],
-        "outpointCount": outpoints.len(),
-        "records": records,
-    }))
+) -> Result<Vec<Value>> {
+    api.brc20_utxo_asset_info(context, outpoints).await
+}
+
+/// Adds non-empty BRC-20 asset lists to the UTXO records returned by availability-details.
+fn enrich_brc20_assets(snapshot: &mut Value, asset_records: &[Value]) {
+    let assets_by_outpoint = asset_records
+        .iter()
+        .filter_map(|record| {
+            let assets = record.get("assets")?.as_array()?;
+            if assets.is_empty() {
+                return None;
+            }
+            Some((outpoint_key(record)?, Value::Array(assets.clone())))
+        })
+        .collect::<HashMap<_, _>>();
+    annotate_utxos(snapshot, &assets_by_outpoint);
+}
+
+/// Recursively locates UTXO objects and annotates only the records with bound BRC-20 assets.
+fn annotate_utxos(value: &mut Value, assets_by_outpoint: &HashMap<String, Value>) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                annotate_utxos(item, assets_by_outpoint);
+            }
+        }
+        Value::Object(fields) => {
+            if let Some(assets) = outpoint_key_from_fields(fields)
+                .and_then(|outpoint| assets_by_outpoint.get(&outpoint))
+                .cloned()
+            {
+                fields.insert("assets".to_string(), assets);
+            }
+            for child in fields.values_mut() {
+                annotate_utxos(child, assets_by_outpoint);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Builds a stable `txHash:voutIndex` key from an asset-detail record or UTXO object.
+fn outpoint_key(value: &Value) -> Option<String> {
+    value.as_object().and_then(outpoint_key_from_fields)
+}
+
+fn outpoint_key_from_fields(fields: &Map<String, Value>) -> Option<String> {
+    let tx_hash = fields.get("txHash")?.as_str()?;
+    let vout_index = fields.get("voutIndex")?;
+    let vout_index = vout_index
+        .as_u64()
+        .map(|index| index.to_string())
+        .or_else(|| vout_index.as_str().map(str::to_string))?;
+    Some(format!("{tx_hash}:{vout_index}"))
 }
 
 #[cfg(test)]
@@ -148,7 +181,10 @@ mod tests {
         assert!(UtxoQueryMode::UserIgnored
             .result_message()
             .contains("asset occupancy was explicitly removed by the user"));
-        assert_eq!(UtxoQueryMode::Unavailable.query_type(), "UNAVAILABLE_BREAKDOWN");
+        assert_eq!(
+            UtxoQueryMode::Unavailable.query_type(),
+            "UNAVAILABLE_BREAKDOWN"
+        );
         assert_eq!(UtxoQueryMode::Available.query_type(), "AVAILABLE_UTXO_LIST");
         assert_eq!(UtxoQueryMode::Available.result_key(), "available");
     }
@@ -181,5 +217,39 @@ mod tests {
         let available = UtxoQueryMode::Available.collect_response_outpoints(&snapshot);
         assert_eq!(available.len(), 1);
         assert_eq!(available[0].tx_hash, available_hash);
+    }
+
+    #[test]
+    fn enrich_brc20_assets_only_annotates_bound_outpoints() {
+        let bound_hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let plain_hash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let mut snapshot = json!({
+            "availableUtxoList": {
+                "utxos": [
+                    {"txHash": bound_hash, "voutIndex": "0", "valueRaw": "546"},
+                    {"txHash": plain_hash, "voutIndex": 1, "valueRaw": "546"}
+                ]
+            }
+        });
+        let records = vec![
+            json!({
+                "txHash": bound_hash,
+                "voutIndex": 0,
+                "assets": [{"protocol": "BRC20", "symbol": "pizza", "readableAmount": "1"}]
+            }),
+            json!({"txHash": plain_hash, "voutIndex": "1", "assets": []}),
+        ];
+
+        enrich_brc20_assets(&mut snapshot, &records);
+
+        assert_eq!(
+            snapshot
+                .pointer("/availableUtxoList/utxos/0/assets/0/symbol")
+                .and_then(Value::as_str),
+            Some("pizza")
+        );
+        assert!(snapshot
+            .pointer("/availableUtxoList/utxos/1/assets")
+            .is_none());
     }
 }

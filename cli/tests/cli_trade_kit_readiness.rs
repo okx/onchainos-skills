@@ -218,12 +218,13 @@ fn asset_class_is_required_and_aliases_are_rejected_before_probe() {
 }
 
 #[test]
-fn signal_playbook_uses_final_command_as_the_only_authentication_authority() {
-    let playbook = include_str!("../../skills/okx-ai/references/task-subscription-signal.md");
-    assert!(playbook.contains("local compatibility only"));
-    assert!(playbook.contains("never checks authentication"));
-    assert!(playbook.contains("do not run it on every delivery"));
-    assert!(playbook.contains("exactly one authority"));
-    assert!(playbook.contains("never automatically retry or replay"));
-    assert!(!playbook.contains("auth_probe_unavailable"));
+fn signal_playbook_uses_guide_direct_lifecycle() {
+    let playbook =
+        include_str!("../../skills/okx-ai/references/a2a/user/execution-policy.md");
+    assert!(playbook.contains("Signal: `savedPath`"));
+    assert!(!playbook.contains("autotrade-guide-intent-resolve"));
+    assert!(playbook.contains("autotrade-direct-claim"));
+    assert!(playbook.contains("autotrade-direct-finalize"));
+    assert!(playbook.contains("autotrade-delivery-report"));
+    assert!(playbook.contains("registered command or tool"));
 }

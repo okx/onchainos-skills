@@ -1,6 +1,6 @@
 # Capability: Market — Troubleshooting
 
-Error handling, edge cases, and region restrictions for the Market capability. Operational flow lives in `market.md`; parameter schemas in `market-cli-reference.md`.
+Error handling, edge cases, and region restrictions for the Market capability. Load operational flow and parameter schemas separately through the top-level conditional-reference table.
 
 ## Region Restrictions (IP Blocking)
 

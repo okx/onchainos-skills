@@ -844,6 +844,30 @@ async fn preflight_balances(
     }
 }
 
+/// Payment-side preparation hook for OKX.AI A2MCP. It deliberately stops
+/// before `PaymentState` creation so the caller cannot accidentally enter the
+/// generic quote/pay state machine.
+pub(crate) async fn prepare_a2mcp_candidates(
+    accepts_val: &[Value],
+) -> Result<(Vec<Candidate>, Option<String>)> {
+    let accepts = build_accepts(accepts_val)?;
+    let mut resolver = DecimalResolver::new();
+    let mut candidates = build_candidates(accepts_val, &accepts, &mut resolver).await?;
+    let wallet_error = preflight_balances(&mut candidates, &accepts).await;
+    Ok((candidates, wallet_error))
+}
+
+/// Refresh only wallet-derived balance fields for an already prepared A2MCP
+/// candidate set. Token metadata, decimals, symbol, scheme and amount are
+/// intentionally supplied by the caller and are not resolved again.
+pub(crate) async fn refresh_a2mcp_candidate_balances(
+    candidates: &mut [Candidate],
+    accepts_val: &[Value],
+) -> Result<Option<String>> {
+    let accepts = build_accepts(accepts_val)?;
+    Ok(preflight_balances(candidates, &accepts).await)
+}
+
 /// Exact candidate balance in atomic units. Contract address is authoritative
 /// whenever the response exposes one; symbol matching is a compatibility
 /// fallback for older balance responses without token addresses.
@@ -869,7 +893,7 @@ fn candidate_balance_atomic(
     }
 }
 
-fn find_balance_entry<'a, F>(value: &'a Value, matches: F) -> Option<&'a Map<String, Value>>
+fn find_balance_entry<F>(value: &Value, matches: F) -> Option<&Map<String, Value>>
 where
     F: Fn(&Map<String, Value>) -> bool + Copy,
 {
@@ -916,7 +940,7 @@ fn human_to_atomic(human: &str, decimals: u32) -> Option<U256> {
     }
     let mut digits = whole.to_string();
     digits.push_str(fraction);
-    digits.extend(std::iter::repeat('0').take(decimals as usize - fraction.len()));
+    digits.extend(std::iter::repeat_n('0', decimals as usize - fraction.len()));
     let normalized = digits.trim_start_matches('0');
     U256::from_str_radix(
         if normalized.is_empty() {

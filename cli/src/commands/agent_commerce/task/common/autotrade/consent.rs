@@ -31,11 +31,12 @@ use serde_json::Value;
 use super::super::user_lang::Lang;
 use super::amount::Decimal;
 use super::grants::job_id_is_safe;
+use super::guide;
 use super::trade_kit::TradeEnvironment;
 use crate::commands::agent_commerce::task::common::config::SubscriptionTradePath;
 
 /// The current consent-file schema version.
-pub const CONSENT_VERSION: u32 = 5;
+pub const CONSENT_VERSION: u32 = 6;
 
 pub type DynamicConsentSettings = BTreeMap<String, Value>;
 
@@ -46,7 +47,7 @@ const MAX_DYNAMIC_SETTING_STRING_LEN: usize = 1024;
 const MAX_DYNAMIC_SETTING_DEPTH: usize = 4;
 const MAX_DYNAMIC_SETTING_COLLECTION_LEN: usize = 64;
 
-const RESERVED_CONSENT_FIELDS: [&str; 16] = [
+const RESERVED_CONSENT_FIELDS: [&str; 17] = [
     "version",
     "jobId",
     "mode",
@@ -57,17 +58,18 @@ const RESERVED_CONSENT_FIELDS: [&str; 16] = [
     "marginMode",
     "orderPolicy",
     "authMode",
-    "serviceGuideHash",
+    "guideHash",
     "requiredFields",
     "extra",
     "createdAt",
     "expiresAt",
     "status",
+    "lifecycle",
 ];
 
 /// Stable, product-defined fields that remain flat in the consent object. New,
 /// service-specific fields belong under `extra` instead of being added here.
-const KNOWN_FLAT_SETTING_FIELDS: [&str; 18] = [
+const KNOWN_FLAT_SETTING_FIELDS: [&str; 17] = [
     "tradeAmountMode",
     "tradeAmountRatio",
     "tradeAmountBasis",
@@ -86,7 +88,6 @@ const KNOWN_FLAT_SETTING_FIELDS: [&str; 18] = [
     // Compatibility aliases written by earlier 4.8.4-beta builds.
     "tradeAmountType",
     "tradeAmountPercent",
-    "serviceGuideHash",
 ];
 
 const EXTRA_FIELD_TYPES: [&str; 7] = [
@@ -204,10 +205,12 @@ fn validate_extra_constraints(
                 anyhow::bail!("extra.{field}.value violates {key}");
             }
         }
-    } else if constraints
-        .keys()
-        .any(|key| matches!(key.as_str(), "min" | "max" | "minExclusive" | "maxExclusive"))
-    {
+    } else if constraints.keys().any(|key| {
+        matches!(
+            key.as_str(),
+            "min" | "max" | "minExclusive" | "maxExclusive"
+        )
+    }) {
         anyhow::bail!("numeric constraints require integer or decimal type for extra.{field}");
     }
 
@@ -225,7 +228,9 @@ fn validate_extra_constraints(
             anyhow::bail!("extra.{field}.constraints.{key} must be a non-negative integer");
         };
         let Some(length) = length else {
-            anyhow::bail!("length constraints require string, array, or object type for extra.{field}");
+            anyhow::bail!(
+                "length constraints require string, array, or object type for extra.{field}"
+            );
         };
         let valid = if key == "minLength" {
             length >= limit
@@ -446,7 +451,9 @@ fn validate_dynamic_settings_impl(
             continue;
         }
         if !KNOWN_FLAT_SETTING_FIELDS.contains(&key.as_str()) {
-            anyhow::bail!("unknown top-level consent setting {key}; put service-specific fields under extra");
+            anyhow::bail!(
+                "unknown top-level consent setting {key}; put service-specific fields under extra"
+            );
         }
         validate_dynamic_setting_name(key)?;
         validate_dynamic_setting_value(value, 0)?;
@@ -487,16 +494,6 @@ fn validate_dynamic_settings_impl(
             }
             "orderType" => {
                 bounded_nonempty_text(value, "orderType", 32)?;
-            }
-            "serviceGuideHash" => {
-                let valid = value.as_str().is_some_and(|value| {
-                    value.strip_prefix("sha256:").is_some_and(|digest| {
-                        digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
-                    })
-                });
-                if !valid {
-                    anyhow::bail!("serviceGuideHash must be sha256:<64 lowercase-or-uppercase hex characters>");
-                }
             }
             "tradeAmountType" => match value.as_str() {
                 Some("fixed" | "percentage") => {}
@@ -603,8 +600,7 @@ pub fn dynamic_decimal_setting(
 }
 
 pub fn uses_percentage_amount(settings: &DynamicConsentSettings) -> bool {
-    settings.get("tradeAmountMode").and_then(Value::as_str)
-        == Some("available_balance_ratio")
+    settings.get("tradeAmountMode").and_then(Value::as_str) == Some("available_balance_ratio")
         || settings.get("tradeAmountType").and_then(Value::as_str) == Some("percentage")
 }
 
@@ -743,7 +739,12 @@ fn short_display(value: &str, max: usize) -> String {
         .filter(|character| !character.is_control())
         .take(max)
         .collect::<String>();
-    if value.chars().filter(|character| !character.is_control()).count() > max {
+    if value
+        .chars()
+        .filter(|character| !character.is_control())
+        .count()
+        > max
+    {
         format!("{flattened}…")
     } else {
         flattened
@@ -919,9 +920,7 @@ impl OrderPolicy {
         match value.to_ascii_lowercase().as_str() {
             "market" => Ok(Self::Market),
             "signal_price_limit" => Ok(Self::SignalPriceLimit),
-            _ => anyhow::bail!(
-                "order policy must be one of: market | signal_price_limit"
-            ),
+            _ => anyhow::bail!("order policy must be one of: market | signal_price_limit"),
         }
     }
 
@@ -974,6 +973,14 @@ pub struct ConsentFile {
     /// this field and must ask once before their next Trade Kit execution.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_mode: Option<TradeKitAuthMode>,
+    /// Hash of the locally persisted service Guide this consent confirms. The
+    /// signal path refuses to combine a consent record with a different Guide.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guide_hash: Option<String>,
+    /// `prepared` records are created before broadcast and are deliberately not
+    /// executable. Only broadcast success transitions them to `active`.
+    #[serde(default)]
+    pub lifecycle: ConsentLifecycle,
     /// User-confirmed, tool-specific execution settings. These fields remain
     /// flat in the JSON document and are preserved even when this CLI version
     /// does not know their business semantics. Core authorization fields above
@@ -984,6 +991,22 @@ pub struct ConsentFile {
     pub created_at: u64,
     /// seconds since epoch.
     pub expires_at: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConsentLifecycle {
+    Prepared,
+    Active,
+    Aborted,
+}
+
+impl Default for ConsentLifecycle {
+    fn default() -> Self {
+        // Files before v6 were written only after broadcast, so `active` is the
+        // safe compatibility interpretation.
+        Self::Active
+    }
 }
 
 /// Read-only consent context exposed to the model-driven subscription session.
@@ -1032,6 +1055,8 @@ pub struct ConsentSnapshot {
     pub order_policy: Option<OrderPolicy>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_mode: Option<TradeKitAuthMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub guide_hash: Option<String>,
     /// Complete validated tool-specific business settings, flattened into the
     /// model-facing snapshot just as they are in the consent file.
     #[serde(flatten)]
@@ -1055,6 +1080,7 @@ impl ConsentSnapshot {
             margin_mode: None,
             order_policy: None,
             auth_mode: None,
+            guide_hash: None,
             dynamic_settings: DynamicConsentSettings::new(),
             created_at: None,
             expires_at: None,
@@ -1134,6 +1160,12 @@ fn inferred_extra_type(value: &Value) -> &'static str {
 /// unpublished schema refinement does not discard an already user-confirmed
 /// value. Stable fields and their compatibility aliases remain flat.
 fn migrate_legacy_flat_settings(file: &mut ConsentFile) {
+    if file.guide_hash.is_none() {
+        file.guide_hash = file
+            .dynamic_settings
+            .remove("serviceGuideHash")
+            .and_then(|value| value.as_str().map(str::to_ascii_lowercase));
+    }
     let legacy_keys = file
         .dynamic_settings
         .keys()
@@ -1155,9 +1187,10 @@ fn migrate_legacy_flat_settings(file: &mut ConsentFile) {
     for key in legacy_keys {
         if let Some(mut value) = file.dynamic_settings.remove(&key) {
             let field_type = inferred_extra_type(&value);
-            if value.as_number().is_some_and(|number| {
-                number.as_i64().is_none() && number.as_u64().is_none()
-            }) {
+            if value
+                .as_number()
+                .is_some_and(|number| number.as_i64().is_none() && number.as_u64().is_none())
+            {
                 value = Value::String(value.to_string());
             }
             extra.entry(key.clone()).or_insert_with(|| {
@@ -1203,11 +1236,24 @@ pub enum ConsentDecision {
     AutoOverCap,
 }
 
-/// `<onchainos_home>/autotrade/consent/<jobId>.json`. Self-validates `job_id`
+/// `<onchainos_home>/autotrade/consent/<jobId>.md`. Self-validates `job_id`
 /// BEFORE any `onchainos_home().join(...)`, so a direct caller such
 /// as `clear_consent("../../x")` cannot reach an out-of-root `remove_file`
 /// (reuses the CONSENT_UNREADABLE bespoke exit).
 fn consent_path(job_id: &str) -> Result<PathBuf, ConsentError> {
+    if !job_id_is_safe(job_id) {
+        return Err(ConsentError(CONSENT_UNREADABLE));
+    }
+    let home = crate::home::onchainos_home().map_err(|_| ConsentError(CONSENT_UNREADABLE))?;
+    Ok(home
+        .join("autotrade")
+        .join("consent")
+        .join(format!("{job_id}.md")))
+}
+
+/// Read-only compatibility path for records written before the Markdown
+/// contract. New writes never target this file.
+fn legacy_consent_path(job_id: &str) -> Result<PathBuf, ConsentError> {
     if !job_id_is_safe(job_id) {
         return Err(ConsentError(CONSENT_UNREADABLE));
     }
@@ -1232,18 +1278,23 @@ fn now_secs() -> u64 {
 /// (both mean execution is not configured). Returns `Err` only for a
 /// present-but-broken record (unreadable / version-too-new / job mismatch), which
 /// the pipeline fails closed on. `Ok(Some(_))` is a live, valid record.
-pub fn load_consent(job_id: &str) -> Result<Option<ConsentFile>, ConsentError> {
+fn read_consent_file(job_id: &str) -> Result<Option<ConsentFile>, ConsentError> {
     if !job_id_is_safe(job_id) {
         // Charset failure is handled by the pipeline's entry guard; be defensive.
         return Err(ConsentError(CONSENT_UNREADABLE));
     }
     let path = consent_path(job_id)?;
-    if !path.exists() {
+    let legacy_path = legacy_consent_path(job_id)?;
+    if !path.exists() && !legacy_path.exists() {
         return Ok(None);
     }
-    let raw = std::fs::read_to_string(&path).map_err(|_| ConsentError(CONSENT_UNREADABLE))?;
-    let mut file: ConsentFile =
-        serde_json::from_str(&raw).map_err(|_| ConsentError(CONSENT_UNREADABLE))?;
+    let raw = std::fs::read_to_string(if path.exists() { path } else { legacy_path })
+        .map_err(|_| ConsentError(CONSENT_UNREADABLE))?;
+    let mut file: ConsentFile = if raw.starts_with("<!-- onchainos-autotrade:consent\n") {
+        guide::parse_markdown("consent", &raw).map_err(|_| ConsentError(CONSENT_UNREADABLE))?
+    } else {
+        serde_json::from_str(&raw).map_err(|_| ConsentError(CONSENT_UNREADABLE))?
+    };
     if file.version > CONSENT_VERSION {
         return Err(ConsentError(CONSENT_VERSION_TOO_NEW));
     }
@@ -1253,8 +1304,7 @@ pub fn load_consent(job_id: &str) -> Result<Option<ConsentFile>, ConsentError> {
     migrate_legacy_flat_settings(&mut file);
     if validate_dynamic_settings(&file.dynamic_settings).is_err()
         || file.dynamic_settings.values().any(Value::is_null)
-        || validate_amount_policy(file.trade_amount_u.as_deref(), &file.dynamic_settings)
-            .is_err()
+        || validate_amount_policy(file.trade_amount_u.as_deref(), &file.dynamic_settings).is_err()
         || !persisted_required_fields_are_complete(&file)
     {
         return Err(ConsentError(CONSENT_UNREADABLE));
@@ -1264,6 +1314,18 @@ pub fn load_consent(job_id: &str) -> Result<Option<ConsentFile>, ConsentError> {
         .is_some_and(|environment| !environment.is_explicit())
     {
         return Err(ConsentError(CONSENT_UNREADABLE));
+    }
+    Ok(Some(file))
+}
+
+/// Load + validate the consent record for execution. Prepared or aborted
+/// records are intentionally invisible to signal handling.
+pub fn load_consent(job_id: &str) -> Result<Option<ConsentFile>, ConsentError> {
+    let Some(file) = read_consent_file(job_id)? else {
+        return Ok(None);
+    };
+    if file.lifecycle != ConsentLifecycle::Active {
+        return Ok(None);
     }
     // Expired ⇒ execution is no longer configured, not a hard error.
     if file.expires_at <= now_secs() {
@@ -1287,6 +1349,7 @@ pub fn consent_snapshot(job_id: &str) -> ConsentSnapshot {
             margin_mode: file.margin_mode,
             order_policy: file.order_policy,
             auth_mode: file.auth_mode,
+            guide_hash: file.guide_hash,
             dynamic_settings: file.dynamic_settings,
             created_at: Some(file.created_at),
             expires_at: Some(file.expires_at),
@@ -1362,15 +1425,7 @@ pub fn write_consent_with_trade_amount(
     quote: Option<&str>,
     ttl_sec: u64,
 ) -> anyhow::Result<()> {
-    write_consent_policy(
-        job_id,
-        mode,
-        cap_u,
-        trade_amount_u,
-        quote,
-        None,
-        ttl_sec,
-    )
+    write_consent_policy(job_id, mode, cap_u, trade_amount_u, quote, None, ttl_sec)
 }
 
 /// Persist consent and optionally replace the user-authorized Trade Kit
@@ -1402,6 +1457,9 @@ pub fn write_consent_policy(
 /// Persist the complete local execution policy. Omitted Trade Kit settings
 /// preserve an existing choice, which makes cap/amount changes safe and lets
 /// older callers remain source-compatible.
+// 9 independently-optional settings; a params struct would only move the same
+// fields into another type without reducing the call-site surface.
+#[allow(clippy::too_many_arguments)]
 pub fn write_consent_policy_with_settings(
     job_id: &str,
     mode: ConsentMode,
@@ -1452,8 +1510,9 @@ pub fn write_consent_policy_with_dynamic_settings(
         anyhow::bail!("--ttl-sec must be > 0");
     }
     // Best-effort compatibility read. This intentionally retains the historical
-    // behavior of allowing a valid new write to replace a broken old record.
-    let existing = load_consent(job_id).ok().flatten();
+    // behavior of allowing a valid new write to replace a broken old record,
+    // while preserving an in-flight prepared record's Guide binding.
+    let existing = read_consent_file(job_id).ok().flatten();
     let cap_u = match mode {
         ConsentMode::Auto => cap_u
             .map(|cap| {
@@ -1530,6 +1589,13 @@ pub fn write_consent_policy_with_dynamic_settings(
         margin_mode,
         order_policy,
         auth_mode,
+        guide_hash: existing
+            .as_ref()
+            .and_then(|consent| consent.guide_hash.clone()),
+        lifecycle: existing
+            .as_ref()
+            .map(|consent| consent.lifecycle)
+            .unwrap_or(ConsentLifecycle::Active),
         dynamic_settings,
         created_at,
         expires_at: created_at + ttl_sec,
@@ -1538,10 +1604,82 @@ pub fn write_consent_policy_with_dynamic_settings(
         anyhow::bail!("requiredFields contains a setting without a confirmed value");
     }
 
-    let path = consent_path(job_id).map_err(|d| anyhow::anyhow!("{}", d.0))?;
-    let body = serde_json::to_string_pretty(&file)?;
+    write_consent_file(&file)?;
+    Ok(())
+}
+
+fn write_consent_file(file: &ConsentFile) -> anyhow::Result<()> {
+    let path = consent_path(&file.job_id).map_err(|error| anyhow::anyhow!(error.0))?;
+    let body = guide::render_markdown(
+        "consent",
+        file,
+        "# Subscription Consent\n\nThis record contains user-confirmed settings for the matching local service Guide.\n",
+    )?;
     crate::home::write_secure(&path, body.as_bytes())?;
     Ok(())
+}
+
+/// Store the local consent before subscription broadcast. Prepared records are
+/// fail-closed: [`load_consent`] never exposes them to execution.
+#[allow(clippy::too_many_arguments)]
+pub fn write_prepared_consent_policy_with_dynamic_settings(
+    job_id: &str,
+    mode: ConsentMode,
+    cap_u: Option<&str>,
+    trade_amount_u: Option<&str>,
+    quote: Option<&str>,
+    trade_environment: Option<TradeEnvironment>,
+    margin_mode: Option<MarginMode>,
+    order_policy: Option<OrderPolicy>,
+    auth_mode: Option<TradeKitAuthMode>,
+    dynamic_updates: Option<&DynamicConsentSettings>,
+    guide_hash: &str,
+    ttl_sec: u64,
+) -> anyhow::Result<()> {
+    if guide_hash.len() != 64 || !guide_hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        anyhow::bail!("service guide hash is invalid")
+    }
+    write_consent_policy_with_dynamic_settings(
+        job_id,
+        mode,
+        cap_u,
+        trade_amount_u,
+        quote,
+        trade_environment,
+        margin_mode,
+        order_policy,
+        auth_mode,
+        dynamic_updates,
+        ttl_sec,
+    )?;
+    let mut file = read_consent_file(job_id)
+        .map_err(|error| anyhow::anyhow!(error.0))?
+        .ok_or_else(|| anyhow::anyhow!("prepared consent could not be read"))?;
+    file.guide_hash = Some(guide_hash.to_ascii_lowercase());
+    file.lifecycle = ConsentLifecycle::Prepared;
+    write_consent_file(&file)
+}
+
+pub fn activate_prepared_consent(job_id: &str) -> anyhow::Result<()> {
+    let mut file = read_consent_file(job_id)
+        .map_err(|error| anyhow::anyhow!(error.0))?
+        .ok_or_else(|| anyhow::anyhow!("prepared consent is not available"))?;
+    if file.lifecycle != ConsentLifecycle::Prepared || file.guide_hash.is_none() {
+        anyhow::bail!("prepared consent is invalid")
+    }
+    file.version = CONSENT_VERSION;
+    file.lifecycle = ConsentLifecycle::Active;
+    write_consent_file(&file)
+}
+
+pub fn abort_prepared_consent(job_id: &str) {
+    let Ok(Some(mut file)) = read_consent_file(job_id) else {
+        return;
+    };
+    if file.lifecycle == ConsentLifecycle::Prepared {
+        file.lifecycle = ConsentLifecycle::Aborted;
+        let _ = write_consent_file(&file);
+    }
 }
 
 /// Update only the Trade Kit environment on an existing live consent record.
@@ -1560,9 +1698,7 @@ pub fn write_trade_environment(
         .ok_or_else(|| anyhow::anyhow!("no live consent"))?;
     file.version = CONSENT_VERSION;
     file.trade_environment = Some(trade_environment);
-    let path = consent_path(job_id).map_err(|error| anyhow::anyhow!(error.0))?;
-    let body = serde_json::to_string_pretty(&file)?;
-    crate::home::write_secure(&path, body.as_bytes())?;
+    write_consent_file(&file)?;
     Ok(file)
 }
 
@@ -1629,9 +1765,7 @@ pub fn write_trade_settings_with_dynamic(
     if !persisted_required_fields_are_complete(&file) {
         anyhow::bail!("requiredFields contains a setting without a confirmed value");
     }
-    let path = consent_path(job_id).map_err(|error| anyhow::anyhow!(error.0))?;
-    let body = serde_json::to_string_pretty(&file)?;
-    crate::home::write_secure(&path, body.as_bytes())?;
+    write_consent_file(&file)?;
     Ok(file)
 }
 
@@ -1800,9 +1934,8 @@ pub fn activate_delivery_context_exclusive(
             Ok(DeliveryActivation::Activated(context))
         }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            let pending = load_pending_delivery_context(job_id)?.ok_or_else(|| {
-                anyhow::anyhow!("pending delivery disappeared during activation")
-            })?;
+            let pending = load_pending_delivery_context(job_id)?
+                .ok_or_else(|| anyhow::anyhow!("pending delivery disappeared during activation"))?;
             if pending.delivery_id == delivery_id {
                 Ok(DeliveryActivation::AlreadyPending(pending))
             } else {
@@ -1861,6 +1994,9 @@ pub fn clear_consent(job_id: &str) {
     // `consent_path` self-validates job_id, so an unsafe path such as
     // `../../x` yields `Err` here and no `remove_file` is ever attempted.
     if let Ok(path) = consent_path(job_id) {
+        let _ = std::fs::remove_file(path);
+    }
+    if let Ok(path) = legacy_consent_path(job_id) {
         let _ = std::fs::remove_file(path);
     }
 }
@@ -1977,6 +2113,7 @@ mod tests {
                     margin_mode: None,
                     order_policy: None,
                     auth_mode: None,
+                    guide_hash: None,
                     dynamic_settings: DynamicConsentSettings::new(),
                     created_at: None,
                     expires_at: None,
@@ -2048,7 +2185,7 @@ mod tests {
             assert!(snapshot_json.get("dynamicSettings").is_none());
 
             let raw = std::fs::read_to_string(consent_path("job1").unwrap()).unwrap();
-            let persisted: Value = serde_json::from_str(&raw).unwrap();
+            let persisted: Value = guide::parse_markdown("consent", &raw).unwrap();
             assert_eq!(persisted["leverage"], serde_json::json!("2"));
             assert_eq!(
                 persisted["extra"]["maxConcurrentPositions"]["type"],
@@ -2169,16 +2306,17 @@ mod tests {
     }
 
     #[test]
-    fn required_fields_and_service_guide_hash_are_validated_and_persisted() {
+    fn required_fields_and_guide_hash_are_validated_and_persisted() {
         with_home(|| {
             let settings = parse_dynamic_settings_json(
                 Some(
-                    r#"{"serviceGuideHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","requiredFields":["tradeAmountMode","tradeAmountBasis","extra.maxConcurrentPositions"],"tradeAmountMode":"fixed_amount","tradeAmountBasis":"margin","extra":{"maxConcurrentPositions":{"label":"Maximum concurrent positions","type":"integer","value":3}}}"#,
+                    r#"{"requiredFields":["tradeAmountMode","tradeAmountBasis","extra.maxConcurrentPositions"],"tradeAmountMode":"fixed_amount","tradeAmountBasis":"margin","extra":{"maxConcurrentPositions":{"label":"Maximum concurrent positions","type":"integer","value":3}}}"#,
                 ),
                 "--settings-json",
             )
             .unwrap();
-            write_consent_policy_with_dynamic_settings(
+            let guide_hash = "a".repeat(64);
+            write_prepared_consent_policy_with_dynamic_settings(
                 "job1",
                 ConsentMode::Auto,
                 Some("100"),
@@ -2189,14 +2327,16 @@ mod tests {
                 None,
                 None,
                 Some(&settings),
+                &guide_hash,
                 3600,
             )
             .unwrap();
+            activate_prepared_consent("job1").unwrap();
             let snapshot = serde_json::to_value(consent_snapshot("job1")).unwrap();
             assert_eq!(snapshot["requiredFields"][0], "tradeAmountMode");
             assert_eq!(snapshot["requiredFields"][1], "tradeAmountBasis");
             assert_eq!(snapshot["tradeAmountBasis"], "margin");
-            assert_eq!(snapshot["serviceGuideHash"], settings["serviceGuideHash"]);
+            assert_eq!(snapshot["guideHash"], guide_hash);
         });
     }
 
@@ -2230,22 +2370,19 @@ mod tests {
             "0.125"
         );
 
-        let missing_type = parse_dynamic_settings_json(
-            Some(r#"{"tradeAmountRatio":"0.25"}"#),
-            "--settings-json",
-        )
-        .unwrap();
+        let missing_type =
+            parse_dynamic_settings_json(Some(r#"{"tradeAmountRatio":"0.25"}"#), "--settings-json")
+                .unwrap();
         assert!(validate_amount_policy(None, &missing_type).is_err());
         assert!(parse_dynamic_settings_json(
             Some(r#"{"tradeAmountMode":"available_balance_ratio","tradeAmountRatio":"1.01"}"#),
             "--settings-json",
         )
         .is_err());
-        assert!(parse_dynamic_settings_json(
-            Some(r#"{"takeProfitRatio":"0"}"#),
-            "--settings-json",
-        )
-        .is_err());
+        assert!(
+            parse_dynamic_settings_json(Some(r#"{"takeProfitRatio":"0"}"#), "--settings-json",)
+                .is_err()
+        );
     }
 
     #[test]
@@ -2270,11 +2407,9 @@ mod tests {
                 3600,
             )
             .unwrap();
-            let removal = parse_dynamic_settings_json(
-                Some(r#"{"slippage":null}"#),
-                "--settings-json",
-            )
-            .unwrap();
+            let removal =
+                parse_dynamic_settings_json(Some(r#"{"slippage":null}"#), "--settings-json")
+                    .unwrap();
             write_trade_settings_with_dynamic("job1", None, None, None, None, Some(&removal))
                 .unwrap();
 
@@ -2419,21 +2554,19 @@ mod tests {
                 "createdAt": now,
                 "expiresAt": now + 3600
             });
-            crate::home::write_secure(&path, serde_json::to_string_pretty(&legacy).unwrap().as_bytes())
-                .unwrap();
+            crate::home::write_secure(
+                &path,
+                serde_json::to_string_pretty(&legacy).unwrap().as_bytes(),
+            )
+            .unwrap();
 
             let legacy_snapshot = consent_snapshot("job1");
             assert_eq!(legacy_snapshot.version, Some(3));
             assert_eq!(legacy_snapshot.auth_mode, None);
 
-            let upgraded = write_trade_settings(
-                "job1",
-                None,
-                None,
-                None,
-                Some(TradeKitAuthMode::OAuth),
-            )
-            .unwrap();
+            let upgraded =
+                write_trade_settings("job1", None, None, None, Some(TradeKitAuthMode::OAuth))
+                    .unwrap();
             assert_eq!(upgraded.version, CONSENT_VERSION);
             assert_eq!(upgraded.auth_mode, Some(TradeKitAuthMode::OAuth));
             assert_eq!(upgraded.trade_environment, Some(TradeEnvironment::Live));
@@ -2651,8 +2784,7 @@ mod tests {
                 activate_delivery_context_exclusive("job1", "delivery-1").unwrap(),
                 DeliveryActivation::AlreadyPending(_)
             ));
-            let conflict =
-                activate_delivery_context_exclusive("job1", "delivery-2").unwrap();
+            let conflict = activate_delivery_context_exclusive("job1", "delivery-2").unwrap();
             assert!(matches!(
                 conflict,
                 DeliveryActivation::Conflict(ref pending)
@@ -2719,44 +2851,42 @@ mod tests {
         });
     }
 
-    /// A direct `clear_consent("../../x")` must delete nothing —
-    /// `consent_path` rejects the unsafe id BEFORE any `remove_file`, so a
-    /// pre-existing file that a naive join would have reached is byte-for-byte
-    /// unchanged. This does NOT rely on the outer Pause command guard.
+    /// A direct `clear_consent("../../x")` must delete nothing. Both the current
+    /// Markdown path and the legacy JSON path reject the unsafe id before any
+    /// `remove_file`; this does not rely on the outer Pause command guard.
     ///
     /// The sentinel is placed at the EXACT target a vulnerable (guard-removed)
-    /// `consent_path` would resolve to: for `job_id = "../../consent_sentinel"`,
-    /// `consent_path` appends `.json` and joins under `autotrade/consent`, giving
-    /// `<home>/autotrade/consent/../../consent_sentinel.json` -> `<home>/consent_sentinel.json`.
-    /// A `.txt` sibling of the home dir (the previous fixture) would never be the
-    /// removal target, so the test could pass even with the guard removed. Using
-    /// the real resolved target makes the test fail iff `job_id_is_safe` is gone.
+    /// path builders would resolve to for `job_id = "../../consent_sentinel"`.
     #[test]
     fn clear_consent_traversal_deletes_nothing() {
         with_home(|| {
             let home = crate::home::onchainos_home().unwrap();
-            // A legitimate consent artefact inside the root.
+            // Legitimate current and legacy consent artefacts inside the root.
             let consent_dir = home.join("autotrade").join("consent");
             std::fs::create_dir_all(&consent_dir).unwrap();
-            let legit = consent_dir.join("legit.json");
-            std::fs::write(&legit, "{}").unwrap();
-            // The EXACT file a vulnerable consent_path("../../consent_sentinel")
-            // would resolve+delete: <home>/autotrade/consent/../../consent_sentinel.json
-            // -> <home>/consent_sentinel.json.
-            let sentinel = home.join("consent_sentinel.json");
-            std::fs::write(&sentinel, "DO_NOT_TOUCH").unwrap();
+            let legit_md = consent_dir.join("legit.md");
+            let legit_json = consent_dir.join("legit.json");
+            std::fs::write(&legit_md, "DO_NOT_TOUCH").unwrap();
+            std::fs::write(&legit_json, "DO_NOT_TOUCH").unwrap();
+            let sentinel_md = home.join("consent_sentinel.md");
+            let sentinel_json = home.join("consent_sentinel.json");
+            std::fs::write(&sentinel_md, "DO_NOT_TOUCH").unwrap();
+            std::fs::write(&sentinel_json, "DO_NOT_TOUCH").unwrap();
 
             // Direct call with an unsafe, path-shaped jobId: no-op, no panic.
             clear_consent("../../consent_sentinel");
             clear_consent("../../x");
 
-            assert!(legit.exists(), "in-root consent record must survive");
-            assert_eq!(
-                std::fs::read_to_string(&sentinel).unwrap(),
-                "DO_NOT_TOUCH",
-                "vulnerable-target sentinel must be byte-for-byte unchanged"
-            );
-            let _ = std::fs::remove_file(&sentinel);
+            for path in [&legit_md, &legit_json, &sentinel_md, &sentinel_json] {
+                assert_eq!(
+                    std::fs::read_to_string(path).unwrap(),
+                    "DO_NOT_TOUCH",
+                    "consent path must be byte-for-byte unchanged: {}",
+                    path.display()
+                );
+            }
+            let _ = std::fs::remove_file(&sentinel_md);
+            let _ = std::fs::remove_file(&sentinel_json);
         });
     }
 
@@ -2788,8 +2918,11 @@ mod tests {
             write_consent("job1", ConsentMode::Auto, Some("100"), None, 1).unwrap();
             // Force expiry into the past.
             let path = consent_path("job1").unwrap();
-            let mut file: ConsentFile =
-                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            let mut file: ConsentFile = guide::parse_markdown(
+                "consent",
+                &std::fs::read_to_string(&path).unwrap(),
+            )
+            .unwrap();
             file.expires_at = 1;
             std::fs::write(&path, serde_json::to_string(&file).unwrap()).unwrap();
             assert_eq!(
@@ -2804,8 +2937,11 @@ mod tests {
         with_home(|| {
             write_consent("job1", ConsentMode::Auto, Some("100"), None, 3600).unwrap();
             let path = consent_path("job1").unwrap();
-            let good: ConsentFile =
-                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            let good: ConsentFile = guide::parse_markdown(
+                "consent",
+                &std::fs::read_to_string(&path).unwrap(),
+            )
+            .unwrap();
 
             let mut newer = good.clone();
             newer.version = CONSENT_VERSION + 1;

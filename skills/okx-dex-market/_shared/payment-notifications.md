@@ -111,7 +111,7 @@ Before formatting the CLI result:
      - If the user picks `0` (or otherwise refuses in free text):
        - Do NOT call `payment default set`. Do NOT rerun. Stop and acknowledge.
    - **If `payment[]` has exactly one entry**, skip the token list — just ask
-     the user to confirm (`yes` / `proceed` / `确认`) or cancel (`0` / `no`).
+     the user to confirm (`yes` / `proceed` / `confirm`) or cancel (`0` / `no`).
      On confirmation, still run `onchainos payment default set --asset <entry.asset> --chain <entry.chainId> --name <entry.symbol_or_name> --tier <notifications[].data.tier>` (same `symbol`-then-`name` fallback as above) — re-saving the existing default is idempotent; the `--tier` flag is what promotes the tier from `charging_unconfirmed` to `charging_confirmed`. Then rerun the original command; the CLI auto-signs the sole option. On cancel, stop and acknowledge — do NOT run `payment default set`, so the next request re-prompts.
    - `--tier` is mandatory whenever you are acting on an OVER_QUOTA
      notification (only the named tier is promoted). The saved default
@@ -198,17 +198,6 @@ Reply with the number (or asset name) to continue, or `0` to cancel. We recommen
 
 **Placeholders**: `{tier}`, `{unitPrice}`, `{paymentOptions}`
 
-If the user picks a numbered asset (or confirms yes in the single-entry case), run:
-
-```
-onchainos payment default set --asset <ASSET_ADDRESS> --chain <CHAIN_ID> --name <NAME> --tier <TIER>
-```
-
-where `<TIER>` is `notifications[].data.tier`. Then rerun the original command.
-If the user picks `0` (or otherwise refuses), stop — do NOT call `payment
-default set`, do NOT rerun. If `payment[]` has only one entry, skip the
-selection and just ask for `yes` / `0` before rerunning.
-
 ---
 
 ## 5. `MARKET_API_OLD_USER_POST_GRACE_OVER_QUOTA`
@@ -227,17 +216,6 @@ Reply with the number (or asset name) to continue, or `0` to cancel. We recommen
 ```
 
 **Placeholders**: `{tier}`, `{unitPrice}`, `{paymentOptions}`
-
-If the user picks a numbered asset (or confirms yes in the single-entry case), run:
-
-```
-onchainos payment default set --asset <ASSET_ADDRESS> --chain <CHAIN_ID> --name <NAME> --tier <TIER>
-```
-
-where `<TIER>` is `notifications[].data.tier`. Then rerun the original command.
-If the user picks `0` (or otherwise refuses), stop — do NOT call `payment
-default set`, do NOT rerun. If `payment[]` has only one entry, skip the
-selection and just ask for `yes` / `0` before rerunning.
 
 ---
 

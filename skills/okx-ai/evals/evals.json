@@ -1,0 +1,102 @@
+{
+  "skill_name": "okx-ai",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "View Agent #42 feedback and ratings.",
+      "expected_output": "Query Agent #42 reputation and display the returned average rating, review count, and review content without changing numeric values.",
+      "files": ["evals/fixtures/reputation-page-1.json"],
+      "expectations": [
+        "Calls `onchainos agent feedback-list --agent-id 42` exactly once.",
+        "Does not call a write command.",
+        "Reports the returned average rating, total review count, and review data."
+      ],
+      "assertions": {
+        "required_commands": ["onchainos agent feedback-list --agent-id 42"],
+        "forbidden_commands": [
+          "onchainos agent activate",
+          "onchainos agent deactivate",
+          "onchainos agent feedback ",
+          "onchainos agent register",
+          "onchainos agent update"
+        ],
+        "response_includes": ["4.80", "5.00", "4.60"]
+      }
+    },
+    {
+      "id": 2,
+      "prompt": "What is the reputation of the Market Maker Agent?",
+      "expected_output": "Ask the user for an Agent ID rather than inferring one from the Agent name.",
+      "files": [],
+      "expectations": [
+        "Does not invoke `onchainos`.",
+        "Does not guess or fabricate an Agent ID.",
+        "Asks the user to provide or select an Agent ID."
+      ],
+      "assertions": {
+        "forbidden_commands": ["onchainos "],
+        "response_includes": ["ID"],
+        "response_excludes": ["#42"]
+      }
+    },
+    {
+      "id": 3,
+      "prompt": "Publish Agent #42 to the marketplace.",
+      "expected_output": "Publish Agent #42 using the user's language preference and state that the listing request was submitted for review.",
+      "files": ["evals/fixtures/listing-submitted.json"],
+      "expectations": [
+        "Calls `onchainos agent activate --agent-id 42 --preferred-language zh-CN` exactly once.",
+        "Does not make a follow-up read.",
+        "States that the listing was submitted for review."
+      ],
+      "assertions": {
+        "required_commands": ["onchainos agent activate --agent-id 42 --preferred-language zh-CN"],
+        "forbidden_commands": [
+          "onchainos agent detail",
+          "onchainos agent my-agents",
+          "onchainos agent search"
+        ],
+        "response_includes": ["review"]
+      }
+    },
+    {
+      "id": 4,
+      "prompt": "View my subscriptions.",
+      "expected_output": "Read the subscription list, render the standard Active and Ended fields, device-receipt state, no-receiver warnings, and next actions from nextAction.actionLabel.",
+      "files": ["evals/fixtures/subscription-list.json"],
+      "expectations": [
+        "Calls `onchainos agent subscription-list --page-size 10` exactly once.",
+        "Renders both active and ended subscriptions from the returned page.",
+        "Warns only for the explicit empty device list and renders each returned `nextAction.actionLabel` in order without executing it."
+      ],
+      "assertions": {
+        "required_commands": ["onchainos agent subscription-list --page-size 10"],
+        "forbidden_commands": [
+          "onchainos agent subscribe-detail",
+          "onchainos agent subscribe-device-update",
+          "onchainos agent subscribe-cancel",
+          "okx-a2a user watch"
+        ],
+        "response_includes": [
+          "Alpha Signal",
+          "Old Signal",
+          "2026-09-16 18:10 UTC",
+          "Trial",
+          "MacBook Pro",
+          "iPhone",
+          "No Receiver Signal",
+          "1. Adjust receiving devices",
+          "2. View subscription details",
+          "3. Cancel subscription",
+          "4. View next page"
+        ],
+        "response_excludes": [
+          "Start watching",
+          "Recommend",
+          "allowedJobIds",
+          "next_subscription_page"
+        ]
+      }
+    }
+  ]
+}

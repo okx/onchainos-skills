@@ -1,6 +1,6 @@
 # Capability: Invest — Troubleshooting
 
-Error codes and failure handling for deposit / withdraw / claim flows. Operational flow lives in `invest.md`; parameter schemas in `invest-cli-reference.md`.
+Error codes and failure handling for deposit / withdraw / claim flows. Load the operational flow and parameter schemas separately through the top-level Intent Routing table.
 
 ## Error Codes
 

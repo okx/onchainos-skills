@@ -126,6 +126,16 @@ fn enrich_one_time_status_names(list: &mut [Value]) {
             Err(_) => format!("status_{status_code}"),
         };
         object.insert("statusName".to_string(), Value::String(status_name));
+        object.insert(
+            "statusLabel".to_string(),
+            Value::String(super::super::common::query::task_status_label(status_code).to_string()),
+        );
+        object.insert(
+            "statusDescription".to_string(),
+            Value::String(
+                super::super::common::query::task_status_description(status_code).to_string(),
+            ),
+        );
     }
 }
 
@@ -270,9 +280,16 @@ async fn fetch_page(
 fn require_user_agent_id(agent_id: String) -> Result<String> {
     let agent_id = agent_id.trim();
     if agent_id.is_empty() {
-        bail!(
-            "no User identity found on this account; register a User identity before listing tasks"
-        );
+        return Err(crate::commands::sink::CodedError::new(
+            "user_identity_required",
+            None,
+            "no User identity found on this account; register a User identity before listing tasks",
+        )
+        .with_next_steps(json!([{
+            "action": "register_user_identity",
+            "label": "Register a User identity"
+        }]))
+        .into());
     }
     Ok(agent_id.to_string())
 }
@@ -508,7 +525,13 @@ mod tests {
         assert_eq!(rows[0]["statusName"], "init");
         assert_eq!(rows[1]["statusName"], "completed");
         assert_eq!(rows[2]["statusName"], "failed");
+        assert_eq!(rows[2]["statusLabel"], "Refund completed");
+        assert_eq!(
+            rows[2]["statusDescription"],
+            "The refund completed and the task is closed."
+        );
         assert_eq!(rows[3]["statusName"], "status_17");
+        assert_eq!(rows[3]["statusLabel"], "Status unavailable");
         assert_eq!(rows[3]["futureField"], json!({"kept": true}));
         assert!(output.get("subscriptions").is_none());
     }
@@ -523,10 +546,15 @@ mod tests {
 
     #[test]
     fn missing_user_identity_returns_an_actionable_error() {
-        let error = require_user_agent_id("  ".to_string())
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains("User identity"));
-        assert!(error.contains("register"));
+        let error = require_user_agent_id("  ".to_string()).unwrap_err();
+        let coded = error
+            .downcast_ref::<crate::commands::sink::CodedError>()
+            .expect("coded user-identity error");
+        assert_eq!(coded.code, "user_identity_required");
+        assert!(coded.message.contains("User identity"));
+        assert_eq!(
+            coded.next_steps.as_ref().unwrap()[0]["action"],
+            "register_user_identity"
+        );
     }
 }

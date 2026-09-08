@@ -44,6 +44,156 @@ use serde_json::Value;
 use std::fs;
 
 #[test]
+fn provider_subscription_decision_commands_are_registered() {
+    for (command, required_args) in [
+        ("accept-subscription", vec!["--agent-id <AGENT_ID>"]),
+        (
+            "decline-subscription",
+            vec!["--agent-id <AGENT_ID>", "--reason <REASON>"],
+        ),
+    ] {
+        let output = onchainos()
+            .args(["agent", command, "job-1", "--help"])
+            .output()
+            .unwrap_or_else(|error| panic!("run {command} help: {error}"));
+        assert_eq!(output.status.code(), Some(0), "{command} was not registered");
+        let help = String::from_utf8_lossy(&output.stdout);
+        for required in required_args {
+            assert!(
+                help.contains(required),
+                "{command} help missing {required:?}: {help}"
+            );
+        }
+    }
+}
+
+#[test]
+fn refund_commands_expose_the_prepare_confirm_contract() {
+    let prepare = onchainos()
+        .args(["agent", "refund-prepare", "job-1", "--help"])
+        .output()
+        .expect("run refund-prepare help");
+    assert_eq!(prepare.status.code(), Some(0));
+    let prepare_help = String::from_utf8_lossy(&prepare.stdout);
+    assert!(prepare_help.contains("--reason <REASON>"));
+
+    let execute = onchainos()
+        .args(["agent", "refund-execute", "job-1", "--help"])
+        .output()
+        .expect("run refund-execute help");
+    assert_eq!(execute.status.code(), Some(0));
+    let execute_help = String::from_utf8_lossy(&execute.stdout);
+    for expected in [
+        "--operation <OPERATION>",
+        "--refund-context-id <REFUND_CONTEXT_ID>",
+        "--confirm",
+        "close-zero",
+        "direct-refund",
+        "request-refund",
+        "cancel-trial-conversion",
+    ] {
+        assert!(
+            execute_help.contains(expected),
+            "refund-execute help missing {expected:?}: {execute_help}"
+        );
+    }
+    assert!(!execute_help.contains("finalize-expired-refund"));
+}
+
+#[test]
+fn refund_execute_rejects_an_unregistered_operation_before_network_access() {
+    let output = onchainos()
+        .args([
+            "agent",
+            "refund-execute",
+            "job-1",
+            "--operation",
+            "claim-auto-refund",
+            "--refund-context-id",
+            "refundctx_example",
+            "--confirm",
+        ])
+        .output()
+        .expect("parse invalid refund operation");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("invalid value"));
+}
+
+#[test]
+fn legacy_claim_auto_refund_is_blocked_before_network_access() {
+    let (_home, dir) = fresh_home("cli_agent_refund_legacy_claim");
+    let mut cmd = onchainos();
+    scrubbed(&mut cmd, &dir);
+    let output = cmd
+        .args(["agent", "claim-auto-refund", "job-1"])
+        .output()
+        .expect("run disabled claim-auto-refund command");
+
+    assert_ne!(output.status.code(), Some(0));
+    assert_error_contains(
+        &output,
+        &[
+            "direct claim-auto-refund is disabled by Refund",
+            "refund-prepare job-1",
+            "Expired(8) is terminal",
+        ],
+    );
+}
+
+#[test]
+fn legacy_refund_writes_are_blocked_before_network_access() {
+    let cases: [(&str, Vec<&str>, [&str; 2]); 3] = [
+        (
+            "close",
+            vec!["agent", "close", "job-1"],
+            [
+                "direct close is disabled for V2 tasks",
+                "refund-prepare job-1",
+            ],
+        ),
+        (
+            "reject",
+            vec!["agent", "reject", "job-1", "--reason", "not acceptable"],
+            [
+                "direct reject is disabled by Refund",
+                "refund-prepare job-1",
+            ],
+        ),
+        (
+            "subscribe-reject",
+            vec![
+                "agent",
+                "subscribe-reject",
+                "sub-1",
+                "--reason",
+                "not acceptable",
+            ],
+            [
+                "direct subscribe-reject is disabled by Refund",
+                "refund-prepare sub-1",
+            ],
+        ),
+    ];
+
+    for (name, args, expected) in cases {
+        let (_home, dir) = fresh_home(&format!("cli_agent_refund_legacy_{name}"));
+        let mut cmd = onchainos();
+        scrubbed(&mut cmd, &dir);
+        let output = cmd
+            .args(args)
+            .output()
+            .unwrap_or_else(|error| panic!("run disabled {name} command: {error}"));
+
+        assert_ne!(
+            output.status.code(),
+            Some(0),
+            "{name} unexpectedly succeeded"
+        );
+        assert_error_contains(&output, &expected);
+    }
+}
+
+#[test]
 fn my_tasks_help_documents_defaults_and_filters() {
     let output = onchainos()
         .args(["agent", "my-tasks", "--help"])
@@ -61,7 +211,10 @@ fn my_tasks_help_documents_defaults_and_filters() {
         "--page-size <PAGE_SIZE>",
         "[default: 10]",
     ] {
-        assert!(stdout.contains(expected), "help missing {expected:?}: {stdout}");
+        assert!(
+            stdout.contains(expected),
+            "help missing {expected:?}: {stdout}"
+        );
     }
 
     let parsed = onchainos()
@@ -203,9 +356,7 @@ fn funding_notice_outputs_canonical_json_and_png() {
             "contentCanonical missing {expected:?}: {content}"
         );
     }
-    let notify_command = data["notifyCommand"]
-        .as_str()
-        .expect("notifyCommand");
+    let notify_command = data["notifyCommand"].as_str().expect("notifyCommand");
     assert!(notify_command.contains("$ONCHAINOS_FUNDING_NOTICE_CONTENT"));
     assert!(notify_command.contains("--image-path"));
     assert!(notify_command.contains("'"));
@@ -216,9 +367,9 @@ fn funding_notice_outputs_canonical_json_and_png() {
     assert_eq!(notify_args[1], "agent");
     assert_eq!(notify_args[2], "user-notify");
     assert!(notify_args.iter().any(|arg| arg == "--image-path"));
-    assert!(notify_args
-        .iter()
-        .any(|arg| arg.as_str().is_some_and(|value| value.contains("funding notice"))));
+    assert!(notify_args.iter().any(|arg| arg
+        .as_str()
+        .is_some_and(|value| value.contains("funding notice"))));
     let policy = data["displayPolicy"].as_str().expect("displayPolicy");
     assert!(policy.contains("Non-TTY"));
     assert!(policy.contains("run notifyCommandArgs"));
@@ -312,7 +463,11 @@ fn validate_listing_a2a_well_structured_passes() {
         "asp",
         r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals, copy-trading supported","serviceType":"A2A","fee":"0.11"}]"#,
     );
-    assert_eq!(result["pass"].as_bool(), Some(true), "expected pass:true, got {result}");
+    assert_eq!(
+        result["pass"].as_bool(),
+        Some(true),
+        "expected pass:true, got {result}"
+    );
     assert!(
         findings(&result).is_empty(),
         "a well-structured A2A listing should raise no findings, got {result}"
@@ -329,7 +484,11 @@ fn validate_listing_a2a_two_paragraph_non_subscription_passes() {
         "asp",
         r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget","serviceType":"A2A","fee":"0.11"}]"#,
     );
-    assert_eq!(result["pass"].as_bool(), Some(true), "expected pass:true, got {result}");
+    assert_eq!(
+        result["pass"].as_bool(),
+        Some(true),
+        "expected pass:true, got {result}"
+    );
     assert!(
         findings(&result).is_empty(),
         "paragraph count is not validated — expected zero findings, got {result}"
@@ -345,7 +504,11 @@ fn validate_listing_a2a_subscription_paragraph_count_not_checked() {
         "asp",
         r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals","serviceGuide":"Choose a market and submit your budget.","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}]}]"#,
     );
-    assert_eq!(result["pass"].as_bool(), Some(true), "expected pass:true, got {result}");
+    assert_eq!(
+        result["pass"].as_bool(),
+        Some(true),
+        "expected pass:true, got {result}"
+    );
     assert!(
         findings(&result).is_empty(),
         "a subscription service must be validated identically to a per-call one, got {result}"
@@ -363,7 +526,11 @@ fn validate_listing_a2a_overlong_description_suggests() {
         r#"[{{"serviceName":"DEX Arbitrage Signals","serviceDescription":"{long}","serviceType":"A2A","fee":"0.11"}}]"#
     );
     let result = validate_listing("asp", &service);
-    assert_eq!(result["pass"].as_bool(), Some(true), "expected pass:true, got {result}");
+    assert_eq!(
+        result["pass"].as_bool(),
+        Some(true),
+        "expected pass:true, got {result}"
+    );
     assert!(
         findings(&result).iter().any(|f| f["severity"] == "suggest"),
         "expected an advisory (suggest) length finding, got {result}"
@@ -387,7 +554,11 @@ fn validate_listing_a2mcp_valid_passes() {
         "asp",
         r#"[{"serviceName":"Realtime Price Feed","serviceDescription":"Returns realtime token price quotes\ntokenAddress (string, required): token contract; chainIndex (string, required): chain id\nPOST","serviceType":"A2MCP","fee":"0.5","endpoint":"https://api.example.com/mcp"}]"#,
     );
-    assert_eq!(result["pass"].as_bool(), Some(true), "expected pass:true, got {result}");
+    assert_eq!(
+        result["pass"].as_bool(),
+        Some(true),
+        "expected pass:true, got {result}"
+    );
 }
 
 // ── IT-006: an A2MCP single-paragraph description raises zero findings ─────────
@@ -433,7 +604,11 @@ fn validate_listing_a2a_url_blocks() {
         "asp",
         r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides DEX arbitrage trading signals, see https://example.com\nUser provides the target chain and budget\nDelivers structured signals","serviceType":"A2A","fee":"0.11"}]"#,
     );
-    assert_eq!(result["pass"].as_bool(), Some(false), "expected pass:false for a URL in the description, got {result}");
+    assert_eq!(
+        result["pass"].as_bool(),
+        Some(false),
+        "expected pass:false for a URL in the description, got {result}"
+    );
 }
 
 // ── IT-009: a 0x address in an A2A description does NOT block ─────────────────
@@ -446,7 +621,11 @@ fn validate_listing_a2a_hex_address_passes() {
         "asp",
         r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides signals for token 0x1234567890abcdef pairs\nUser provides the target chain and budget\nDelivers structured signals","serviceType":"A2A","fee":"0.11"}]"#,
     );
-    assert_eq!(result["pass"].as_bool(), Some(true), "a 0x address must not block, got {result}");
+    assert_eq!(
+        result["pass"].as_bool(),
+        Some(true),
+        "a 0x address must not block, got {result}"
+    );
 }
 
 // ── IT-010: a profit guarantee advises instead of blocking ────────────────────
@@ -459,7 +638,11 @@ fn validate_listing_a2a_profit_guarantee_suggests() {
         "asp",
         r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Guaranteed profit DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals","serviceType":"A2A","fee":"0.11"}]"#,
     );
-    assert_eq!(result["pass"].as_bool(), Some(true), "expected pass:true, got {result}");
+    assert_eq!(
+        result["pass"].as_bool(),
+        Some(true),
+        "expected pass:true, got {result}"
+    );
     assert!(
         findings(&result).iter().any(|f| f["severity"] == "suggest"),
         "expected an advisory (suggest) profit-guarantee finding, got {result}"
@@ -478,7 +661,11 @@ fn validate_listing_a2a_test_marker_blocks() {
         "asp",
         r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides DEX arbitrage trading signals (test)\nUser provides the target chain and budget\nDelivers structured signals","serviceType":"A2A","fee":"0.11"}]"#,
     );
-    assert_eq!(result["pass"].as_bool(), Some(false), "expected pass:false for a test marker, got {result}");
+    assert_eq!(
+        result["pass"].as_bool(),
+        Some(false),
+        "expected pass:false for a test marker, got {result}"
+    );
 }
 
 // ── IT-012: an A2MCP description may carry a URL; other prohibited content can't ─
@@ -517,7 +704,11 @@ fn validate_listing_a2a_suggest_and_block_together_blocks() {
         "asp",
         r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Guaranteed profit DEX arbitrage signals, see https://example.com\nUser provides the target chain and budget","serviceType":"A2A","fee":"0.11"}]"#,
     );
-    assert_eq!(result["pass"].as_bool(), Some(false), "expected pass:false — a blocking URL overrides the advisory finding, got {result}");
+    assert_eq!(
+        result["pass"].as_bool(),
+        Some(false),
+        "expected pass:false — a blocking URL overrides the advisory finding, got {result}"
+    );
     assert!(
         findings(&result).iter().any(|f| f["severity"] == "suggest"),
         "expected the advisory D9 to still surface alongside the block, got {result}"
@@ -667,10 +858,9 @@ fn autotrade_environment_set_upgrades_only_the_existing_policy() {
     let result = common::assert_ok_and_extract_data(&output);
     assert_eq!(result["tradeEnvironment"], "demo");
 
-    let stored: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(consent_dir.join("job_environment.json")).unwrap(),
-    )
-    .unwrap();
+    let stored: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(consent_dir.join("job_environment.json")).unwrap())
+            .unwrap();
     assert_eq!(stored["version"], 3);
     assert_eq!(stored["mode"], "auto");
     assert_eq!(stored["capU"], "20");
@@ -732,10 +922,9 @@ fn autotrade_settings_update_persists_all_trade_kit_choices_without_rewriting_po
     assert_eq!(result["marginMode"], "isolated");
     assert_eq!(result["orderPolicy"], "signal_price_limit");
 
-    let stored: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(consent_dir.join("job_settings.json")).unwrap(),
-    )
-    .unwrap();
+    let stored: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(consent_dir.join("job_settings.json")).unwrap())
+            .unwrap();
     assert_eq!(stored["version"], 3);
     assert_eq!(stored["mode"], "auto");
     assert_eq!(stored["capU"], "20");
@@ -751,13 +940,7 @@ fn autotrade_settings_update_persists_all_trade_kit_choices_without_rewriting_po
 #[test]
 fn autotrade_auto_accepts_missing_cap_and_authorizes_any_positive_amount() {
     let (_home, dir) = fresh_home("cli_agent_autotrade_unbounded_auto");
-    create_auto_consent_via_continuation(
-        &dir,
-        "job_unbounded_auto",
-        "8315",
-        None,
-        None,
-    );
+    create_auto_consent_via_continuation(&dir, "job_unbounded_auto", "8315", None, None);
 
     let mut check = onchainos();
     scrubbed(&mut check, &dir);
@@ -858,7 +1041,7 @@ fn user_notify_rejects_local_image_links_in_content() {
 }
 
 #[test]
-fn service_match_help_describes_pagination_headers_and_price_range() {
+fn service_match_help_describes_pagination_flow_and_price_range() {
     let (_home, dir) = fresh_home("cli_agent_service_match_help");
     let mut cmd = onchainos();
     scrubbed(&mut cmd, &dir);
@@ -871,8 +1054,7 @@ fn service_match_help_describes_pagination_headers_and_price_range() {
     let help = String::from_utf8_lossy(&output.stdout);
     for expected in [
         "Search marketplace Services by capability, ASP, Service ID, Service name, or price range.",
-        "Results include searchAfter, hasMore, unmatchReason",
-        "--agentic-id <AGENTIC_ID>",
+        "Results include searchAfter, hasMore, unmatchReason, action, tip",
         "--sid <SERVICE_ID>",
         "--min-payment-token-amount <MIN_PAYMENT_TOKEN_AMOUNT>",
         "--max-payment-token-amount <MAX_PAYMENT_TOKEN_AMOUNT>",
@@ -880,9 +1062,13 @@ fn service_match_help_describes_pagination_headers_and_price_range() {
         "Initial request without filters",
         "Continuation request",
     ] {
-        assert!(help.contains(expected), "missing {expected:?} in help:\n{help}");
+        assert!(
+            help.contains(expected),
+            "missing {expected:?} in help:\n{help}"
+        );
     }
     assert!(!help.contains("      --format "));
+    assert!(!help.contains("--agentic-id"));
     assert!(!help.contains("backend raw data payload"));
 }
 
@@ -892,12 +1078,7 @@ fn hidden_autotrade_watch_precheck_is_callable_and_rejects_an_unsafe_job_id_loca
     let mut cmd = onchainos();
     scrubbed(&mut cmd, &dir);
     let output = cmd
-        .args([
-            "agent",
-            "autotrade-watch-precheck",
-            "--job-id",
-            "../unsafe",
-        ])
+        .args(["agent", "autotrade-watch-precheck", "--job-id", "../unsafe"])
         .output()
         .expect("run autotrade-watch-precheck");
 

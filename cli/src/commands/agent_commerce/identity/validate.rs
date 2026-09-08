@@ -59,15 +59,16 @@ mod fe {
     /// has to point there.
     pub const FE10_U5: &str = "The service name or description mentions a different service type than the one selected \u{2014} an A2A service that says \"A2MCP\", or the reverse. Keep the service type you picked and delete that word from the name or description; only change the service type if you actually offer the other one. Then resubmit.";
     pub const FE11: &str = "The endpoint configuration is invalid: A2MCP requires an endpoint while A2A must not have one, and it must be a publicly accessible HTTPS URL \u{2014} not a private-network address or one starting with 0x. For A2MCP, enter a publicly accessible https URL; for A2A, remove the endpoint. Then resubmit.";
-    pub const FE12: &str = "The A2MCP fee must be a plain number (enter 0 for free), but the current value contains units or non-numeric text. Enter the fee as a number only (e.g., 10; 0 for free) \u{2014} it's denominated in USDT by default, so no symbols or extra text. Then resubmit.";
+    pub const FE12: &str = "The A2MCP fee must be a plain number (enter 0 for free), but the current value contains units, non-numeric text, or more than 6 decimal places. Enter the fee as a number only (e.g., 10; 0 for free) \u{2014} it's denominated in USDT by default, with up to 6 decimal places and no symbols or extra text. Then resubmit.";
+    pub const FE12_A2A: &str = "The A2A pay-per-use fee must be a plain number, but the current value contains units, non-numeric text, or more than 2 decimal places. Enter the fee as a number only (e.g., 10 or 0.25) \u{2014} it's denominated in USDT by default, with up to 2 decimal places and no symbols or extra text. Then resubmit.";
     pub const FE13: &str = "The service data isn't a valid JSON array, or the create/update/delete operations don't match the id rules. Follow the sample format \u{2014} omit the id when creating, and include the id when updating or deleting \u{2014} then resubmit.";
     pub const FE17: &str = "The subscription billing setup is invalid: A2MCP doesn't support subscriptions, and an A2A service must use exactly one of pay-per-use or monthly subscription \u{2014} you can't leave both empty or fill in both. Pick one billing mode for your A2A service: set a pay-per-use fee, or set a monthly subscription (leave fee as an empty string \"\" when using subscription); for A2MCP, remove the subscription field. Then resubmit.";
     pub const FE18: &str = "Subscriptions currently support monthly billing only, but a different interval was provided. Set the subscription tier's interval to \"month\" (weekly, yearly, and other intervals aren't supported yet), then resubmit.";
-    pub const FE19: &str = "The subscription price must be a plain number, but the current value contains units, symbols, or non-numeric text. Enter each tier's price as a number only (e.g., 10) \u{2014} denominated in USDT by default, up to 6 decimal places, no symbols or extra text. Then resubmit.";
+    pub const FE19: &str = "The A2A subscription price must be a plain number, but the current value contains units, symbols, non-numeric text, or more than 2 decimal places. Enter each tier's price as a number only (e.g., 10 or 0.25) \u{2014} denominated in USDT by default, up to 2 decimal places, no symbols or extra text. Then resubmit.";
     pub const FE20: &str = "The free-trial setup is invalid: freeTrial can only be configured on monthly-subscription A2A services and must be a positive integer number of hours; A2MCP and pay-per-use services can't offer a trial. Guided writes use \"72\" (3 days); preserve another positive integer only when writing back a legacy service. Otherwise omit freeTrial entirely (don't set \"\" or \"0\"). Then resubmit.";
     pub fn service_guide_too_long(service_name: &str) -> String {
         format!(
-            "The service guide for [{service_name}] exceeds the length limit. Shorten it to no more than 1,000 full-width Chinese/Japanese characters or 2,000 Latin characters, then resubmit."
+            "The service guide for [{service_name}] exceeds the length limit. Shorten it to no more than 5,000 full-width Chinese/Japanese characters or 10,000 Latin characters, then resubmit."
         )
     }
     /// FE-21 (必填 / 长度) — SPLIT per sub-check, because the two are not
@@ -461,8 +462,9 @@ fn check_duplicate_service_names(services: &[AgentService], findings: &mut Vec<F
 // Pricing QA. A2MCP: single-purchase `fee` required (plain number), no
 // subscription. A2A: EXACTLY ONE of a single-purchase `fee` XOR a
 // `subscription` — never neither (P2) and never both (P6); the two models are
-// mutually exclusive. Every fee (single or per-tier) is a plain number, and
-// the only supported interval today is `month`. A subscription-priced A2A
+// mutually exclusive. Every fee is a plain number; A2A single and tier fees
+// allow up to 2 decimals, while A2MCP fees allow up to 6. The only supported
+// subscription interval today is `month`. A subscription-priced A2A
 // carries an EMPTY single `fee` (`""`) — that is the "no single price" marker.
 // USDT is the implicit, only currency, so ANY extra text — a symbol, a
 // parenthetical, or negotiation wording — makes a fee non-numeric and is
@@ -480,8 +482,8 @@ fn check_pricing(
     // Empty `fee` is the subscription "no single price" marker.
     let fee_present = !fee.is_empty();
     let has_subscription = !svc.subscription.is_empty();
-    let bad_fee = |findings: &mut Vec<Finding>| {
-        findings.push(Finding::block(&fee_field, "P1", fe::FE12));
+    let bad_fee = |findings: &mut Vec<Finding>, message: &str| {
+        findings.push(Finding::block(&fee_field, "P1", message));
     };
 
     let trial = svc.free_trial.as_deref().map(str::trim).unwrap_or("");
@@ -497,8 +499,8 @@ fn check_pricing(
         if !fee_present {
             findings.push(Finding::block(&fee_field, "U4", fe::FE12));
             findings.push(Finding::block(&fee_field, "P1", fe::FE12));
-        } else if !is_plain_number(fee) {
-            bad_fee(findings);
+        } else if !is_plain_number(fee, 6) {
+            bad_fee(findings, fe::FE12);
         }
         return;
     }
@@ -511,14 +513,14 @@ fn check_pricing(
         if fee_present && has_subscription {
             findings.push(Finding::block(&fee_field, "P6", fe::FE17));
         }
-        if fee_present && !is_plain_number(fee) {
-            bad_fee(findings);
+        if fee_present && !is_plain_number(fee, 2) {
+            bad_fee(findings, fe::FE12_A2A);
         }
         for tier in &svc.subscription {
             if !tier.interval.trim().eq_ignore_ascii_case("month") {
                 findings.push(Finding::block(&sub_field, "P4", fe::FE18));
             }
-            if !is_plain_number(tier.fee.trim()) {
+            if !is_plain_number(tier.fee.trim(), 2) {
                 findings.push(Finding::block(&sub_field, "P5", fe::FE19));
             }
         }
@@ -535,8 +537,8 @@ fn check_pricing(
     }
 
     // Unknown serviceType (T1 already flags the type) — validate fee format only.
-    if fee_present && !is_plain_number(fee) {
-        bad_fee(findings);
+    if fee_present && !is_plain_number(fee, 6) {
+        bad_fee(findings, fe::FE12);
     }
 }
 

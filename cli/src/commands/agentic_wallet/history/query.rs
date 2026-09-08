@@ -18,7 +18,7 @@ pub(in crate::commands::agentic_wallet) async fn cmd_query_history(
     address: Option<&str>,
     begin: Option<&str>,
     end: Option<&str>,
-    page_num: Option<&str>,
+    cursor: Option<&str>,
     limit: Option<&str>,
     order_id: Option<&str>,
     tx_hash: Option<&str>,
@@ -93,7 +93,7 @@ pub(in crate::commands::agentic_wallet) async fn cmd_query_history(
         if let Some(value) = end {
             query.push(("end", value));
         }
-        if let Some(value) = page_num {
+        if let Some(value) = cursor {
             query.push(("cursor", value));
         }
         if let Some(value) = limit {
@@ -115,4 +115,53 @@ pub(in crate::commands::agentic_wallet) async fn cmd_query_history(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use crate::commands::agentic_wallet::WalletCommand;
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(subcommand)]
+        command: WalletCommand,
+    }
+
+    fn history_cursor(args: &[&str]) -> Option<String> {
+        let cli = TestCli::try_parse_from(args).expect("history command should parse");
+        match cli.command {
+            WalletCommand::History { cursor, .. } => cursor,
+            _ => panic!("expected wallet history command"),
+        }
+    }
+
+    #[test]
+    fn history_first_page_omits_cursor() {
+        assert_eq!(
+            history_cursor(&["onchainos", "history", "--limit", "20"]),
+            None
+        );
+    }
+
+    #[test]
+    fn history_continuation_uses_returned_cursor_verbatim() {
+        assert_eq!(
+            history_cursor(&[
+                "onchainos",
+                "history",
+                "--limit",
+                "20",
+                "--cursor",
+                "next-page-token",
+            ]),
+            Some("next-page-token".to_string())
+        );
+    }
+
+    #[test]
+    fn history_rejects_legacy_page_num_flag() {
+        assert!(TestCli::try_parse_from(["onchainos", "history", "--page-num", "1",]).is_err());
+    }
 }

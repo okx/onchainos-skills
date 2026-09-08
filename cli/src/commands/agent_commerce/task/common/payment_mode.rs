@@ -1,4 +1,7 @@
-/// Backend paymentMode: NONE(0), ESCROW(1), X402(3)
+/// Backend paymentMode: NONE(0), ESCROW(1), legacy-disabled X402(3).
+///
+/// The X402 variant is retained only so stale backend records fail closed. New
+/// Task commands can create or select escrow mode only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaymentMode {
     None,
@@ -7,7 +10,7 @@ pub enum PaymentMode {
 }
 
 impl PaymentMode {
-    /// CLI string -> enum ("escrow" / "x402")
+    /// CLI string -> enum. `x402` is recognized only as a disabled sentinel.
     pub fn from_str(s: &str) -> Self {
         match s {
             "escrow" => Self::Escrow,
@@ -22,8 +25,9 @@ impl PaymentMode {
         match flag {
             None => Ok(0),
             Some("escrow") => Ok(Self::Escrow.as_int()),
-            Some("x402") => Ok(Self::X402.as_int()),
-            Some(other) => anyhow::bail!("unsupported --payment-mode \"{other}\"; valid values: escrow, x402"),
+            Some(other) => {
+                anyhow::bail!("unsupported --payment-mode \"{other}\"; valid Task value: escrow")
+            }
         }
     }
 
@@ -41,7 +45,7 @@ impl PaymentMode {
         match self {
             Self::None => "none",
             Self::Escrow => "escrow",
-            Self::X402 => "x402",
+            Self::X402 => "legacy-x402-disabled",
         }
     }
 
@@ -59,7 +63,18 @@ impl PaymentMode {
         match self {
             Self::None => "not set",
             Self::Escrow => "escrow payment",
-            Self::X402 => "x402 on-demand micropayment",
+            Self::X402 => "legacy task payment disabled",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PaymentMode;
+
+    #[test]
+    fn new_task_flags_accept_escrow_and_reject_legacy_x402() {
+        assert_eq!(PaymentMode::parse_flag(Some("escrow")).unwrap(), 1);
+        assert!(PaymentMode::parse_flag(Some("x402")).is_err());
     }
 }

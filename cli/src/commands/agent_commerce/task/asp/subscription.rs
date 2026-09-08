@@ -10,18 +10,18 @@
 //!   - the outbound sent-marker (jobId × deliveryId) that makes signal delivery idempotent.
 //!
 //! NOTE on `subStatus`: the authoritative Subscribe API doc §1.1 (aligned with contract
-//! `SubStatus`) defines valid codes: -1 (Init), 1 (Active), 3 (Rejected), 4 (Disputed),
-//! 6 (Completed), 7 (Closed), 9 (Failed).
+//! `SubStatus`) defines valid codes: -1 (Init), 0 (Created), 1 (Active), 3 (Rejected),
+//! 4 (Disputed), 6 (Completed), 7 (Closed), 8 (Expired), 9 (Failed).
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use serde::Serialize;
 use serde_json::Value;
 use std::time::Duration;
 
 use crate::audit;
-use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-use crate::commands::agent_commerce::task::common::subscription_identity::{
-    select_subscription_agent_id,
+use crate::commands::agent_commerce::task::common::{
+    self, network::task_api_client::TaskApiClient,
+    subscription_identity::select_subscription_agent_id,
 };
 use crate::commands::agent_commerce::task::signing;
 
@@ -40,13 +40,14 @@ const SUBSCRIBE_MY_PATH: &str = "/priapi/v1/aieco/task/subscribe/my";
 /// aligned with the contract `SubStatus`).
 /// Only `Active` (1) keeps a subscription in the continuous-delivery phase; every other
 /// status ends it (a signal-bearing delivery is then rejected as `subscriptionExpired`, and
-/// closing/settlement is backend-automatic — a subscription never runs an ASP submit).
+/// a subscription never runs an ASP submit). `Expired` (8) is authoritative terminal proof
+/// that any applicable backend-owned automatic refund reached the Buyer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SubStatus {
     /// -1 INIT — DB record created, not yet on-chain (transient; treated as not-live).
     Init,
-    /// 0 NONE — internal placeholder for an absent/missing status field (not a backend code).
-    None,
+    /// 0 Created — subscription funded and waiting for the designated ASP.
+    Created,
     /// 1 Active — subscription live (includes the trial period, distinguished by trialType).
     Active,
     /// 3 Rejected — user rejected, awaiting ASP reaction (1-day window).
@@ -57,6 +58,9 @@ pub enum SubStatus {
     Completed,
     /// 7 Closed — terminal (trial cancel / expiry close / on-chain-fail void).
     Closed,
+    /// 8 Expired — terminal ASP/deadline timeout. Any applicable backend-owned automatic
+    /// refund has reached the Buyer; trial/zero-amount tasks had no refundable funds.
+    Expired,
     /// 9 Failed — refunded (terminal: ASP agreed refund / user won arbitration / auto-refund).
     Failed,
     /// Any code this build does not recognize — treated as not-live (fail safe).
@@ -67,13 +71,14 @@ impl SubStatus {
     pub fn from_int(code: i64) -> Self {
         match code {
             -1 => SubStatus::Init,
-             0 => SubStatus::None,
-             1 => SubStatus::Active,
-             3 => SubStatus::Rejected,
-             4 => SubStatus::Disputed,
-             6 => SubStatus::Completed,
-             7 => SubStatus::Closed,
-             9 => SubStatus::Failed,
+            0 => SubStatus::Created,
+            1 => SubStatus::Active,
+            3 => SubStatus::Rejected,
+            4 => SubStatus::Disputed,
+            6 => SubStatus::Completed,
+            7 => SubStatus::Closed,
+            8 => SubStatus::Expired,
+            9 => SubStatus::Failed,
             other => SubStatus::Unknown(other),
         }
     }
@@ -87,13 +92,14 @@ impl SubStatus {
     pub fn code(self) -> i64 {
         match self {
             SubStatus::Init => -1,
-            SubStatus::None =>  0,
-            SubStatus::Active =>  1,
-            SubStatus::Rejected =>  3,
-            SubStatus::Disputed =>  4,
-            SubStatus::Completed =>  6,
-            SubStatus::Closed =>  7,
-            SubStatus::Failed =>  9,
+            SubStatus::Created => 0,
+            SubStatus::Active => 1,
+            SubStatus::Rejected => 3,
+            SubStatus::Disputed => 4,
+            SubStatus::Completed => 6,
+            SubStatus::Closed => 7,
+            SubStatus::Expired => 8,
+            SubStatus::Failed => 9,
             SubStatus::Unknown(c) => c,
         }
     }
@@ -109,14 +115,16 @@ pub enum Routing {
     Active,
     /// Subscription has ended (terminal status, or Active but past the buffer window) —
     /// `deliver` short-circuits to `subscriptionExpired` and does NOT send or submit;
-    /// closing/settlement is backend-automatic (a subscription never runs an ASP submit).
+    /// any remaining settlement is not an ASP delivery action (a subscription never runs
+    /// an ASP submit).
     Ended,
 }
 
 /// Read an integer field the backend may serialize as a JSON number or a string.
 fn as_i64(v: &Value, key: &str) -> Option<i64> {
     let f = v.get(key)?;
-    f.as_i64().or_else(|| f.as_str().and_then(|s| s.trim().parse::<i64>().ok()))
+    f.as_i64()
+        .or_else(|| f.as_str().and_then(|s| s.trim().parse::<i64>().ok()))
 }
 
 /// Read a field that may be a JSON string or number, as an owned string.
@@ -146,7 +154,10 @@ impl SubscriptionDetail {
         let job_type = as_i64(v, "jobType").unwrap_or(0);
         let status_code = as_i64(v, "status")
             .or_else(|| as_i64(v, "subStatus"))
-            .unwrap_or(SubStatus::None.code());
+            // Missing is not Created(0). Preserve a distinct fail-safe unknown
+            // value so incomplete detail cannot masquerade as a real backend
+            // lifecycle state.
+            .unwrap_or(-2);
         SubscriptionDetail {
             job_type,
             status: SubStatus::from_int(status_code),
@@ -221,7 +232,11 @@ pub fn record_sent(job_id: &str, delivery_id: &str) -> Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
         Ok(_) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
         Err(e) => Err(e.into()),
@@ -262,8 +277,7 @@ fn mock_detail() -> SubscriptionDetail {
 
 #[cfg(debug_assertions)]
 fn mock_job_id() -> String {
-    std::env::var("ONCHAINOS_TEST_MOCK_JOB_ID")
-        .unwrap_or_else(|_| "0xMOCKSUBJOB0001".to_string())
+    std::env::var("ONCHAINOS_TEST_MOCK_JOB_ID").unwrap_or_else(|_| "0xMOCKSUBJOB0001".to_string())
 }
 
 /// Fetch the authoritative subscription detail for a job (subId = jobId). Returns `None`
@@ -275,7 +289,10 @@ pub async fn fetch_detail(
 ) -> Option<SubscriptionDetail> {
     #[cfg(debug_assertions)]
     if std::env::var("ONCHAINOS_TEST_MOCK_SUBSCRIPTION").as_deref() == Ok("1") {
-        eprintln!("[MOCK] fetch_detail({job_id}) → synthetic subscription (subStatus={})", mock_substatus().code());
+        eprintln!(
+            "[MOCK] fetch_detail({job_id}) → synthetic subscription (subStatus={})",
+            mock_substatus().code()
+        );
         return Some(mock_detail());
     }
     match client.fetch_subscription(job_id, agent_id).await {
@@ -325,12 +342,17 @@ pub async fn handle_active(client: &mut TaskApiClient, agent_id: &str) -> Result
         } else {
             Vec::new()
         };
-        eprintln!("[MOCK] subscribe-active → {} synthetic active job(s)", active.len());
+        eprintln!(
+            "[MOCK] subscribe-active → {} synthetic active job(s)",
+            active.len()
+        );
         crate::output::success(active);
         return Ok(());
     }
 
-    let data = client.get_with_identity(SUBSCRIBE_MY_PATH, agent_id).await?;
+    let data = client
+        .get_with_identity(SUBSCRIBE_MY_PATH, agent_id)
+        .await?;
     // The list may sit at `data.list` or be the array itself, depending on the wrapper.
     let items: Vec<Value> = match data.get("list").and_then(|v| v.as_array()) {
         Some(arr) => arr.clone(),
@@ -386,10 +408,16 @@ pub async fn handle_agree_refund(
     let resp = client.post_with_identity(&path, &body, agent_id).await?;
 
     let tx_hash = signing::sign_uop_and_broadcast(
-        client, &resp["uopData"], &account_id, &address,
-        job_id, signing::extract_biz_type(&resp), agent_id,
+        client,
+        &resp["uopData"],
+        &account_id,
+        &address,
+        job_id,
+        signing::extract_biz_type(&resp),
+        agent_id,
         None,
-    ).await?;
+    )
+    .await?;
 
     audit::log(
         "cli",
@@ -404,10 +432,9 @@ pub async fn handle_agree_refund(
         None,
     );
 
-    println!("✓ Agreed to refund this subscription period, waiting for on-chain confirmation");
-    println!("  txHash: {tx_hash}");
-    println!();
-    println!("⚠️  Next steps are driven by system notifications — do not proactively message the buyer.");
+    println!("✓ Full refund for this subscription period submitted");
+    println!("  Progress will update in this task.");
+    println!("  Ask me to view this task's details for the refund result.");
     Ok(())
 }
 
@@ -433,10 +460,16 @@ pub async fn handle_asp_claim(
     let resp = client.post_with_identity(&path, &body, agent_id).await?;
 
     let tx_hash = signing::sign_uop_and_broadcast(
-        client, &resp["uopData"], &account_id, &address,
-        job_id, signing::extract_biz_type(&resp), agent_id,
+        client,
+        &resp["uopData"],
+        &account_id,
+        &address,
+        job_id,
+        signing::extract_biz_type(&resp),
+        agent_id,
         None,
-    ).await?;
+    )
+    .await?;
 
     audit::log(
         "cli",
@@ -451,7 +484,9 @@ pub async fn handle_asp_claim(
         None,
     );
 
-    println!("✓ Claim submitted for accrued subscription income, waiting for on-chain confirmation");
+    println!(
+        "✓ Claim submitted for accrued subscription income, waiting for on-chain confirmation"
+    );
     println!("  txHash: {tx_hash}");
     println!();
     println!("⚠️  This claims your own funds only — no buyer action is involved; do not message the buyer.");
@@ -461,11 +496,12 @@ pub async fn handle_asp_claim(
 /// Max on-chain dispute reason length (parity with the one-shot `dispute raise`/`confirm`).
 const MAX_DISPUTE_REASON_CHARS: usize = 2000;
 
-/// `subscribe-dispute` — the ASP raises arbitration for a rejected subscription period via the
+/// `subscribe-dispute` — the ASP requests evaluation for a rejected subscription period via the
 /// backend's single combined endpoint (§2.10 `POST /priapi/v1/aieco/task/{jobId}/dispute/
 /// approveAndCreateDispute` — approve + create in one call, NOT the old two-phase
-/// dispute raise/confirm). Fetch uopData → sign → broadcast; `reason` rides the broadcast
-/// bizContext so the arbitration record carries the ASP's argument.
+/// dispute raise/confirm). Fetch uopData → hand the exact reason to the task session → sign →
+/// broadcast; `reason` also rides the broadcast bizContext so the evaluation record and the
+/// later evidence flow share the ASP's argument.
 pub async fn handle_dispute(
     client: &mut TaskApiClient,
     job_id: &str,
@@ -474,10 +510,24 @@ pub async fn handle_dispute(
 ) -> Result<()> {
     let validated_agent_id = select_subscription_agent_id("", agent_id)?;
     let agent_id = validated_agent_id.as_str();
+    if reason.trim().is_empty() {
+        bail!("Evaluation reason is required. Pass the provided evaluation reason with --reason.");
+    }
     if reason.chars().count() > MAX_DISPUTE_REASON_CHARS {
-        bail!("Dispute reason exceeds {MAX_DISPUTE_REASON_CHARS} characters. Please shorten it and try again.");
+        bail!("Evaluation reason exceeds {MAX_DISPUTE_REASON_CHARS} characters. Please shorten it and try again.");
     }
     let (account_id, address) = signing::resolve_wallet_by_agent_id(agent_id).await?;
+    let subscription_detail = client
+        .fetch_subscription(job_id, agent_id)
+        .await
+        .context("subscribe-dispute: failed to fetch subscription detail for reason handoff")?;
+    let buyer_agent_id = subscription_detail["buyerAgentId"]
+        .as_str()
+        .or_else(|| subscription_detail["userAgentId"].as_str())
+        .filter(|value| !value.trim().is_empty())
+        .context(
+            "subscribe-dispute: subscription detail missing buyerAgentId for reason handoff",
+        )?;
     let body = serde_json::json!({});
 
     // §2.10 combined approve+create (subId == jobId). Path shape is /task/{jobId}/dispute/…,
@@ -485,14 +535,29 @@ pub async fn handle_dispute(
     let path = client.endpoint(job_id, "dispute/approveAndCreateDispute");
     let resp = client.post_with_identity(&path, &body, agent_id).await?;
 
+    // Deliver the original reason to the existing subscription task session before
+    // broadcasting the combined transaction. The later `sub_asp_dispute` event is handled
+    // in that session and can therefore include the same reason in the evidence upload.
+    let reason_handoff =
+        super::dispute_raise::build_subscription_reason_handoff(job_id, agent_id, reason);
+    common::okx_a2a::session_send(job_id, Some(buyer_agent_id), &reason_handoff).context(
+        "subscribe-dispute: failed to hand off the evaluation reason to the task session; combined dispute transaction was not broadcast",
+    )?;
+
     // Ride the reason on the broadcast bizContext (mirrors `dispute confirm`); the
     // approveAndCreateDispute request body itself stays empty, matching the one-shot path.
     let reason_json = serde_json::json!({ "reason": reason });
     let tx_hash = signing::sign_uop_and_broadcast(
-        client, &resp["uopData"], &account_id, &address,
-        job_id, signing::extract_biz_type(&resp), agent_id,
+        client,
+        &resp["uopData"],
+        &account_id,
+        &address,
+        job_id,
+        signing::extract_biz_type(&resp),
+        agent_id,
         Some(&reason_json),
-    ).await?;
+    )
+    .await?;
 
     audit::log(
         "cli",
@@ -507,10 +572,9 @@ pub async fn handle_dispute(
         None,
     );
 
-    println!("✓ Subscription dispute raised (approve+create), waiting for on-chain confirmation");
-    println!("  txHash: {tx_hash}");
-    println!();
-    println!("⚠️  Next steps are driven by system notifications — do not proactively message the buyer.");
+    println!("✓ Evaluation request submitted");
+    println!("  Progress will update in this task.");
+    println!("  Ask me to view this task's details for the evaluation result.");
     Ok(())
 }
 
@@ -530,7 +594,7 @@ mod tests {
 
     #[test]
     fn substatus_codes_round_trip() {
-        for c in [-1, 0, 1, 3, 4, 6, 7, 9, 999] {
+        for c in [-1, 0, 1, 3, 4, 6, 7, 8, 9, 999] {
             assert_eq!(SubStatus::from_int(c).code(), c);
         }
         assert!(SubStatus::from_int(1).is_active());
@@ -564,8 +628,8 @@ mod tests {
     }
 
     #[test]
-    fn terminal_status_is_ended() {
-        for status in [3, 4, 6, 7, 9, -1, 100] {
+    fn every_non_active_status_is_ended_for_delivery() {
+        for status in [-1, 0, 3, 4, 6, 7, 8, 9, 100] {
             assert_eq!(detail(1, status, Some(9999)).liveness(1000), Routing::Ended);
         }
     }
@@ -585,9 +649,10 @@ mod tests {
     fn from_json_status_alias_and_defaults() {
         let d = SubscriptionDetail::from_json(&json!({"jobType": 1, "subStatus": 1}));
         assert!(d.status.is_active());
-        // absent status → None (0) → not-live.
+        // An absent status remains distinct from the real Created(0) state and
+        // fails safe as not-live.
         let d2 = SubscriptionDetail::from_json(&json!({"jobType": 1}));
-        assert_eq!(d2.status, SubStatus::None);
+        assert_eq!(d2.status, SubStatus::Unknown(-2));
         assert_eq!(d2.liveness(1000), Routing::Ended);
     }
 
@@ -595,6 +660,9 @@ mod tests {
     fn sent_marker_path_layout() {
         let p = sent_marker_path("job1", "sig-20260716-42").unwrap();
         let s = p.to_string_lossy();
-        assert!(s.ends_with("/autotrade/sent/job1/sig-20260716-42"), "unexpected: {s}");
+        assert!(
+            s.ends_with("/autotrade/sent/job1/sig-20260716-42"),
+            "unexpected: {s}"
+        );
     }
 }

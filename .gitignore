@@ -24,6 +24,8 @@ build/
 out/
 target/
 target-pack/
+.cargo-home/
+.cargo-target/
 
 # Xcode / Swift
 xcuserdata/
@@ -51,6 +53,12 @@ CLAUDE.local.md
 
 # AI Assistant directories (auto-generated)
 .agents/
+.codex/bin/
+.codex/build/
+.codex/runtime/
+.codex/skills/
+.codex/config.toml
+.codex/dev.json
 .cursor
 .ai-mat
 .cursorrules
@@ -78,6 +86,10 @@ run.sh
 test-cases.json
 
 **/evals/
+!skills/okx-ai/evals/
+!skills/okx-ai/evals/**
+!skills/okx-agentic-wallet/evals/
+!skills/okx-agentic-wallet/evals/**
 
 # Agent task workspace (local only)
 skills/okx-agent-task-workspace/
@@ -92,3 +104,20 @@ skills/okx-agent-task-workspace/
 .agents/skills/onchainos-skills
 
 output/
+
+scripts/dev/*
+!scripts/dev/common.sh
+!scripts/dev/dev.mjs
+!scripts/dev/dev.test.mjs
+!scripts/dev/okx-a2a.sh
+!scripts/dev/onchainos.sh
+
+.aiide/
+.aiide-preview/
+
+# Local Codex build artifacts
+.codex/cargo/
+.codex/onchainos/
+.codex/target-global/
+.codex/agent-task
+artifacts/

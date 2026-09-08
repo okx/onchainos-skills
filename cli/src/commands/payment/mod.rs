@@ -1,4 +1,5 @@
 pub mod a2a_pay;
+pub mod a2mcp;
 pub mod addr;
 pub mod decode_receipt;
 pub mod dispatcher;
@@ -8,6 +9,9 @@ pub mod quote;
 pub mod session_state;
 pub mod state;
 pub mod subscription;
+
+#[cfg(test)]
+mod a2mcp_tests;
 
 // Re-export the dispatcher entry-points so external call sites read
 // `crate::commands::payment::PaymentCommand` instead of `payment::dispatcher::PaymentCommand`.
