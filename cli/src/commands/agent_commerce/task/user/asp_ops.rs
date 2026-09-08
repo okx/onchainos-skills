@@ -1359,16 +1359,22 @@ mod tests {
     }
 
     #[test]
-    fn cli_task_service_select_reuses_service_match_limit_validation() {
-        assert!(TestCli::try_parse_from([
+    fn cli_task_service_select_accepts_limit_without_a_service_range_constraint() {
+        let cli = TestCli::try_parse_from([
             "test",
             "task-service-select",
             "--keywords",
             "audit",
             "--limit",
-            "11",
+            "1000",
         ])
-        .is_err());
+        .expect("task-service-select should reuse the unconstrained service-match limit");
+        match cli.cmd {
+            super::super::TaskCommand::TaskServiceSelect(args) => {
+                assert_eq!(args.service_match.limit, 1000);
+            }
+            _ => panic!("expected TaskServiceSelect"),
+        }
     }
 
     #[test]

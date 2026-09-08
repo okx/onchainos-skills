@@ -7,7 +7,7 @@
       "id": "one-time-a2a-success",
       "sessions": ["user-main", "user-task-sub", "asp-task-sub"],
       "steps": [
-        {"session": "user-main", "input": "natural-language purchase", "route": "SKILL.md -> identity/router.md -> search.md"},
+        {"session": "user-main", "input": "natural-language purchase", "route": "SKILL.md -> identity/search.md"},
         {"session": "user-main", "input": "selected sid", "route": "identity/search.md -> create-prepare.md", "command": "task-create-prepare"},
         {"session": "user-main", "input": "all_checks_passed", "route": "create-prepare.md -> create.md", "effect": "one confirmed create-task"},
         {"session": "user-main", "input": "watch_task", "route": "create.md -> runtime/watch.md", "effect": "scoped long poll"},

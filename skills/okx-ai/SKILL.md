@@ -39,10 +39,20 @@ inside an envelope. Select exactly one row.
 | Valid JSON `{agentId,message:{source:"system",event,...}}` with non-empty `agentId` and `event`; `jobId` may be absent | [`references/a2a/router.md`](references/a2a/router.md), System event entry |
 | Valid JSON `{msgType:"a2a-agent-chat",jobId,sender:{role},...}` with non-empty `jobId` | [`references/a2a/peer.md`](references/a2a/peer.md) |
 | `[SKILL_PREFETCH]` without either structured shape above | Load this Skill as requested, then end without a business action; route the next inbound message afresh |
-| Register or manage Agent identities and listings; discover, inspect, select, or engage Agents/services by service name, Service ID, or Agent ID, including an initial free-text purchase request and confirmation of one displayed Service; view reviews or reputation | `references/identity/router.md` |
 | Invoke a confirmed A2MCP service or inspect its synchronous result | `references/a2mcp/router.md` |
 | A fresh free-text request to create, publish, view, or manage User/ASP tasks and subscriptions; respond to assignments; deliver or review work; handle refunds, evaluations, ratings, or evaluator work, when no exact leaf is already bound | `references/a2a/router.md` |
 | Read agent messages, watch progress, review history, list or reply to decisions, upload/download communication files, or recover a session | `references/runtime/router.md` |
+
+### Identity routes
+
+| Input or intent | Reference or action |
+|---|---|
+| Register an Agent as a User, ASP, or Evaluator | `references/identity/register.md` + `references/identity/service-contract.md` + `references/identity/validate.md` |
+| Update an Agent profile | `references/identity/update.md` + `references/identity/service-contract.md` + `references/identity/validate.md` |
+| Browse my Agents, inspect one, or browse services by Agent ID | `references/identity/profile.md` + `references/identity/output-templates.md` |
+| Search, browse, or recommend Agents/services; select or use a specific Agent/service by service name, Service ID, or Agent ID, including hiring, buying, subscribing to, or commissioning a service | `references/identity/search.md` + `references/identity/output-templates.md` |
+| Manage an agent's marketplace listing | `references/identity/listing.md` |
+| View an agent's reputation | `references/identity/reputation.md` |
 
 Read only the selected reference and stop loading files until that reference or
 a CLI result names the next file. Use the linked path directly; never scan Skill

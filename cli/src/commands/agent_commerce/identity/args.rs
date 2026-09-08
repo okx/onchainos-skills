@@ -434,9 +434,9 @@ pub struct ServiceMatchArgs {
     /// Cursor returned by the previous response; cannot be combined with initial-search filters.
     #[arg(long = "search-after")]
     pub search_after: Option<String>,
-    /// Requested number of Services, from 1 through 10.
-    #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u8).range(1..=10))]
-    pub limit: u8,
+    /// Requested number of Services.
+    #[arg(long, default_value_t = 3)]
+    pub limit: u64,
 }
 
 #[cfg(test)]
@@ -493,12 +493,11 @@ mod service_match_args_tests {
     }
 
     #[test]
-    fn rejects_limit_outside_documented_range() {
-        for limit in ["0", "11"] {
-            assert!(
-                TestCli::try_parse_from(["test", "--keywords", "audit", "--limit", limit,])
-                    .is_err()
-            );
+    fn accepts_limit_without_a_service_range_constraint() {
+        for limit in ["0", "11", "1000"] {
+            let cli = TestCli::try_parse_from(["test", "--keywords", "audit", "--limit", limit])
+                .expect("limit should not have a service-specific range constraint");
+            assert_eq!(cli.service_match.limit.to_string(), limit);
         }
     }
 }
