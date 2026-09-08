@@ -249,19 +249,16 @@ default. Then **END THIS TURN**. A reply confirming Step 4.5 never also answers 
 Step 5 -- Subscription confirmation form
 ================================================
 
-The confirmation form has exactly the seven product-facing rows below. Guide Consent values belong only in the separately confirmed Step 4.5 review. Never append, merge, or render them as rows in this product-facing subscription confirmation form. Continue retaining the user-authored values for the Step 6 `--guide-consent-json` argument.
+Read `skills/okx-ai/references/a2a/user/subscription-create.md` and render its exact
+`Subscription job creation confirmation` scene. That scene is the only source
+for the English display template, field order, optional Service Parameters
+column, Provider and Fee format, Trial text, Auto-renewal label, and Recommend
+action. Bind it from the retained User-confirmed values and the selected
+Service payload. Do not keep or invent a second confirmation template here.
 
-| Field | Value |
-|---|---|
-| Title | <short title, <=30 chars> |
-| Description | <full content> (if <=200 chars in table; if >200 write `see below` and render below) |
-| Provider | Agent <providerAgentId>(<providerAgentName>) — degrade to Agent <providerAgentId> when name empty/absent |
-| Service params | <serviceParams readable display, or \"None\"> |
-| Service price | <subscriptionInfo.feeAmount> <feeTokenSymbol> / month |
-| Trial | Yes (<subscriptionInfo.freeTrial> hours free) / No (based on `subscriptionInfo.supportTrial`) |
-| Auto-renew | On / Off |
-
-> Confirm? Once confirmed, the subscription will be created on-chain.
+Guide Consent values belong only in the separately confirmed Step 4.5 review.
+Never append, merge, or render them in this product-facing subscription
+confirmation. Continue retaining the user-authored values for the Step 6 `--guide-consent-json` argument.
 
 → **End this turn**; wait for the user's reply.
 
@@ -561,33 +558,24 @@ mod tests {
         assert!(out.contains("The Guide is the only contract for Consent and Signal"));
         assert!(out.contains("--guide-consent-json"));
         assert!(out.contains("Guide Consent values belong only"));
-        assert!(out.contains("exactly the seven product-facing rows below"));
-        for expected_row in [
-            "| Title |",
-            "| Description |",
-            "| Provider |",
-            "| Service params |",
-            "| Service price |",
-            "| Trial |",
-            "| Auto-renew |",
+        assert!(out.contains("skills/okx-ai/references/a2a/user/subscription-create.md"));
+        assert!(out.contains("Subscription job creation confirmation"));
+        assert!(out.contains("the only source\nfor the English display template"));
+        assert!(out.contains("optional Service Parameters\ncolumn"));
+        assert!(out.contains(
+            "Provider and Fee format, Trial text, Auto-renewal label, and Recommend\naction"
+        ));
+        for retired_inline_row in [
+            "| Title | <short title",
+            "| Service params | <serviceParams",
+            "| Trial | Yes",
+            "> Confirm? Once confirmed",
         ] {
             assert!(
-                out.contains(expected_row),
-                "missing confirmation row {expected_row}"
+                !out.contains(retired_inline_row),
+                "retired inline confirmation template remains: {retired_inline_row}"
             );
         }
-        let form = out
-            .split("Step 5 -- Subscription confirmation form")
-            .nth(1)
-            .expect("subscription confirmation section")
-            .split("> Confirm?")
-            .next()
-            .expect("subscription confirmation table");
-        assert_eq!(
-            form.lines().filter(|line| line.starts_with("| ")).count(),
-            8,
-            "confirmation table must contain one header plus exactly seven product rows"
-        );
         assert!(out.contains(
             "Continue retaining the user-authored values for the Step 6 `--guide-consent-json` argument"
         ));
