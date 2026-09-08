@@ -9,6 +9,12 @@ For a System entry, consume the fresh progression result already produced by
 the A2A router. For a selected pending request, use the fresh `refund-detail`
 result. Render [Buyer Refund Request](#buyer-refund-request).
 
+For a one-time task, the CLI reads Buyer’s Reason from
+`message.rejectReason` on `job_rejected`, or `detail.rejectReason` from the
+fresh `refund-detail` response. It preserves the value verbatim and normalizes
+it to `payload.buyerReason`; the Skill must use that normalized value and must
+not extract or reconstruct a reason from free text.
+
 Continue only when every template field is present. If a System result is
 blocked for missing fields, run the same `refund-detail` query used by a
 selected request. If fresh detail is still incomplete, show the missing fields

@@ -138,6 +138,8 @@ fn refund_finality_and_display_remain_exact() {
         "A full refund will be issued automatically if no action is taken by the deadline. Reply with a number or Job ID to view the request."
     ));
     assert!(PROVIDER_ARBITRATION_DECISION.contains("### Buyer Refund Request"));
+    assert!(PROVIDER_ARBITRATION_DECISION.contains("`message.rejectReason`"));
+    assert!(PROVIDER_ARBITRATION_DECISION.contains("`detail.rejectReason`"));
     assert!(PROVIDER_ARBITRATION_DECISION.contains(
         "To refund the buyer, reply “Approve refund.” To dispute the request, reply “Request evaluation” and provide your reason."
     ));

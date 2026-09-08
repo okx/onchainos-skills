@@ -1483,12 +1483,16 @@ mod tests {
             Some(&prefetched),
             Some(&json!({
                 "eventId": "event-1",
-                "refundReason": "The result was incomplete",
+                "rejectReason": "The result was incomplete",
             })),
         );
         let output: serde_json::Value = serde_json::from_str(&output).unwrap();
 
         assert_eq!(output["payload"]["serviceName"], "Audit Service");
+        assert_eq!(
+            output["payload"]["rejectReason"],
+            "The result was incomplete"
+        );
         assert!(output["payload"]["refundDisplayB64"].is_string());
     }
 

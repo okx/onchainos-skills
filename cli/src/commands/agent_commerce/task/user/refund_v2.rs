@@ -1454,6 +1454,8 @@ impl RefundSnapshot {
                         &["rejectReason", "refundReason", "userReason"][..],
                     ));
                 }
+                // One-time task detail formally returns `rejectReason`; the
+                // remaining names are retained for older response snapshots.
                 values.push((task, &["rejectReason", "refundReason", "userReason"][..]));
                 first_exact_string(&values)
             },

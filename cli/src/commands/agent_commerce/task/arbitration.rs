@@ -222,7 +222,9 @@ pub fn build_decision_result(
         let keys: &[&str] = if is_subscription {
             &["rejectReason", "refundReason", "userReason"]
         } else {
-            &["refundReason", "rejectReason", "userReason", "reason"]
+            // `job_rejected` formally exposes `rejectReason`; keep the older
+            // aliases as read-only compatibility fallbacks.
+            &["rejectReason", "refundReason", "userReason", "reason"]
         };
         keys.iter()
             .find_map(|key| exact_nonempty_string(value.get(*key)))
@@ -256,7 +258,7 @@ pub fn build_decision_result(
     let mut required = vec![
         ("serviceName", service_name.is_some()),
         ("amount", refund_amount_label.is_some()),
-        ("refundReason", refund_reason.is_some()),
+        ("rejectReason", refund_reason.is_some()),
         ("responseDeadline", response_deadline_label.is_some()),
     ];
     if is_subscription {
@@ -359,6 +361,7 @@ pub fn build_decision_result(
             "currentPeriod": current_period,
             "requestedRefund": requested_refund,
             "buyerReason": buyer_reason.clone(),
+            "rejectReason": refund_reason.clone(),
             "refundReason": refund_reason,
             "responseDeadline": response_deadline,
             "responseDeadlineLabel": response_deadline_label,
@@ -1125,7 +1128,7 @@ mod tests {
             } else {
                 json!({
                     "periodIndex": 2,
-                    "refundReason": "The result was incomplete",
+                    "rejectReason": "The result was incomplete",
                     "expireTime": 1_700_600_000,
                 })
             };
@@ -1142,6 +1145,35 @@ mod tests {
             assert_eq!(result["nextAction"].as_array().map(Vec::len), Some(2));
             assert_eq!(result["payload"]["name"], "Service");
         }
+    }
+
+    #[test]
+    fn one_time_job_rejected_uses_contract_reject_reason_verbatim() {
+        let reason = " The result was incomplete.\nKeep this exact | reason ";
+        let result = build_decision_result(
+            JOB_REJECTED,
+            "0xfull-one-time-job-id",
+            Some("Audit task".to_string()),
+            Some("2.5".to_string()),
+            Some("USDT".to_string()),
+            Some(&json!({
+                "serviceName": "Audit Service",
+                "rejectReason": reason,
+                "expireTime": 1_700_600_000,
+            })),
+        );
+
+        assert_eq!(result["decision"], "requires_user_input");
+        assert_eq!(result["payload"]["buyerReason"], reason);
+        assert_eq!(result["payload"]["rejectReason"], reason);
+        assert_eq!(result["payload"]["refundReason"], reason);
+        let content = URL_SAFE_NO_PAD
+            .decode(result["payload"]["userContentB64"].as_str().unwrap())
+            .unwrap();
+        let content = String::from_utf8(content).unwrap();
+        assert!(content.contains("0xfull-one-time-job-id"));
+        assert!(content.contains(reason));
+        assert!(!content.contains("| Current Period |"));
     }
 
     #[test]
@@ -1202,7 +1234,7 @@ mod tests {
         assert_eq!(result["reason"], "missing_required_facts");
         assert_eq!(
             result["payload"]["missingFields"],
-            json!(["refundReason", "responseDeadline"])
+            json!(["rejectReason", "responseDeadline"])
         );
         assert_eq!(result["nextAction"], json!([]));
     }
