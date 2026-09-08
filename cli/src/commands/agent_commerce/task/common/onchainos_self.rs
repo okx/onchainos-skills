@@ -32,10 +32,17 @@ pub fn task_feedback_exists(agent_id: &str, task_id: &str) -> Result<bool> {
         anyhow::bail!("onchainos agent task-feedback exit {status}: {stderr}", status = out.status);
     }
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let parsed: serde_json::Value = serde_json::from_str(stdout.trim())
-        .unwrap_or(serde_json::Value::Null);
-    let data = &parsed["data"];
-    Ok(data.is_array() && !data.as_array().unwrap().is_empty())
+    parse_task_feedback_exists(stdout.trim())
+}
+
+fn parse_task_feedback_exists(stdout: &str) -> Result<bool> {
+    let parsed: serde_json::Value = serde_json::from_str(stdout)
+        .map_err(|error| anyhow::anyhow!("invalid task-feedback JSON: {error}"))?;
+    let data = parsed
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("task-feedback response missing data array"))?;
+    Ok(!data.is_empty())
 }
 
 /// Spawn `onchainos agent feedback-submit ...` as a child process.
@@ -67,4 +74,22 @@ pub fn feedback_submit(
         anyhow::bail!("onchainos agent feedback-submit exit {status}: {stderr}", status = out.status);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_task_feedback_exists;
+
+    #[test]
+    fn task_feedback_parser_distinguishes_empty_and_existing_feedback() {
+        assert!(!parse_task_feedback_exists(r#"{"data":[]}"#).unwrap());
+        assert!(parse_task_feedback_exists(r#"{"data":[{"feedbackId":"1"}]}"#).unwrap());
+    }
+
+    #[test]
+    fn task_feedback_parser_rejects_malformed_or_unexpected_success_output() {
+        assert!(parse_task_feedback_exists("not-json").is_err());
+        assert!(parse_task_feedback_exists(r#"{"ok":true}"#).is_err());
+        assert!(parse_task_feedback_exists(r#"{"data":null}"#).is_err());
+    }
 }

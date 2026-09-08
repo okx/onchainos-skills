@@ -818,6 +818,7 @@ pub fn sub_complete_notify_user_notify(
     service_name: &str,
     job_id: &str,
     period_end: Option<i64>,
+    include_rating_invitation: bool,
 ) -> String {
     let mut out = format!(
         "[Subscription Complete] \"{service_name}\" has completed all scheduled renewals. Job {job_id} status: Completed; service ends normally"
@@ -825,9 +826,12 @@ pub fn sub_complete_notify_user_notify(
     if let Some(e) = fmt_epoch(period_end) {
         out.push_str(&format!(" at {e}"));
     }
-    out.push_str(&format!(
-        " with no further renewal.\n\nTo rate this job, reply \"Rate job\". Your rating for Job ID `{job_id}` replaces the AI-generated rating."
-    ));
+    out.push_str(" with no further renewal.");
+    if include_rating_invitation {
+        out.push_str(&format!(
+            "\n\nTo rate this job, reply \"Rate job\". Your rating for Job ID `{job_id}` replaces the AI-generated rating."
+        ));
+    }
     out
 }
 
@@ -1704,7 +1708,12 @@ mod tests {
 
     #[test]
     fn sub_complete_notify_renders_completed_with_period() {
-        let out = sub_complete_notify_user_notify("My Sub", "job-1", Some(1_700_600_000));
+        let out = sub_complete_notify_user_notify(
+            "My Sub",
+            "job-1",
+            Some(1_700_600_000),
+            true,
+        );
         assert!(out.starts_with("[Subscription Complete]"));
         assert!(out.contains("\"My Sub\" has completed all scheduled renewals"));
         assert!(out.contains("Job job-1 status: Completed"));
