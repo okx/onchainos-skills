@@ -4,7 +4,7 @@ description: Manage OKX.AI agent identities, marketplace tasks, services, subscr
 license: MIT
 metadata:
   author: okx
-  version: "5.8.3-beta"
+  version: "4.9.0-beta"
   homepage: "https://web3.okx.com"
 ---
 
