@@ -76,7 +76,7 @@ fn unknown_system_events_stop_before_cli_dispatch() {
 }
 
 #[test]
-fn create_confirmation_excludes_execution_configuration() {
+fn create_confirmation_omits_follow_trade_configuration() {
     let create = CREATE.split_whitespace().collect::<Vec<_>>().join(" ");
     let subscription_create = SUBSCRIPTION_CREATE
         .split_whitespace()
@@ -92,13 +92,20 @@ fn create_confirmation_excludes_execution_configuration() {
     assert!(CREATE.contains("Render attachments below the field list"));
     assert!(CREATE.contains("- Job Name: {title}"));
     assert!(!CREATE.contains("| Job Name | Job Description |"));
-    assert!(SUBSCRIPTION_CREATE.contains("- Task Name: {title}"));
+    assert!(SUBSCRIPTION_CREATE.contains("- Subscription Name: {title}"));
+    assert!(SUBSCRIPTION_CREATE.contains("not ASP configuration and not merely a local record"));
     assert!(SUBSCRIPTION_CREATE.contains("- Service Guide Consent: {guideConsent}"));
+    assert!(!SUBSCRIPTION_CREATE.contains("- Service Parameters: {serviceParams}"));
+    assert!(subscription_create.contains("internal follow-trade parameters"));
     assert!(!SUBSCRIPTION_CREATE.contains("| Field | Value |"));
     assert!(subscription_create.contains("without asking for a separate confirmation"));
     assert!(subscription_create.contains("one explicit final confirmation"));
+    assert!(subscription_create.contains("Automatic copy-trading preference"));
+    assert!(subscription_create.contains("Do not ask an additional platform-level mode question"));
+    assert!(GUIDE.contains("silently persist that answer before asking the next"));
+    assert!(GUIDE.contains("subscription-execution-config-set"));
+    assert!(subscription_create.contains("one-time tasks never configure it"));
     assert!(!SUBSCRIPTION_CREATE.contains("Guide Consent remains a separate confirmation"));
-    assert!(!SUBSCRIPTION_CREATE.contains("subscription-execution-config-set"));
     let subscription_detail = SUBSCRIPTION_QUERY.split_once("## Detail").unwrap().1;
     assert!(subscription_detail.contains("- Job ID: {jobId}"));
     assert!(subscription_detail.contains("- Status: {localizedStatusLabel}"));

@@ -15,7 +15,7 @@ fn watch_reenters_after_nonterminal_results() {
 
 #[test]
 fn creation_watch_shows_one_localized_monitoring_note_without_reentry_repeats() {
-    let note = "> Note: Message monitoring may stop after the job is created, but the job will continue running. Reply “Resume message monitoring” to receive updates.";
+    let note = "> Note: The job will continue running after it is created, but message monitoring may stop. You can:\n>\n> - Reply “Check the current task progress” for a one-time status check.\n> - For subscriptions, reply “Check subscription task status” to view recent follow-trade results.";
     assert_eq!(WATCH.matches(note).count(), 1);
     assert!(WATCH.contains("`phase=creation`"));
     assert!(WATCH.contains("`reason=broadcast_submitted`"));
@@ -23,6 +23,17 @@ fn creation_watch_shows_one_localized_monitoring_note_without_reentry_repeats() 
     assert!(WATCH.contains("translate it into the user's initial locale"));
     assert!(WATCH.contains("Do not show it for"));
     assert!(WATCH.contains("dispatch resume, wake re-entry, or any later watch call"));
+    assert!(WATCH.contains("render `Check the current task progress` as\n`查询当前任务进展`"));
+    assert!(WATCH.contains("`Check subscription task status` as `查询订阅任务状态`"));
+}
+
+#[test]
+fn current_task_progress_is_a_one_time_status_query() {
+    let task_query = include_str!("../../skills/okx-ai/references/a2a/task-query.md");
+    assert!(task_query.contains("`查询当前任务进展`"));
+    assert!(task_query.contains("one-time fresh status query"));
+    assert!(task_query.contains("single unambiguous Job ID bound to the current conversation"));
+    assert!(task_query.contains("run `active-tasks`"));
 }
 
 #[test]

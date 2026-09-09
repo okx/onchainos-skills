@@ -5,6 +5,7 @@
 //! its own copy.
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 pub(super) const XLAYER_CHAIN_INDEX: &str = "196";
 pub(super) const XLAYER_CHAIN_INDEX_NUM: u64 = 196;
@@ -45,7 +46,7 @@ pub(super) struct SubscriptionTier {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(super) struct AgentService {
     #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
-    pub(super) id: Option<String>,
+    pub(super) id: Option<Value>,
     #[serde(rename = "serviceName")]
     pub(super) service_name: String,
     #[serde(rename = "serviceDescription")]

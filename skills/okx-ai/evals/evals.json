@@ -97,6 +97,89 @@
           "next_subscription_page"
         ]
       }
+    },
+    {
+      "id": 5,
+      "prompt": "查一下 agent9967 的服务。",
+      "expected_output": "将自然语言中的 agent9967 规范化为数字 Agent ID 9967，并只使用数字值查询 Agent 详情及服务。",
+      "files": [],
+      "expectations": [
+        "Calls `onchainos agent get-agents --agent-ids 9967` exactly once.",
+        "Calls `onchainos agent service-list --agent-id 9967 --page 1 --page-size 3` exactly once.",
+        "Never passes `agent9967` as an Agent ID CLI argument."
+      ],
+      "assertions": {
+        "required_commands": [
+          "onchainos agent get-agents --agent-ids 9967",
+          "onchainos agent service-list --agent-id 9967 --page 1 --page-size 3"
+        ],
+        "forbidden_commands": [
+          "--agent-ids agent9967",
+          "--agent-id agent9967"
+        ],
+        "response_includes": ["9967"]
+      }
+    },
+    {
+      "id": 6,
+      "prompt": "帮我找一下13373的服务",
+      "expected_output": "将作为服务所有者出现的数字 13373 解析为 ASP Agent ID，而不是 Service ID/SID。",
+      "files": [],
+      "expectations": [
+        "Calls `onchainos agent service-match --asp-agent-id 13373 --limit 3` exactly once.",
+        "Never passes 13373 through `--sid`.",
+        "Does not invent search keywords from the generic request wrapper."
+      ],
+      "assertions": {
+        "required_commands": [
+          "onchainos agent service-match --asp-agent-id 13373 --limit 3"
+        ],
+        "forbidden_commands": [
+          "--sid 13373",
+          "--keywords"
+        ],
+        "response_includes": ["13373"]
+      }
+    },
+    {
+      "id": 7,
+      "prompt": "帮我找一下13373服务",
+      "expected_output": "将没有所有关系标记的数字 13373 解析为 Service ID/SID。",
+      "files": [],
+      "expectations": [
+        "Calls `onchainos agent service-match --sid 13373 --limit 3` exactly once.",
+        "Never passes 13373 through `--asp-agent-id`.",
+        "Does not invent search keywords from the generic request wrapper."
+      ],
+      "assertions": {
+        "required_commands": [
+          "onchainos agent service-match --sid 13373 --limit 3"
+        ],
+        "forbidden_commands": [
+          "--asp-agent-id 13373",
+          "--keywords"
+        ],
+        "response_includes": ["13373"]
+      }
+    },
+    {
+      "id": 8,
+      "prompt": "Find the Agent or service identified by 13373.",
+      "expected_output": "Ask whether 13373 is an ASP Agent ID or a Service ID and wait without searching.",
+      "files": [],
+      "expectations": [
+        "Does not call `onchainos agent service-match`.",
+        "Asks the user whether 13373 is an Agent ID or a Service ID.",
+        "Waits for the user's answer before searching."
+      ],
+      "assertions": {
+        "forbidden_commands": [
+          "agent service-match",
+          "--asp-agent-id",
+          "--sid"
+        ],
+        "response_includes": ["13373", "Agent ID", "Service ID"]
+      }
     }
   ]
 }

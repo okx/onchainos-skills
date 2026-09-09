@@ -8,13 +8,14 @@
 
 use anyhow::Result;
 use serde::Serialize;
+use serde_json::Value;
 
 use crate::commands::Context;
 
 use super::args::ValidateListingArgs;
 use super::models::{AgentService, ServiceOperation};
 use super::utils::{
-    display_width, is_plain_number, is_positive_integer, normalize_role,
+    display_width, is_plain_number, is_positive_integer, is_zero_value, normalize_role,
     SERVICE_GUIDE_MAX_DISPLAY_WIDTH,
 };
 
@@ -69,6 +70,40 @@ mod fe {
     pub fn service_guide_too_long(service_name: &str) -> String {
         format!(
             "The service guide for [{service_name}] exceeds the length limit. Shorten it to no more than 5,000 full-width Chinese/Japanese characters or 10,000 Latin characters, then resubmit."
+        )
+    }
+    /// FE-PRICE-01 — an A2A subscription tier price is empty. Interpolates the
+    /// service name (same pattern as `service_guide_too_long`), returning a
+    /// `String` rather than a `const &str`. The text is kept BYTE-IDENTICAL to the
+    /// strict create/update path (`normalize_service` in `utils.rs`) so the QA and
+    /// strict paths surface the same sentence for the same defect (spec §5.1
+    /// lockstep). `service_name` may be empty in the QA path — acceptable (§6.6).
+    /// `mod fe` is a private child module, so this text is reproduced verbatim
+    /// rather than imported from the strict path's inlined literal.
+    pub fn fe_price_empty(service_name: &str) -> String {
+        format!(
+            "The price for \"{service_name}\" cannot be empty. Please enter a price and try again."
+        )
+    }
+    /// FE-PRICE-02 — an A2A subscription tier price is a well-formed zero. Text is
+    /// kept BYTE-IDENTICAL to the strict path (spec §5.1 lockstep); see
+    /// `fe_price_empty` for the rationale.
+    pub fn fe_price_zero(service_name: &str) -> String {
+        format!(
+            "The subscription price for \"{service_name}\" must be greater than 0. Please update the price and try again."
+        )
+    }
+    /// FE-EP-01 (EP1) — within-submission A2MCP endpoint collision. Unlike the
+    /// static rule-group constants, this copy names BOTH the offending service
+    /// and the one that first claimed the endpoint, so it is formatted at
+    /// finding-creation time (same pattern as `service_guide_too_long`).
+    pub fn fe_ep01(service_name: &str, conflicting_name: &str) -> String {
+        format!(
+            "The Endpoint for \"{}\" is already used by \"{}\". \
+             Please use a different Endpoint and try again. \
+             If you have any questions, contact the OKX.AI team \
+             via customer support in the bottom-right corner of okx.ai.",
+            service_name, conflicting_name,
         )
     }
     /// FE-21 (必填 / 长度) — SPLIT per sub-check, because the two are not
@@ -238,6 +273,7 @@ pub(crate) fn run_validation(
                             check_service(i, svc, name, &mut findings);
                         }
                         check_duplicate_service_names(&services, &mut findings);
+                        check_duplicate_endpoints(&services, &mut findings); // FE-EP-01
                     }
                     Err(()) => findings.push(Finding::block("service", "PARSE", fe::FE13)),
                 }
@@ -416,7 +452,7 @@ fn check_service(index: usize, svc: &AgentService, agent_name: &str, findings: &
         && display_width(&svc.service_guide) > SERVICE_GUIDE_MAX_DISPLAY_WIDTH
     {
         findings.push(Finding::block(
-            &format!("service[{index}].serviceGuide"),
+            format!("service[{index}].serviceGuide"),
             "G2",
             &fe::service_guide_too_long(&svc.service_name),
         ));
@@ -455,6 +491,60 @@ fn check_duplicate_service_names(services: &[AgentService], findings: &mut Vec<F
             ));
         } else {
             seen_names.push(service_name);
+        }
+    }
+}
+
+/// EP1: A2MCP endpoints within one ASP submission must be unique. Mirrors
+/// `check_duplicate_service_names`: case-insensitive exact match on the
+/// already-trimmed endpoint string (no trailing-slash / query / port
+/// normalization — see spec §1.4). Services with `operation == Delete` are
+/// being removed, and A2A / empty-endpoint services have no endpoint, so both
+/// are skipped. Self-exclusion: two entries sharing the SAME non-empty `id`
+/// are the same service being edited, not a collision (spec §1.5). Does NOT
+/// short-circuit — every later duplicate gets its own finding (spec §2.4).
+fn check_duplicate_endpoints(services: &[AgentService], findings: &mut Vec<Finding>) {
+    // Each entry: (trimmed endpoint, first-claiming index, Option<non-empty id>).
+    let mut seen: Vec<(&str, usize, Option<String>)> = Vec::new();
+
+    for (index, service) in services.iter().enumerate() {
+        // A delete-op service is being removed — it never claims an endpoint.
+        if service.operation == Some(ServiceOperation::Delete) {
+            continue;
+        }
+        // A2A services (and any empty endpoint) do not participate.
+        let endpoint = match service.endpoint.as_deref().map(str::trim) {
+            Some(ep) if !ep.is_empty() => ep,
+            _ => continue,
+        };
+
+        // Self-exclusion key: a non-empty `id` identifies an existing service
+        // being edited; the same id sharing an endpoint is itself, not a clash.
+        let self_id = service.id.as_ref().and_then(|id| match id {
+            Value::String(id) if !id.is_empty() => Some(id.clone()),
+            Value::Number(id) => Some(id.to_string()),
+            _ => None,
+        });
+
+        let conflict = seen.iter().find(|(seen_ep, _, seen_id)| {
+            seen_ep.eq_ignore_ascii_case(endpoint)
+                && !(self_id.is_some() && seen_id.as_ref() == self_id.as_ref())
+        });
+
+        if let Some((_, first_idx, _)) = conflict {
+            let conflicting_name = &services[*first_idx].service_name;
+            findings.push(Finding::block(
+                format!("service[{index}].endpoint"),
+                "EP1",
+                &fe::fe_ep01(&service.service_name, conflicting_name),
+            ));
+        } else if !seen
+            .iter()
+            .any(|(seen_ep, _, _)| seen_ep.eq_ignore_ascii_case(endpoint))
+        {
+            // Record only the FIRST occurrence of an endpoint so the conflict
+            // message always points back to the original claimant.
+            seen.push((endpoint, index, self_id));
         }
     }
 }
@@ -520,8 +610,26 @@ fn check_pricing(
             if !tier.interval.trim().eq_ignore_ascii_case("month") {
                 findings.push(Finding::block(&sub_field, "P4", fe::FE18));
             }
-            if !is_plain_number(tier.fee.trim(), 2) {
+            // Empty first (FE-PRICE-01), then the plain-number format check (P5),
+            // then the zero check (FE-PRICE-02). `else if` keeps them mutually
+            // exclusive so an empty tier fee emits ONLY PRICE_EMPTY, and the zero
+            // branch is reached only after `is_plain_number` passes — the
+            // precondition `is_zero_value` requires (§6.4).
+            let tfee = tier.fee.trim();
+            if tfee.is_empty() {
+                findings.push(Finding::block(
+                    &sub_field,
+                    "PRICE_EMPTY",
+                    &fe::fe_price_empty(&svc.service_name),
+                ));
+            } else if !is_plain_number(tfee, 2) {
                 findings.push(Finding::block(&sub_field, "P5", fe::FE19));
+            } else if is_zero_value(tfee) {
+                findings.push(Finding::block(
+                    &sub_field,
+                    "SUBSCRIPTION_PRICE_ZERO",
+                    &fe::fe_price_zero(&svc.service_name),
+                ));
             }
         }
         // Free trial is subscription-only and must be a positive integer hour count.

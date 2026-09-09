@@ -12,10 +12,12 @@
 #   MAJOR   incompatible API changes              (4.0.0)
 #   MINOR   backwards-compatible new functionality (3.3.0)
 #   PATCH   backwards-compatible bug fixes         (3.2.1)
+#   BETA    next beta pre-release                  (3.2.1-beta)
 #   CUSTOM  any explicit x.y.z you type in
 #
 # Usage: bash scripts/bump-version.sh                       (interactive prompt)
-#        bash scripts/bump-version.sh <major|minor|patch>   (non-interactive bump)
+#        bash scripts/bump-version.sh <major|minor|patch|beta>
+#                                                        (non-interactive bump)
 #        bash scripts/bump-version.sh custom <x.y.z>        (non-interactive custom)
 #        bash scripts/bump-version.sh <x.y.z>               (shorthand for custom)
 set -euo pipefail
@@ -87,15 +89,17 @@ if [[ -z "$PART" ]]; then
   printf '  1) %s  PATCH  — backwards-compatible bug fixes      → %s\n' "patch " "$(green "$NEXT_PATCH")"
   printf '  2) %s  MINOR  — backwards-compatible new features   → %s\n' "minor " "$(green "$NEXT_MINOR")"
   printf '  3) %s  MAJOR  — incompatible API changes            → %s\n' "major " "$(green "$NEXT_MAJOR")"
-  printf '  4) %s  CUSTOM — enter an explicit version\n' "custom"
+  printf '  4) %s  BETA   — next beta pre-release\n' "beta  "
+  printf '  5) %s  CUSTOM — enter an explicit version\n' "custom"
   echo
-  printf '%s' "$(dim 'Enter 1 / 2 / 3 / 4 (or patch / minor / major / custom): ')"
+  printf '%s' "$(dim 'Enter 1 / 2 / 3 / 4 / 5 (or patch / minor / major / beta / custom): ')"
   read -r choice
   case "$choice" in
     1|patch)  PART="patch" ;;
     2|minor)  PART="minor" ;;
     3|major)  PART="major" ;;
-    4|custom) PART="custom" ;;
+    4|beta)   PART="beta" ;;
+    5|custom) PART="custom" ;;
     *) echo "$(red "Invalid choice: '${choice}'. Aborted.")" >&2; exit 1 ;;
   esac
 fi
@@ -109,6 +113,7 @@ case "$PART" in
   major)  MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0; NEW="$MAJOR.$MINOR.$PATCH" ;;
   minor)  MINOR=$((MINOR + 1)); PATCH=0; NEW="$MAJOR.$MINOR.$PATCH" ;;
   patch)  PATCH=$((PATCH + 1)); NEW="$MAJOR.$MINOR.$PATCH" ;;
+  beta)   NEW="$MAJOR.$MINOR.$((PATCH + 1))-beta" ;;
   custom)
     if [[ ! "$CUSTOM" =~ $SEMVER_RE ]]; then
       echo "$(red "Error: invalid version: '${CUSTOM}' (expected x.y.z, optionally -prerelease / +build)")" >&2
@@ -116,7 +121,7 @@ case "$PART" in
     fi
     NEW="$CUSTOM"
     ;;
-  *) echo "$(red "Error: invalid bump type: '${PART}' (expected major|minor|patch|custom)")" >&2; exit 1 ;;
+  *) echo "$(red "Error: invalid bump type: '${PART}' (expected major|minor|patch|beta|custom)")" >&2; exit 1 ;;
 esac
 
 # ── rewrite helpers ────────────────────────────────────────────────────────────

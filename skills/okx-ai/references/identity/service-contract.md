@@ -93,7 +93,7 @@ If `serviceGuide` is absent for A2A create, show the following prompt:
 
 - Required for A2A; omit for A2MCP.
 - For A2A per-call billing, use `[]`.
-- For A2A monthly billing, use `[{"interval":"month","fee":"N"}]` and set `fee` to `""`.
+- For A2A monthly billing, use `[{"interval":"month","fee":"N"}]`, where `N` is greater than 0, and set `fee` to `""`.
 
 ### freeTrial
 

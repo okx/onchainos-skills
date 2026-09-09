@@ -222,8 +222,10 @@ fn subscription_tier_fee_not_plain_number_fails_p5() {
     // (plain number, USDT implied, ≤2 decimals) — but a violation is P5 on the
     // subscription field, never P1 on the fee field (`fee` is legitimately empty
     // on a subscription-priced service, which is exactly why the codes differ).
-    // Covers: currency token, negotiation wording, empty tier fee, 3 decimals.
-    for tier_fee in &["10 USDT", "面议", "", "1.123"] {
+    // Covers: currency token, negotiation wording, 7 decimals. An EMPTY tier fee
+    // is NO LONGER a P5 case — it now emits PRICE_EMPTY (FE-PRICE-01) via the
+    // empty-first branch (see `empty_subscription_tier_fee_fails_price_empty_not_p5`).
+    for tier_fee in &["10 USDT", "面议", "1.1234567"] {
         let service = format!(
             "[{{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"Does a thing.\",\"serviceGuide\":\"Choose a market.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{{\"interval\":\"month\",\"fee\":\"{tier_fee}\"}}]}}]"
         );
@@ -252,9 +254,12 @@ fn every_bad_subscription_tier_reports_p5() {
 
 #[test]
 fn subscription_tier_fee_edge_values_pass_p5() {
-    // Boundary of the A2A fee contract: an integer, "0", and exactly 2
-    // decimals are all plain numbers → no P5.
-    for tier_fee in &["10", "0", "0.12"] {
+    // Boundary of the A2A fee contract: a positive integer and exactly 2
+    // decimals are plain numbers → no P5 (format) finding, and — being > 0 — no
+    // SUBSCRIPTION_PRICE_ZERO either, so the listing passes. `"0"` is intentionally
+    // NOT here: it is a plain number (still no P5) but now blocks via
+    // SUBSCRIPTION_PRICE_ZERO (see `zero_subscription_tier_fee_fails_subscription_price_zero`).
+    for tier_fee in &["10", "0.12"] {
         let service = format!(
             "[{{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"Does a thing.\",\"serviceGuide\":\"Choose a market.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{{\"interval\":\"month\",\"fee\":\"{tier_fee}\"}}]}}]"
         );
@@ -262,6 +267,153 @@ fn subscription_tier_fee_edge_values_pass_p5() {
         assert!(!codes(&r).contains(&"P5".to_string()), "tier fee={tier_fee} got {:?}", codes(&r));
         assert!(r.pass, "tier fee={tier_fee} got {:?}", codes(&r));
     }
+}
+
+// ─── FE-PRICE-01 / FE-PRICE-02: subscription tier empty / zero price ──────────
+// New QA-path findings emitted in check_pricing's A2A tier loop (spec §6.4):
+//   • PRICE_EMPTY (FE-PRICE-01)             — an empty tier fee.
+//   • SUBSCRIPTION_PRICE_ZERO (FE-PRICE-02) — a well-formed zero tier fee.
+// Both are BLOCK findings on `service[i].subscription`; validate-listing surfaces
+// them as data (exit 0) and never bails. The empty case is checked FIRST and the
+// three price branches are mutually exclusive (`else if`), so an empty tier fee
+// emits ONLY PRICE_EMPTY — never also P5 or SUBSCRIPTION_PRICE_ZERO. Messages are
+// byte-identical to the strict create/update path (spec §5.1 lockstep).
+
+/// One subscription-priced A2A service whose single monthly tier carries `tier_fee`.
+fn a2a_sub_service(tier_fee: &str) -> String {
+    format!(
+        "[{{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"Does a thing.\",\"serviceGuide\":\"Choose a market.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{{\"interval\":\"month\",\"fee\":\"{tier_fee}\"}}]}}]"
+    )
+}
+
+#[test]
+fn empty_subscription_tier_fee_fails_price_empty_not_p5() {
+    // fee:"", subscription:[{month, ""}] → PRICE_EMPTY, and (the grounded
+    // regression) NOT P5: moving the empty check ahead of the format check
+    // reassigns an empty tier fee from P5 to PRICE_EMPTY.
+    let service = a2a_sub_service("");
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    let c = codes(&r);
+    assert!(c.contains(&"PRICE_EMPTY".to_string()), "got {:?}", c);
+    assert!(
+        !c.contains(&"P5".to_string()),
+        "empty tier fee is PRICE_EMPTY, not P5; got {:?}",
+        c
+    );
+    assert!(
+        !c.contains(&"SUBSCRIPTION_PRICE_ZERO".to_string()),
+        "empty must short-circuit the zero check; got {:?}",
+        c
+    );
+    assert_eq!(severity_of(&r, "PRICE_EMPTY"), Some("block"));
+    let f = r.findings.iter().find(|f| f.code == "PRICE_EMPTY").unwrap();
+    assert_eq!(
+        f.field, "service[0].subscription",
+        "PRICE_EMPTY belongs on the subscription field"
+    );
+    assert_eq!(f.message, super::fe::fe_price_empty("Pricing Service"));
+    assert!(
+        !r.pass,
+        "a blocking PRICE_EMPTY must fail the listing; got {:?}",
+        c
+    );
+}
+
+#[test]
+fn zero_subscription_tier_fee_fails_subscription_price_zero() {
+    // fee:"", subscription:[{month, "0" | "0.00"}] → SUBSCRIPTION_PRICE_ZERO. A
+    // zero is a plain number, so it never trips the P5 format check.
+    for tier_fee in &["0", "0.00"] {
+        let service = a2a_sub_service(tier_fee);
+        let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+        let c = codes(&r);
+        assert!(
+            c.contains(&"SUBSCRIPTION_PRICE_ZERO".to_string()),
+            "tier_fee={tier_fee} got {:?}",
+            c
+        );
+        assert!(
+            !c.contains(&"PRICE_EMPTY".to_string()),
+            "tier_fee={tier_fee} got {:?}",
+            c
+        );
+        assert!(
+            !c.contains(&"P5".to_string()),
+            "a zero is a plain number, not P5; tier_fee={tier_fee} got {:?}",
+            c
+        );
+        assert_eq!(severity_of(&r, "SUBSCRIPTION_PRICE_ZERO"), Some("block"));
+        let f = r
+            .findings
+            .iter()
+            .find(|f| f.code == "SUBSCRIPTION_PRICE_ZERO")
+            .unwrap();
+        assert_eq!(
+            f.field, "service[0].subscription",
+            "SUBSCRIPTION_PRICE_ZERO belongs on the subscription field"
+        );
+        assert_eq!(f.message, super::fe::fe_price_zero("Pricing Service"));
+        assert!(!r.pass, "tier_fee={tier_fee} got {:?}", c);
+    }
+}
+
+#[test]
+fn positive_subscription_tier_fee_has_no_price_findings() {
+    // fee:"", subscription:[{month, "10"}] → neither new price code fires.
+    let service = a2a_sub_service("10");
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    let c = codes(&r);
+    assert!(!c.contains(&"PRICE_EMPTY".to_string()), "got {:?}", c);
+    assert!(
+        !c.contains(&"SUBSCRIPTION_PRICE_ZERO".to_string()),
+        "got {:?}",
+        c
+    );
+    assert!(r.pass, "got {:?}", c);
+}
+
+#[test]
+fn single_purchase_zero_fee_exempt_from_subscription_price_zero() {
+    // fee:"0", subscription:[] (single-purchase A2A). The zero rule is
+    // subscription-only (§6.2): a single "0" fee must NOT emit
+    // SUBSCRIPTION_PRICE_ZERO, and — the fee being present — not PRICE_EMPTY.
+    let service = svc(
+        "Pricing Service",
+        "Does a thing.\\nMore detail here.\\nDo the thing",
+        "A2A",
+        "0",
+        None,
+    );
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    let c = codes(&r);
+    assert!(
+        !c.contains(&"SUBSCRIPTION_PRICE_ZERO".to_string()),
+        "single fee is exempt; got {:?}",
+        c
+    );
+    assert!(!c.contains(&"PRICE_EMPTY".to_string()), "got {:?}", c);
+    assert!(r.pass, "got {:?}", c);
+}
+
+#[test]
+fn empty_tier_fee_emits_only_price_empty_in_order() {
+    // Order guard (spec §6.4): empty-before-zero with `else if`. An empty tier fee
+    // emits EXACTLY PRICE_EMPTY from the new price group — nothing else.
+    let service = a2a_sub_service("");
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    let new_codes: Vec<&str> = r
+        .findings
+        .iter()
+        .filter(|f| f.code == "PRICE_EMPTY" || f.code == "SUBSCRIPTION_PRICE_ZERO")
+        .map(|f| f.code.as_str())
+        .collect();
+    assert_eq!(
+        new_codes,
+        vec!["PRICE_EMPTY"],
+        "empty tier fee must emit only PRICE_EMPTY, got {:?}",
+        new_codes
+    );
+    assert!(!r.pass);
 }
 
 #[test]
@@ -1812,10 +1964,179 @@ fn delete_service_bypasses_service_guide_length_check() {
 }
 
 #[test]
+fn delete_service_accepts_numeric_id() {
+    let service = serde_json::json!([{
+        "operation": "delete",
+        "id": 9,
+        "serviceName": "Signal Service",
+        "serviceDescription": "Provides trading signals.",
+        "serviceType": "A2A",
+        "fee": "10"
+    }])
+    .to_string();
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert!(r.pass, "got {:?}", codes(&r));
+}
+
+#[test]
 fn a2a_subscription_delete_bypasses_optional_service_guide_checks() {
     let service = "[{\"operation\":\"delete\",\"id\":\"9\",\"serviceName\":\"Signal Service\",\"serviceDescription\":\"Provides trading signals.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{\"interval\":\"month\",\"fee\":\"10\"}],\"freeTrial\":\"24\"}]";
     let r = run_validation("asp", Some("Agent Name"), None, Some(service));
     assert!(!codes(&r).iter().any(|code| code.starts_with('G')), "got {:?}", codes(&r));
     assert!(!codes(&r).contains(&"P8".to_string()), "got {:?}", codes(&r));
     assert!(r.pass, "got {:?}", codes(&r));
+}
+
+// ─── EP1: A2MCP endpoint uniqueness within one submission (FE-EP-01) ────────
+// Mirrors the S2 serviceName dedup: case-insensitive exact match on the trimmed
+// endpoint; A2A / empty-endpoint services skipped; delete-op services excluded;
+// same-`id` services treated as the same service being edited (self-exclusion);
+// no short-circuit (every later duplicate gets its own EP1).
+
+#[test]
+fn a2mcp_duplicate_endpoints_fail_ep1() {
+    // Two A2MCP services sharing an endpoint → EP1 on the LATER one, pass:false.
+    let services = r#"[
+        {"serviceName":"Price Feed One","serviceDescription":"Returns token prices.","serviceType":"A2MCP","fee":"10","endpoint":"https://example.com/mcp"},
+        {"serviceName":"Price Feed Two","serviceDescription":"Returns other prices.","serviceType":"A2MCP","fee":"12","endpoint":"https://example.com/mcp"}
+    ]"#;
+    let r = run_validation("asp", Some("Agent Name"), None, Some(services));
+    assert!(codes(&r).contains(&"EP1".to_string()), "got {:?}", codes(&r));
+    assert!(
+        r.findings
+            .iter()
+            .any(|f| f.code == "EP1" && f.field == "service[1].endpoint"),
+        "EP1 belongs on the later duplicate service, got {:?}",
+        codes(&r)
+    );
+    assert!(!r.pass);
+}
+
+#[test]
+fn a2mcp_duplicate_endpoints_case_insensitive() {
+    // `https://Example.COM/mcp` vs `https://example.com/mcp` → still a duplicate
+    // (eq_ignore_ascii_case, mirroring the serviceName dedup).
+    let services = r#"[
+        {"serviceName":"Price Feed One","serviceDescription":"Returns token prices.","serviceType":"A2MCP","fee":"10","endpoint":"https://Example.COM/mcp"},
+        {"serviceName":"Price Feed Two","serviceDescription":"Returns other prices.","serviceType":"A2MCP","fee":"12","endpoint":"https://example.com/mcp"}
+    ]"#;
+    let r = run_validation("asp", Some("Agent Name"), None, Some(services));
+    assert!(codes(&r).contains(&"EP1".to_string()), "got {:?}", codes(&r));
+    assert!(!r.pass);
+}
+
+#[test]
+fn a2mcp_different_endpoints_pass() {
+    // Distinct endpoints, everything else valid → no EP1, pass:true.
+    let services = r#"[
+        {"serviceName":"Price Feed One","serviceDescription":"Returns token prices.","serviceType":"A2MCP","fee":"10","endpoint":"https://example.com/alpha"},
+        {"serviceName":"Price Feed Two","serviceDescription":"Returns other prices.","serviceType":"A2MCP","fee":"12","endpoint":"https://example.com/beta"}
+    ]"#;
+    let r = run_validation("asp", Some("Agent Name"), None, Some(services));
+    assert!(!codes(&r).contains(&"EP1".to_string()), "got {:?}", codes(&r));
+    assert!(r.pass, "got {:?}", codes(&r));
+}
+
+#[test]
+fn a2mcp_self_exclusion_same_id() {
+    // Same endpoint AND same non-empty id → the same service being edited, not a
+    // collision (self-exclusion for the update flow) → no EP1.
+    let services = r#"[
+        {"id":"42","operation":"update","serviceName":"Price Feed One","serviceDescription":"Returns token prices.","serviceType":"A2MCP","fee":"10","endpoint":"https://example.com/mcp"},
+        {"id":"42","operation":"update","serviceName":"Price Feed Two","serviceDescription":"Returns other prices.","serviceType":"A2MCP","fee":"12","endpoint":"https://example.com/mcp"}
+    ]"#;
+    let r = run_validation("asp", Some("Agent Name"), None, Some(services));
+    assert!(!codes(&r).contains(&"EP1".to_string()), "got {:?}", codes(&r));
+}
+
+#[test]
+fn a2mcp_three_services_two_collide() {
+    // svc0 & svc2 share an endpoint, svc1 differs → EP1 on service[2].endpoint
+    // ONLY (svc1 is untouched; no short-circuit swallows svc2).
+    let services = r#"[
+        {"serviceName":"Price Feed One","serviceDescription":"Returns token prices.","serviceType":"A2MCP","fee":"10","endpoint":"https://example.com/shared"},
+        {"serviceName":"Price Feed Two","serviceDescription":"Returns other prices.","serviceType":"A2MCP","fee":"12","endpoint":"https://example.com/unique"},
+        {"serviceName":"Price Feed Three","serviceDescription":"Returns more prices.","serviceType":"A2MCP","fee":"14","endpoint":"https://example.com/shared"}
+    ]"#;
+    let r = run_validation("asp", Some("Agent Name"), None, Some(services));
+    let ep1_fields: Vec<&str> = r
+        .findings
+        .iter()
+        .filter(|f| f.code == "EP1")
+        .map(|f| f.field.as_str())
+        .collect();
+    assert_eq!(
+        ep1_fields,
+        vec!["service[2].endpoint"],
+        "EP1 must land on svc2 only, got {:?}",
+        codes(&r)
+    );
+    assert!(!r.pass);
+}
+
+#[test]
+fn a2mcp_delete_operation_skipped() {
+    // A delete-op service is being removed → excluded from the comparison pool,
+    // so its endpoint no longer collides with a live service → no EP1.
+    let services = r#"[
+        {"operation":"delete","id":"9","serviceName":"Price Feed One","serviceDescription":"Returns token prices.","serviceType":"A2MCP","fee":"10","endpoint":"https://example.com/mcp"},
+        {"serviceName":"Price Feed Two","serviceDescription":"Returns other prices.","serviceType":"A2MCP","fee":"12","endpoint":"https://example.com/mcp"}
+    ]"#;
+    let r = run_validation("asp", Some("Agent Name"), None, Some(services));
+    assert!(!codes(&r).contains(&"EP1".to_string()), "got {:?}", codes(&r));
+}
+
+#[test]
+fn mixed_a2a_a2mcp_no_cross_type_collision() {
+    // An A2A service has no endpoint (skipped) and cannot collide with an A2MCP
+    // endpoint → no EP1, and the whole listing is otherwise valid.
+    let services = r#"[
+        {"serviceName":"Signal Service","serviceDescription":"Provides trading signals.","serviceType":"A2A","fee":"5"},
+        {"serviceName":"Price Feed MCP","serviceDescription":"Returns token prices.","serviceType":"A2MCP","fee":"10","endpoint":"https://example.com/mcp"}
+    ]"#;
+    let r = run_validation("asp", Some("Agent Name"), None, Some(services));
+    assert!(!codes(&r).contains(&"EP1".to_string()), "got {:?}", codes(&r));
+    assert!(r.pass, "got {:?}", codes(&r));
+}
+
+#[test]
+fn ep1_message_contains_both_service_names() {
+    // The rejection copy must name BOTH the offending service and the service
+    // that first claimed the endpoint (via the new fe::fe_ep01 helper).
+    let services = r#"[
+        {"serviceName":"Alpha Feed Svc","serviceDescription":"Returns token prices.","serviceType":"A2MCP","fee":"10","endpoint":"https://example.com/mcp"},
+        {"serviceName":"Beta Feed Svc","serviceDescription":"Returns other prices.","serviceType":"A2MCP","fee":"12","endpoint":"https://example.com/mcp"}
+    ]"#;
+    let r = run_validation("asp", Some("Agent Name"), None, Some(services));
+    let ep1 = r.findings.iter().find(|f| f.code == "EP1").expect("EP1 expected");
+    // Offending = svc1 ("Beta Feed Svc"); conflicting first-claimer = svc0.
+    assert!(
+        ep1.message.contains("Beta Feed Svc"),
+        "must name the offending service: {}",
+        ep1.message
+    );
+    assert!(
+        ep1.message.contains("Alpha Feed Svc"),
+        "must name the conflicting service: {}",
+        ep1.message
+    );
+    assert_eq!(
+        ep1.message,
+        super::fe::fe_ep01("Beta Feed Svc", "Alpha Feed Svc")
+    );
+}
+
+#[test]
+fn ep1_coexists_with_other_findings() {
+    // A duplicate NAME (S2) and a duplicate ENDPOINT (EP1) in one submission →
+    // BOTH codes surface (all-problems-at-once, §2.4).
+    let services = r#"[
+        {"serviceName":"Duplicate Svc","serviceDescription":"Returns token prices.","serviceType":"A2MCP","fee":"10","endpoint":"https://example.com/mcp"},
+        {"serviceName":"Duplicate Svc","serviceDescription":"Returns other prices.","serviceType":"A2MCP","fee":"12","endpoint":"https://example.com/mcp"}
+    ]"#;
+    let r = run_validation("asp", Some("Agent Name"), None, Some(services));
+    let c = codes(&r);
+    assert!(c.contains(&"S2".to_string()), "expected S2, got {:?}", c);
+    assert!(c.contains(&"EP1".to_string()), "expected EP1, got {:?}", c);
+    assert!(!r.pass);
 }

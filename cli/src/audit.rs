@@ -500,6 +500,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         // Task (user)
         AgentCommand::CreateTask { .. } => "create-task".into(),
         AgentCommand::Status { .. } => "status".into(),
+        AgentCommand::Lifecycle { .. } => "lifecycle".into(),
         AgentCommand::Tasks { .. } => "tasks".into(),
         AgentCommand::SetPaymentMode { .. } => "set-payment-mode".into(),
         AgentCommand::ConfirmAccept { .. } => "confirm-accept".into(),
@@ -598,6 +599,9 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::SubscribeCost { .. } => "subscribe-cost".into(),
         AgentCommand::SubscribeDeviceUpdate { .. } => "subscribe-device-update".into(),
         AgentCommand::SubscribeOfflineUpdate { .. } => "subscribe-offline-update".into(),
+        AgentCommand::SubscriptionExecutionConfigSet { .. } => {
+            "subscription-execution-config-set".into()
+        }
         AgentCommand::DeviceList { .. } => "device-list".into(),
         AgentCommand::AspMatch { .. } => "asp-match".into(),
         AgentCommand::ServiceMatch(_) => "service-match".into(),

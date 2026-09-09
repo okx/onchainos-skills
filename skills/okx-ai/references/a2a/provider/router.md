@@ -11,7 +11,7 @@ ASP/Provider. Select exactly one final leaf and stop routing.
 | Missing-parameter negotiation | [`../params.md`](../params.md) |
 | Execute accepted work | [`execution.md`](execution.md) |
 | Submit a deliverable | [`delivery.md`](delivery.md) |
-| List ASP tasks or saved deliverables | [`../task-query.md`](../task-query.md) |
+| List ASP tasks, query a provided one-time task lifecycle/current stage, or view saved deliverables | [`../task-query.md`](../task-query.md) |
 | Query the refund status or refund result of a provided task | [`../task-query.md`](../task-query.md) |
 | List or manage provided subscriptions | [`subscription.md`](subscription.md) |
 | Respond to a rejection, open a selected rejected task for evaluation, or continue its refund-or-evaluation decision | [`arbitration-decision.md`](arbitration-decision.md) |

@@ -135,7 +135,7 @@ English sessions use it verbatim. Other languages translate it faithfully, prese
 #### Creation-start monitoring note
 
 Only when this watch entry comes directly from the successful task-creation
-result in the same turn, render one additional paragraph immediately after the
+result in the same turn, render one additional note immediately after the
 banner and before calling watch. Require all of these exact structured facts:
 
 - `phase=creation`;
@@ -144,9 +144,14 @@ banner and before calling watch. Require all of these exact structured facts:
 - `nextAction.params.jobId` equals `payload.jobId`.
 
 Use this English source and translate it into the user's initial locale,
-including a natural localized equivalent of the quoted reply phrase:
+including natural localized equivalents of both quoted reply phrases. In a
+Simplified Chinese session, render `Check the current task progress` as
+`查询当前任务进展` and `Check subscription task status` as `查询订阅任务状态`:
 
-> Note: Message monitoring may stop after the job is created, but the job will continue running. Reply “Resume message monitoring” to receive updates.
+> Note: The job will continue running after it is created, but message monitoring may stop. You can:
+>
+> - Reply “Check the current task progress” for a one-time status check.
+> - For subscriptions, reply “Check subscription task status” to view recent follow-trade results.
 
 Show this note exactly once for that creation-start entry. Do not show it for
 a trigger-phrase watch, an explicit-job watch, a continuation/rearm request,

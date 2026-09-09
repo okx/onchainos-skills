@@ -162,6 +162,18 @@ pub(super) fn parse_services(raw: Option<&str>) -> Result<Vec<AgentService>> {
         .collect::<Result<Vec<_>>>()
 }
 
+fn normalize_service_id(id: Option<&Value>) -> Result<Option<Value>> {
+    match id {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(id)) if id.trim().is_empty() => Ok(None),
+        Some(Value::String(id)) => Ok(Some(Value::String(id.trim().to_string()))),
+        Some(Value::Number(id)) if id.is_i64() || id.is_u64() => {
+            Ok(Some(Value::Number(id.clone())))
+        }
+        Some(_) => bail!("invalid --service: id must be a string or integer"),
+    }
+}
+
 /// Parse update-only service deltas. Delete directives are canonicalized to
 /// `{operation, id}`; create/update entries use the full service contract.
 pub(super) fn parse_service_deltas(raw: Option<&str>) -> Result<Vec<Value>> {
@@ -174,14 +186,9 @@ pub(super) fn parse_service_deltas(raw: Option<&str>) -> Result<Vec<Value>> {
         .into_iter()
         .map(|entry| {
             if entry.get("operation").and_then(Value::as_str) == Some("delete") {
-                let id = entry
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|id| !id.is_empty())
-                    .ok_or_else(|| {
-                        anyhow!("invalid --service: operation 'delete' requires an id")
-                    })?;
+                let id = normalize_service_id(entry.get("id"))?.ok_or_else(|| {
+                    anyhow!("invalid --service: operation 'delete' requires an id")
+                })?;
                 return Ok(json!({ "operation": "delete", "id": id }));
             }
 
@@ -194,17 +201,7 @@ pub(super) fn parse_service_deltas(raw: Option<&str>) -> Result<Vec<Value>> {
 }
 
 pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentService> {
-    if service
-        .id
-        .as_deref()
-        .map(str::trim)
-        .unwrap_or("")
-        .is_empty()
-    {
-        service.id = None;
-    } else {
-        service.id = Some(service.id.unwrap().trim().to_string());
-    }
+    service.id = normalize_service_id(service.id.as_ref())?;
     service.service_name = service.service_name.trim().to_string();
     service.service_description = service.service_description.trim().to_string();
     service.service_guide = service.service_guide.trim().to_string();
@@ -283,8 +280,34 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
                         tier.interval
                     );
                 }
+                // FE-PRICE-01: a subscription tier price must not be empty. This
+                // runs BEFORE the plain-number format check so an empty fee
+                // surfaces the empty-price message rather than the generic format
+                // error. `tier.fee` is already trimmed (line ~247), so a
+                // whitespace-only value has already collapsed to "";
+                // `service.service_name` is guaranteed non-empty by the
+                // `serviceName` bail above (§6.6, no fallback needed). The message
+                // is kept byte-identical to the QA path (validate.rs `fe::fe_price_empty`).
+                if tier.fee.is_empty() {
+                    bail!(
+                        "The price for \"{}\" cannot be empty. Please enter a price and try again.",
+                        service.service_name
+                    );
+                }
                 if !is_plain_number(&tier.fee, 2) {
                     bail!("invalid subscription fee in --service: must be a plain number with up to 2 decimal places (USDT is the default currency)");
+                }
+                // FE-PRICE-02: a subscription tier price must be > 0. This runs
+                // AFTER `is_plain_number` so `is_zero_value`'s precondition (a
+                // well-formed plain number) holds. Only subscription tiers are
+                // checked — single-purchase A2A and A2MCP fees of 0 are out of
+                // scope (§6.2). The message is kept byte-identical to the QA path
+                // (validate.rs `fe::fe_price_zero`).
+                if is_zero_value(&tier.fee) {
+                    bail!(
+                        "The subscription price for \"{}\" must be greater than 0. Please update the price and try again.",
+                        service.service_name
+                    );
                 }
             }
             // A real single price must be a plain number; an empty `fee` (the
@@ -362,6 +385,19 @@ pub(super) fn is_plain_number(s: &str, max_decimals: usize) -> bool {
                 && frac.bytes().all(|b| b.is_ascii_digit())
         }
     }
+}
+
+/// True when `s` is a representation of zero (`0`, `0.0`, `0.00`, `00`, …).
+///
+/// Called **only after `is_plain_number(s)` has passed**, so `s` is already
+/// trimmed and matches `^\d+(\.\d{1,6})?$` — no float parsing, no NaN/inf, no
+/// rounding. Under that precondition `s` is zero iff every byte is `'0'` or
+/// `'.'` (stripping those characters leaves the empty string); a bare `"."`
+/// cannot reach here because `is_plain_number(".")` is false. Shared by
+/// `normalize_service` (strict create/update) and `validate::check_pricing`
+/// (QA) so both paths reject a zero fee identically.
+pub(super) fn is_zero_value(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| b == b'0' || b == b'.')
 }
 
 /// True when `s` is a POSITIVE integer: digits only (`^\d+$`) with at least one

@@ -146,6 +146,17 @@ pub(crate) async fn resolve_agent_id_or_error(
     }
 }
 
+/// Fetch authoritative task detail for an already-resolved querying identity.
+pub async fn fetch_task_detail(
+    client: &mut TaskApiClient,
+    job_id: &str,
+    agent_id: &str,
+) -> Result<Value> {
+    client
+        .get_with_identity(&client.task_path(job_id), agent_id)
+        .await
+}
+
 /// Query task status.
 pub async fn handle_status(
     client: &mut TaskApiClient,
@@ -153,24 +164,21 @@ pub async fn handle_status(
     agent_id: &str,
     role: i64,
 ) -> Result<()> {
-    let agent_id = resolve_agent_id_or_error(agent_id, role).await?;
-    let resp = match client
-        .get_with_identity(&client.task_path(job_id), &agent_id)
-        .await
-    {
+    let resolved_agent_id = resolve_agent_id_or_error(agent_id, role).await?;
+    let resp = match fetch_task_detail(client, job_id, &resolved_agent_id).await {
         Ok(resp) => resp,
         Err(task_error) => {
             // Subscription disputes may not exist on the ordinary one-time
             // task-detail endpoint. The shared dispute endpoint remains the
             // authoritative existence/permission check for both task types.
             let dispute = crate::commands::agent_commerce::task::evaluator::dispute_status::get_dispute_status(
-                client, job_id, &agent_id,
+                client, job_id, &resolved_agent_id,
             )
             .await
             .map_err(|_| task_error)?;
             let supplement = if dispute.job_type == Some(1) {
                 client
-                    .fetch_subscription(job_id, &agent_id)
+                    .fetch_subscription(job_id, &resolved_agent_id)
                     .await
                     .unwrap_or_else(|_| json!({}))
             } else {
@@ -184,13 +192,17 @@ pub async fn handle_status(
     let dispute = match status_code {
         Some(4) => Some(
             crate::commands::agent_commerce::task::evaluator::dispute_status::get_dispute_status(
-                client, job_id, &agent_id,
+                client,
+                job_id,
+                &resolved_agent_id,
             )
             .await?,
         ),
         Some(6 | 9) => {
             crate::commands::agent_commerce::task::evaluator::dispute_status::get_dispute_status(
-                client, job_id, &agent_id,
+                client,
+                job_id,
+                &resolved_agent_id,
             )
             .await
             .ok()

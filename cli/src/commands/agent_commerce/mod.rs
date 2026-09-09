@@ -247,6 +247,18 @@ pub enum AgentCommand {
         flag: String,
     },
 
+    /// Persist this device's explicitly user-confirmed subscription copy-trading preference.
+    #[command(name = "subscription-execution-config-set")]
+    SubscriptionExecutionConfigSet {
+        #[arg(long = "service-id")]
+        service_id: String,
+        #[arg(long = "execution-mode")]
+        execution_mode: String,
+        /// Replace an existing preference only after a fresh, explicit user confirmation.
+        #[arg(long)]
+        replace: bool,
+    },
+
     /// List the devices this agent is logged in on (paginated to completion).
     #[command(name = "device-list")]
     DeviceList {
@@ -341,6 +353,13 @@ pub enum AgentCommand {
 
     /// Get current task status
     Status {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
+    },
+
+    /// Reconstruct a task's lifecycle from authoritative status and local XMTP history
+    Lifecycle {
         job_id: String,
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
@@ -1639,6 +1658,21 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         AgentCommand::SubscribeOfflineUpdate { job_id, flag } => {
             task::user::run_task(T::SubscribeOfflineUpdate { job_id, flag }, ctx).await
         }
+        AgentCommand::SubscriptionExecutionConfigSet {
+            service_id,
+            execution_mode,
+            replace,
+        } => {
+            task::user::run_task(
+                T::SubscriptionExecutionConfigSet {
+                    service_id,
+                    execution_mode,
+                    replace,
+                },
+                ctx,
+            )
+            .await
+        }
         AgentCommand::DeviceList { page, page_size } => {
             task::user::run_task(T::DeviceList { page, page_size }, ctx).await
         }
@@ -1734,6 +1768,16 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 &job_id,
                 agent_id.as_deref().unwrap_or(""),
                 task::common::AGENT_ROLE_USER,
+            )
+            .await
+        }
+
+        AgentCommand::Lifecycle { job_id, agent_id } => {
+            let mut client = task::common::network::task_api_client::TaskApiClient::new();
+            task::common::lifecycle::handle_lifecycle(
+                &mut client,
+                &job_id,
+                agent_id.as_deref().unwrap_or(""),
             )
             .await
         }
@@ -4505,10 +4549,8 @@ async fn check_status_freshness(
         let mut latest_context = None;
         let mut latest_error = None;
         for attempt in 0..=REFUND_RETRY_DELAYS_MS.len() {
-            match task::user::refund::fetch_authoritative_refund_context(
-                &mut c, job_id, agent_id,
-            )
-            .await
+            match task::user::refund::fetch_authoritative_refund_context(&mut c, job_id, agent_id)
+                .await
             {
                 Ok(context) => {
                     let ready = dispute_result_context_block_reason(&context, agent_id).is_none();
@@ -4550,10 +4592,8 @@ async fn check_status_freshness(
         let mut latest_context = None;
         let mut latest_error = None;
         for attempt in 0..=REFUND_RETRY_DELAYS_MS.len() {
-            match task::user::refund::fetch_authoritative_refund_context(
-                &mut c, job_id, agent_id,
-            )
-            .await
+            match task::user::refund::fetch_authoritative_refund_context(&mut c, job_id, agent_id)
+                .await
             {
                 Ok(context) => {
                     let ready =
@@ -4592,10 +4632,8 @@ async fn check_status_freshness(
         let mut latest_context = None;
         let mut latest_error = None;
         for attempt in 0..=REFUND_RETRY_DELAYS_MS.len() {
-            match task::user::refund::fetch_authoritative_refund_context(
-                &mut c, job_id, agent_id,
-            )
-            .await
+            match task::user::refund::fetch_authoritative_refund_context(&mut c, job_id, agent_id)
+                .await
             {
                 Ok(context) => {
                     let ready = buyer_refund_freshness_ready(

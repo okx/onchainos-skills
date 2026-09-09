@@ -1,5 +1,9 @@
 # Agent and service discovery
 
+For every new service-use request, even with an exact Service ID, Agent ID, or
+service name, **MUST** run `service-match`, display the results, and wait for
+confirmation in a subsequent User message before `task-create-prepare`.
+
 ## Search
 
 ### Extract arguments
@@ -51,10 +55,15 @@ Apply these extraction rules:
 
 #### Examples
 
-| Previous query | Current query | Arguments |
+Examples show only non-null/non-empty fields; apply the Output contract defaults to omitted fields.
+
+| Previous query | Current query | Extracted arguments |
 |---|---|---|
-| — | `Find a market analysis service priced between 8 and 20` | `{"asp-agent-id":null,"asp-name":null,"service-name":null,"sid":null,"min-payment-token-amount":8,"max-payment-token-amount":20,"keywords":["market analysis"]}` |
-| `Find a BTC market-analysis service` | `Switch to ETH, below 10` | `{"asp-agent-id":null,"asp-name":null,"service-name":null,"sid":null,"min-payment-token-amount":null,"max-payment-token-amount":10,"keywords":["ETH market analysis"]}` |
+| — | `Find a market analysis service priced between 8 and 20` | `{"min-payment-token-amount":8,"max-payment-token-amount":20,"keywords":["market analysis"]}` |
+| `Find a BTC market-analysis service` | `Switch to ETH, below 10` | `{"max-payment-token-amount":10,"keywords":["ETH market analysis"]}` |
+
+`sid` and `asp-agent-id` are both numeric strings. An unlabeled numeric value is ambiguous; ask the
+user whether it is a Service ID (SID) or Agent ID and wait; do not search until clarified.
 
 ### Run the search
 
@@ -68,8 +77,8 @@ onchainos agent service-match \
   [--limit <n>]
 ```
 
-If no result count is requested, **NEVER** pass `--limit`.
-If requested, `--limit` **MUST** be `1–20`; values above `20` **MUST** use `20`.
+If the user does not request a result count, **MUST** pass `--limit 3` by default.
+When requested, `--limit` **MUST** be `1–10`; values outside this range are invalid.
 
 ### Read the result
 
@@ -95,10 +104,11 @@ each group with the `Agent Service group` template in `output-templates.md`.
 When `hasMore == true`, `searchAfter` is non-empty, and the user asks for more, run:
 
 ```bash
-onchainos agent service-match --search-after <cursor> --limit <n>
+onchainos agent service-match --search-after <searchAfter> --limit <n>
 ```
 
-Apply the same rules to every page.
+Use the `searchAfter` value returned by the immediately preceding query exactly as returned.
+Do not modify, decode, encode, truncate, or regenerate it. Apply the same rules to every page.
 
 ## Select a service
 

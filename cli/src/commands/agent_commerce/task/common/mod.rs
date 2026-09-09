@@ -19,6 +19,7 @@ pub mod deposit_qr;
 pub mod dispute_upload;
 pub mod funding_notice;
 pub mod in_progress;
+pub mod lifecycle;
 pub mod network;
 pub mod okx_a2a;
 pub mod onchainos_self;

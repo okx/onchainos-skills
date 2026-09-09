@@ -1835,7 +1835,14 @@ fn parse_services_operation_update_with_id_ok() {
     let raw = r#"[{"operation":"update","id":"7","serviceName":"S","serviceDescription":"d","serviceType":"A2A","fee":"1"}]"#;
     let svcs = parse_services(Some(raw)).unwrap();
     assert_eq!(svcs[0].operation, Some(ServiceOperation::Update));
-    assert_eq!(svcs[0].id.as_deref(), Some("7"));
+    assert_eq!(svcs[0].id.as_ref(), Some(&json!("7")));
+}
+
+#[test]
+fn parse_services_operation_update_with_numeric_id_ok() {
+    let raw = r#"[{"operation":"update","id":7,"serviceName":"S","serviceDescription":"d","serviceType":"A2A","fee":"1"}]"#;
+    let svcs = parse_services(Some(raw)).unwrap();
+    assert_eq!(serde_json::to_value(&svcs[0]).unwrap()["id"], json!(7));
 }
 
 #[test]
@@ -1855,6 +1862,20 @@ fn parse_service_deltas_delete_with_id_ok() {
     let raw = r#"[{"operation":"delete","id":"9"}]"#;
     let deltas = parse_service_deltas(Some(raw)).unwrap();
     assert_eq!(deltas, vec![json!({ "operation": "delete", "id": "9" })]);
+}
+
+#[test]
+fn parse_service_deltas_delete_with_numeric_id_ok() {
+    let raw = r#"[{"operation":"delete","id":9}]"#;
+    let deltas = parse_service_deltas(Some(raw)).unwrap();
+    assert_eq!(deltas, vec![json!({ "operation": "delete", "id": 9 })]);
+}
+
+#[test]
+fn parse_service_deltas_update_with_numeric_id_ok() {
+    let raw = r#"[{"operation":"update","id":7,"serviceName":"Signals","serviceDescription":"Provides signals","serviceType":"A2A","fee":"10","subscription":[]}]"#;
+    let deltas = parse_service_deltas(Some(raw)).unwrap();
+    assert_eq!(deltas[0]["id"], json!(7));
 }
 
 #[test]
@@ -2474,7 +2495,7 @@ fn update_delete_subscription_serializes_empty_array() {
     // User drops the subscription (keeps per-call): backend must receive
     // subscription:[] explicitly so it clears the existing subscription.
     let mut svc = a2a_with("0.11", vec![]);
-    svc.id = Some("7".to_string());
+    svc.id = Some(json!("7"));
     svc.operation = Some(ServiceOperation::Update);
     let svc = normalize_service(svc).unwrap();
     let v = serde_json::to_value(&svc).unwrap();
@@ -2487,7 +2508,7 @@ fn update_subscription_service_serializes_empty_fee() {
     // A subscription-priced service (keeps subscription): backend must receive
     // fee:"" so it carries "no single-purchase price".
     let mut svc = a2a_with("", vec![("month", "10")]);
-    svc.id = Some("7".to_string());
+    svc.id = Some(json!("7"));
     svc.operation = Some(ServiceOperation::Update);
     let svc = normalize_service(svc).unwrap();
     let v = serde_json::to_value(&svc).unwrap();
@@ -2510,6 +2531,111 @@ fn serialized_service_always_carries_subscription_array() {
     assert_eq!(v2["fee"], "");
     assert_eq!(v2["subscription"][0]["interval"], "month");
     assert_eq!(v2["subscription"][0]["fee"], "10");
+}
+
+// ─── FE-PRICE-01 / FE-PRICE-02: A2A subscription tier price (strict path) ──
+//
+// New rules in the A2A subscription-tier loop of normalize_service (spec §6.1
+// / §6.2 / §6.3):
+//   • FE-PRICE-01 — an empty tier price bails with the empty-price message,
+//     running BEFORE the is_plain_number format check so an empty fee surfaces
+//     the empty-price copy (not the generic "invalid subscription fee" error).
+//   • FE-PRICE-02 — a zero tier price ("0" / "0.0" / … / "0.000000") bails with
+//     the ">0" message, running AFTER is_plain_number (is_zero_value's
+//     precondition). Order is empty-BEFORE-zero.
+// Single-purchase A2A and A2MCP fees of 0 are NOT subject to FE-PRICE-02
+// (§6.2 scope). Strict path uses bail!() → fail-fast on the first error.
+//
+// The message strings MUST be byte-identical to the QA path (validate.rs), so
+// each test asserts on the FULLY-interpolated canonical text. a2a_with(...) sets
+// service_name = "Aave loop assistant", which is interpolated into {serviceName}.
+
+const FE_PRICE_01_MSG: &str = "The price for \"Aave loop assistant\" cannot be empty. Please enter a price and try again.";
+const FE_PRICE_02_MSG: &str = "The subscription price for \"Aave loop assistant\" must be greater than 0. Please update the price and try again.";
+
+#[test]
+fn normalize_a2a_subscription_empty_tier_fee_is_fe_price_01() {
+    // fee:"" + subscription:[{month, ""}] → FE-PRICE-01 (empty tier price).
+    let err = normalize_service(a2a_with("", vec![("month", "")]))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains(FE_PRICE_01_MSG),
+        "expected FE-PRICE-01 message; got: {err}"
+    );
+}
+
+#[test]
+fn normalize_a2a_subscription_whitespace_tier_fee_is_fe_price_01() {
+    // A whitespace-only tier fee is trimmed to "" (utils.rs:247), so it hits
+    // FE-PRICE-01 (empty) — NOT the generic plain-number format error.
+    let err = normalize_service(a2a_with("", vec![("month", "  ")]))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains(FE_PRICE_01_MSG),
+        "expected FE-PRICE-01 message for whitespace-trimmed-to-empty; got: {err}"
+    );
+}
+
+#[test]
+fn normalize_a2a_subscription_zero_tier_fee_is_fe_price_02() {
+    // Every plain-number zero form is rejected with the FE-PRICE-02 (>0) message.
+    // "0.000000" (6 decimals) is intentionally NOT here: A2A subscription fees
+    // now cap at 2 decimals (skills-v2), so a 6-decimal value fails the format
+    // check (invalid subscription fee) before reaching this zero check.
+    for fee in ["0", "0.0", "0.00"] {
+        let err = normalize_service(a2a_with("", vec![("month", fee)]))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(FE_PRICE_02_MSG),
+            "fee={fee}: expected FE-PRICE-02 message; got: {err}"
+        );
+    }
+}
+
+#[test]
+fn normalize_a2a_subscription_positive_tier_fee_ok() {
+    // A positive subscription price passes both new checks.
+    for fee in ["10", "0.01"] {
+        let svc = normalize_service(a2a_with("", vec![("month", fee)]))
+            .unwrap_or_else(|e| panic!("subscription fee={fee} should be Ok; got: {e}"));
+        assert_eq!(svc.fee, "");
+        assert_eq!(svc.subscription[0].fee, fee);
+    }
+}
+
+#[test]
+fn normalize_a2a_single_purchase_zero_and_positive_fee_ok() {
+    // §6.2 scope: single-purchase (non-subscription) A2A fees are NOT subject to
+    // the FE-PRICE-02 > 0 rule — 0 and any positive plain number are accepted.
+    for fee in ["10", "0"] {
+        let svc = normalize_service(a2a_with(fee, vec![]))
+            .unwrap_or_else(|e| panic!("single-purchase fee={fee} should be Ok; got: {e}"));
+        assert_eq!(svc.fee, fee);
+        assert!(svc.subscription.is_empty());
+    }
+}
+
+#[test]
+fn normalize_a2mcp_zero_fee_ok() {
+    // A2MCP is exempt from FE-PRICE-02: a 0 single-purchase fee stays Ok (the > 0
+    // rule applies only to A2A subscription tiers, §6.2 / acceptance crit #13).
+    let svc = AgentService {
+        id: None,
+        service_name: "Price feed svc".to_string(),
+        service_description: "desc".to_string(),
+        service_guide: String::new(),
+        fee: "0".to_string(),
+        service_type: "A2MCP".to_string(),
+        subscription: Vec::new(),
+        free_trial: None,
+        operation: None,
+        endpoint: Some("https://api.example.com/mcp".to_string()),
+    };
+    let out = normalize_service(svc).expect("A2MCP fee 0 must be Ok");
+    assert_eq!(out.fee, "0");
 }
 
 // ─── freeTrial (A2A subscription only) ────────────────────────────────
@@ -2575,7 +2701,7 @@ fn normalize_free_trial_legacy_positive_integer_is_ok() {
 #[test]
 fn normalize_delete_preserves_legacy_positive_free_trial() {
     let mut svc = a2a_with("", vec![("month", "10")]);
-    svc.id = Some("9".to_string());
+    svc.id = Some(json!("9"));
     svc.operation = Some(ServiceOperation::Delete);
     svc.service_guide.clear();
     svc.free_trial = Some("24".to_string());
@@ -2661,4 +2787,26 @@ fn validate_avatar_image_errors_with_supported_types() {
 fn validate_avatar_image_accepts_supported() {
     let png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
     assert_eq!(validate_avatar_image(&png).unwrap(), ("PNG", "image/png"));
+}
+
+// ─── is_zero_value: only reached after is_plain_number passes ─────────
+
+#[test]
+fn is_zero_value_detects_all_zero_forms() {
+    // Every input here already satisfies is_plain_number (^\d+(\.\d{1,6})?$)
+    // and represents zero: stripping all '0' and '.' leaves the empty string.
+    assert!(is_zero_value("0"));
+    assert!(is_zero_value("0.0"));
+    assert!(is_zero_value("0.00"));
+    assert!(is_zero_value("0.000000"));
+    // "00" passes is_plain_number (no leading-zero rejection), then strips to
+    // empty → zero.
+    assert!(is_zero_value("00"));
+}
+
+#[test]
+fn is_zero_value_rejects_nonzero() {
+    assert!(!is_zero_value("0.01"));
+    assert!(!is_zero_value("1"));
+    assert!(!is_zero_value("10"));
 }

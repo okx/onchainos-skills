@@ -70,6 +70,26 @@ fn action_ids_are_partitioned_by_domain_and_role() {
 }
 
 #[test]
+fn creation_monitoring_query_tips_have_explicit_user_routes() {
+    let task_query_route = "`Check the current task progress` or equivalent wording; list or inspect tasks, saved deliverables, pending evaluations, or tasks the User rejected | [`../task-query.md`](../task-query.md)";
+    assert!(USER_ROUTER.contains(task_query_route));
+    let subscription_trade_route = "Direct reply to the Runtime Watch creation-start note using `Check subscription task status` or its localized rendering; or query local follow-trade results for a subscription Signal by `jobId` or `deliveryId` | [`subscription-trade-records.md`](subscription-trade-records.md)";
+    assert!(USER_ROUTER.contains(subscription_trade_route));
+    let generic_subscription_route = "List, inspect, or manage a subscription | [`subscription.md`](subscription.md) or [`subscription-manage.md`](subscription-manage.md)";
+    assert!(USER_ROUTER.contains(generic_subscription_route));
+    assert!(USER_ROUTER.contains(
+        "Without that direct-reply context, treat subscription\nlifecycle/status wording as a generic subscription query"
+    ));
+    let direct_subscription_tip = USER_ROUTER
+        .find("Direct reply to the Runtime Watch creation-start note")
+        .unwrap();
+    let generic_subscription_query = USER_ROUTER
+        .find("List, inspect, or manage a subscription")
+        .unwrap();
+    assert!(direct_subscription_tip < generic_subscription_query);
+}
+
+#[test]
 fn arbitration_decision_execution_and_query_are_separate() {
     assert!(ARBITRATION_DECISION.contains("Bind an event-created card"));
     assert!(ARBITRATION_DECISION.contains("card opened from a selected pending request"));
@@ -247,19 +267,23 @@ fn user_facing_statuses_use_cli_labels_across_task_subscription_and_rating_flows
 }
 
 #[test]
-fn pending_evaluation_starts_with_rejected_tasks_and_localizes_table_chrome() {
+fn pending_refund_list_uses_only_current_rows_and_action_guidance() {
     assert!(PROVIDER_ROUTER.contains("first query the rejected-task set"));
     assert!(ARBITRATION_QUERY.contains("the current rejected-task set"));
     assert!(ARBITRATION_QUERY.contains("refund-list --role provider --scope requested"));
-    assert!(ARBITRATION_QUERY.contains("Localize each list title and every table header"));
-    assert!(ARBITRATION_QUERY.contains("待处理退款申请"));
-    assert!(ARBITRATION_QUERY.contains("响应截止时间"));
     assert!(ARBITRATION_QUERY.contains(
-        "可回复序号或 Job ID 查看详情，并选择“同意退款”或“发起评审”。逾期未处理将自动全额退款。"
+        "Render only this table followed by its action guidance. Do not add a count"
+    ));
+    assert!(ARBITRATION_QUERY.contains(
+        "from a separate agent or query."
+    ));
+    assert!(ARBITRATION_QUERY.contains(
+        "Translate every user-facing table header and the action guidance into the"
     ));
     assert!(ARBITRATION_QUERY.contains(
         "Reply with the number or Job ID to view details, then select \"Approve Refund\" or \"Request Review\"."
     ));
+    assert!(!ARBITRATION_QUERY.contains("You have {pendingCount} refund requests"));
 }
 
 #[test]
