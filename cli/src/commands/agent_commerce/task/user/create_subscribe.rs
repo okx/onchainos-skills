@@ -191,6 +191,24 @@ pub async fn handle_create_subscribe(
         eprintln!("[create-subscribe] user identity check passed (agentId: {user_agent_id})");
     }
 
+    let execution_mode = super::super::common::autotrade::subscription_config::execution_mode(
+        &user_agent_id,
+        &params.service_id,
+    )?
+    .ok_or_else(|| {
+        anyhow::anyhow!(
+            "subscription automatic-copy preference is required; collect the user's Guide answers and save the preference before create-subscribe"
+        )
+    })?;
+    if execution_mode
+        == super::super::common::autotrade::subscription_config::ExecutionMode::GuideDirect
+        && guide_consent.is_none()
+    {
+        bail!(
+            "automatic copy-trading requires --service-guide and --guide-consent-json before create-subscribe"
+        );
+    }
+
     // Repeat the selection-time duplicate and balance checks immediately
     // before the V2 subscription write boundary.
     let existing_subscriptions =

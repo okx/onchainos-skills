@@ -55,8 +55,6 @@ The English templates below are the source wording and field order only.
 ### Pending Refund Requests
 
 ```markdown
-You have {pendingCount} refund requests from buyers awaiting your decision:
-
 | # | Service Name | Job ID | Task Type | Requested Refund | Response Deadline |
 |---|---|---|---|---|---|
 | {n} | {serviceName} | {jobId} | {taskType} | {requestedRefund} | {responseDeadline} |
@@ -66,21 +64,25 @@ Reply with the number or Job ID to view details, then select "Approve Refund" or
 
 Display rules:
 
-1. Use only pending records returned by the CLI.
-2. Number records sequentially and preserve the full Job ID.
-3. Preserve CLI order after its response-deadline sort.
-4. Use the CLI-provided service name, task type, amount, and formatted deadline.
+1. Render only this table followed by its action guidance. Do not add a count
+   introduction, per-job summary, status explanation, diagnostic, or any result
+   from a separate agent or query.
+2. Use only pending records returned by the CLI.
+3. Number records sequentially and preserve the full Job ID.
+4. Preserve CLI order after its response-deadline sort.
+5. Use the CLI-provided service name, task type, amount, and formatted deadline.
    The deadline is `rejectDeadline` from this pending-list row, formatted with
    the same minute precision and UTC offset as other task times.
-5. Translate the English recommendation in the template into the user's
-   language without changing its actions or deadline consequence.
+6. Translate every user-facing table header and the action guidance into the
+   current conversation language. The English template fixes only field order
+   and meaning; preserve the available actions and deadline consequence.
 
 ### Evaluation Records
 
 ```markdown
 You have {evaluationCount} evaluation records:
 
-| # | Service Name | Job ID | Status | Evaluation Started | Key Time |
+| # | Service Name | Job ID | Status | Evaluation Started | Action Deadline |
 |---|---|---|---|---|---|
 | {n} | {serviceName} | {jobId} | {localizedStatusLabel} | {evaluationStarted} | {keyTime} |
 
@@ -93,7 +95,7 @@ Display rules:
 2. Render and translate the CLI `statusLabel`; `evaluationStatus` is the
    stable machine key.
 3. Use the CLI-provided evaluation-started and key-time values directly.
-4. Render `Key Time` when at least one returned value is present.
+4. Render `Action Deadline` when at least one returned value is present.
 5. Restrict selection to `nextAction[id=view_arbitration].params.allowedJobIds`.
 
 ### Evaluation Details

@@ -346,6 +346,52 @@ fn signal_only_prompt(runtime_context: &serde_json::Value) -> Option<String> {
     ))
 }
 
+/// A local copy-trading choice is durable user intent. A Guide and Consent are
+/// separate execution material, so neither can silently turn a receive-only
+/// subscription into automatic copy-trading.
+struct LocalExecutionAdmission {
+    mode: Option<&'static str>,
+    guide_direct: bool,
+    reason: &'static str,
+}
+
+fn local_execution_admission(agent_id: &str, service_id: &str, job_id: &str) -> LocalExecutionAdmission {
+    use crate::commands::agent_commerce::task::common::autotrade::{
+        guide,
+        subscription_config::{self, ExecutionMode},
+    };
+
+    match subscription_config::execution_mode(agent_id, service_id) {
+        Ok(Some(ExecutionMode::GuideDirect)) if guide::has_active_execution_contract(job_id) => {
+            LocalExecutionAdmission {
+                mode: Some(ExecutionMode::GuideDirect.as_str()),
+                guide_direct: true,
+                reason: "automatic_copy_trading_enabled",
+            }
+        }
+        Ok(Some(ExecutionMode::GuideDirect)) => LocalExecutionAdmission {
+            mode: Some(ExecutionMode::GuideDirect.as_str()),
+            guide_direct: false,
+            reason: "no_active_guide_execution_contract",
+        },
+        Ok(Some(ExecutionMode::SignalOnly)) => LocalExecutionAdmission {
+            mode: Some(ExecutionMode::SignalOnly.as_str()),
+            guide_direct: false,
+            reason: "automatic_copy_trading_disabled",
+        },
+        Ok(None) => LocalExecutionAdmission {
+            mode: None,
+            guide_direct: false,
+            reason: "automatic_copy_trading_unconfigured",
+        },
+        Err(_) => LocalExecutionAdmission {
+            mode: None,
+            guide_direct: false,
+            reason: "automatic_copy_trading_unreadable",
+        },
+    }
+}
+
 /// Hand every saved delivery from an exactly Active subscription to the model
 /// Skill. This includes inline text saved as `.txt` and long `--deliverable-text`
 /// values that the ASP transport converted to `.md` files. No deterministic
@@ -407,6 +453,45 @@ pub(crate) async fn route_subscription_delivery_to_skill(
         transport_identity,
     );
     let received_at_ms = now_ms();
+    let execution_admission = local_execution_admission(agent_id, &active.service_id, job_id);
+    if !execution_admission.guide_direct {
+        crate::audit::log(
+            "cli",
+            "user/subscription_signal_admission",
+            false,
+            Duration::default(),
+            Some(vec![
+                format!("jobId={job_id}"),
+                format!("agentId={agent_id}"),
+                format!("deliveryId={delivery_id}"),
+                "executionPath=signal_only".into(),
+                format!(
+                    "executionMode={}",
+                    execution_admission.mode.unwrap_or("unconfigured")
+                ),
+                format!("reason={}", execution_admission.reason),
+            ]),
+            None,
+        );
+        let runtime_context = serde_json::json!({
+            "source": source,
+            "jobId": job_id,
+            "agentId": agent_id,
+            "providerAgentId": active.provider_agent_id,
+            "deliveryId": delivery_id,
+            "savedPath": saved_path,
+            "deliverableType": deliverable_type,
+            "receivedAtMs": received_at_ms,
+            "executionMode": execution_admission.mode,
+            "executionPath": "signal_only",
+            "executionContract": {
+                "path": "signal_only",
+                "directMoneyMovingCommandAllowed": false,
+                "reason": execution_admission.reason,
+            },
+        });
+        return signal_only_prompt(&runtime_context);
+    }
     let _delivery_context = match consent::register_delivery_context_with_path(
         job_id,
         agent_id,
@@ -457,6 +542,7 @@ pub(crate) async fn route_subscription_delivery_to_skill(
             "admissionSource=active_subscription".into(),
             format!("deliveryId={delivery_id}"),
             format!("executionPath={}", execution_path.as_str()),
+            "executionMode=guide_direct".to_string(),
             "subscriptionActive=true".to_string(),
             "executionEligibility=deferred_to_direct_claim".to_string(),
         ]),
@@ -483,6 +569,7 @@ pub(crate) async fn route_subscription_delivery_to_skill(
         "deliverableType": deliverable_type,
         "receivedAtMs": received_at_ms,
         "guidePath": guide_path,
+        "executionMode": "guide_direct",
         "executionPath": execution_path.as_str(),
         "executionContract": execution_contract,
     });
@@ -588,6 +675,16 @@ pub(crate) async fn resume_queued_subscription_delivery(
         );
     }
 
+    let execution_admission = local_execution_admission(agent_id, &active.service_id, job_id);
+    if !execution_admission.guide_direct {
+        consent::clear_pending_delivery(job_id, delivery_id);
+        let _ = delivery_queue::complete_and_advance(job_id, delivery_id);
+        return format!(
+            "[Queued subscription Signal] The saved delivery at {} is receive-and-display-only because automatic copy-trading is unavailable ({}). No order was submitted, no execution outcome was created, and no legacy Consent command may be used.",
+            context.saved_path, execution_admission.reason
+        );
+    }
+
     let execution_path =
         crate::commands::agent_commerce::task::common::config::SubscriptionTradePath::AgentDirect;
     let execution_contract = serde_json::json!({
@@ -611,6 +708,7 @@ pub(crate) async fn resume_queued_subscription_delivery(
         "deliverableType": context.deliverable_type,
         "receivedAtMs": context.received_at_ms,
         "guidePath": guide_path,
+        "executionMode": "guide_direct",
         "executionPath": execution_path.as_str(),
         "queueRecovery": {
             "fifo": true,

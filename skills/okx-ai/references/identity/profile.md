@@ -2,6 +2,10 @@
 
 Use to list owned Agents, inspect Agent details, and list services.
 
+## Agent ID normalization
+
+- Agent IDs **MUST** be digits only; normalize `agent9967` to `9967`.
+
 ## My Agents
 
 Run:

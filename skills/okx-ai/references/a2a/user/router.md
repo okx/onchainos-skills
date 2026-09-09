@@ -10,15 +10,21 @@ User/Buyer. Select exactly one final leaf and stop routing.
 | Continue a selected Service after `task-create-prepare` | [`create-prepare.md`](create-prepare.md) |
 | Create a one-time task or answer its Guide | [`create.md`](create.md); Guide-only step → [`create-guide.md`](create-guide.md) |
 | Create a subscription | [`subscription-create.md`](subscription-create.md) |
+| Direct reply to the Runtime Watch creation-start note using `Check subscription task status` or its localized rendering; or query local follow-trade results for a subscription Signal by `jobId` or `deliveryId` | [`subscription-trade-records.md`](subscription-trade-records.md) |
 | List, inspect, or manage a subscription | [`subscription.md`](subscription.md) or [`subscription-manage.md`](subscription-manage.md) |
-| Query local follow-trade results for a subscription Signal by `jobId` or `deliveryId` | [`subscription-trade-records.md`](subscription-trade-records.md) |
-| List or inspect tasks, saved deliverables, pending evaluations, or tasks the User rejected | [`../task-query.md`](../task-query.md); its existing single-task status call type-gates one-time versus subscription rendering without a probe request |
+| `Check the current task progress` or equivalent wording; list or inspect tasks, saved deliverables, pending evaluations, or tasks the User rejected | [`../task-query.md`](../task-query.md); its existing single-task status call type-gates one-time versus subscription rendering without a probe request |
 | Change task visibility | [`visibility.md`](visibility.md) |
 | Review a deliverable or continue approval/rejection | [`review.md`](review.md) or [`review-decision.md`](review-decision.md) |
 | Refund, close, or inspect refund status | [`refund-prepare.md`](refund-prepare.md) |
 | Rate an Active subscription or a Completed one-time task/subscription | [`rating.md`](rating.md) |
 | View or configure subscription receipt devices | [`receipt.md`](receipt.md) |
 | Continue an active subscription signal | [`subscription-signal.md`](subscription-signal.md) |
+
+The fixed `Check subscription task status` phrase enters
+`subscription-trade-records.md` only as a direct reply to the Runtime Watch
+creation-start note. Without that direct-reply context, treat subscription
+lifecycle/status wording as a generic subscription query through
+`subscription.md`; do not infer follow-trade intent from the phrase alone.
 
 ## System events
 

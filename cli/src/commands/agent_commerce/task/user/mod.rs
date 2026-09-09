@@ -386,6 +386,17 @@ pub enum TaskCommand {
         #[arg(long)]
         flag: String,
     },
+    /// Persist this device's explicitly user-confirmed subscription copy-trading preference.
+    #[command(name = "subscription-execution-config-set")]
+    SubscriptionExecutionConfigSet {
+        #[arg(long = "service-id")]
+        service_id: String,
+        #[arg(long = "execution-mode")]
+        execution_mode: String,
+        /// Replace an existing preference only after a fresh, explicit user confirmation.
+        #[arg(long)]
+        replace: bool,
+    },
     /// List the devices this agent is logged in on (paginated to completion).
     #[command(name = "device-list")]
     DeviceList { page: i64, page_size: i64 },
@@ -399,6 +410,32 @@ fn parse_bool_or_int(s: &str, flag: &str) -> Result<i32> {
         "1" | "true" => Ok(1),
         _ => anyhow::bail!("--{flag} must be 0, 1, true, or false; got \"{s}\""),
     }
+}
+
+async fn handle_subscription_execution_config_set(
+    service_id: String,
+    execution_mode: String,
+    replace: bool,
+) -> Result<()> {
+    use crate::commands::agent_commerce::task::common::autotrade::subscription_config;
+
+    let (agent_id, _) = create::resolve_user_agent().await?;
+    let agent_id = select_subscription_agent_id(&agent_id, "")?;
+    let execution_mode = execution_mode.parse::<subscription_config::ExecutionMode>()?;
+    let outcome = subscription_config::save_execution_mode(
+        &agent_id,
+        &service_id,
+        execution_mode,
+        replace,
+    )?;
+    crate::output::success(serde_json::json!({
+        "agentId": agent_id,
+        "serviceId": service_id,
+        "executionMode": execution_mode.as_str(),
+        "outcome": outcome.as_str(),
+        "storage": "local",
+    }));
+    Ok(())
 }
 
 /// Build the optional post-login subscription hint. Only active subscriptions
@@ -1787,6 +1824,15 @@ pub(crate) async fn fetch_post_login_subscriptions(agentic_id: &str) -> Option<s
 }
 
 pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
+    // Resolve the logged-in User Agent before saving its device-local preference.
+    let cmd = match cmd {
+        TaskCommand::SubscriptionExecutionConfigSet {
+            service_id,
+            execution_mode,
+            replace,
+        } => return handle_subscription_execution_config_set(service_id, execution_mode, replace).await,
+        cmd => cmd,
+    };
     let mut client = TaskApiClient::new();
 
     match cmd {
@@ -2042,6 +2088,11 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         TaskCommand::SubscribeOfflineUpdate { job_id, flag } => {
             offline_receive::handle_subscribe_offline_update(&mut client, &job_id, &flag).await
         }
+        TaskCommand::SubscriptionExecutionConfigSet {
+            service_id,
+            execution_mode,
+            replace,
+        } => handle_subscription_execution_config_set(service_id, execution_mode, replace).await,
         TaskCommand::DeviceList { page, page_size } => {
             device_routing::handle_device_list(&mut client, page, page_size).await
         }

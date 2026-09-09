@@ -44,6 +44,18 @@ use serde_json::Value;
 use std::fs;
 
 #[test]
+fn lifecycle_command_is_registered() {
+    let output = onchainos()
+        .args(["agent", "lifecycle", "job-1", "--help"])
+        .output()
+        .expect("run lifecycle help");
+    assert_eq!(output.status.code(), Some(0));
+    let help = String::from_utf8_lossy(&output.stdout);
+    assert!(help.contains("<JOB_ID>"));
+    assert!(help.contains("--agent-id <AGENT_ID>"));
+}
+
+#[test]
 fn provider_subscription_decision_commands_are_registered() {
     for (command, required_args) in [
         ("accept-subscription", vec!["--agent-id <AGENT_ID>"]),
@@ -56,7 +68,11 @@ fn provider_subscription_decision_commands_are_registered() {
             .args(["agent", command, "job-1", "--help"])
             .output()
             .unwrap_or_else(|error| panic!("run {command} help: {error}"));
-        assert_eq!(output.status.code(), Some(0), "{command} was not registered");
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{command} was not registered"
+        );
         let help = String::from_utf8_lossy(&output.stdout);
         for required in required_args {
             assert!(
@@ -288,6 +304,16 @@ fn findings(result: &Value) -> &Vec<Value> {
     result["findings"]
         .as_array()
         .unwrap_or_else(|| panic!("`findings` is not an array: {result}"))
+}
+
+fn read_consent_metadata(path: &std::path::Path) -> Value {
+    let raw = std::fs::read_to_string(path).expect("read consent markdown");
+    let json = raw
+        .strip_prefix("<!-- onchainos-autotrade:consent\n")
+        .and_then(|value| value.split_once("\n-->"))
+        .map(|(metadata, _)| metadata)
+        .expect("parse consent metadata envelope");
+    serde_json::from_str(json).expect("parse consent metadata JSON")
 }
 
 fn funding_notice_image_dir() -> std::path::PathBuf {
@@ -628,12 +654,9 @@ fn validate_listing_a2a_hex_address_passes() {
     );
 }
 
-// ── IT-010: a profit guarantee advises instead of blocking ────────────────────
-//   D9 is advisory: the hardcoded phrase list is only a partial backstop (the
-//   skill layer flags guarantee wording in any language by meaning), so it
-//   surfaces as `suggest` and pass stays true.
+// ── IT-010: profit wording is no longer a description finding ─────────────────
 #[test]
-fn validate_listing_a2a_profit_guarantee_suggests() {
+fn validate_listing_a2a_profit_guarantee_passes_without_finding() {
     let result = validate_listing(
         "asp",
         r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Guaranteed profit DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals","serviceType":"A2A","fee":"0.11"}]"#,
@@ -644,12 +667,8 @@ fn validate_listing_a2a_profit_guarantee_suggests() {
         "expected pass:true, got {result}"
     );
     assert!(
-        findings(&result).iter().any(|f| f["severity"] == "suggest"),
-        "expected an advisory (suggest) profit-guarantee finding, got {result}"
-    );
-    assert!(
-        findings(&result).iter().all(|f| f["severity"] != "block"),
-        "a profit guarantee must not block, got {result}"
+        findings(&result).is_empty(),
+        "expected no finding, got {result}"
     );
 }
 
@@ -695,11 +714,9 @@ fn validate_listing_a2mcp_url_allowed_test_marker_still_blocks() {
     );
 }
 
-// ── IT-013: an advisory finding never rescues a blocking one ──────────────────
-//   Interaction case: a description carrying BOTH an advisory profit guarantee (D9)
-//   and a blocking URL (D6) still fails — `pass` is driven only by block findings.
+// ── IT-013: removed profit rule does not affect a blocking URL ─────────────────
 #[test]
-fn validate_listing_a2a_suggest_and_block_together_blocks() {
+fn validate_listing_a2a_profit_text_and_url_blocks_for_url_only() {
     let result = validate_listing(
         "asp",
         r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Guaranteed profit DEX arbitrage signals, see https://example.com\nUser provides the target chain and budget","serviceType":"A2A","fee":"0.11"}]"#,
@@ -707,12 +724,14 @@ fn validate_listing_a2a_suggest_and_block_together_blocks() {
     assert_eq!(
         result["pass"].as_bool(),
         Some(false),
-        "expected pass:false — a blocking URL overrides the advisory finding, got {result}"
+        "expected pass:false for the blocking URL, got {result}"
     );
-    assert!(
-        findings(&result).iter().any(|f| f["severity"] == "suggest"),
-        "expected the advisory D9 to still surface alongside the block, got {result}"
+    assert_eq!(
+        findings(&result).len(),
+        1,
+        "expected only the URL finding, got {result}"
     );
+    assert_eq!(findings(&result)[0]["severity"], "block");
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -858,10 +877,8 @@ fn autotrade_environment_set_upgrades_only_the_existing_policy() {
     let result = common::assert_ok_and_extract_data(&output);
     assert_eq!(result["tradeEnvironment"], "demo");
 
-    let stored: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(consent_dir.join("job_environment.json")).unwrap())
-            .unwrap();
-    assert_eq!(stored["version"], 3);
+    let stored = read_consent_metadata(&consent_dir.join("job_environment.md"));
+    assert_eq!(stored["version"], 6);
     assert_eq!(stored["mode"], "auto");
     assert_eq!(stored["capU"], "20");
     assert_eq!(stored["tradeAmountU"], "10");
@@ -922,10 +939,8 @@ fn autotrade_settings_update_persists_all_trade_kit_choices_without_rewriting_po
     assert_eq!(result["marginMode"], "isolated");
     assert_eq!(result["orderPolicy"], "signal_price_limit");
 
-    let stored: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(consent_dir.join("job_settings.json")).unwrap())
-            .unwrap();
-    assert_eq!(stored["version"], 3);
+    let stored = read_consent_metadata(&consent_dir.join("job_settings.md"));
+    assert_eq!(stored["version"], 6);
     assert_eq!(stored["mode"], "auto");
     assert_eq!(stored["capU"], "20");
     assert_eq!(stored["tradeAmountU"], "10");
@@ -973,6 +988,24 @@ fn autotrade_consent_request_suppresses_mode_card_for_auto_policy() {
 
     for job_id in ["job_auto"] {
         create_auto_consent_via_continuation(&dir, job_id, "8315", Some("1"), Some("10"));
+        let context_dir = dir.join("autotrade/delivery-context").join(job_id);
+        std::fs::create_dir_all(&context_dir).unwrap();
+        std::fs::write(
+            context_dir.join("msg:delivery-1.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "version": 2,
+                "jobId": job_id,
+                "agentId": "8315",
+                "providerAgentId": "8779",
+                "deliveryId": "msg:delivery-1",
+                "savedPath": "/tmp/legacy-signal.txt",
+                "deliverableType": "spot",
+                "receivedAtMs": 1,
+                "executionPath": "legacy_wrapper"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
 
         let mut request = onchainos();
         scrubbed(&mut request, &dir);
@@ -995,10 +1028,11 @@ fn autotrade_consent_request_suppresses_mode_card_for_auto_policy() {
 
         assert_eq!(data["decision"], false);
         assert_eq!(data["decisionPushed"], false);
-        assert_eq!(data["reason"], "auto_authorization_already_persisted");
+        assert_eq!(data["status"], "skipped");
+        assert_eq!(data["reason"], "guide_execution_unavailable");
         assert_eq!(data["jobId"], job_id);
         assert_eq!(data["deliveryId"], "msg:delivery-1");
-        assert_eq!(data["consentMode"], "auto");
+        assert_eq!(data["terminal"], true);
     }
 }
 
@@ -1154,5 +1188,622 @@ fn agent_update_empty_service_description_missing_required_field() {
     assert!(
         stdout.contains("missing required field in --service: serviceDescription"),
         "expected the missing-required-field error on stdout, got: {stdout}"
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  agent validate-listing / create / update — A2A price validation
+//  (WWINFRA-3829 · FE-PRICE-01 empty price · FE-PRICE-02 subscription price > 0)
+//
+//  Source plan: `oli-docs/qni0daj9tofmssxzdepllevkgqf/integration-plan.csv` rows
+//  IT-001…IT-011. Spec: `oli-docs/qni0daj9tofmssxzdepllevkgqf/spec.md`.
+//
+//  NOTE: this file's IT-001…IT-015 above belong to a DIFFERENT, already-merged
+//  requirement (WWINFRA-3659, serviceDescription advisory). The rows below are a
+//  SEPARATE plan (WWINFRA-3829, price validation) that also numbers from IT-001;
+//  the two ID spaces are unrelated. These reuse the `validate_listing` + `findings`
+//  helpers defined above.
+//
+//  Conventions (mirror the validate-listing block above):
+//    - Every `validate-listing` row is `network_required: offline` — a pure-local
+//      validator (no HTTP, no wallet), so it runs directly, NEVER via
+//      `run_with_retry`. `validate_listing` already stages an isolated
+//      `ONCHAINOS_HOME` sandbox under `cli/target/test_tmp/cli_agent/…` via
+//      `fresh_home` + `scrubbed` (not `tempfile::tempdir()`).
+//    - Offline pass/findings assertions are DETERMINISTIC (the validator is a pure
+//      function of its input), so exact `pass` / finding-code assertions are correct.
+//    - The two `create` / `update` rows are `network_required: live` AND wallet-gated:
+//      `create_impl`/`update_impl` run auth + signing-session load BEFORE
+//      `normalize_service`, so the FE-PRICE-02 bail is only reachable with real creds.
+//      They are `#[ignore]`d and, as live rows, go through the project's
+//      `run_with_retry` helper (rate-limit tolerance) rather than a bare invocation.
+//    - No environment-specific base URL or hostname is hardcoded anywhere.
+// ════════════════════════════════════════════════════════════════════════════
+
+/// True when `findings` carries at least one finding whose `code` equals `code`.
+/// Reads the shared `findings` helper above, so a wrong envelope shape panics with
+/// the full JSON rather than silently reporting "not present".
+//  agent validate-listing — FE-EP-01 A2MCP endpoint duplicate-prevention
+//
+//  Covers integration-plan.csv rows IT-001..IT-015 for the A-side (ASP) A2MCP
+//  Endpoint duplicate check (rule EP1, spec §1.4/§2.x; branch
+//  feat/a2mcp-endpoint-dedup). Every row is `network_required: offline` and
+//  `exit_code 0` — findings are surfaced as `{ pass, findings }` data, never a
+//  process error — so each is driven directly via `validate_listing_with` and
+//  never through `run_with_retry`. These sit alongside the earlier
+//  description-rule `validate_listing_*` tests; the CSV test_id is noted per fn.
+// ════════════════════════════════════════════════════════════════════════════
+
+/// True when `result.findings` contains at least one finding carrying `code`.
+/// Run `agent validate-listing` with the exact flags specified by a test row.
+/// This is needed by endpoint-dedup cases that omit `--service` or override
+/// the default role.
+fn validate_listing_with(extra_args: &[&str]) -> Value {
+    let (_home, dir) = fresh_home("cli_agent");
+    let mut cmd = onchainos();
+    scrubbed(&mut cmd, &dir);
+    let mut args: Vec<&str> = vec!["agent", "validate-listing"];
+    args.extend_from_slice(extra_args);
+    let output = cmd
+        .args(&args)
+        .output()
+        .expect("failed to execute `onchainos agent validate-listing`");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "validate-listing must exit 0 (findings are data, not a process error)\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    parse_stdout_json(&output)
+}
+fn has_finding_code(result: &Value, code: &str) -> bool {
+    findings(result).iter().any(|f| f["code"] == code)
+}
+
+// ── IT-001: an A2A monthly subscription priced at 10 USDT passes ──────────────
+//   Golden path — a priced subscription tier does not fire FE-PRICE-01/02 (§6.2, AC#5).
+#[test]
+fn validate_listing_a2a_subscription_priced_passes() {
+    let result = validate_listing(
+        "asp",
+        r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals","serviceGuide":"Choose a market and submit your budget.","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}]}]"#,
+    );
+    assert_eq!(
+        result["pass"].as_bool(),
+        Some(true),
+        "an A2A subscription priced at 10 USDT must pass, got {result}"
+    );
+}
+
+// ── IT-002: a blank A2A subscription price is flagged PRICE_EMPTY (FE-PRICE-01) ─
+//   The empty tier raises PRICE_EMPTY (spec §6.1/§6.4, AC#2).
+#[test]
+fn validate_listing_a2a_subscription_empty_price_flags_price_empty() {
+    let result = validate_listing(
+        "asp",
+        r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals","serviceGuide":"Choose a market and submit your budget.","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":""}]}]"#,
+    );
+    assert!(
+        has_finding_code(&result, "PRICE_EMPTY"),
+        "a blank A2A subscription price must raise a PRICE_EMPTY finding, got {result}"
+    );
+}
+
+// ── IT-003: a spaces-only A2A subscription price is treated as empty ───────────
+//   FE-PRICE-01 whitespace-trim (spec §6.1): the fee trims to "" and raises PRICE_EMPTY.
+#[test]
+fn validate_listing_a2a_subscription_whitespace_price_flags_price_empty() {
+    let result = validate_listing(
+        "asp",
+        r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals","serviceGuide":"Choose a market and submit your budget.","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"  "}]}]"#,
+    );
+    assert!(
+        has_finding_code(&result, "PRICE_EMPTY"),
+        "a spaces-only A2A subscription price must trim to empty and raise PRICE_EMPTY, got {result}"
+    );
+}
+
+// ── IT-004: an A2A subscription price of 0 is blocked (FE-PRICE-02) ────────────
+//   The greater-than-zero rule → SUBSCRIPTION_PRICE_ZERO finding (spec §6.2, AC#3).
+#[test]
+fn validate_listing_a2a_subscription_zero_price_flags_price_zero() {
+    let result = validate_listing(
+        "asp",
+        r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals","serviceGuide":"Choose a market and submit your budget.","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"0"}]}]"#,
+    );
+    assert!(
+        has_finding_code(&result, "SUBSCRIPTION_PRICE_ZERO"),
+        "an A2A subscription price of 0 must raise SUBSCRIPTION_PRICE_ZERO, got {result}"
+    );
+}
+
+// ── IT-005: an A2A subscription price of 0.00 is recognised as zero ────────────
+//   FE-PRICE-02 zero-form (spec §6.2/§15.2): is_zero_value matches 0.00.
+#[test]
+fn validate_listing_a2a_subscription_zero_decimal_price_flags_price_zero() {
+    let result = validate_listing(
+        "asp",
+        r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals","serviceGuide":"Choose a market and submit your budget.","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"0.00"}]}]"#,
+    );
+    assert!(
+        has_finding_code(&result, "SUBSCRIPTION_PRICE_ZERO"),
+        "an A2A subscription price of 0.00 must raise SUBSCRIPTION_PRICE_ZERO, got {result}"
+    );
+}
+
+// ── IT-006: a six-decimal zero (0.000000) subscription price is blocked as a
+//   format violation, not SUBSCRIPTION_PRICE_ZERO ──────────────────────────────
+//   A2A subscription fees now cap at 2 decimals (skills-v2), so a 6-decimal
+//   value fails the format check (P5) before the zero check ever runs — the
+//   original max-precision-zero boundary (spec §6.2/§15.2) is superseded by
+//   this tighter cap; the 2-decimal zero boundary is covered by
+//   `validate_listing_a2a_subscription_zero_decimal_price_flags_price_zero`.
+#[test]
+fn validate_listing_a2a_subscription_six_decimal_price_flags_format_not_zero() {
+    let result = validate_listing(
+        "asp",
+        r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals","serviceGuide":"Choose a market and submit your budget.","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"0.000000"}]}]"#,
+    );
+    assert!(
+        has_finding_code(&result, "P5"),
+        "an A2A subscription price of 0.000000 exceeds the 2-decimal cap and must raise P5, got {result}"
+    );
+    assert!(
+        !has_finding_code(&result, "SUBSCRIPTION_PRICE_ZERO"),
+        "the format check must short-circuit before the zero check, got {result}"
+    );
+}
+
+// ── IT-007: an A2A subscription priced at 0.01 USDT is accepted ────────────────
+//   FE-PRICE-02 lower boundary — the smallest positive price passes (spec §6.2, AC#5).
+#[test]
+fn validate_listing_a2a_subscription_min_positive_price_passes() {
+    let result = validate_listing(
+        "asp",
+        r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals","serviceGuide":"Choose a market and submit your budget.","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"0.01"}]}]"#,
+    );
+    assert_eq!(
+        result["pass"].as_bool(),
+        Some(true),
+        "an A2A subscription priced at 0.01 USDT must pass, got {result}"
+    );
+}
+
+// ── IT-008: a one-off (non-subscription) A2A service priced at 0 is allowed ────
+//   The greater-than-zero rule is subscription-only → no SUBSCRIPTION_PRICE_ZERO
+//   for a single-purchase fee of 0 (spec §6.2 scope, AC#4).
+#[test]
+fn validate_listing_a2a_one_off_zero_fee_not_flagged_price_zero() {
+    let result = validate_listing(
+        "asp",
+        r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals","serviceType":"A2A","fee":"0"}]"#,
+    );
+    assert!(
+        !has_finding_code(&result, "SUBSCRIPTION_PRICE_ZERO"),
+        "a one-off A2A fee of 0 must not raise SUBSCRIPTION_PRICE_ZERO, got {result}"
+    );
+}
+
+// ── IT-009: a free (0-priced) A2MCP service is unaffected by the new rules ─────
+//   A2MCP is out of scope, so neither PRICE_EMPTY nor SUBSCRIPTION_PRICE_ZERO
+//   fires (spec §13, AC#13).
+#[test]
+fn validate_listing_a2mcp_zero_fee_unaffected_by_price_rules() {
+    let result = validate_listing(
+        "asp",
+        r#"[{"serviceName":"Realtime Price Feed","serviceDescription":"Returns realtime token price quotes\ntokenAddress (string, required): token contract; chainIndex (string, required): chain id\nPOST","serviceType":"A2MCP","fee":"0","endpoint":"https://api.example.com/mcp"}]"#,
+    );
+    assert!(
+        !has_finding_code(&result, "SUBSCRIPTION_PRICE_ZERO"),
+        "a free A2MCP service must not raise SUBSCRIPTION_PRICE_ZERO, got {result}"
+    );
+    assert!(
+        !has_finding_code(&result, "PRICE_EMPTY"),
+        "a free A2MCP service must not raise PRICE_EMPTY, got {result}"
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  agent create / update — FE-PRICE-02 strict path (live, wallet-gated)
+// ════════════════════════════════════════════════════════════════════════════
+//  Both rows are `network_required: live` and require a logged-in test wallet:
+//  auth + signing-session load run BEFORE `normalize_service` in
+//  `create_impl`/`update_impl`, so the FE-PRICE-02 subscription-price bail is only
+//  reachable with real creds. They are `#[ignore]`d so CI (no wallet) does not fail
+//  on the earlier auth error; run them explicitly with `cargo test -- --ignored`
+//  against a wallet. As live rows they go through `run_with_retry` for rate-limit
+//  tolerance (the create/update-agent endpoints are rate-limited).
+
+// ── IT-010: `agent create` with a 0 A2A subscription price is rejected ─────────
+//   FE-PRICE-02 on the strict create path → {ok:false} exit 1 (spec §3, AC#3).
+#[test]
+#[ignore = "live: requires a logged-in test wallet — auth/signing runs before normalize_service, so the FE-PRICE-02 subscription-price bail is only reachable with creds"]
+fn agent_create_a2a_subscription_zero_price_rejected() {
+    let output = run_with_retry(&[
+        "agent",
+        "create",
+        "--role",
+        "asp",
+        "--name",
+        "Arb Signals Bot",
+        "--description",
+        "DEX arbitrage trading signal provider",
+        "--service",
+        r#"[{"serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"0"}]}]"#,
+    ]);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "expected exit 1\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(
+        parsed["ok"].as_bool(),
+        Some(false),
+        "expected {{ok:false}} on the strict create path, got {parsed}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("must be greater than 0"),
+        "expected the FE-PRICE-02 subscription-price message, got: {stdout}"
+    );
+}
+
+// ── IT-011: `agent update` to a 0 A2A subscription price is rejected ───────────
+//   FE-PRICE-02 on the strict update path → {ok:false} exit 1 (spec §3, AC#7).
+#[test]
+#[ignore = "live: requires a logged-in test wallet — auth/signing runs before normalize_service, so the FE-PRICE-02 subscription-price bail is only reachable with creds"]
+fn agent_update_a2a_subscription_zero_price_rejected() {
+    let output = run_with_retry(&[
+        "agent",
+        "update",
+        "--agent-id",
+        "12345",
+        "--service",
+        r#"[{"operation":"update","id":"7","serviceName":"DEX Arbitrage Signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"0"}]}]"#,
+    ]);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "expected exit 1\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(
+        parsed["ok"].as_bool(),
+        Some(false),
+        "expected {{ok:false}} on the strict update path, got {parsed}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("must be greater than 0"),
+        "expected the FE-PRICE-02 subscription-price message, got: {stdout}"
+    );
+}
+
+// ── IT-001 · golden: two A2MCP services sharing one Endpoint → second rejected ─
+//   Core EP1 finding on service[1].endpoint, pass:false (spec §2.2). Mirrors unit
+//   test a2mcp_duplicate_endpoints_fail_ep1.
+#[test]
+fn validate_listing_a2mcp_duplicate_endpoints_flag_ep1() {
+    let result = validate_listing_with(&[
+        "--service",
+        r#"[{"serviceName":"Chain Data Service","serviceDescription":"Provides market data.","fee":"10","serviceType":"A2MCP","endpoint":"https://api.example.com/mcp"},{"serviceName":"Market Data Service","serviceDescription":"Provides market data.","fee":"10","serviceType":"A2MCP","endpoint":"https://api.example.com/mcp"}]"#,
+    ]);
+    assert_eq!(
+        findings(&result).first().map(|f| &f["code"]),
+        Some(&Value::String("EP1".into())),
+        "expected findings[0].code == \"EP1\" for a duplicate endpoint, got {result}"
+    );
+    assert_eq!(
+        result["pass"].as_bool(),
+        Some(false),
+        "a duplicate A2MCP endpoint must fail the listing, got {result}"
+    );
+}
+
+// ── IT-002 · golden: two A2MCP services with DIFFERENT Endpoints both accepted ─
+//   Happy path, no EP1 finding (spec §2.1). Mirrors a2mcp_different_endpoints_pass.
+#[test]
+fn validate_listing_a2mcp_different_endpoints_pass() {
+    let result = validate_listing_with(&[
+        "--service",
+        r#"[{"serviceName":"Chain Data Service","serviceDescription":"Provides market data.","fee":"10","serviceType":"A2MCP","endpoint":"https://api.example.com/mcp"},{"serviceName":"Market Data Service","serviceDescription":"Provides market data.","fee":"10","serviceType":"A2MCP","endpoint":"https://data.example.com/mcp"}]"#,
+    ]);
+    assert_eq!(
+        result["pass"].as_bool(),
+        Some(true),
+        "distinct A2MCP endpoints must pass, got {result}"
+    );
+    assert!(
+        !has_finding_code(&result, "EP1"),
+        "no duplicate-endpoint finding expected for distinct endpoints, got {result}"
+    );
+}
+
+// ── IT-003 · edge: Endpoints differing only in letter-case are still duplicates ─
+//   Case-insensitive compare via eq_ignore_ascii_case (spec §1.4). Mirrors
+//   a2mcp_duplicate_endpoints_case_insensitive.
+#[test]
+fn validate_listing_a2mcp_duplicate_endpoints_case_insensitive() {
+    let result = validate_listing_with(&[
+        "--service",
+        r#"[{"serviceName":"Chain Data Service","serviceDescription":"Provides market data.","fee":"10","serviceType":"A2MCP","endpoint":"https://api.example.com/mcp"},{"serviceName":"Market Data Service","serviceDescription":"Provides market data.","fee":"10","serviceType":"A2MCP","endpoint":"https://API.EXAMPLE.COM/mcp"}]"#,
+    ]);
+    assert_eq!(
+        findings(&result).first().map(|f| &f["code"]),
+        Some(&Value::String("EP1".into())),
+        "a case-only endpoint difference must still flag EP1, got {result}"
+    );
+    assert_eq!(
+        result["pass"].as_bool(),
+        Some(false),
+        "a case-insensitive duplicate endpoint must fail the listing, got {result}"
+    );
+}
+
+// ── IT-004 · edge: editing a service but keeping its own Endpoint is not flagged ─
+//   Self-exclusion keyed by service id (spec §1.5). Mirrors a2mcp_self_exclusion_same_id.
+#[test]
+fn validate_listing_a2mcp_self_exclusion_same_id_passes() {
+    let result = validate_listing_with(&[
+        "--service",
+        r#"[{"id":"svc-123","serviceName":"Chain Data Service","serviceDescription":"Provides market data.","fee":"10","serviceType":"A2MCP","endpoint":"https://api.example.com/mcp","operation":"update"},{"id":"svc-123","serviceName":"Market Data Service","serviceDescription":"Provides market data.","fee":"10","serviceType":"A2MCP","endpoint":"https://api.example.com/mcp","operation":"update"}]"#,
+    ]);
+    assert_eq!(
+        result["pass"].as_bool(),
+        Some(true),
+        "two entries with the same id are the same service being edited, not a clash — expected pass, got {result}"
+    );
+    assert!(
+        !has_finding_code(&result, "EP1"),
+        "self-exclusion by id must suppress EP1, got {result}"
+    );
+}
+
+// ── IT-005 · edge: among three services, only the one reusing an earlier Endpoint fails ─
+//   All-problems-at-once, no short-circuit; the sole EP1 finding points at
+//   service[2].endpoint (spec §2.4). Mirrors a2mcp_three_services_two_collide.
+#[test]
+fn validate_listing_a2mcp_three_services_second_collision_flagged() {
+    let result = validate_listing_with(&[
+        "--service",
+        r#"[{"serviceName":"Chain Data Service","serviceDescription":"Provides market data.","fee":"10","serviceType":"A2MCP","endpoint":"https://api.example.com/mcp"},{"serviceName":"Market Data Service","serviceDescription":"Provides market data.","fee":"10","serviceType":"A2MCP","endpoint":"https://data.example.com/mcp"},{"serviceName":"Weather Data Service","serviceDescription":"Provides market data.","fee":"10","serviceType":"A2MCP","endpoint":"https://api.example.com/mcp"}]"#,
+    ]);
+    assert_eq!(
+        findings(&result).first().map(|f| &f["field"]),
+        Some(&Value::String("service[2].endpoint".into())),
+        "expected findings[0].field == \"service[2].endpoint\", got {result}"
+    );
+    assert_eq!(
+        findings(&result).first().map(|f| &f["code"]),
+        Some(&Value::String("EP1".into())),
+        "the third service reusing the first endpoint must flag EP1, got {result}"
+    );
+    assert_eq!(
+        result["pass"].as_bool(),
+        Some(false),
+        "a colliding third endpoint must fail the listing, got {result}"
+    );
+}
+
+// ── IT-006 · edge: a service being deleted frees its Endpoint for another ──────
+//   operation:delete is skipped by the dedup pass (spec Appendix A.1). Mirrors
+//   a2mcp_delete_operation_skipped.
+#[test]
+fn validate_listing_a2mcp_delete_operation_frees_endpoint() {
+    let result = validate_listing_with(&[
+        "--service",
+        r#"[{"serviceName":"Chain Data Service","serviceDescription":"Provides market data.","fee":"10","serviceType":"A2MCP","endpoint":"https://api.example.com/mcp"},{"id":"svc-del-1","serviceName":"Market Data Service","serviceDescription":"Provides market data.","fee":"10","serviceType":"A2MCP","endpoint":"https://api.example.com/mcp","operation":"delete"}]"#,
+    ]);
+    assert_eq!(
+        result["pass"].as_bool(),
+        Some(true),
+        "a delete-op service never claims its endpoint, so the survivor must pass, got {result}"
+    );
+    assert!(
+        !has_finding_code(&result, "EP1"),
+        "a deleted service must not trigger an EP1 collision, got {result}"
+    );
+}
+
+// ── IT-007 · edge: an A2A service (no Endpoint) never clashes with an A2MCP one ─
+//   Only A2MCP services with endpoints participate (spec §1.4). Mirrors
+//   mixed_a2a_a2mcp_no_cross_type_collision.
+#[test]
+fn validate_listing_mixed_a2a_a2mcp_no_cross_type_collision() {
+    let result = validate_listing_with(&[
+        "--service",
+        r#"[{"serviceName":"Ledger Info Service","serviceDescription":"Provides market data.","fee":"5","serviceType":"A2A"},{"serviceName":"Market Data Service","serviceDescription":"Provides market data.","fee":"10","serviceType":"A2MCP","endpoint":"https://api.example.com/mcp"}]"#,
+    ]);
+    assert_eq!(
+        result["pass"].as_bool(),
+        Some(true),
+        "an A2A service has no endpoint to collide with an A2MCP one — expected pass, got {result}"
+    );
+    assert!(
+        !has_finding_code(&result, "EP1"),
+        "no cross-type endpoint collision expected, got {result}"
+    );
+}
+
+// ── IT-008 · golden: the rejection message names the conflicting service ───────
+//   EP1 copy must contain "is already used by" AND both service names so the
+//   skill layer can recognise it (spec §2.3). The extra `--name IgnoredAgentName`
+//   proves the Agent name does not leak into the message. Mirrors
+//   ep1_message_contains_both_service_names.
+#[test]
+fn validate_listing_ep1_message_names_conflicting_service() {
+    let result = validate_listing_with(&[
+        "--service",
+        r#"[{"serviceName":"Chain Data Service","serviceDescription":"Provides market data.","fee":"10","serviceType":"A2MCP","endpoint":"https://api.example.com/mcp"},{"serviceName":"Market Data Service","serviceDescription":"Provides market data.","fee":"10","serviceType":"A2MCP","endpoint":"https://api.example.com/mcp"}]"#,
+        "--name",
+        "IgnoredAgentName",
+    ]);
+    assert_eq!(
+        result["pass"].as_bool(),
+        Some(false),
+        "a duplicate endpoint must fail the listing, got {result}"
+    );
+    let ep1 = findings(&result)
+        .iter()
+        .find(|f| f["code"] == "EP1")
+        .unwrap_or_else(|| panic!("expected an EP1 finding, got {result}"));
+    let message = ep1["message"]
+        .as_str()
+        .unwrap_or_else(|| panic!("EP1 message is not a string: {result}"));
+    for needle in [
+        "is already used by",
+        "Market Data Service",
+        "Chain Data Service",
+    ] {
+        assert!(
+            message.contains(needle),
+            "EP1 message must contain {needle:?}, got: {message}"
+        );
+    }
+}
+
+// ── IT-009 · error: a duplicate service NAME and duplicate Endpoint both surface ─
+//   Rejection accumulates S2 and EP1 in one pass, pass:false (spec §2.4). Mirrors
+//   ep1_coexists_with_other_findings.
+#[test]
+fn validate_listing_ep1_coexists_with_duplicate_name() {
+    let result = validate_listing_with(&[
+        "--service",
+        r#"[{"serviceName":"Repeat Data Service","serviceDescription":"Provides market data.","fee":"10","serviceType":"A2MCP","endpoint":"https://api.example.com/mcp"},{"serviceName":"Repeat Data Service","serviceDescription":"Provides market data.","fee":"10","serviceType":"A2MCP","endpoint":"https://api.example.com/mcp"}]"#,
+    ]);
+    assert!(
+        findings(&result).len() >= 2,
+        "expected at least two findings (duplicate name + duplicate endpoint), got {result}"
+    );
+    assert!(
+        has_finding_code(&result, "S2"),
+        "expected a duplicate-service-name finding (S2), got {result}"
+    );
+    assert!(
+        has_finding_code(&result, "EP1"),
+        "expected a duplicate-endpoint finding (EP1), got {result}"
+    );
+    assert_eq!(
+        result["pass"].as_bool(),
+        Some(false),
+        "coexisting S2 + EP1 must fail the listing, got {result}"
+    );
+}
+
+// ── IT-010 · error: invalid service JSON returns a format error, not a crash ───
+//   Parse failure yields a PARSE finding (fe::FE13), still exit 0 (spec §3.2).
+#[test]
+fn validate_listing_invalid_service_json_returns_parse() {
+    let result = validate_listing_with(&["--service", "not-json"]);
+    assert_eq!(
+        findings(&result).first().map(|f| &f["code"]),
+        Some(&Value::String("PARSE".into())),
+        "invalid service JSON must yield findings[0].code == \"PARSE\", got {result}"
+    );
+    assert_eq!(
+        result["pass"].as_bool(),
+        Some(false),
+        "unparseable --service must fail the listing, got {result}"
+    );
+}
+
+// ── IT-011 · edge: for a non-ASP role, service Endpoints are not checked at all ─
+//   --service is ignored for user/evaluator; dedup runs only in the asp branch
+//   (spec §1.1/§1.3, regression guard).
+#[test]
+fn validate_listing_user_role_ignores_service_endpoints() {
+    let result = validate_listing_with(&[
+        "--role",
+        "user",
+        "--service",
+        r#"[{"serviceName":"Chain Data Service","serviceDescription":"Provides market data.","fee":"10","serviceType":"A2MCP","endpoint":"https://api.example.com/mcp"},{"serviceName":"Market Data Service","serviceDescription":"Provides market data.","fee":"10","serviceType":"A2MCP","endpoint":"https://api.example.com/mcp"}]"#,
+    ]);
+    assert_eq!(
+        result["pass"].as_bool(),
+        Some(true),
+        "a user-role listing ignores --service entirely — expected pass, got {result}"
+    );
+    assert!(
+        findings(&result).is_empty(),
+        "no service checks (including EP1) run for a non-ASP role, got {result}"
+    );
+}
+
+// ── IT-012 · edge: an empty service list is accepted with no errors ────────────
+//   Boundary: zero services, no findings (spec §2.1).
+#[test]
+fn validate_listing_empty_service_list_passes() {
+    let result = validate_listing_with(&["--service", "[]"]);
+    assert_eq!(
+        result["pass"].as_bool(),
+        Some(true),
+        "an empty service list must pass, got {result}"
+    );
+    assert!(
+        findings(&result).is_empty(),
+        "an empty service list raises no findings, got {result}"
+    );
+}
+
+// ── IT-013 · edge: a single A2MCP service has no Endpoint to collide with ───────
+//   Boundary: one service, dedup is a no-op (spec §2.1).
+#[test]
+fn validate_listing_single_a2mcp_service_passes() {
+    let result = validate_listing_with(&[
+        "--service",
+        r#"[{"serviceName":"Chain Data Service","serviceDescription":"Provides market data.","fee":"10","serviceType":"A2MCP","endpoint":"https://api.example.com/mcp"}]"#,
+    ]);
+    assert_eq!(
+        result["pass"].as_bool(),
+        Some(true),
+        "a single A2MCP service must pass, got {result}"
+    );
+    assert!(
+        !has_finding_code(&result, "EP1"),
+        "a single service cannot collide, so no EP1, got {result}"
+    );
+}
+
+// ── IT-014 · edge: running the check with no services supplied passes cleanly ──
+//   Flag default: --service absent (role defaults to asp), no findings (spec §1.1).
+#[test]
+fn validate_listing_no_service_flag_passes() {
+    let result = validate_listing_with(&[]);
+    assert_eq!(
+        result["pass"].as_bool(),
+        Some(true),
+        "no --service supplied must pass, got {result}"
+    );
+    assert!(
+        findings(&result).is_empty(),
+        "an absent --service raises no findings, got {result}"
+    );
+}
+
+// ── IT-015 · edge: Endpoints differing only by surrounding spaces are duplicates ─
+//   parse_services_lenient trims before comparison (spec §1.4 whitespace
+//   normalization).
+#[test]
+fn validate_listing_a2mcp_endpoints_differ_only_by_whitespace_flag_ep1() {
+    let result = validate_listing_with(&[
+        "--service",
+        r#"[{"serviceName":"Chain Data Service","serviceDescription":"Provides market data.","fee":"10","serviceType":"A2MCP","endpoint":"https://data.example.com/mcp"},{"serviceName":"Market Data Service","serviceDescription":"Provides market data.","fee":"10","serviceType":"A2MCP","endpoint":" https://data.example.com/mcp "}]"#,
+    ]);
+    assert_eq!(
+        findings(&result).first().map(|f| &f["code"]),
+        Some(&Value::String("EP1".into())),
+        "endpoints differing only by surrounding whitespace must flag EP1, got {result}"
+    );
+    assert_eq!(
+        result["pass"].as_bool(),
+        Some(false),
+        "a whitespace-only endpoint difference must fail the listing, got {result}"
     );
 }

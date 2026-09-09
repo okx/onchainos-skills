@@ -31,7 +31,8 @@ not delay the initial watch or `sub_open` event.
 | Active subscription cost | `onchainos agent subscribe-cost` |
 | Replay offline deliverables | Fresh-read; when changed, `subscribe-offline-update --job-id <jobId> --flag 0`, then reread. |
 | Discard offline deliverables | Fresh-read; when changed, use flag 1, then reread and report support state. |
-| Pause Guide-driven automatic execution | `autotrade-consent-set --job-id <jobId> --mode pause`; receipt and subscription stay active. |
+| Pause listening / stop receiving Signals on this device | Fresh-read the subscription and list devices, then use `subscribe-device-update --job-id <jobId> --device-list <all current receiver device IDs except this device>`. This overwrites the complete receiver list; preserve every other receiver and confirm before leaving no receiver. |
+| Pause copy-trading but keep receiving Signals | Persist this device's signal-only preference: `subscription-execution-config-set --service-id <serviceId> --execution-mode signal_only`. |
 | Receive/resume/listen for signals | Follow the scoped receipt flow below. |
 
 Do not write when the fresh value already matches. A preference-write failure
@@ -58,6 +59,7 @@ or Consent keeps signals visible but disables local automatic execution.
 - Any explicit receiver update is built from a fresh complete read and
   overwrites the entire list.
 - Confirm before a removal that would leave no receiving device.
-- Pausing automatic execution never cancels the subscription or receipt.
+- "Pause listening" changes the server-side receiver list; "pause copy-trading" writes this device's `signal_only` execution preference. Neither action
+cancels the subscription.
 - Creation-time device selection is unsupported; configure it only after
   successful creation.

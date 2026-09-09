@@ -29,7 +29,7 @@ const NOTICE_REF_VERSION: u32 = 1;
 const EXECUTION_LATCH_VERSION: u32 = 2;
 const TERMINAL_JOURNAL_VERSION: u32 = 1;
 const GLOBAL_RETRY_BUDGET: Duration = Duration::from_millis(300);
-const INITIAL_NOTIFY_TIMEOUT: Duration = Duration::from_secs(1);
+const INITIAL_NOTIFY_TIMEOUT: Duration = Duration::from_secs(5);
 const STALE_LEASE_SEC: u64 = 30;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

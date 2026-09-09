@@ -1,0 +1,18 @@
+{
+  "jobId": "test-job-001",
+  "taskType": "one_time",
+  "phase": "asp_executing",
+  "statusLabel": "ASP executing",
+  "responsibleParty": "asp",
+  "nextAction": "Wait for Agent 8415 to submit the deliverable.",
+  "milestones": {
+    "createdAt": "2026-09-08 10:00",
+    "acceptedAt": "2026-09-08 10:05",
+    "submittedAt": null,
+    "completedAt": null
+  },
+  "statusSource": "official_status",
+  "confidence": "confirmed",
+  "lastEventAt": "2026-09-08 10:05",
+  "syncedAt": "2026-09-09 10:30"
+}
