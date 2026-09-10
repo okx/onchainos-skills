@@ -3,7 +3,7 @@
 ## Step 1 — Run the install/update command
 
 ```
-npx -y oc-onchainos install
+npx -y @okxweb3/onchainos-installer install
 ```
 
 ## Step 2 — Extract `afterVersion`

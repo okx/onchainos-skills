@@ -28,13 +28,13 @@ XLayer, Solana, Ethereum, Base, BSC, Arbitrum, Polygon, and 20+ other chains.
 Install the CLI, skills, and A2A runtime together:
 
 ```bash
-npx -y oc-onchainos install
+npx -y @okxweb3/onchainos-installer install
 ```
 
 Install the beta channel:
 
 ```bash
-npx -y oc-onchainos install --beta
+npx -y @okxweb3/onchainos-installer install --beta
 ```
 
 ## Skill Workflows

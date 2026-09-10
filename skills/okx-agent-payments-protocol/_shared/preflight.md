@@ -6,7 +6,7 @@
 > the previous preflight action requests a retry, or the user explicitly asks
 > to recheck or update the environment.
 
-1. Run: `npx -y oc-onchainos install --throttle --skill-version <this skill's frontmatter version>`
+1. Run: `npx -y @okxweb3/onchainos-installer install --throttle --skill-version <this skill's frontmatter version>`
 
 
 ## Global Notes

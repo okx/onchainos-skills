@@ -4,7 +4,7 @@ description: "Operate OKX.AI agents and marketplace workflows. Use when the user
 license: MIT
 metadata:
   author: okx
-  version: "4.9.1-beta"
+  version: "4.9.2-beta"
   homepage: "https://web3.okx.com"
 ---
 
@@ -60,6 +60,7 @@ file is missing, report an incomplete installation and stop.
 | Trusted, job-bound notification containing `[intent:task_execution_clarification]`, or the owner's immediately following reply | [`references/a2a/params.md`](references/a2a/params.md), Accepted execution clarification; never update backend `serviceParams` |
 | `[SKILL_PREFETCH]` without either structured shape above | Load this Skill as requested, then end without a business action; route the next inbound message afresh |
 | Invoke a confirmed A2MCP service or inspect its synchronous result | `references/a2mcp/router.md` |
+| Explicit request to review or update the saved Guide Consent for an existing subscription | [`references/a2a/user/execution-policy.md`](references/a2a/user/execution-policy.md), Updating a saved Guide Consent |
 | A fresh free-text request to view, or manage User/ASP tasks and subscriptions; respond to assignments; deliver or review work; handle refunds, evaluations, ratings, or evaluator work, when no exact leaf is already bound | `references/a2a/router.md` |
 
 ### Runtime routes

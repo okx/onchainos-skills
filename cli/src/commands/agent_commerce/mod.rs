@@ -751,107 +751,15 @@ pub enum AgentCommand {
         ttl_sec: u64,
     },
 
-    /// Persist the buyer's subscription signal policy (`auto` or notify-only)
-    /// plus applicable automatic settings. This command persists
-    /// policy only; the model session retains and executes the current delivery.
-    #[command(name = "autotrade-consent-set")]
-    AutotradeConsentSet {
+    /// Replace all user-confirmed values in an existing active Guide Consent.
+    /// This updates Consent only; it never changes the matching Service Guide.
+    #[command(name = "autotrade-guide-consent-update")]
+    AutotradeGuideConsentUpdate {
         #[arg(long = "job-id")]
         job_id: String,
-        /// `auto` | `notify_only` | `pause` | `cap-adjust` |
-        /// `environment-set` | `settings-update` | `plugin-ready-check`.
-        /// Legacy `manual` and `decline` inputs normalize to notify-only.
-        #[arg(long)]
-        mode: String,
-        /// Optional per-trade cap in quote-stablecoin units (USDT by default).
-        #[arg(long)]
-        cap: Option<String>,
-        /// Fixed quote-stablecoin amount used by the model-driven subscription.
-        #[arg(long = "trade-amount")]
-        trade_amount: Option<String>,
-        /// Buyer agent id (optional; retained only for rolling CLI compatibility).
-        /// Local consent operations, including `pause`, do not use it.
-        #[arg(long = "agent-id")]
-        agent_id: Option<String>,
-        /// Consent lifetime in seconds (default 365 days).
-        #[arg(long = "ttl-sec", default_value_t = 31_536_000)]
-        ttl_sec: u64,
-        /// Plugin-store id checked by `plugin-ready-check` (the legacy
-        /// `plugin-approved` alias is retained for compatibility).
-        #[arg(long)]
-        plugin: Option<String>,
-        /// Quote stablecoin dex trades pay with / settle into: `usdc` | `usdt`.
-        /// Pass ONLY when the user named one; omitted keeps the stored choice
-        /// (or the default, USDT).
-        #[arg(long)]
-        quote: Option<String>,
-        /// User-authorized Trade Kit environment (`live` or `demo`). Omitted
-        /// values preserve the existing choice.
-        #[arg(long)]
-        environment: Option<String>,
-        /// User-authorized Trade Kit margin mode (`cross` or `isolated`).
-        #[arg(long = "margin-mode")]
-        margin_mode: Option<String>,
-        /// User-authorized order policy (`market` or `signal_price_limit`).
-        #[arg(long = "order-policy")]
-        order_policy: Option<String>,
-        /// User-selected Trade Kit credential source (`oauth` or `api_key`).
-        #[arg(long = "auth-mode")]
-        auth_mode: Option<String>,
-        /// User-confirmed stable flat settings and typed `extra` entries.
-        #[arg(long = "settings-json")]
-        settings_json: Option<String>,
-        /// One-time continuation permit required for every `auto` policy write.
-        /// It binds the final write to the exact user-confirmed draft.
-        #[arg(long = "continuation-id")]
-        continuation_id: Option<String>,
-    },
-
-    /// Continue a short-lived, job-bound execution configuration flow.
-    #[command(name = "autotrade-consent-continue", hide = true)]
-    AutotradeConsentContinue {
-        #[arg(long = "job-id")]
-        job_id: String,
-        #[arg(long = "agent-id")]
-        agent_id: String,
-        #[arg(long = "continuation-id")]
-        continuation_id: Option<String>,
-        #[arg(long)]
-        mode: Option<String>,
-        #[arg(long)]
-        origin: Option<String>,
-        #[arg(long = "signal-type")]
-        signal_type: Option<String>,
-        #[arg(long = "delivery-id")]
-        delivery_id: Option<String>,
-        #[arg(long = "required-field")]
-        required_fields: Vec<String>,
-        #[arg(long = "confirm-mode", default_value_t = false)]
-        confirm_mode: bool,
-        /// Confirm the complete inactive execution draft returned by the
-        /// preceding continuation call. Valid only as a separate resume.
-        #[arg(long = "confirm-draft", default_value_t = false)]
-        confirm_draft: bool,
-        #[arg(long = "trade-amount")]
-        trade_amount: Option<String>,
-        #[arg(long)]
-        cap: Option<String>,
-        #[arg(long)]
-        quote: Option<String>,
-        #[arg(long)]
-        environment: Option<String>,
-        #[arg(long = "margin-mode")]
-        margin_mode: Option<String>,
-        #[arg(long = "order-policy")]
-        order_policy: Option<String>,
-        /// User-selected Trade Kit credential source (`oauth` or `api_key`).
-        #[arg(long = "auth-mode")]
-        auth_mode: Option<String>,
-        /// User-confirmed stable flat settings and typed `extra` entries.
-        #[arg(long = "settings-json")]
-        settings_json: Option<String>,
-        #[arg(long, default_value_t = false)]
-        cancel: bool,
+        /// Complete JSON object of Guide-defined Consent values.
+        #[arg(long = "values-json")]
+        values_json: String,
     },
 
     /// Compatibility entry point for delivery policy handling. Only an active
@@ -879,6 +787,15 @@ pub enum AgentCommand {
         delivery_id: String,
         #[arg(long)]
         amount: String,
+    },
+
+    /// Restore local Guide/Consent material without reserving execution.
+    #[command(name = "autotrade-guide-prepare", hide = true)]
+    AutotradeGuidePrepare {
+        #[arg(long = "job-id")]
+        job_id: String,
+        #[arg(long = "delivery-id")]
+        delivery_id: String,
     },
 
     /// Reserve an Agent-direct delivery immediately before the selected
@@ -936,17 +853,6 @@ pub enum AgentCommand {
         /// Concise user-safe reason; command output and credentials are forbidden.
         #[arg(long)]
         reason: String,
-    },
-
-    /// Read-only first-entry gate for an explicitly scoped subscription watch.
-    #[command(name = "autotrade-watch-precheck", hide = true)]
-    AutotradeWatchPrecheck {
-        #[arg(long = "job-id")]
-        job_id: String,
-        /// Require an explicit review of an existing local execution policy
-        /// before restoring this subscription's scoped watch.
-        #[arg(long = "review-existing", default_value_t = false)]
-        review_existing: bool,
     },
 
     /// Ask whether to raise the cap after a successful over-cap one-shot.
@@ -2189,19 +2095,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             Ok(())
         }
 
-        AgentCommand::AutotradeWatchPrecheck {
-            job_id,
-            review_existing,
-        } => {
-            let result = if review_existing {
-                task::user::scoped_watch_autotrade_precheck_for_review(&job_id).await?
-            } else {
-                task::user::scoped_watch_autotrade_precheck(&job_id).await?
-            };
-            crate::output::success(result);
-            Ok(())
-        }
-
         AgentCommand::AutotradeConsentRequest {
             job_id,
             agent_id: _,
@@ -2239,7 +2132,18 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             delivery_id,
         } => {
             let result =
-                task::common::autotrade::executor::claim_guide_direct(&job_id, &delivery_id)?;
+                task::common::autotrade::executor::claim_guide_direct(&job_id, &delivery_id).await?;
+            crate::output::success(result);
+            Ok(())
+        }
+
+        AgentCommand::AutotradeGuidePrepare {
+            job_id,
+            delivery_id,
+        } => {
+            let result =
+                task::common::autotrade::executor::prepare_guide_direct(&job_id, &delivery_id)
+                    .await?;
             crate::output::success(result);
             Ok(())
         }
@@ -2335,197 +2239,25 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             Ok(())
         }
 
-        AgentCommand::AutotradeConsentContinue {
+        AgentCommand::AutotradeGuideConsentUpdate {
             job_id,
-            agent_id,
-            continuation_id,
-            mode,
-            origin,
-            signal_type,
-            delivery_id,
-            required_fields,
-            confirm_mode,
-            confirm_draft,
-            trade_amount,
-            cap,
-            quote,
-            environment,
-            margin_mode,
-            order_policy,
-            auth_mode,
-            settings_json,
-            cancel,
+            values_json,
         } => {
-            use task::common::autotrade::consent;
-            use task::common::autotrade::continuation::{
-                self, ExplicitValues, Origin, SelectedMode, StartBinding,
-            };
-            if cancel {
-                if mode.is_some()
-                    || origin.is_some()
-                    || signal_type.is_some()
-                    || delivery_id.is_some()
-                    || !required_fields.is_empty()
-                    || confirm_mode
-                    || confirm_draft
-                    || trade_amount.is_some()
-                    || cap.is_some()
-                    || quote.is_some()
-                    || environment.is_some()
-                    || margin_mode.is_some()
-                    || order_policy.is_some()
-                    || auth_mode.is_some()
-                    || settings_json.is_some()
-                {
-                    anyhow::bail!("--cancel does not accept configuration arguments");
-                }
-                let continuation_id = continuation_id.as_deref().ok_or_else(|| {
-                    anyhow::anyhow!("--continuation-id is required with --cancel")
-                })?;
-                continuation::cancel(&job_id, &agent_id, continuation_id)?;
-                crate::output::success(serde_json::json!({
-                    "jobId": job_id,
-                    "continuationId": continuation_id,
-                    "cancelled": true,
-                }));
-                return Ok(());
-            }
-
-            let selected_mode = mode.as_deref().map(SelectedMode::parse).transpose()?;
-            let values = ExplicitValues {
-                trade_amount_u: trade_amount.as_deref(),
-                cap_u: cap.as_deref(),
-                quote_token: quote.as_deref(),
-                trade_environment: environment.as_deref(),
-                margin_mode: margin_mode.as_deref(),
-                order_policy: order_policy.as_deref(),
-                auth_mode: auth_mode.as_deref(),
-                dynamic_settings: consent::parse_dynamic_settings_json(
-                    settings_json.as_deref(),
-                    "--settings-json",
-                )?,
-                confirm_draft,
-            };
-
-            let result = if continuation_id.is_none() {
-                if confirm_draft {
-                    anyhow::bail!("--confirm-draft requires --continuation-id");
-                }
-                let mut selected_mode = selected_mode
-                    .ok_or_else(|| anyhow::anyhow!("--mode is required when starting"))?;
-                let origin = origin
-                    .as_deref()
-                    .ok_or_else(|| anyhow::anyhow!("--origin is required when starting"))
-                    .and_then(Origin::parse)?;
-                if origin != Origin::SubscriptionRestore {
-                    anyhow::bail!(
-                        "new consent continuations are supported only for subscription restoration"
-                    );
-                }
-                let signal_type = signal_type
-                    .as_deref()
-                    .ok_or_else(|| anyhow::anyhow!("--signal-type is required when starting"))?;
-                let asset_class = signal_type
-                    .parse::<crate::asset_class::AssetClass>()
-                    .map_err(anyhow::Error::msg)?;
-                let precheck =
-                    task::user::scoped_watch_autotrade_precheck_for_review(&job_id).await?;
-                let restore_context = task::user::bind_subscription_restore_consent_context(
-                    &precheck,
-                    &job_id,
-                    &agent_id,
-                    asset_class,
-                )?;
-                let mut effective_required_fields = required_fields;
-                for field in &restore_context.required_fields {
-                    if !effective_required_fields.contains(field) {
-                        effective_required_fields.push(field.clone());
-                    }
-                }
-                let mut mode_confirmed = confirm_mode;
-                if restore_context.preserve_existing_mode && !confirm_mode {
-                    selected_mode = restore_context
-                        .existing_mode
-                        .as_deref()
-                        .ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "guide refresh cannot preserve a missing execution mode"
-                            )
-                        })
-                        .and_then(SelectedMode::parse)?;
-                    mode_confirmed = true;
-                }
-                let seed_consent = task::common::autotrade::consent::load_consent(&job_id)?;
-                continuation::start_or_update(
-                    Some(StartBinding {
-                        job_id: &job_id,
-                        agent_id: &agent_id,
-                        selected_mode,
-                        mode_confirmed,
-                        origin,
-                        signal_type,
-                        original_delivery_id: delivery_id.as_deref(),
-                        required_fields: Some(&effective_required_fields),
-                        service_guide_hash: restore_context.service_guide_hash.as_deref(),
-                        service_guide_hash_resolved: restore_context.service_guide_hash_resolved,
-                        seed_consent: seed_consent.as_ref(),
-                    }),
-                    &job_id,
-                    &agent_id,
-                    None,
-                    None,
-                    values,
-                )?
-            } else {
-                if origin.is_some()
-                    || signal_type.is_some()
-                    || delivery_id.is_some()
-                    || !required_fields.is_empty()
-                    || confirm_mode
-                {
-                    anyhow::bail!(
-                        "resume accepts only --continuation-id, optional --mode, and explicit values"
-                    );
-                }
-                let continuation_id = continuation_id.as_deref().expect("checked above");
-                let existing = continuation::load_for_resume(&job_id, &agent_id, continuation_id)?;
-                if existing.origin == Origin::SubscriptionRestore {
-                    let asset_class = existing
-                        .signal_type
-                        .parse::<crate::asset_class::AssetClass>()
-                        .map_err(anyhow::Error::msg)?;
-                    let precheck =
-                        task::user::scoped_watch_autotrade_precheck_for_review(&job_id).await?;
-                    let restore_context = task::user::bind_subscription_restore_consent_context(
-                        &precheck,
-                        &job_id,
-                        &agent_id,
-                        asset_class,
-                    )?;
-                    if restore_context.service_guide_hash_resolved
-                        && (!existing.service_guide_hash_resolved
-                            || existing.service_guide_hash.as_deref()
-                                != restore_context.service_guide_hash.as_deref())
-                    {
-                        continuation::clear(&job_id);
-                        anyhow::bail!(
-                            "service guide changed during configuration; restart the restore flow"
-                        );
-                    }
-                }
-                continuation::start_or_update(
-                    None,
-                    &job_id,
-                    &agent_id,
-                    Some(continuation_id),
-                    selected_mode,
-                    values,
-                )?
-            };
-            crate::output::success(result);
+            let values = serde_json::from_str(&values_json)
+                .map_err(|error| anyhow::anyhow!("--values-json must be a JSON object: {error}"))?;
+            let consent = task::common::autotrade::guide::update_active_consent_values(
+                &job_id, values,
+            )?;
+            crate::output::success(serde_json::json!({
+                "jobId": consent.job_id,
+                "consentStatus": "active",
+                "guideHash": consent.guide_hash,
+                "updated": true,
+            }));
             Ok(())
         }
 
+        #[cfg(any())]
         AgentCommand::AutotradeConsentSet {
             job_id,
             mode,
@@ -3371,6 +3103,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
     }
 }
 
+#[cfg(any())]
 fn auto_write_continuation_id<'a>(
     mode: &str,
     continuation_id: Option<&'a str>,
@@ -3646,7 +3379,7 @@ fn validate_a2a_file_arg(
     persist_validated_a2a_spool(pj, &canonical)
 }
 
-#[cfg(test)]
+#[cfg(all(test, any()))]
 mod auto_consent_permit_tests {
     use super::{auto_write_continuation_id, run, AgentCommand};
 

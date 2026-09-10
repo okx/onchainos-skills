@@ -8,10 +8,10 @@ ONCHAINOS_BIN="$INSTALL_DIR/onchainos"
 # --- 1. Install OnchainOS -----------------------------------
 echo "[onchainos] Installing CLI, skills, and A2A runtime..."
 
-npx -y oc-onchainos install
+npx -y @okxweb3/onchainos-installer install
 
 if [ ! -x "$ONCHAINOS_BIN" ]; then
-  echo "[onchainos] ERROR: oc-onchainos did not produce $ONCHAINOS_BIN"
+  echo "[onchainos] ERROR: @okxweb3/onchainos-installer did not produce $ONCHAINOS_BIN"
   exit 1
 fi
 

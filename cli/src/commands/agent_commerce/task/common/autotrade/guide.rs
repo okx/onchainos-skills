@@ -192,6 +192,18 @@ pub fn consent_path(job_id: &str) -> Result<PathBuf> {
         .join(format!("{job_id}.md")))
 }
 
+/// Pre-Guide Consent records used the same directory with a JSON extension.
+/// New writes always target [`consent_path`]; this is read-only migration input.
+fn legacy_consent_path(job_id: &str) -> Result<PathBuf> {
+    if !job_id_is_safe(job_id) {
+        bail!("invalid job id")
+    }
+    Ok(crate::home::onchainos_home()?
+        .join("autotrade")
+        .join("consent")
+        .join(format!("{job_id}.json")))
+}
+
 pub fn write_prepared_consent(
     job_id: &str,
     guide: &GuideFile,
@@ -222,6 +234,26 @@ pub fn activate_prepared_consent(job_id: &str) -> Result<()> {
     write_guide_consent(&consent)
 }
 
+/// Replace all user-confirmed values in an existing, active Guide Consent.
+///
+/// This deliberately does not alter the Guide or any Consent metadata. In
+/// particular, a changed Guide must go through the Guide refresh and explicit
+/// confirmation flow rather than being made effective by a Consent edit.
+pub fn update_active_consent_values(
+    job_id: &str,
+    values: BTreeMap<String, Value>,
+) -> Result<GuideConsentFile> {
+    validate_consent_values(&values)?;
+    let mut consent = read_guide_consent(job_id)?
+        .context("active Guide Consent is not available locally")?;
+    if consent.lifecycle != GuideConsentLifecycle::Active || consent.expires_at <= now_secs() {
+        bail!("active Guide Consent is not available locally")
+    }
+    consent.values = values;
+    write_guide_consent(&consent)?;
+    Ok(consent)
+}
+
 pub fn abort_prepared_consent(job_id: &str) {
     let Ok(Some(mut consent)) = read_guide_consent(job_id) else {
         return;
@@ -230,6 +262,85 @@ pub fn abort_prepared_consent(job_id: &str) {
         consent.lifecycle = GuideConsentLifecycle::Aborted;
         let _ = write_guide_consent(&consent);
     }
+}
+
+/// Upgrade the retired JSON Consent in place when a delivery reaches its final
+/// claim gate. New Guide Consent documents are always parsed as such; only an
+/// unmarked local JSON document is considered a legacy record.
+pub fn migrate_legacy_json_consent_if_needed(
+    job_id: &str,
+    agent_id: &str,
+    service_id: &str,
+) -> Result<()> {
+    use super::consent::{ConsentLifecycle, ConsentMode, CONSENT_VERSION};
+    use super::subscription_config::{self, ExecutionMode};
+
+    let current_path = consent_path(job_id)?;
+    let legacy_path = legacy_consent_path(job_id)?;
+    let path = if current_path.exists() {
+        current_path
+    } else if legacy_path.exists() {
+        legacy_path
+    } else {
+        return Ok(());
+    };
+    let raw = std::fs::read_to_string(&path).context("local Consent is not readable")?;
+    if raw.starts_with("<!-- onchainos-autotrade:consent\n") {
+        read_guide_consent(job_id)?;
+        return Ok(());
+    }
+
+    let legacy: super::consent::ConsentFile =
+        serde_json::from_str(&raw).context("local Consent is neither current Guide Consent nor legacy JSON")?;
+    if legacy.version > CONSENT_VERSION || legacy.job_id != job_id {
+        bail!("legacy Consent metadata is invalid")
+    }
+    if legacy.lifecycle != ConsentLifecycle::Active || legacy.expires_at <= now_secs() {
+        return Ok(());
+    }
+
+    let guide = load_guide(job_id)?;
+    let mut values = serde_json::to_value(&legacy)
+        .context("legacy Consent cannot be migrated")?
+        .as_object()
+        .cloned()
+        .context("legacy Consent must be a JSON object")?;
+    for field in [
+        "version",
+        "jobId",
+        "mode",
+        "requiredFields",
+        "serviceGuideHash",
+        "guideHash",
+        "lifecycle",
+        "createdAt",
+        "expiresAt",
+    ] {
+        values.remove(field);
+    }
+    let values = values.into_iter().collect::<BTreeMap<_, _>>();
+    validate_consent_values(&values)?;
+    // A completed local choice takes precedence. Only bootstrap the current
+    // per-service setting for a subscription that has never had one. Persist
+    // it before replacing legacy JSON so a configuration write failure leaves
+    // the old `mode` available for a safe retry.
+    if subscription_config::execution_mode(agent_id, service_id)?.is_none() {
+        let execution_mode = match legacy.mode {
+            ConsentMode::Auto => ExecutionMode::GuideDirect,
+            ConsentMode::Manual | ConsentMode::Decline => ExecutionMode::SignalOnly,
+        };
+        subscription_config::save_execution_mode(agent_id, service_id, execution_mode, false)?;
+    }
+    write_guide_consent(&GuideConsentFile {
+        version: GUIDE_CONSENT_VERSION,
+        job_id: job_id.to_string(),
+        guide_hash: guide_contract_hash(&guide)?,
+        lifecycle: GuideConsentLifecycle::Active,
+        values,
+        created_at: legacy.created_at,
+        expires_at: legacy.expires_at,
+    })?;
+    Ok(())
 }
 
 pub fn consent_snapshot(job_id: &str) -> GuideConsentSnapshot {
@@ -426,6 +537,137 @@ mod tests {
         write_guide_consent(&consent).unwrap();
 
         assert!(has_active_execution_contract("job-guide-plain"));
+
+        std::env::remove_var("ONCHAINOS_HOME");
+        std::fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
+    fn active_consent_values_can_be_replaced_without_changing_guide_metadata() {
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp")
+            .join("guide_consent_update");
+        std::fs::remove_dir_all(&home).ok();
+        std::fs::create_dir_all(&home).unwrap();
+        std::env::set_var("ONCHAINOS_HOME", &home);
+
+        let draft = parse_draft(Some("Follow the saved Signal."), None)
+            .unwrap()
+            .unwrap();
+        let guide = draft.clone().into_file("job-guide-update", "svc-guide", None);
+        write_guide(&guide, &draft.source).unwrap();
+        write_prepared_consent(
+            "job-guide-update",
+            &guide,
+            serde_json::from_value(serde_json::json!({"tradeAmount": "10"})).unwrap(),
+            60,
+        )
+        .unwrap();
+        activate_prepared_consent("job-guide-update").unwrap();
+        let before = read_guide_consent("job-guide-update").unwrap().unwrap();
+
+        let updated = update_active_consent_values(
+            "job-guide-update",
+            serde_json::from_value(serde_json::json!({
+                "tradeAmount": "20",
+                "marginMode": "cross"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(updated.values["tradeAmount"], "20");
+        assert_eq!(updated.values["marginMode"], "cross");
+        assert_eq!(updated.version, before.version);
+        assert_eq!(updated.job_id, before.job_id);
+        assert_eq!(updated.guide_hash, before.guide_hash);
+        assert_eq!(updated.lifecycle, before.lifecycle);
+        assert_eq!(updated.created_at, before.created_at);
+        assert_eq!(updated.expires_at, before.expires_at);
+
+        std::env::remove_var("ONCHAINOS_HOME");
+        std::fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
+    fn migrates_live_legacy_json_and_preserves_an_existing_execution_choice() {
+        use crate::commands::agent_commerce::task::common::autotrade::{
+            subscription_config::{self, ExecutionMode},
+        };
+
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp")
+            .join("guide_legacy_json_migration");
+        std::fs::remove_dir_all(&home).ok();
+        std::fs::create_dir_all(&home).unwrap();
+        std::env::set_var("ONCHAINOS_HOME", &home);
+
+        let job_id = "job-legacy-guide";
+        let agent_id = "agent-legacy-guide";
+        let service_id = "service-legacy-guide";
+        let source = "Follow the saved Signal with the confirmed settings.";
+        let draft = parse_draft(Some(source), None).unwrap().unwrap();
+        let guide = draft
+            .clone()
+            .into_file(job_id, service_id, Some("provider-legacy-guide"));
+        write_guide(&guide, &draft.source).unwrap();
+
+        let legacy = serde_json::json!({
+            "version": 5,
+            "jobId": job_id,
+            "mode": "auto",
+            "capU": "100",
+            "tradeAmountU": "100",
+            "quoteToken": "usdt",
+            "tradeEnvironment": "demo",
+            "marginMode": "isolated",
+            "orderPolicy": "market",
+            "requiredFields": ["tradeAmount"],
+            "serviceGuideHash": "sha256:ignored",
+            "tradeAmountBasis": "notional",
+            "tradeAmountMode": "fixed_amount",
+            "createdAt": 1,
+            "expiresAt": now_secs() + 3600,
+        });
+        let path = legacy_consent_path(job_id).unwrap();
+        crate::home::write_secure(&path, serde_json::to_string(&legacy).unwrap().as_bytes())
+            .unwrap();
+
+        migrate_legacy_json_consent_if_needed(job_id, agent_id, service_id).unwrap();
+        assert!(consent_path(job_id).unwrap().exists());
+        let migrated = read_guide_consent(job_id).unwrap().unwrap();
+        assert_eq!(migrated.lifecycle, GuideConsentLifecycle::Active);
+        assert_eq!(migrated.values.get("capU"), Some(&Value::String("100".into())));
+        assert!(!migrated.values.contains_key("requiredFields"));
+        assert!(!migrated.values.contains_key("mode"));
+        assert_eq!(
+            subscription_config::execution_mode(agent_id, service_id).unwrap(),
+            Some(ExecutionMode::GuideDirect)
+        );
+
+        subscription_config::save_execution_mode(
+            agent_id,
+            service_id,
+            ExecutionMode::SignalOnly,
+            true,
+        )
+        .unwrap();
+        std::fs::remove_file(consent_path(job_id).unwrap()).unwrap();
+        crate::home::write_secure(&path, serde_json::to_string(&legacy).unwrap().as_bytes())
+            .unwrap();
+        migrate_legacy_json_consent_if_needed(job_id, agent_id, service_id).unwrap();
+        assert_eq!(
+            subscription_config::execution_mode(agent_id, service_id).unwrap(),
+            Some(ExecutionMode::SignalOnly)
+        );
 
         std::env::remove_var("ONCHAINOS_HOME");
         std::fs::remove_dir_all(home).ok();

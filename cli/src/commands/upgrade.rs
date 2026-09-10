@@ -30,19 +30,19 @@ pub struct PreflightArgs {}
 
 pub async fn execute(_: UpgradeArgs) -> Result<()> {
     let status = Command::new("npx")
-        .args(["-y", "oc-onchainos", "install"])
+        .args(["-y", "@okxweb3/onchainos-installer", "install"])
         .status()
-        .context("failed to start `npx -y oc-onchainos install`")?;
+        .context("failed to start `npx -y @okxweb3/onchainos-installer install`")?;
 
     if !status.success() {
-        bail!("`npx -y oc-onchainos install` exited with {status}");
+        bail!("`npx -y @okxweb3/onchainos-installer install` exited with {status}");
     }
 
     Ok(())
 }
 
 pub async fn preflight(_: PreflightArgs) -> Result<()> {
-    bail!("`onchainos preflight` is deprecated; use `npx -y oc-onchainos install`")
+    bail!("`onchainos preflight` is deprecated; use `npx -y @okxweb3/onchainos-installer install`")
 }
 
 fn discover_skill_paths_in(home: &Path) -> Vec<PathBuf> {
