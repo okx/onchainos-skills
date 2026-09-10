@@ -13,6 +13,12 @@ Trim text values and use exact camelCase keys.
 
 - Require the exact value `A2MCP` or `A2A`.
 
+#### Service Information Collection Guide
+
+Immediately below the service type choices, show:
+
+> Not sure how to proceed? See the [Developer Documentation](https://web3.okx.com/onchainos/dev-docs/okxai/asp) for detailed instructions.
+
 ### serviceName
 
 - Require a 5–30 character noun phrase.

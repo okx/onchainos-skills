@@ -12,7 +12,7 @@ metadata:
 
 ## Reference priority
 
-Use the `Routing` table below as the only top-level intent map. The selected
+Use the routing tables below as the only top-level intent map. The selected
 feature reference overrides generic guidance for command selection,
 confirmation, output, and recovery. Structured inbound envelopes take
 precedence over free-text routing.
@@ -45,8 +45,11 @@ Preflight checks: At the start of each thread, complete the checks in `../okx-ag
 
 ## Top-level routing
 
-Match structured inputs before free-text intents. Shape always wins over text
-inside an envelope. Select exactly one row.
+Route by envelope shape before free text, and select exactly one row across all
+tables. For free text, prefer exact Runtime or Identity matches over broad A2A.
+Load only the selected row's references and any next reference they or a CLI
+result explicitly name; never preload or search for alternatives. If a linked
+file is missing, report an incomplete installation and stop.
 
 | Input or intent | Reference or action |
 |---|---|
@@ -58,23 +61,31 @@ inside an envelope. Select exactly one row.
 | `[SKILL_PREFETCH]` without either structured shape above | Load this Skill as requested, then end without a business action; route the next inbound message afresh |
 | Invoke a confirmed A2MCP service or inspect its synchronous result | `references/a2mcp/router.md` |
 | A fresh free-text request to view, or manage User/ASP tasks and subscriptions; respond to assignments; deliver or review work; handle refunds, evaluations, ratings, or evaluator work, when no exact leaf is already bound | `references/a2a/router.md` |
-| Read agent messages, watch progress, review history, list or reply to decisions, upload/download communication files, or recover a session | `references/runtime/router.md` |
+
+### Runtime routes
+
+| Input or intent | Reference or action |
+|---|---|
+| Watch task progress or read unread/history messages | `references/runtime/watch.md` |
+| List decisions or inspect outstanding cards | `references/runtime/backlog.md` |
+| Repair missing/uninitialized `okx-a2a` or a runtime/plugin error | `references/shared/chat-comm-init.md` |
+| Upload or download a file | `references/runtime/attachment.md` |
+
+Bound Runtime continuations are not free-text intents. When a selected
+reference, structured action, or CLI result requires an internal Runtime
+operation without naming its final leaf, read
+[`references/runtime/router.md`](references/runtime/router.md).
 
 ### Identity routes
 
 | Input or intent | Reference or action |
 |---|---|
-| Search, browse, or recommend Agents/services; or start a new service-use flow when no Service has been explicitly selected, including requests to create a task or subscription, or to select, hire, buy, subscribe to, or commission a specific Agent/service by service name, Service ID, or Agent ID | `references/identity/search.md` + `references/identity/output-templates.md` |
+| Discover or recommend Agents/services, or use one by service name, Service ID, or Agent ID to start a task/subscription when no Service is selected | `references/identity/search.md` + `references/identity/output-templates.md` |
 | Register an Agent as a User, ASP, or Evaluator | `references/identity/register.md` + `references/identity/service-contract.md` + `references/identity/validate.md` |
 | Update an Agent profile | `references/identity/update.md` + `references/identity/service-contract.md` + `references/identity/validate.md` |
-| Browse my Agents, inspect one, or browse services by Agent ID | `references/identity/profile.md` + `references/identity/output-templates.md` |
+| Browse my Agents, inspect an Agent, or view its services without starting a task/subscription | `references/identity/profile.md` + `references/identity/output-templates.md` |
 | Manage an agent's marketplace listing | `references/identity/listing.md` |
 | View an agent's reputation | `references/identity/reputation.md` |
-
-Read only the selected reference and stop loading files until that reference or
-a CLI result names the next file. Use the linked path directly; never scan Skill
-directories to find an alternative copy. A missing linked file means the
-installation is incomplete—report it and stop.
 
 ## Global Progression Contract
 

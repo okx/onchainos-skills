@@ -123,6 +123,18 @@ for (const [target, required, forbidden] of routingContracts) {
   }
 }
 
+const serviceContractPath = path.join(skillDir, "references/identity/service-contract.md");
+if (!fs.existsSync(serviceContractPath)) {
+  errors.push("references/identity/service-contract.md: service contract owner is missing");
+} else {
+  const source = fs.readFileSync(serviceContractPath, "utf8");
+  const serviceTypeSection = source.match(/### serviceType\n([\s\S]*?)(?=\n### )/)?.[1] || "";
+  const developerDocsLink = "[Developer Documentation](https://web3.okx.com/onchainos/dev-docs/okxai/asp)";
+  if (!serviceTypeSection.includes(developerDocsLink)) {
+    errors.push("references/identity/service-contract.md: service type prompt is missing the ASP developer documentation link");
+  }
+}
+
 const requiredOwners = [
   "references/a2a/router.md",
   "references/a2a/user/router.md",

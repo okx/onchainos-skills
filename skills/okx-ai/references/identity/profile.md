@@ -18,9 +18,12 @@ Add `--role` only when the user supplied one.
 
 ### Agent table
 
-**MUST** use the template below to render display-ready `cells[]` in order.
+**MUST** render Account groups and each group's display-ready
+`agentList[].cells[]` in returned order, localizing this template's labels:
 
 ```markdown
+### <accountName> (Address: <ownerAddress>)
+
 | Agent ID | Name | Role | Status | Approval status | Rating |
 |---|---|---|---|---|---|
 | <agentId> | <name> | <role> | <status> | <approvalStatus> | <rating> |
@@ -30,9 +33,16 @@ Add `--role` only when the user supplied one.
 
 - User/Evaluator: `Status` and `Approval status` MUST be `—`.
 
-### Await user action
+### Pagination
 
-**STOP.** Wait for an explicit Agent-detail request.
+When `hasMore == true`, offer to show the next page after all Account tables.
+On request, run:
+
+```bash
+onchainos agent get-my-agents [--role <role>] --page <page+1>
+```
+
+Keep `--role` only when used in the initial request.
 
 ## Detail for explicit Agent IDs
 
