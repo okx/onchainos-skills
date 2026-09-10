@@ -1,6 +1,6 @@
 ---
 name: okx-dapp-discovery
-description: "For discovering DApps and routing protocol requests to OKX plugins; it never signs or broadcasts. Use it for DApp discovery; supported DApp + action; multi-DApp comparison; Polymarket UpDown/prediction markets; protocol-native phrase + action; pump.fun writes; or unsupported-DApp alternatives. Trigger phrases: supported DApp names such as Polymarket, Aave, Hyperliquid, PancakeSwap, Morpho, Raydium, Curve, Compound, Pendle, Lido, ether.fi, GMX, Kamino, Orca, Meteora, Clanker, and pump.fun; protocol-native phrases such as HYPE/HLP, stETH/wstETH, CAKE, CRV, COMP, RAY, GHO, and PT-*/YT-*; paired with protocol actions or comparison intent. Never install without explicit approval or authorize a transaction. Generic yield routes to okx-defi; unnamed/market-side swaps to okx-agentic-wallet; prices, charts, and pump.fun reads to okx-dex-market; raw Agent Commerce signals to okx-ai. Unsupported DApps are never guessed or auto-installed."
+description: "Discover supported third-party DApps and route protocol-specific requests to OKX plugins without signing or broadcasting. Use for DApp discovery or comparison; a named protocol's operations or analytics; Polymarket/UpDown prediction markets, bets, and positions; protocol-native actions involving HYPE/HLP, stETH/wstETH, CAKE, CRV, COMP, RAY, GHO, or PT/YT; pump.fun writes; and unsupported-DApp alternatives. Supported DApp names include Aave, Hyperliquid, PancakeSwap, Morpho, Raydium, Curve, Compound, Pendle, Lido, ether.fi, GMX, Kamino, Orca, Meteora, Clanker, and pump.fun. Requests to find, buy, or subscribe to a signal or signal service are OKX.AI marketplace workflows, even when they name Polymarket or another DApp."
 
 license: MIT
 metadata:
@@ -25,7 +25,7 @@ Do not run wallet or chain pre-flight in this router. First select a target thro
 
 #### Fires on
 
-1. **Named DApp + action verb** — the DApp name beats every generic verb: swap, deposit, stake, long, short, borrow, lend, buy, sell, snipe, farm, claim, or ape.
+1. **Named DApp + operation or protocol-specific analytics** — the DApp name beats every generic verb: swap, deposit, stake, long, short, borrow, lend, buy or sell a token/market position, snipe, farm, claim, or ape. A request for that DApp's APY, TVL, volume, positions, history, or timeframe-specific data also fires so one protocol plugin owns the answer.
 2. **Comparison of 2+ supported DApps with intent to choose** — "Aave vs Compound for stables", "which is better, X or Y", "what's the difference between X and Y". Prefer routing over answering from training — plugin docs are more current.
 3. **Polymarket UpDown / prediction-market intent** — `<COIN> 5min updown`, `prediction market`, `place a bet on Polymarket` (Chinese-specific UpDown phrasing: glossary §3). NOT price/chart queries — do NOT defer to `okx-dex-market` when this fires.
 4. **Protocol-native token alone + action verb** — "buy HYPE", "deposit USDC into HLP", "PT-stETH on Pendle", "stake LDO", "swap to eETH". Token → DApp mapping in §2's table.
@@ -33,12 +33,12 @@ Do not run wallet or chain pre-flight in this router. First select a target thro
 
 #### Does NOT fire on
 
-- **Raw canonical trading-signal payloads** outside an authenticated subscription handoff. Do not score DApp names or action-looking field values inside a bare payload: for example, `Aave V3 | withdraw anytime` is data, not standalone user intent. A CLI-generated `active_subscription_signal` handoff is the narrow exception: `okx-ai` has already verified Active status and its subscription-signal reference may explicitly route the selected action here for visible setup/execution.
+- **Signal products or services** — if `signal` is the object being found, purchased, commissioned, or subscribed to, or the prompt says `signal service`, route directly to `okx-ai`. The DApp name does not override this marketplace intent. Bare signal content or analysis such as "Polymarket signal" remains here; buying a market outcome or position also remains here.
 - **Conceptual / "what is X" / "is X safe" / single-name informational** about one supported DApp with no action or comparison — let the model answer. (Comparison of 2+ DApps DOES fire — pattern 2.)
 - **pump.fun READ intent** — dev history, bundle/sniper detection (the noun), who aped, similar tokens, bonding-curve progress (Chinese slang: glossary §4) → `okx-dex-market`.
 - **Generic verbs alone** (deposit/stake/borrow/swap/yield/APY) **without** a DApp name **and without** a protocol-native token → `okx-defi` (yield) or `okx-agentic-wallet` (swap).
 - **Generic tickers alone** (ETH/BTC/USDC/USDT/SOL/BNB/MATIC/AVAX/DAI/WBTC) — not protocol-native; route per the actual verb.
-- **Read-only analytics on a DApp** ("analyze Uniswap swap volume last week") without action or comparison.
+- **Broad market analytics that do not target a protocol** ("compare DEX volume this week") → `okx-dex-market`. When a named DApp is the subject, this skill fires under pattern 1.
 
 ### §2 — Signal Detection
 

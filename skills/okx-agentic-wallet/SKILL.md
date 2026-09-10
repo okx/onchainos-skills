@@ -1,6 +1,6 @@
 ---
 name: okx-agentic-wallet
-description: "Use this skill whenever the user wants to use OKX Onchain OS / onchainos CLI / agentic wallet for wallet state or on-chain actions. Triggers: onchainos, Onchain OS wallet, agentic wallet; wallet login/status/account/address/balance/holdings/deposit/receive/send/transfer; on-chain swap/DEX trade/buy/sell/convert; bridge; Gas Station; contract calls; transaction history/status; Bitcoin UTXOs, BRC-20, inscriptions; signing; approvals; wallet export/policy; token or DApp security checks; or audit log."
+description: "Operate OKX Onchain OS wallets and execute or inspect on-chain transactions. Use for wallet login/status/accounts/addresses/balances/holdings; receive/send/transfer; swaps, bridges, limit orders, contract calls, gas estimation, simulation, broadcast, and tracking; Bitcoin UTXO/BRC-20/inscriptions; signing, approvals, wallet policy/export, public-address portfolios, security checks, and audit logs."
 license: MIT
 metadata:
   author: okx
@@ -8,9 +8,9 @@ metadata:
   homepage: "https://web3.okx.com"
 ---
 
-# Onchain OS Wallet
+# OKX Agentic Wallet
 
-Unified wallet skill driving the `onchainos` CLI: wallet lifecycle, Gas Station, DEX swap, cross-chain bridge, limit-order strategy, transaction gateway, public-address portfolio, security scanning, and audit log.
+Wallet and on-chain execution skill using the `onchainos` CLI. It covers wallet lifecycle, Gas Station, DEX swaps, cross-chain bridges, limit-order strategies, transaction gateway operations, public-address portfolios, security checks, and audit logs.
 
 ## Intent Routing
 

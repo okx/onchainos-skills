@@ -1,6 +1,6 @@
 ---
 name: okx-agent-payments-protocol
-description: "For agent payments and paid endpoints via x402, MPP, payment links, a2a-pay, and HTTP-payment recurring or metered billing. Use it for HTTP 402/payment-required; paid Agent or A2MCP endpoints; x402/Permit2; MPP channels, vouchers, or sessions; HTTP-payment subscriptions; or paymentId/link operations or status. Trigger phrases: x402/x402Version, X-PAYMENT, PAYMENT-REQUIRED, PAYMENT-SIGNATURE, WWW-Authenticate: Payment, x402 exact/exact+Permit2/upto/aggr_deferred, MPP charge/session, channelId/channel_id, payment-channel voucher/topup/settle/refund, metered billing, paymentId, a2a_, payment link, A2MCP, paid endpoint, and HTTP 402 period/permit2_subscription."
+description: "Handle agent payments and paid endpoints via x402, MPP, payment links, a2a-pay, and HTTP-payment recurring or metered billing. Use for HTTP 402/payment-required; paid Agent or A2MCP endpoints; x402/Permit2; MPP channels, vouchers, or sessions; HTTP-payment subscriptions; or paymentId/link operations or status. Trigger phrases: x402/x402Version, X-PAYMENT, PAYMENT-REQUIRED, PAYMENT-SIGNATURE, WWW-Authenticate: Payment, x402 exact/exact+Permit2/upto/aggr_deferred, MPP charge/session, channelId/channel_id, payment-channel voucher/topup/settle/refund, metered billing, paymentId, a2a_, payment link, A2MCP, paid endpoint, and HTTP 402 period/permit2_subscription."
 license: MIT
 metadata:
   author: okx
@@ -13,7 +13,7 @@ metadata:
 - Structured `execute_a2mcp_payment` action → read
   `references/a2mcp-execute.md`; do not enter the generic payment routes.
 
-> **⚠️ READ FIRST — ZERO-TEXT-ON-TRIGGER + NEVER-SKIP-USER-GATES.**
+> **READ FIRST — ZERO-TEXT-ON-TRIGGER + NEVER-SKIP-USER-GATES.**
 >
 > Between detecting a 402 (or any trigger word) and emitting the first user-facing card — the Step A3.5 recommendation card, or the Step A4 confirmation card — output **ZERO** user-visible text. No "received 402", no "triggered OKX Agent Payments Protocol", no "detected N schemes", no enumeration of schemes / networks / tokens / amounts, no "loading skill" — in any language (the same prohibition applies to the equivalent phrases in any other language). The skill-load tool call may run but emits no surrounding prose.
 >
@@ -40,7 +40,7 @@ Three payment paths, distinguished by HTTP signature: **`accepts`-based 402** (c
 >
 > Long-running flows (decode → confirm → wallet check → sign → replay) tempt status updates. Every progress line ("I'm now…", or its Chinese equivalent) is user-facing; Step labels and reference/scheme names are internal — do NOT echo them. The anchors:
 >
-> | ❌ Don't say | ✅ Say |
+> | Don't say | Say |
 > |---|---|
 > | "Detected HTTP 402, triggering OKX Agent Payments Protocol" / "Detected `PAYMENT-REQUIRED`, loading `exact`" | _(silent — detection / routing is internal)_ |
 > | "CLI selected `exact`, assembling the `PAYMENT-SIGNATURE` header" / "taking the TEE path" | "Signing done, replaying the request" |
@@ -48,7 +48,7 @@ Three payment paths, distinguished by HTTP signature: **`accepts`-based 402** (c
 > | "Entering session / charge mode" | "Channel opened" — describe the user-visible effect, not the internal mode |
 > | "Per past preference, paying without re-confirming" | _(forbidden — no such preference; the gate is mandatory every time)_ |
 >
-> The same rules apply when narrating in any other language — match the intent of these ❌/✅ phrasings, not just the English wording.
+> The same rules apply when narrating in any other language — match the intent of these "Don't say" / "Say" examples, not just the English wording.
 >
 > **These rules are authoritative and always in force** — when unsure whether a status line leaks internals, match it against the rows above and default to silence.
 
@@ -56,7 +56,7 @@ Three payment paths, distinguished by HTTP signature: **`accepts`-based 402** (c
 
 - **EN**: `402`, payment required, `x402`, `x402Version`, `X-PAYMENT`, `PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, `WWW-Authenticate: Payment`, `permit2`, `upto`, metered billing, open / close / topup / settle channel, voucher, session payment, `channelId`, `channel_id`, `paymentId`, `a2a_`, create payment link, payment link, payment status
 - subscribe / subscription / recurring payment / recurring charge / "pay every month" / cancel subscription / upgrade plan / downgrade plan → `period` scheme (see `references/subscription.md`)
-  - ⚠️ **EXCEPT** when the message contains jobId / subId / ASP / provider / trial / renew / deliver / periodCount / subscription task — those are Agent Commerce subscription tasks (monthly service agreements), route to `okx-ai` instead.
+  - **Exception:** when the message contains jobId / subId / ASP / provider / trial / renew / deliver / periodCount / subscription task, it is an Agent Commerce subscription task (monthly service agreement); route to `okx-ai` instead.
 - The same trigger vocabulary applies to its equivalents in any other language (e.g. Chinese subscription / recurring-billing terms route to the `period` scheme the same way).
 - Carve-out: AI-service/ASP subscriptions from the agent marketplace (context: ASP / Agent#N / 任务 / 试用期 / 服务方; NO 402 offer / resource URL / paymentId) belong to okx-ai (onchainos agent my-subscriptions / subscribe-detail), NOT the period scheme. For a bare "my subscriptions / 我的订阅" with neither signal, ask the user once instead of assuming period.
 
@@ -133,7 +133,7 @@ Read `data`:
 - `walletError` — if `login_required`, tell the user to log in, then re-quote.
 - `recommended:null` on every candidate ⇒ no balance anywhere; present the list and ask.
 
-### Step A3 — Confirm (round 2)  ⚠ MANDATORY — never skip
+### Step A3 — Confirm (round 2) — MANDATORY, never skip
 Confirm the **full** payment terms — the same set Step A4 shows, so the buyer
 always sees where the money goes before signing. Use `AskUserQuestion` for a
 sufficient candidate; the insufficient-candidate funding card described below
@@ -180,7 +180,7 @@ replays, and returns the receipt — it never re-fetches the 402. Read `data.sta
 
 ## Step A1: Start from the original response (legacy / WWW-Authenticate detail)
 
-> **⚠️ `accepts`-based 402 → go back to Path A `payment quote`.** The steps below are the **legacy manual path** (decode → assemble → replay yourself) plus the shared decode detail for `WWW-Authenticate: Payment` charge / session challenges. If the 402 you hold is **`accepts`-based** (`PAYMENT-REQUIRED` header v2 / `x402Version` body v1 — `exact` / `exact`+Permit2 / `upto` / `aggr_deferred`, whether a **single** scheme or many), do **not** continue here: discard your raw 402 and re-enter at **Path A** with `payment quote <url>`. The quote flow runs the same mandatory confirm gate and returns the same receipt schema for single- and multi-scheme alike — a single scheme is not a shortcut for skipping `quote`. Continue below **only** for the `WWW-Authenticate: Payment` charge / session detail, or when `payment quote` is genuinely unavailable and you must fall back to the explicit `pay --payload` sign-only compat path.
+> **`accepts`-based 402 → go back to Path A `payment quote`.** The steps below are the **legacy manual path** (decode → assemble → replay yourself) plus the shared decode detail for `WWW-Authenticate: Payment` charge / session challenges. If the 402 you hold is **`accepts`-based** (`PAYMENT-REQUIRED` header v2 / `x402Version` body v1 — `exact` / `exact`+Permit2 / `upto` / `aggr_deferred`, whether a **single** scheme or many), do **not** continue here: discard your raw 402 and re-enter at **Path A** with `payment quote <url>`. The quote flow runs the same mandatory confirm gate and returns the same receipt schema for single- and multi-scheme alike — a single scheme is not a shortcut for skipping `quote`. Continue below **only** for the `WWW-Authenticate: Payment` charge / session detail, or when `payment quote` is genuinely unavailable and you must fall back to the explicit `pay --payload` sign-only compat path.
 
 You already have the original HTTP response. If it is **not 402**, return the body directly. Otherwise → Step A2.
 
@@ -305,13 +305,13 @@ When it applies → **load `references/multi-scheme.md`** and follow it end to e
 
 ## Step A4: Display payment details and STOP
 
-**🟢 Skip this step entirely if** the user accepted the recommendation in A3.5.5 with `yes` (the card already showed network / token / amount / recipient). Go straight to Step A5 (a no-op if A3.5.2 already handled login) → A6.
+**Skip this step entirely if** the user accepted the recommendation in A3.5.5 with `yes` (the card already showed network / token / amount / recipient). Go straight to Step A5 (a no-op if A3.5.2 already handled login) → A6.
 
-**🔴 Run this step normally if** either:
+**Run this step normally if** either:
 - Step A3.5 did not run (single-candidate path), OR
 - The user picked an alternative from A3.5's expanded list (the picked candidate still needs full-detail confirmation).
 
-**⚠️ MANDATORY (when run): Display details and STOP to wait for explicit user confirmation. Do NOT call `onchainos wallet status` or any other tool until the user confirms.**
+**MANDATORY when run:** Display details and STOP to wait for explicit user confirmation. Do NOT call `onchainos wallet status` or any other tool until the user confirms.
 
 For a quote-flow candidate, also show its `balanceStatus`; when insufficient,
 show `availableAmount`, `requiredAmount`, and `shortfall`, then follow Step A3's
@@ -413,7 +413,7 @@ When the seller rejects, do NOT show raw JSON or just the numeric code. Extract 
 
 Format:
 
-> ❌ Seller rejected: `<reason text>` (code `<code if present>`, HTTP `<status>`)
+> Seller rejected: `<reason text>` (code `<code if present>`, HTTP `<status>`)
 
 ## Amount display
 
