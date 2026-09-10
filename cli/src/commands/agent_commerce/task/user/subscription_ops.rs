@@ -569,7 +569,7 @@ pub(crate) struct MySubscriptionsSnapshot {
 }
 
 /// Minimal machine-readable view used by subscription creation prechecks.
-/// Only non-terminal buyer subscriptions are ever exposed through this type.
+/// Only active buyer subscriptions are ever exposed through this type.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ExistingSubscriptionSummary {
@@ -593,25 +593,21 @@ pub(crate) struct ExistingSubscriptionSummary {
     pub(crate) status: i64,
 }
 
-fn blocks_duplicate_creation(status: i64) -> bool {
-    // Unknown future states fail closed: SubStatus::from_code intentionally
-    // maps them to Init, which remains blocking. Expired is safe for duplicate
-    // creation even when settlement for the old job is still pending; that
-    // settlement continues through the old job's reconciliation flow.
-    !matches!(
-        SubStatus::from_code(status),
-        SubStatus::Completed | SubStatus::Closed | SubStatus::Expired | SubStatus::Failed
-    )
+fn is_active_subscription(status: i64) -> bool {
+    // A purchase may be resumed only when this Buyer already has an Active
+    // subscription to the exact service. Pending, rejected, disputed, terminal,
+    // and unknown states must not turn an old record into a duplicate block.
+    status == SubStatus::Active.code()
 }
 
-fn summarize_non_terminal_buyer_subscriptions(
+fn summarize_active_buyer_subscriptions(
     list: Vec<SubscriptionInfo>,
     buyer_agent_id: &str,
 ) -> Vec<ExistingSubscriptionSummary> {
     let mut summaries = list
         .into_iter()
         .filter(|item| item.buyer_agent_id == buyer_agent_id)
-        .filter(|item| blocks_duplicate_creation(item.status))
+        .filter(|item| is_active_subscription(item.status))
         .map(|item| ExistingSubscriptionSummary {
             job_id: item.job_id,
             service_id: item.service_id,
@@ -625,16 +621,17 @@ fn summarize_non_terminal_buyer_subscriptions(
         })
         .collect::<Vec<_>>();
 
-    // Historical duplicate rows can exist. Surface ACTIVE first because it is
-    // the only status for which the product may offer "Restore listening".
-    summaries.sort_by_key(|item| (!item.restore_listening_available, item.job_id.clone()));
+    // This list contains only Active rows, for which the product may offer
+    // "Restore listening". Sort deterministically in case historical data has
+    // more than one Active record for the same service.
+    summaries.sort_by_key(|item| item.job_id.clone());
     summaries
 }
 
-/// Read all subscriptions that block duplicate creation for an already-resolved buyer.
+/// Read Active subscriptions that block duplicate creation for an already-resolved buyer.
 /// Unlike the user-facing listing, this precheck does not create sessions or
 /// alter device routing.
-pub(crate) async fn fetch_non_terminal_buyer_subscriptions_for_agent(
+pub(crate) async fn fetch_active_buyer_subscriptions_for_agent(
     client: &mut TaskApiClient,
     buyer_agent_id: &str,
 ) -> Result<Vec<ExistingSubscriptionSummary>> {
@@ -645,7 +642,7 @@ pub(crate) async fn fetch_non_terminal_buyer_subscriptions_for_agent(
         .map_err(|e| anyhow!("failed to check existing subscriptions: {e}"))?;
     let wrapper: SubscriptionList = serde_json::from_value(data)
         .map_err(|e| anyhow!("failed to parse existing subscriptions: {e}"))?;
-    Ok(summarize_non_terminal_buyer_subscriptions(
+    Ok(summarize_active_buyer_subscriptions(
         wrapper.list,
         &buyer_agent_id,
     ))
@@ -1476,17 +1473,12 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_creation_allows_expired_and_terminal_statuses() {
-        for status in [-1, 1, 3, 4, 42] {
+    fn duplicate_creation_blocks_only_active_status() {
+        assert!(is_active_subscription(SubStatus::Active.code()));
+        for status in [-1, 0, 3, 4, 6, 7, 8, 9, 42] {
             assert!(
-                blocks_duplicate_creation(status),
-                "status {status} must block duplicate creation"
-            );
-        }
-        for status in [6, 7, 8, 9] {
-            assert!(
-                !blocks_duplicate_creation(status),
-                "non-blocking status {status} must allow a new subscription"
+                !is_active_subscription(status),
+                "non-active status {status} must allow a new subscription"
             );
         }
     }
@@ -1501,7 +1493,7 @@ mod tests {
             status,
             ..SubscriptionInfo::default()
         };
-        let summaries = summarize_non_terminal_buyer_subscriptions(
+        let summaries = summarize_active_buyer_subscriptions(
             vec![
                 row("job-rejected", "svc-1", "buyer-1", 3),
                 row("job-active", "svc-1", "buyer-1", 1),
@@ -1511,11 +1503,9 @@ mod tests {
             "buyer-1",
         );
 
-        assert_eq!(summaries.len(), 2);
+        assert_eq!(summaries.len(), 1);
         assert_eq!(summaries[0].job_id, "job-active");
         assert!(summaries[0].restore_listening_available);
-        assert_eq!(summaries[1].job_id, "job-rejected");
-        assert!(!summaries[1].restore_listening_available);
         assert_eq!(
             existing_subscription_for_service(&summaries, "svc-1")
                 .expect("service must be blocked")

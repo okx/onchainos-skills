@@ -2389,6 +2389,7 @@ impl From<RefundSnapshot> for common::PreFetchedTaskContext {
             verified_transaction_hash: snapshot.settlement_tx_hash,
             refund_request_provenance: snapshot.refund_request_provenance,
             expire_time: snapshot.response_deadline,
+            review_expire_time: None,
             test_flag: false,
         }
     }

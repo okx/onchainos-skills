@@ -370,6 +370,7 @@ onchainos agent create-task \\
 - `phase=funding_required`, `decision=blocked`, `reason=insufficient_balance`: enter `skills/okx-agentic-wallet/references/funding.md` immediately and render the shared balance/address/QR result. Do not save or replay the create command. END TURN; do not create again or Watch.
 - CLI error → relay to user, do NOT auto-modify → return to Step 5.
 - `reason=broadcast_submitted` means the UserOperation was submitted, not that `job_created` has arrived.
+- For `payload.initialLifecycle.taskType=one_time`, render its five returned timeline nodes and concise current guidance before Watch. If the display is absent or incomplete, state once that the initial timeline is unavailable; never synthesize lifecycle values.
 - Route `nextAction.id=watch_task` directly to `skills/okx-ai/references/runtime/watch.md` immediately; do not re-enter `SKILL.md` or the A2A router.
 
 Do not call `task-attach`, `set-payment-mode`, `confirm-accept`, `okx-a2a session create`, or `okx-a2a file upload` in this step. Attachments were saved locally by `create-task`; A2A forwarding starts only from the later `job_created` flow.",
@@ -699,6 +700,10 @@ mod tests {
         assert!(out.contains("reason=broadcast_submitted"));
         assert!(out.contains("nextAction.id=watch_task"));
         assert!(out.contains("not that `job_created` has arrived"));
+        assert!(out.contains("`payload.initialLifecycle.taskType=one_time`"));
+        let lifecycle = out.find("render its five returned timeline nodes").unwrap();
+        let watch = out.find("Route `nextAction.id=watch_task`").unwrap();
+        assert!(lifecycle < watch);
         assert!(out.contains("`phase=funding_required`"));
         assert!(out.contains("`decision=blocked`"));
         assert!(out.contains("`reason=insufficient_balance`"));

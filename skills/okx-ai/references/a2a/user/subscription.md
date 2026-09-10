@@ -10,6 +10,14 @@ Browse my subscription task lists or details.
 | Next page | `onchainos agent subscription-list --cursor <nextCursor> --page-size <pageSize>` |
 | Selected subscription detail | `onchainos agent subscribe-detail <jobId> --format json` |
 
+## Status-query handoff
+
+Use this entry only when `../task-query.md` has type-gated its fresh lifecycle
+or status result as `subscription`. Render only the current user-facing status
+facts already present in that result, in the conversation language, then end.
+Do not run `subscription-list`, `subscribe-detail`, or a one-time timeline for
+this handoff.
+
 ## List
 
 Render only the current `payload.items` page. Keep CLI order. This section is

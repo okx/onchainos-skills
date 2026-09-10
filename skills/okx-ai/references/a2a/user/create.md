@@ -90,6 +90,10 @@ onchainos agent create-task \
 
 Include the complete Guide bundle only for a non-blank Guide. Pass confirmed
 Service context unchanged; do not repeat price, balance, or provider checks.
-On `broadcast_submitted/watch_task`, enter the returned scoped watch. Creation
-is final only after `job_created`. For an uncertain mutation result, query fresh
-task state before considering any retry.
+On `broadcast_submitted/watch_task`, hand the complete structured result
+unchanged to [`../../runtime/watch.md`](../../runtime/watch.md). This leaf owns
+the creation command through receipt of that result; Runtime Watch owns the
+post-result sequence: initial one-time progress, watch banner, creation-start
+note, then the scoped watch call. Creation is final only after `job_created`.
+For an uncertain mutation result, query fresh task state before considering any
+retry.

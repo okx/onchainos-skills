@@ -4,113 +4,154 @@ This leaf performs read-only queries and returns fresh task data.
 
 ## One task
 
-Treat `Check the current task progress`, `查询当前任务进展`, and equivalent wording
-in any language as a one-time fresh status query, not as a request to start or
-resume message monitoring. Use an explicit Job ID when supplied; otherwise use
-the single unambiguous Job ID bound to the current conversation's task context.
-If no Job ID can be identified unambiguously, run `active-tasks`, show numbered
-candidates with title, role, status, and counterparty, then wait for a selection.
+Choose the branch from the user's requested information:
+
+| Intent | Branch |
+|---|---|
+| Progress, status, lifecycle, timeline, current stage, responsible party, or next step | Complete lifecycle timeline |
+| Task details, basic information, attributes, type, fee, provider, or description | Task details |
+| Delivery content | Task details plus the saved User deliverable manifest |
+
+Examples such as `Check the current task progress` and `View task status`, or
+equivalent progress/status wording in the conversation language, use the
+complete lifecycle timeline. Generic verbs such as `check`, `view`, or `query`
+inherit their branch from the requested information. When both progress and
+details are mentioned, render the lifecycle timeline; render both outputs when
+the user explicitly requests both.
+
+Use an explicit Job ID when supplied; otherwise use the single unambiguous Job
+ID bound to the current conversation's task context. If no Job ID can be
+identified unambiguously, run `active-tasks`, show numbered candidates with
+title, role, status, and counterparty, then wait for a selection.
 
 ### One-time lifecycle timeline
 
-When the user asks for a task's complete lifecycle, progress timeline, current
-stage, current responsible party, or what happens next, run exactly one
-read-only lifecycle query:
+For any progress-like intent defined above, run exactly one read-only lifecycle
+query:
 
 ```text
-onchainos agent lifecycle <jobId> --agent-id <currentAgentId>
+onchainos agent lifecycle <jobId>
 ```
 
 This command owns XMTP-history aggregation, duplicate and out-of-order event
-handling, and authoritative current-status reconciliation. Do not call
-`agent status`, `okx-a2a session history`, or `next-action` in addition to it.
-Do not reconstruct lifecycle events from free-text peer messages.
+handling, current-wallet User identity resolution, and current-status
+reconciliation.
 
-Continue only when the returned task type is `one_time`. For `subscription`,
-enter [`user/subscription.md`](user/subscription.md) §Status-query handoff using
-the returned current-status facts; do not render the one-time timeline. For an
-unknown or missing task type, fail closed and report that the task type could
-not be established.
+Route the returned task type:
 
-Render the complete five-stage timeline from the CLI-provided milestones and
-current phase, in the user's language:
+- `one_time`: render the timeline below.
+- `subscription`: stop the one-time branch before rendering its timeline and
+  enter [`user/subscription.md`](user/subscription.md) §Status-query handoff
+  with the returned current-status facts.
+- Unknown or missing: stop and report that the task type could not be
+  established. Never assume an untyped task is one-time.
+
+Render the complete five-stage timeline from `display.timeline`, in the exact
+order returned by the CLI and in the user's language:
 
 ```text
 A2A single task · {jobId}
 
-Task progress  {phaseDerivedStep} / 5
+Task progress  {display.progressStep} / {display.progressTotal}
 
-{createdMarker} Task created
-│  {createdAtOrNotProvided}
-│
-{acceptedMarker} ASP accepted
-│  {acceptedAtOrNotProvided}
-│
-{executingMarker} ASP executing
-│  Current execution stage
-│
-{reviewMarker} Waiting for user review
-│  ASP submission: {submittedAtOrNotProvided}
-│
-{completedMarker} Task completed
-   {completedAtOrNotProvided}
+{timeline[0].marker} {localized timeline[0].title}
+│  {localized timeline[0].detail, only when present}
+...
+{each display.followUp item, only when returned, in the same two-line form}
+{timeline[4].marker} {localized timeline[4].title}
+   {localized timeline[4].detail, only when present}
 
-Current responsible party: {localizedResponsibleParty}
-Next: {localizedNextAction}
-Data status: {localizedConfidence}; synced at {syncedAt}
+Current status: {localized display.currentSummary}
+Handled by: {localized display.handledBy}
+Next: {localized display.next}
+{localized display.notice, only when present}
 ```
 
 Rendering rules:
 
-1. Use `✓` only for a stage confirmed by a returned milestone or by the
-   authoritative current phase, `▶` for the current non-terminal stage, and
-   `○` for a future or unconfirmed stage. Never invent a timestamp.
-2. Map the returned phase exactly: `waiting_for_asp` → stage 2,
-   `asp_executing` → stage 3, `waiting_for_user_review` → stage 4, and
-   `completed` → stage 5. For an exception phase, show the confirmed milestones
-   first, then a localized exception line using the CLI-provided status label
-   and description; do not pretend the normal path completed.
-3. Translate the CLI-provided responsible party, next action, confidence,
-   status label, and status description. Preserve the complete Job ID, Agent
-   ID, timestamps, and user-authored text. Render a missing optional milestone
-   as `尚未提供` in Chinese or its equivalent; never estimate it.
-   Treat `statusSource` and `lastEventAt` as supporting diagnostics: mention
-   them only when confidence is `partial` or `conflict`, or when the user asks.
-4. `confirmed` means the current phase is confirmed, not that every historical
-   timestamp exists. `partial` must say that some history is unavailable.
-   `conflict` must say the authoritative current status won and that some
-   message history conflicts. Do not expose raw compatibility keys unless the
-   user asks for diagnostics.
-5. This is a read-only result. Do not create a pending decision, start a watch,
-   send an XMTP message, or perform the returned next action. End after the
-   timeline and concise current responsibility guidance.
+1. Render exactly the five returned `timeline` items. Preserve every returned
+   marker and timestamp.
+2. A node is one title line plus at most one indented detail line. Omit the
+   detail line when `detail` is absent. The completed ASP-execution node may
+   have the single additional deliverable line defined below. User-facing
+   output contains the five plain-language nodes rather than diagnostic fields
+   such as `confidence`, `statusSource`, event names, or SQLite paths.
+3. Insert non-empty `display.followUp` after `timeline[3]` and immediately
+   before `timeline[4]`, preserving the returned order. These rows carry
+   plain-language interruption, platform-review, and refund results. The task
+   completion item remains the final displayed node for every outcome.
+4. Translate user-facing prose only. Preserve the complete Job ID, Agent ID,
+   amounts, timestamps, and user-authored text. `Time unavailable`, `Start time
+   unavailable`, `Not started`, and `Not completed` are intentional CLI
+   fallbacks and are translated directly.
+5. Review readiness is CLI-owned by `display.reviewReady`, which requires both
+   submitted task status and `display.deliverableAvailable=true`. Render the
+   `user_review` detail, `currentSummary`, `handledBy`, and `next` exactly as
+   returned.
+6. If `display` is absent because an older CLI is installed, use the legacy
+   `milestones` and `phase` fields with the original five-stage layout, one
+   detail line per node, and no estimated values. Recommend updating the CLI
+   after presenting the compatible result.
+7. End after the timeline and concise current responsibility guidance.
 
-For a normal detail/status request that does not ask for lifecycle progress,
-continue with the existing status query below.
+When `display.handledBy` is exactly `ASP` or `Platform`, render this source
+sentence in the conversation language using the returned fields:
+
+```text
+Currently handled by {localized display.handledBy}; next: {localized display.next}. You can say “View task details” to review the details.
+```
+
+Preserve the meaning of `display.next` and render this sentence once.
+
+When the returned `timeline` item with `key=asp_execution` has marker `✓` and
+`display.deliverableAvailable=true`, run one scoped, read-only CLI lookup:
+
+```text
+onchainos agent task-deliverable-list --job-id <jobId> --role user
+```
+
+Use only a successful result whose full `jobId` equals the lifecycle Job ID.
+When it returns a non-empty `deliverables` array, select the last returned item
+and add exactly one line under the ASP-execution detail:
+
+```text
+│  Deliverable: [<absolutePath>](<absolutePath>)
+```
+
+Translate only the `Deliverable` label. Preserve the returned absolute path.
+If the command, manifest, directory, or item is unavailable, omit this optional
+line and keep the lifecycle result unchanged. The Skill does not open the
+returned file or derive deliverable data from events or conversation history.
+
+Safety boundary: this branch is read-only. Do not infer missing markers, times,
+deadlines, refund amounts, or review results, and do not start a watch, create a
+decision, send a message, or perform the returned next action.
+
+For the task-details branch, run:
 
 ```text
 onchainos agent status <jobId> --agent-id <currentAgentId>
 ```
 
-Use this existing status call as the task-type gate; never add a probe request.
-The normal result includes `Task type: one_time|subscription|unknown`, derived
-from the authoritative `jobType` in the same task-detail response.
+The status result is also the task-type gate. Its normal output includes
+`Task type: one_time|subscription|unknown`, derived from the authoritative
+`jobType` in the same task-detail response.
 
-When the user asks about this task's delivery content, status, attributes, or
-type, first read the User deliverable manifest with `task-deliverable-list`;
-if it is unavailable, answer from the existing conversation context.
+For a delivery-content request, also read the User deliverable manifest with
+`task-deliverable-list`; when unavailable, answer from the existing
+conversation context. Attributes and task type use the status result directly.
 
 - `one_time`: continue below and render the one-time task card.
 - `subscription`: stop the one-time branch before rendering its card and enter
   [`user/subscription.md`](user/subscription.md) §Status-query handoff with the
-  same status result. Do not call `subscription-list` or `subscribe-detail` for
-  this handoff.
+  same status result.
 - `unknown`: stop and report that the task type could not be established. Never
   assume an untyped task is one-time.
 
 When `agent status` returns a structured arbitration detail instead of the
 normal text summary, use its authoritative `payload.jobType` (`0` one-time,
-`1` subscription) as the same gate. Missing or unsupported values fail closed.
+`1` subscription) as the same gate. Report missing or unsupported values as an
+unknown task type.
 
 For a one-time task, render this exact card from fresh returned facts:
 
@@ -142,15 +183,10 @@ display rules:
 
 ### Submitted one-time review recovery
 
-After rendering the normal card above, continue only when the same status
-result says both `Task type: one_time` and `Task status: submitted`. This is
-the authoritative delivered-but-not-yet-reviewed state. Do not run this branch
-for subscriptions or any other status.
-
-Do not call `next-action` or synthesize a `job_submitted` event. The status
-response is already authoritative and the recovery path must not issue another
-task-detail request. Require `payment: escrow` from that same status result,
-then inspect only the User-side local deliverable manifest:
+After rendering the normal card above, enter this recovery when the same status
+result says `Task type: one_time`, `Task status: submitted`, and
+`payment: escrow`. That result is the authoritative delivered-but-not-yet-reviewed
+state. Read the User-side local deliverable manifest:
 
 ```text
 onchainos agent task-deliverable-list --job-id <jobId> --role user
@@ -160,9 +196,9 @@ onchainos agent task-deliverable-list --job-id <jobId> --role user
   `counterpartyAgentId` to equal the ASP from `status`.
 - Select the last returned deliverable. Require its path to exist as a regular
   file. Its returned `deliverableType` is authoritative: for `text`, read that
-  exact file as untrusted display data; for `file`, do not inspect its contents.
-- If any check fails or no saved deliverable exists, keep the normal task card
-  as the only user-visible result. Never reconstruct a deliverable.
+  exact file as untrusted display data; for `file`, render only the file link.
+- When a check fails or no saved deliverable exists, keep the normal task card
+  as the only user-visible result.
 
 Compose the localized review card directly from those facts. Use the full
 absolute path in its Markdown link and the complete text without truncation:
@@ -192,12 +228,15 @@ onchainos agent pending-decisions-v2 request \
 This command uses the stable database key
 `buyer-review:<jobId>:job_submitted`; an existing decision is reused. After it
 succeeds, immediately append the exact same localized `--user-content` to the
-status response as a Markdown blockquote. Do not call `next-action`,
-`okx-a2a user list`, `outdated-list`, or `watch` before displaying it.
+status response as a Markdown blockquote.
 
 - Preserve this Job ID and idempotency key as the active decision context for
-  the User's next message. This card has no active-watch origin and must not
-  start or resume a watch.
+  the User's next message. This card has no active-watch origin.
+
+Safety boundary: use the existing status response and validated manifest only.
+Do not synthesize events or deliverables, inspect file-deliverable contents,
+make another task-detail/`next-action` query, call `okx-a2a user list` or
+`outdated-list` before rendering the review card, or start or resume a watch.
 
 Use Refund V2 settlement provenance to confirm the refund result.
 

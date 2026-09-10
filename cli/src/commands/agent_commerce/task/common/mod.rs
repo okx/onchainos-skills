@@ -204,10 +204,12 @@ pub struct PreFetchedTaskContext {
     /// for the exact task/payment snapshot now being displayed.
     /// Raw task/subscription API responses never populate this flag.
     pub refund_request_provenance: bool,
-    /// Current action deadline (unix seconds). Rejection response deadlines take
-    /// precedence over `expireTime`; otherwise use the positive server deadline
-    /// or `now()+expireConfig.reviewDeadline` fallback.
+    /// Current ASP action deadline (unix seconds). Only absolute server values
+    /// are accepted; a missing value must not be synthesized from wall-clock time.
     pub expire_time: Option<i64>,
+    /// User deliverable-review deadline (unix seconds). Prefer an absolute
+    /// server value; otherwise derive it once from submittedAt + three days.
+    pub review_expire_time: Option<i64>,
 
     /// FR-2: backend-derived sandbox-review flag (creator ∈ test-buyer allowlist ⇒ `true`).
     /// Read-only, consumed only by the ASP accept decision. Absent/malformed ⇒ `false`.
@@ -230,8 +232,6 @@ impl PreFetchedTaskContext {
                     .or_else(|| value.as_u64().map(|value| value.to_string()))
             })
         };
-        // Prefer the rejection response deadline for ASP decisions, then the
-        // ordinary server expiry, then approximate now()+reviewDeadline.
         let integer = |keys: &[&str]| {
             keys.iter().find_map(|key| {
                 v.get(*key).and_then(|value| {
@@ -241,15 +241,11 @@ impl PreFetchedTaskContext {
                 })
             })
         };
-        let expire_time = integer(&["rejectWindowEndsAt", "responseDeadline", "expireTime"])
-            .filter(|&t| t > 0)
-            .or_else(|| {
-                v.get("expireConfig")
-                    .and_then(|c| c.get("reviewDeadline"))
-                    .and_then(|x| x.as_i64())
-                    .filter(|&s| s > 0)
-                    .map(|secs| chrono::Local::now().timestamp() + secs)
-            });
+        let expire_time = deadline::first_timestamp(
+            v,
+            &["rejectWindowEndsAt", "responseDeadline", "expireTime"],
+        );
+        let review_expire_time = deadline::review_deadline_from_detail(v);
         Self {
             title: v["title"].as_str().unwrap_or("").to_string(),
             description: v["description"].as_str().unwrap_or("").to_string(),
@@ -289,6 +285,7 @@ impl PreFetchedTaskContext {
             verified_transaction_hash: None,
             refund_request_provenance: false,
             expire_time,
+            review_expire_time,
             // FR-2: additive, backward compatible — absent/non-bool testFlag ⇒ false.
             test_flag: v["testFlag"].as_bool().unwrap_or(false),
         }
@@ -1437,24 +1434,29 @@ mod expire_time_tests {
         let v = json!({ "expireTime": now + 3 * DAY });
         let ctx = PreFetchedTaskContext::from_api_response(&v);
         assert_eq!(ctx.expire_time, Some(now + 3 * DAY));
+        assert_eq!(ctx.review_expire_time, Some(now + 3 * DAY));
     }
 
-    // AC-8: `expireTime` absent, `expireConfig.reviewDeadline` positive ⇒
-    // approximate now()+reviewDeadline (assert within a small tolerance since
-    // `now()` is read internally).
     #[test]
-    fn review_deadline_fallback_is_approximate_now_plus_secs() {
-        let before = chrono::Local::now().timestamp();
-        let v = json!({ "expireTime": null, "expireConfig": { "reviewDeadline": 259_200 } });
+    fn millisecond_timestamps_are_normalized_before_deadline_math() {
+        let submitted = 1_700_000_000_i64;
+        let ctx = PreFetchedTaskContext::from_api_response(&json!({
+            "submittedAt": submitted * 1_000
+        }));
+        assert_eq!(ctx.review_expire_time, Some(submitted + 3 * DAY));
+    }
+
+    #[test]
+    fn review_deadline_fallback_is_submitted_at_plus_three_days() {
+        let submitted = 1_700_000_000;
+        let v = json!({
+            "expireTime": null,
+            "submittedAt": submitted,
+            "expireConfig": { "reviewDeadline": 123 }
+        });
         let ctx = PreFetchedTaskContext::from_api_response(&v);
-        let after = chrono::Local::now().timestamp();
-        let got = ctx.expire_time.expect("fallback should produce Some");
-        assert!(
-            got >= before + 259_200 && got <= after + 259_200,
-            "expire_time {got} not within [{}+259200, {}+259200]",
-            before,
-            after
-        );
+        assert_eq!(ctx.expire_time, None);
+        assert_eq!(ctx.review_expire_time, Some(submitted + 3 * DAY));
     }
 
     // AC-8: neither field present ⇒ None (backward compatible, no reminder).
@@ -1463,6 +1465,7 @@ mod expire_time_tests {
         let v = json!({ "title": "x" });
         let ctx = PreFetchedTaskContext::from_api_response(&v);
         assert_eq!(ctx.expire_time, None);
+        assert_eq!(ctx.review_expire_time, None);
     }
 
     #[test]
@@ -1497,6 +1500,7 @@ mod expire_time_tests {
         assert_eq!(ctx.period_start_time, Some(1_700_000_000));
         assert_eq!(ctx.period_end_time, Some(1_700_500_000));
         assert_eq!(ctx.expire_time, Some(1_700_600_000));
+        assert_eq!(ctx.review_expire_time, None);
     }
 
     // AC-8: `expireTime == 0` is filtered out; with no expireConfig it falls to None.
@@ -1507,15 +1511,12 @@ mod expire_time_tests {
         assert_eq!(ctx.expire_time, None);
     }
 
-    // AC-8: `expireTime == 0` but a positive reviewDeadline ⇒ approximate fallback.
     #[test]
-    fn zero_expire_time_uses_review_deadline_fallback() {
-        let before = chrono::Local::now().timestamp();
+    fn duration_without_submitted_time_does_not_invent_a_deadline() {
         let v = json!({ "expireTime": 0, "expireConfig": { "reviewDeadline": DAY } });
         let ctx = PreFetchedTaskContext::from_api_response(&v);
-        let after = chrono::Local::now().timestamp();
-        let got = ctx.expire_time.expect("fallback should produce Some");
-        assert!(got >= before + DAY && got <= after + DAY);
+        assert_eq!(ctx.expire_time, None);
+        assert_eq!(ctx.review_expire_time, None);
     }
 
     // ── FR-2: testFlag mapping (sandbox ASP review) ──────────────────────

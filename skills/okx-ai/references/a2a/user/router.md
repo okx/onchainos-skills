@@ -12,7 +12,8 @@ User/Buyer. Select exactly one final leaf and stop routing.
 | Create a subscription | [`subscription-create.md`](subscription-create.md) |
 | Direct reply to the Runtime Watch creation-start note using `Check subscription task status` or its localized rendering; or query local follow-trade results for a subscription Signal by `jobId` or `deliveryId` | [`subscription-trade-records.md`](subscription-trade-records.md) |
 | List, inspect, or manage a subscription | [`subscription.md`](subscription.md) or [`subscription-manage.md`](subscription-manage.md) |
-| `Check the current task progress` or equivalent wording; list or inspect tasks, saved deliverables, pending evaluations, or tasks the User rejected | [`../task-query.md`](../task-query.md); its existing single-task status call type-gates one-time versus subscription rendering without a probe request |
+| Ask about a task's progress, status, lifecycle, timeline, current stage, current responsible party, or next step | [`../task-query.md`](../task-query.md) §One-time lifecycle timeline; its lifecycle result type-gates one-time versus subscription rendering |
+| Explicitly ask for task details, basic information, attributes, type, fee, provider, description, or delivery content; list or inspect tasks, saved deliverables, pending evaluations, or tasks the User rejected | [`../task-query.md`](../task-query.md); use its detail or list branch |
 | Change task visibility | [`visibility.md`](visibility.md) |
 | Review a deliverable or continue approval/rejection | [`review.md`](review.md) or [`review-decision.md`](review-decision.md) |
 | Refund, close, or inspect refund status | [`refund-prepare.md`](refund-prepare.md) |
@@ -21,10 +22,9 @@ User/Buyer. Select exactly one final leaf and stop routing.
 | Continue an active subscription signal | [`subscription-signal.md`](subscription-signal.md) |
 
 The fixed `Check subscription task status` phrase enters
-`subscription-trade-records.md` only as a direct reply to the Runtime Watch
-creation-start note. Without that direct-reply context, treat subscription
-lifecycle/status wording as a generic subscription query through
-`subscription.md`; do not infer follow-trade intent from the phrase alone.
+`subscription-trade-records.md` as a direct reply to the Runtime Watch
+creation-start note. All other subscription lifecycle/status wording uses the
+generic subscription query in `subscription.md`.
 
 ## System events
 
@@ -51,5 +51,5 @@ lifecycle/status wording as a generic subscription query through
 | `provide_refund_reason` | [`refund-confirm.md`](refund-confirm.md) |
 | `cancel_trial_conversion`, `close_zero_price`, `execute_direct_refund`, `submit_refund_request` | [`refund-confirm.md`](refund-confirm.md); after the bound confirmation load [`refund-execute.md`](refund-execute.md) |
 
-Cross-domain actions are intercepted before this router is loaded. Unknown
-actions are coverage failures; never infer a replacement from prose.
+Cross-domain actions are intercepted before this router is loaded. Treat an
+unknown action as a coverage failure.

@@ -1527,6 +1527,7 @@ pub(crate) async fn deliverable_received_cli(
                 verified_transaction_hash: None,
                 refund_request_provenance: false,
                 expire_time: None,
+                review_expire_time: None,
                 test_flag: false,
             }
         });
@@ -1767,12 +1768,12 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
         "job_submitted",
     );
 
-    // FR-2: append the review-deadline reminder to the acceptance card. `None`
-    // (no expireTime / expireConfig, or not representable) ⇒ empty string, so the
-    // card renders exactly as before (backward compatible, FR-5).
+    // Append the review-deadline reminder to the acceptance card. `None`
+    // (no absolute deadline and no submittedAt-derived fallback) means the card
+    // renders without a deadline rather than inventing one from the current time.
     use crate::commands::agent_commerce::task::common::deadline::{self, DeadlineKind};
     let review_deadline_line = deadline::deadline_reminder_line(
-        p.expire_time,
+        p.review_expire_time,
         chrono::Local::now().timestamp(),
         DeadlineKind::Review,
     )
@@ -2648,7 +2649,8 @@ Part B continues
             token_address: None,
             verified_transaction_hash: None,
             refund_request_provenance: false,
-            expire_time,
+            expire_time: None,
+            review_expire_time: expire_time,
             test_flag: false,
         }
     }

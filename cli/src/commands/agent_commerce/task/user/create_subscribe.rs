@@ -212,11 +212,8 @@ pub async fn handle_create_subscribe(
     // Repeat the selection-time duplicate and balance checks immediately
     // before the V2 subscription write boundary.
     let existing_subscriptions =
-        super::subscription_ops::fetch_non_terminal_buyer_subscriptions_for_agent(
-            client,
-            &user_agent_id,
-        )
-        .await?;
+        super::subscription_ops::fetch_active_buyer_subscriptions_for_agent(client, &user_agent_id)
+            .await?;
     if let Some(existing) = super::subscription_ops::existing_subscription_for_service(
         &existing_subscriptions,
         &params.service_id,

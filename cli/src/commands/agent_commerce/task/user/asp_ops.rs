@@ -533,7 +533,7 @@ pub async fn handle_task_service_select(
             .ok_or_else(|| anyhow::anyhow!(
                 "--agentic-id is required to check existing subscriptions before selecting a subscription service"
             ))?;
-        let existing = super::subscription_ops::fetch_non_terminal_buyer_subscriptions_for_agent(
+        let existing = super::subscription_ops::fetch_active_buyer_subscriptions_for_agent(
             client,
             buyer_agent_id,
         )
