@@ -3,6 +3,10 @@
 Use this leaf for `job_rejected`, `sub_user_reject`, a pending refund request,
 or an explicit request to evaluate one rejected task.
 
+A zero-price one-time task whose fresh status is Failed(9) is terminal and must
+not enter this leaf. Notify the ASP owner of the Failed result and execute the
+returned task-scoped cleanup action; do not offer refund or platform evaluation.
+
 ## Refund request detail and decision
 
 For a System entry, consume the fresh progression result already produced by

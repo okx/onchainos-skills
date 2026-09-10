@@ -125,6 +125,46 @@ fn terminal_notification_result(job_id: &str, event: &str, notification: String)
     .to_string()
 }
 
+/// A buyer rejection is terminal for a zero-price one-time task. There are no
+/// escrowed funds to refund and no evaluation window for the provider to manage.
+pub(crate) fn free_job_rejected_failed(
+    job_id: &str,
+    task: &PreFetchedTaskContext,
+    message: Option<&serde_json::Value>,
+) -> String {
+    let service_name = service_name(task, message);
+    let rejection_reason = task
+        .refund_reason
+        .as_deref()
+        .and_then(authoritative_field)
+        .map(ToOwned::to_owned)
+        .or_else(|| display_field(message, "reason"))
+        .or_else(|| display_field(message, "rejectReason"))
+        .or_else(|| display_field(message, "refundReason"))
+        .unwrap_or_else(|| "Not provided".to_string());
+    let notification = format!(
+        "{} [Job Failed] Job {} ({}) — the buyer rejected the deliverable.\n\
+         - Status: Failed\n\
+         - Rejection reason: {}\n\n\
+         This free one-time task has ended. No refund or platform evaluation is required.",
+        crate::commands::agent_commerce::task::common::TERMINAL_NOTIFICATION_MARKER,
+        job_id,
+        service_name,
+        rejection_reason,
+    );
+
+    let mut result: serde_json::Value = serde_json::from_str(&terminal_notification_result(
+        job_id,
+        "job_rejected",
+        notification,
+    ))
+    .unwrap_or_else(|_| serde_json::json!({}));
+    result["payload"]["statusLabel"] = serde_json::json!("Failed");
+    result["payload"]["statusDescription"] =
+        serde_json::json!("The buyer rejected the free task deliverable; the task is terminal.");
+    result.to_string()
+}
+
 pub(crate) fn authoritative_context_required(
     job_id: &str,
     event: &str,
@@ -418,6 +458,30 @@ mod tests {
         assert!(!content.contains("Job status: Closed"));
         assert!(!content.contains("Job status: Expired"));
         assert!(!content.contains("is pending"));
+    }
+
+    #[test]
+    fn free_one_time_buyer_rejection_is_terminal_failed_without_arbitration() {
+        let mut task = task_context("Daily forecast", 0, "0", "", 9);
+        task.refund_reason = Some("Authoritative rejection reason".to_string());
+        let event = json!({ "reason": "Stale event reason" });
+        let output = parse(free_job_rejected_failed("job-1", &task, Some(&event)));
+
+        assert_eq!(output["decision"], "ready");
+        assert_eq!(
+            output["nextAction"][0]["id"],
+            "notify_and_cleanup_subscription"
+        );
+        assert_eq!(output["payload"]["statusLabel"], "Failed");
+        assert_eq!(output["payload"]["cleanup"]["jobId"], "job-1");
+        let content = output["payload"]["notification"]["content"]
+            .as_str()
+            .unwrap();
+        assert!(content.contains("[Job Failed]"));
+        assert!(content.contains("Status: Failed"));
+        assert!(content.contains("Authoritative rejection reason"));
+        assert!(!content.contains("Stale event reason"));
+        assert!(content.contains("No refund or platform evaluation is required"));
     }
 
     #[test]

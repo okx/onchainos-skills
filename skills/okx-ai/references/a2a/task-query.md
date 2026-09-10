@@ -175,7 +175,7 @@ Saved at: [<absolutePath>](<absolutePath>)
 ---End of deliverable---
 Payment: escrow
 A. Approve → reply 'A'
-B. Reject → reply 'B'
+B. Reject → reply 'B' and include a rejection reason
 <exact `review:` reminder from status, when present>
 ```
 

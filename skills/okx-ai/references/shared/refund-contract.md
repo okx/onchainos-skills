@@ -28,6 +28,7 @@ Always use a fresh read. History or caller events cannot prove settlement.
 | Paid non-trial one-time or formal subscription at Expired(8), matching Buyer, kind, and exact positive original payment | `refund_confirmed`; backend automatic refund arrived. |
 | Trial subscription or exact-zero task at Expired(8) | `expired_without_refundable_payment`; settlement not required. |
 | One-time at Closed(7), positive original amount, `paymentMode=1` | `refund_confirmed`; close returned escrow. |
+| One-time at Failed(9), matching Buyer and exact-zero original payment | `zero_amount_task_failed`; terminal failure with `settlement.state=not_required`. |
 | One-time at Failed(9), matching Buyer and exact positive original payment | `refund_confirmed`. |
 | Formal subscription at Failed(9), matching fresh Buyer/type and exact positive original payment | `refund_confirmed`; render `Refund completed`. |
 | Subscription at Closed(7) | `task_closed_no_new_refund_action`; Closed alone proves no refund. |
@@ -36,8 +37,10 @@ Both Expired(8) outcomes require `job.refundState=resolved` and
 `rules.providerTimeoutRefundExpected=false`. Paid uses
 `settlement.state=confirmed`; no-funds uses `not_required`.
 
-`job_asp_reject_expire` requires matching durable `request-refund` provenance
-plus fresh Failed(9), owner, type, exact amount, and token address.
+For a positive-payment task, `job_asp_reject_expire` requires matching durable
+`request-refund` provenance plus fresh Failed(9), owner, type, exact amount,
+and token address. An exact-zero one-time task at buyer-owned Failed(9) is
+instead terminal with no refund settlement and requires no refund provenance.
 `dispute_resolved` requires that provenance plus fresh kind, ownership, and
 terminal status: status 9 is User-winning refund; status 6 is ASP-winning
 no-refund. An event alone is never proof.

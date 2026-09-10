@@ -56,10 +56,12 @@ tasks use [`provider/assignment.md`](provider/assignment.md) or
 [`params.md`](params.md) instead. A stale-state result ends the exchange without
 another message.
 
-In accepted discussion mode, parameters are immutable. Answer execution-detail
-questions autonomously with at most one peer send in the turn. Do not call task
-mutation commands. Questions beyond capability are forwarded to the owner via
-`user-notify`.
+In accepted discussion mode, enter the Accepted execution-clarification flow in
+[`params.md`](params.md). The bound Buyer task session uses `user-notify` for
+an owner-facing question; after the owner replies, the Buyer main session uses
+`session send` to return the answer to that task session. Do not create a
+pending decision or generic relay. The answer is execution context only: never
+call `service-param-update` or mutate task or commercial terms.
 
 ## Explicit User forwarding
 

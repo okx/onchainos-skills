@@ -310,6 +310,31 @@ pub(crate) fn job_asp_reject_expire(
     ctx: &FlowContext<'_>,
     message: Option<&serde_json::Value>,
 ) -> String {
+    if let Some(detail) = ctx.prefetched.filter(|detail| {
+        detail.status == Some(9)
+            && detail.user_agent_id.as_deref() == Some(ctx.agent_id)
+            && detail.job_type == Some(0)
+            && super::super::refund::is_zero_decimal(detail.token_amount.trim())
+    }) {
+        let rejection_reason = detail
+            .refund_reason
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .or_else(|| message_text(message, "rejectReason"))
+            .or_else(|| message_text(message, "reason"))
+            .unwrap_or_else(|| "Not provided".to_string());
+        let content = format!(
+            "[Task Failed] {} (`{}`): the rejection is confirmed and this free one-time task has ended.\n\
+             - Rejection reason: {}\n\
+             - Refund: Not required (payment amount was 0)\n\
+             No refund reconciliation or platform evaluation is required.",
+            authoritative_title(ctx), ctx.job_id, rejection_reason
+        );
+        return notify_and_end_terminal(&content, &ctx.terminal_session_hint);
+    }
+
     let authoritative_refund_complete = ctx.prefetched.is_some_and(|detail| {
         detail.status == Some(9)
             && detail.user_agent_id.as_deref() == Some(ctx.agent_id)

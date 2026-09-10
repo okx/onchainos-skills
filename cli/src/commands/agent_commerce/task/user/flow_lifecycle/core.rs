@@ -1792,7 +1792,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
      File path: [<localPath>](<localPath>)\n\
      Payment: escrow\n\
      A. Approve → reply 'A'\n\
-     B. Reject → reply 'B'\n\
+     B. Reject → reply 'B' and include a rejection reason\n\
      {review_deadline_line}\
      ```\n\n\
      ▸ deliverableType=text:\n\
@@ -1804,7 +1804,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
      ---End of deliverable---\n\
      Payment: escrow\n\
      A. Approve → reply 'A'\n\
-     B. Reject → reply 'B'\n\
+     B. Reject → reply 'B' and include a rejection reason\n\
      {review_deadline_line}\
      ```\n\n\
      Push to user (localize `--user-content` and `--list-label` to user's language first):\n\n\
@@ -1837,16 +1837,44 @@ fn user_authored_rejection_reason(data: Option<&str>) -> Option<&str> {
     data.map(str::trim).filter(|reason| !reason.is_empty())
 }
 
-/// Compatibility handoff for review replies already relayed to a task session.
-/// Current CLI-driver cards execute in the user conversation and do not enter here.
+/// Review-rejection entry point. Submitted zero-price one-time tasks execute
+/// the existing reject lifecycle immediately; all other tasks receive the
+/// paid/subscription Refund confirmation guidance.
 pub(crate) async fn reject_review(ctx: &FlowContext<'_>) -> String {
+    use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
     let job_id = ctx.job_id;
     let reason = user_authored_rejection_reason(ctx.data);
+    let known_non_free = ctx.prefetched.is_some_and(|task| {
+        task.job_type != Some(0)
+            || !crate::commands::agent_commerce::task::user::refund::is_zero_decimal(
+                &task.token_amount,
+            )
+    });
+    if !known_non_free {
+        let mut client = TaskApiClient::new();
+        match super::super::v2::reject::try_handle_free_review(&mut client, job_id, reason).await {
+            Ok(Some(result)) => return result.to_string(),
+            Ok(None) => {}
+            Err(error) => {
+                return serde_json::json!({
+                    "phase": "deliverable_review",
+                    "decision": "blocked",
+                    "reason": "free_rejection_failed",
+                    "nextAction": [{ "id": "stop" }],
+                    "payload": {
+                        "jobId": job_id,
+                        "error": error.to_string(),
+                    },
+                })
+                .to_string();
+            }
+        }
+    }
     let reason_arg = reason
         .map(|value| format!(" --reason {}", serde_json::to_string(value).unwrap()))
         .unwrap_or_default();
     format!(
-        "[reject_review compatibility] The relayed rejection opens the Refund V2 confirmation flow.\n\n\
+        "[reject_review compatibility] This is not a submitted zero-price one-time task, so the relayed rejection opens the Refund V2 confirmation flow.\n\n\
          Run the read-only `onchainos agent refund-prepare {job_id}{reason_arg}` and always render its complete `payload.display` with the Template 6.1 Confirm Refund Request field-list template, even when the reason is blank. Never replace the card with only a refund-reason question. End the turn after presenting the card. The rejection itself authorizes no refund write: B is not `Submit refund request` intent and does not arm a reason-only continuation. Continue only after the user provides clear submission intent and a refund reason; then rerun the fresh preparation with that verbatim reason and execute only its returned `submit_refund_request` action. A reason without submission intent only refreshes and re-renders Template 6.1. Any other preparation result is the authoritative outcome to present to the user.\n"
     )
 }
@@ -1991,6 +2019,14 @@ mod tests {
 
     #[tokio::test]
     async fn reject_review_without_reason_opens_refund_confirmation() {
+        let paid =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &serde_json::json!({
+                    "jobType": 0,
+                    "status": 2,
+                    "paymentTokenAmount": "1",
+                }),
+            );
         let ctx = crate::commands::agent_commerce::task::user::flow::FlowContext {
             job_id: "0xabc",
             agent_id: "426",
@@ -2000,7 +2036,7 @@ mod tests {
             title_in_extract: "",
             terminal_session_hint: String::new(),
             payment_mode: Some(1),
-            prefetched: None,
+            prefetched: Some(&paid),
             data: None,
         };
 
@@ -2022,6 +2058,14 @@ mod tests {
 
     #[tokio::test]
     async fn legacy_reject_review_with_reason_preserves_it_for_the_confirmation() {
+        let paid =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &serde_json::json!({
+                    "jobType": 0,
+                    "status": 2,
+                    "paymentTokenAmount": "1",
+                }),
+            );
         let ctx = crate::commands::agent_commerce::task::user::flow::FlowContext {
             job_id: "0xabc",
             agent_id: "426",
@@ -2031,7 +2075,7 @@ mod tests {
             title_in_extract: "",
             terminal_session_hint: String::new(),
             payment_mode: Some(1),
-            prefetched: None,
+            prefetched: Some(&paid),
             data: Some("  quality below SLA  "),
         };
 
@@ -2682,7 +2726,10 @@ Part B continues
             "escrow card should append the Review reminder line; got:\n{out}"
         );
         assert!(out.contains("A. Approve → reply 'A'"), "{out}");
-        assert!(out.contains("B. Reject → reply 'B'"), "{out}");
+        assert!(
+            out.contains("B. Reject → reply 'B' and include a rejection reason"),
+            "{out}"
+        );
         assert!(!out.contains("Full refund request:"), "{out}");
     }
 

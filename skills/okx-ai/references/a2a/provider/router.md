@@ -28,7 +28,7 @@ ASP/Provider. Select exactly one final leaf and stop routing.
 | `job_accepted` | [`execution.md`](execution.md) |
 | `job_submitted` | [`../notify.md`](../notify.md) |
 | `job_completed`, `job_auto_completed` | [`../completion.md`](../completion.md) |
-| `job_rejected` | [`arbitration-decision.md`](arbitration-decision.md) |
+| `job_rejected` | Fresh zero-price one-time task at Failed(9) → [`../completion.md`](../completion.md) using the returned terminal notification-and-cleanup action; otherwise → [`arbitration-decision.md`](arbitration-decision.md) |
 | `job_refunded`, `job_auto_refunded`, `job_closed`, `job_expired`, `job_asp_reject_expire`, `job_asp_reject_closed` | [`../refund-reconcile.md`](../refund-reconcile.md) |
 | `dispute_approved` | [`dispute.md`](dispute.md) |
 | `job_disputed` | [`evidence-upload.md`](evidence-upload.md) |

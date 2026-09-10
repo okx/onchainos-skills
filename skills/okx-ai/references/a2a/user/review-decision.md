@@ -15,10 +15,16 @@ for this route.
 
 ## Reject
 
-For any unambiguous rejection, preserve the User-authored wording verbatim,
-enter [`refund-prepare.md`](refund-prepare.md), and render the complete fresh
-Template 6.1 Refund V2 confirmation. Continue with the intent-and-reason response
-matrix in [`refund-confirm.md`](refund-confirm.md).
+For any unambiguous rejection, call the `reject_review` next action. A submitted
+zero-price one-time task requires a non-blank User-authored rejection reason. If
+it is missing, execute the returned `request_rejection_reason` action and wait;
+no reject endpoint is called. Preserve the supplied reason verbatim, then call
+`reject_review` again so the existing `/pre-reject` + `/reject` lifecycle runs.
+The backend transitions that case directly to Failed(9), with no refund request.
+For every other task, preserve the User-authored wording verbatim, enter
+[`refund-prepare.md`](refund-prepare.md), and render the complete fresh Template
+6.1 Refund V2 confirmation. Continue with the intent-and-reason response matrix
+in [`refund-confirm.md`](refund-confirm.md).
 
 For an ambiguous, expired, already-handled, missing, or metadata-mismatched
 reply, re-render or report the exact returned recovery guidance.
