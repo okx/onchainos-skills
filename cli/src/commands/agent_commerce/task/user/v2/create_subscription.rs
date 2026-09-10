@@ -147,16 +147,9 @@ where
     )?;
     establish_local_readiness(&job_id)
         .context("subscription local execution configuration could not be persisted")?;
-    let prebind = match common::a2a_binding::bind_job_provider_to_current_runtime_required(&job_id)
-        .await
-        .context("cannot bind subscription to the current AI runtime; creation was not broadcast")
-    {
-        Ok(prebind) => prebind,
-        Err(error) => {
-            common::autotrade::guide::abort_prepared_consent(&job_id);
-            return Err(error);
-        }
-    };
+    // Provider routing is best-effort. A local okx-a2a readiness or binding
+    // failure must not prevent an otherwise valid subscription broadcast.
+    let prebind = common::a2a_binding::bind_job_provider_to_current_runtime(&job_id).await;
 
     let broadcast = match signing::sign_uop_and_broadcast_full(
         client,
@@ -172,12 +165,16 @@ where
     {
         Ok(value) if !value.is_null() => value,
         Ok(_) => {
-            prebind.rollback_if_created().await;
+            if let Some(prebind) = prebind.as_ref() {
+                prebind.rollback_if_created().await;
+            }
             common::autotrade::guide::abort_prepared_consent(&job_id);
             bail!("broadcast returned no receipt for jobId={job_id}");
         }
         Err(error) => {
-            prebind.rollback_if_created().await;
+            if let Some(prebind) = prebind.as_ref() {
+                prebind.rollback_if_created().await;
+            }
             common::autotrade::guide::abort_prepared_consent(&job_id);
             return Err(error).with_context(|| {
                 format!("broadcast failed or returned an unknown result for jobId={job_id}")

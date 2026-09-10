@@ -603,10 +603,10 @@ mod tests {
     }
 
     // The backend create response is the first point where the subscription has
-    // a jobId. Bind that job to the current runtime before broadcasting so the
-    // on-chain creation event cannot race ahead of local provider routing.
+    // a jobId. Try to bind that job to the current runtime before broadcasting,
+    // but do not block the broadcast when the local binding is unavailable.
     #[test]
-    fn create_subscribe_binds_job_provider_before_broadcast() {
+    fn create_subscribe_treats_job_provider_binding_as_best_effort() {
         let source = include_str!("v2/create_subscription.rs");
         let job_id = source
             .find("validate_create_response(&response)")
@@ -615,15 +615,19 @@ mod tests {
             .find("establish_local_readiness(&job_id)")
             .expect("v2 create must establish local execution readiness");
         let bind = source
-            .find("bind_job_provider_to_current_runtime_required(&job_id)")
-            .expect("v2 create must require runtime binding");
+            .find("bind_job_provider_to_current_runtime(&job_id)")
+            .expect("v2 create must attempt runtime binding without requiring it");
         let broadcast = source
             .find("signing::sign_uop_and_broadcast_full(")
             .expect("v2 create must broadcast the subscription transaction");
         let rollback = source
-            .find("prebind.rollback_if_created().await")
+            .find("if let Some(prebind) = prebind.as_ref()")
             .expect("handler must roll back a newly-created binding when broadcast fails");
 
+        assert!(
+            !source.contains("bind_job_provider_to_current_runtime_required(&job_id)"),
+            "subscription creation must not block on runtime binding"
+        );
         assert!(
             job_id < readiness,
             "jobId must be resolved before local readiness"
@@ -632,7 +636,10 @@ mod tests {
             readiness < bind,
             "local readiness must precede runtime binding"
         );
-        assert!(bind < broadcast, "bind-current must run before broadcast");
+        assert!(
+            bind < broadcast,
+            "best-effort runtime binding must be attempted before broadcast"
+        );
         assert!(
             broadcast < rollback,
             "broadcast failure handling must be able to roll back the pre-bind"
