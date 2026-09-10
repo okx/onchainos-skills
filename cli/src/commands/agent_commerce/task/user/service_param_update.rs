@@ -29,23 +29,18 @@ struct RoundState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum ServiceParamTaskType {
     Single,
-    Subscription,
 }
 
 impl ServiceParamTaskType {
     fn path(self, client: &TaskApiClient, job_id: &str) -> String {
         match self {
             Self::Single => client.endpoint(job_id, "serviceParam"),
-            Self::Subscription => {
-                format!("{}/serviceParam", client.subscribe_path(job_id))
-            }
         }
     }
 
     fn as_str(self) -> &'static str {
         match self {
             Self::Single => "single",
-            Self::Subscription => "subscription",
         }
     }
 }
@@ -256,15 +251,15 @@ mod tests {
     }
 
     #[test]
-    fn selects_documented_endpoints() {
+    fn selects_only_the_single_task_endpoint() {
         let client = TaskApiClient::new();
         assert_eq!(
             ServiceParamTaskType::Single.path(&client, "job-1"),
             "/priapi/v1/aieco/task/job-1/serviceParam"
         );
         assert_eq!(
-            ServiceParamTaskType::Subscription.path(&client, "job-1"),
-            "/priapi/v1/aieco/task/subscribe/job-1/serviceParam"
+            ServiceParamTaskType::value_variants(),
+            &[ServiceParamTaskType::Single]
         );
     }
 

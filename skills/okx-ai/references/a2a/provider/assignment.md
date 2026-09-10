@@ -37,8 +37,13 @@ onchainos agent service-list --agent-id <aspAgentId> --service-id <serviceId>
 
 ## One semantic decision
 
-Read these inputs once: task description, current complete `serviceParams`,
-attachments, and the registered `serviceDescription`.
+Use inputs by assignment type:
+
+- Single task: task description, current complete `serviceParams`, attachments,
+  and the registered `serviceDescription`.
+- Subscription: subscription description, attachments, and the registered
+  `serviceDescription`. Do not inspect or render `serviceParams` in the ASP
+  decision playbook.
 
 - Single task: produce exactly `ACCEPT`, `NEED_PARAMS`, or `REJECT`.
 - Subscription: produce exactly `ACCEPT` or `REJECT`. `NEED_PARAMS` is forbidden
@@ -59,8 +64,8 @@ Apply this strict boundary before choosing:
 - Never infer missing parameters from `serviceGuide`, Guide Consent, signal
   schemas, risk disclosures, execution prerequisites, or CLI/API command
   arguments. Those are not `serviceParams`.
-- For subscriptions, do not validate whether `serviceParams` is complete. Treat
-  an absent or empty value as valid. `copyTrade`, Guide Consent, leverage, margin
+- For subscriptions, do not inspect, render, or validate `serviceParams`. An
+  absent or empty value is valid. `copyTrade`, Guide Consent, leverage, margin
   mode, trade amount, denomination/target currency, close strategy, credentials,
   and every other execution setting are Buyer-local state that the ASP must not
   inspect, reconstruct, request, or use as a rejection reason.

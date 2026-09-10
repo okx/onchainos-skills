@@ -2,6 +2,8 @@ const ROUTER: &str = include_str!("../../skills/okx-ai/references/a2a/router.md"
 const USER_ROUTER: &str = include_str!("../../skills/okx-ai/references/a2a/user/router.md");
 const TASK_QUERY: &str = include_str!("../../skills/okx-ai/references/a2a/task-query.md");
 const PROVIDER_ROUTER: &str = include_str!("../../skills/okx-ai/references/a2a/provider/router.md");
+const PROVIDER_TASK_QUERY: &str =
+    include_str!("../../skills/okx-ai/references/a2a/provider/task-query.md");
 const ARBITRATION_DECISION: &str =
     include_str!("../../skills/okx-ai/references/a2a/provider/arbitration-decision.md");
 const REFUND_CONFIRM: &str =
@@ -43,6 +45,8 @@ const ASP_SUBSCRIPTION_SOURCE: &str =
     include_str!("../src/commands/agent_commerce/task/asp/subscription.rs");
 const ASP_FLOW_SOURCE: &str = include_str!("../src/commands/agent_commerce/task/asp/flow.rs");
 const ASP_CONTENT_SOURCE: &str = include_str!("../src/commands/agent_commerce/task/asp/content.rs");
+const ASP_TASK_QUERY_SOURCE: &str =
+    include_str!("../src/commands/agent_commerce/task/asp/task_query.rs");
 const USER_CONTENT_SOURCE: &str =
     include_str!("../src/commands/agent_commerce/task/user/content.rs");
 const REFUND_LIST_SOURCE: &str = include_str!("../src/commands/agent_commerce/task/refund_list.rs");
@@ -69,6 +73,32 @@ fn action_ids_are_partitioned_by_domain_and_role() {
     }
     assert!(ROUTER.contains("Preserve `agentId`"));
     assert!(ROUTER.contains("Never substitute retired"));
+}
+
+#[test]
+fn asp_task_query_uses_one_language_neutral_template() {
+    assert!(PROVIDER_ROUTER.contains("[`task-query.md`](task-query.md)"));
+    assert!(PROVIDER_ROUTER.contains("| `view_provider_task` | [`task-query.md`](task-query.md) |"));
+    assert!(USER_ROUTER.contains("[`../task-query.md`](../task-query.md)"));
+    assert!(PROVIDER_TASK_QUERY.contains("onchainos agent asp list-tasks"));
+    assert!(PROVIDER_TASK_QUERY
+        .contains("{userName} (Agent ID: {userAgentId}){platformReviewTag}"));
+    assert!(PROVIDER_TASK_QUERY.contains("[Platform-reviewed User]"));
+    assert!(PROVIDER_TASK_QUERY.contains("{morePrompt}"));
+    assert!(PROVIDER_TASK_QUERY.contains("Set `jobCount` from `payload.total`"));
+    assert!(PROVIDER_TASK_QUERY.contains("### Tasks for {aspName} (Agent ID: {agentId})"));
+    assert!(PROVIDER_TASK_QUERY.contains("Translate `taskTypeLabel` into the user's language"));
+    assert!(PROVIDER_TASK_QUERY.contains("hasSubscriptionTasks=false"));
+    assert!(!PROVIDER_TASK_QUERY.contains("platformReviewTagEn"));
+    assert!(!PROVIDER_TASK_QUERY.contains("morePromptEn"));
+    assert!(!PROVIDER_TASK_QUERY.contains("recommendedActionsEn"));
+    assert!(!PROVIDER_TASK_QUERY.contains("[平台审核用户]"));
+    assert!(!TASK_QUERY.contains("platformReviewTag"));
+    assert!(!TASK_QUERY.contains("[平台审核用户]"));
+    assert!(!TASK_QUERY.contains("onchainos agent asp list-tasks"));
+
+    assert!(ASP_TASK_QUERY_SOURCE.contains("\"testFlag\": common::is_test_task(value)"));
+    assert!(ASP_TASK_QUERY_SOURCE.contains("\"userName\": string_from_keys"));
 }
 
 #[test]

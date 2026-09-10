@@ -61,7 +61,7 @@ nonzero caller-supplied code, cannot override a fresh matching Expired(8).
 
 | Event | Action |
 |---|---|
-| `sub_open` | **Run the §1.3 provider decision inside the ASP runtime.** The backend sends this event to both Buyer and ASP after the Buyer's create-subscribe transaction is confirmed. Fetch latest subscription detail, require CREATED, verify the exact registered Service, then return exactly `ACCEPT / NEED_PARAMS / REJECT` and follow [assignment.md](assignment.md). |
+| `sub_open` | **Run the §1.3 provider decision inside the ASP runtime.** The backend sends this event to both Buyer and ASP after the Buyer's create-subscribe transaction is confirmed. Fetch latest subscription detail, require CREATED, verify the exact registered Service, then return exactly `ACCEPT / REJECT` and follow [assignment.md](assignment.md). Do not inspect or render `serviceParams`; missing or empty values are valid and must not trigger parameter clarification. |
 | `sub_created` | Buyer-only acceptance event. Silently ignore if it is unexpectedly delivered to the ASP; `sub_asp_selected` owns the ASP acceptance-confirmed flow. |
 | `sub_asp_selected` | **Run §1.5 inside the ASP runtime.** This is the current backend subscription-acceptance event; the Lark flow calls the stage `sub_accepted`, but do not wait for a separate event with that name. The CLI fetches authoritative subscription detail, renders the fixed acceptance notice to the ASP owner, then starts the registered Service's existing AI/Skill workflow. If output is ready now, hand it to §1.6 delivery; for schedule/event-driven services initialize that workflow without inventing an empty deliverable. |
 | `sub_complete_notify` | Route the structured result through [`../completion.md`](../completion.md). |

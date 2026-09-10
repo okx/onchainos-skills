@@ -742,6 +742,27 @@ pub async fn handle_arbitration_list(
     page: u32,
     page_size: u32,
 ) -> Result<()> {
+    handle_arbitration_list_inner(client, agent_id, page, page_size, false).await
+}
+
+/// ASP-only arbitration list. Preserve the backend review marker for the
+/// provider display without adding it to the existing User CLI contract.
+pub(crate) async fn handle_provider_arbitration_list(
+    client: &mut TaskApiClient,
+    agent_id: &str,
+    page: u32,
+    page_size: u32,
+) -> Result<()> {
+    handle_arbitration_list_inner(client, agent_id, page, page_size, true).await
+}
+
+async fn handle_arbitration_list_inner(
+    client: &mut TaskApiClient,
+    agent_id: &str,
+    page: u32,
+    page_size: u32,
+    include_test_flag: bool,
+) -> Result<()> {
     let agent_id = agent_id.trim();
     if agent_id.is_empty() {
         bail!("--agent-id must not be empty");
@@ -777,7 +798,7 @@ pub async fn handle_arbitration_list(
         };
         enriched.push((item, status));
     }
-    let result = build_list_result(page, total, &enriched);
+    let result = build_list_result(page, total, &enriched, include_test_flag);
     crate::output::success(result);
     Ok(())
 }
@@ -993,6 +1014,7 @@ pub(crate) fn build_list_result(
     page: u32,
     total: u64,
     items: &[(Value, Option<DisputeStatusResponse>)],
+    include_test_flag: bool,
 ) -> Value {
     let items = items
         .iter()
@@ -1022,7 +1044,7 @@ pub(crate) fn build_list_result(
                 )),
                 _ => Value::Null,
             };
-            Some(json!({
+            let mut result = json!({
                 "jobId": job_id,
                 "serviceName": value_from_keys(item, &["serviceName", "title", "jobTitle"]),
                 "status": status,
@@ -1043,7 +1065,11 @@ pub(crate) fn build_list_result(
                 "verdict": verdict,
                 "verdictLabel": verdict_label,
                 "verdictDescription": verdict_description,
-            }))
+            });
+            if include_test_flag {
+                result["testFlag"] = Value::Bool(super::common::is_test_task(item));
+            }
+            Some(result)
         })
         .collect::<Vec<_>>();
     let allowed_job_ids = items
@@ -1438,21 +1464,20 @@ mod tests {
 
     #[test]
     fn arbitration_list_exposes_stable_selection_ids() {
-        let result = build_list_result(
-            1,
-            1,
-            &[(
-                json!({
-                    "jobId": "job-1",
-                    "title": "Research",
-                    "status": 4,
-                    "createTime": 1_700_000_000,
-                }),
-                None,
-            )],
-        );
+        let items = [(
+            json!({
+                "jobId": "job-1",
+                "title": "Research",
+                "status": 4,
+                "testFlag": true,
+                "createTime": 1_700_000_000,
+            }),
+            None,
+        )];
+        let result = build_list_result(1, 1, &items, false);
         assert_eq!(result["phase"], "arbitration_list");
         assert_eq!(result["payload"]["items"][0]["jobId"], "job-1");
+        assert!(result["payload"]["items"][0].get("testFlag").is_none());
         assert_eq!(result["payload"]["items"][0]["description"], "Research");
         assert_eq!(result["payload"]["items"][0]["occurredAt"], 1_700_000_000);
         assert_eq!(result["payload"]["items"][0]["taskStatus"], "disputed");
@@ -1464,6 +1489,9 @@ mod tests {
             result["payload"]["items"][0]["arbitrationPhaseDescription"],
             "The Evaluation stage is currently unavailable."
         );
+
+        let provider_result = build_list_result(1, 1, &items, true);
+        assert_eq!(provider_result["payload"]["items"][0]["testFlag"], true);
         assert_eq!(
             result["payload"]["items"][0]["status"],
             "Status unavailable"
