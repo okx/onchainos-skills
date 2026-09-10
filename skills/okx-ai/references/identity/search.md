@@ -1,8 +1,7 @@
 # Agent and service discovery
 
-For every new service-use request, even with an exact Service ID, Agent ID, or
-service name, **MUST** run `service-match`, display the results, and wait for
-confirmation in a subsequent User message before `task-create-prepare`.
+A Service **MUST** be matched and explicitly selected by the User before `task-create-prepare`.
+Never create a task directly from an Agent ID, Service ID, service name, or search request.
 
 ## Search
 
@@ -39,12 +38,29 @@ type SearchArguments = {
 
 Apply these extraction rules:
 
-1. **Names and IDs:** Map explicitly labeled Agent/ASP ID, Agent/ASP name, Service name, and Service
-   ID to `asp-agent-id`, `asp-name`, `service-name`, and `sid`. Preserve values verbatim after
-   removing labels, quotes, brackets, delimiters, whitespace, and an adjacent `#`.
+1. **Names and IDs:** Classify an ID before removing syntax markers, using this precedence:
+   1. An explicit Service ID or SID label maps to `sid`.
+   2. An explicit Agent ID or ASP ID label maps to `asp-agent-id`.
+   3. In an Agent/service discovery or service-use request, an otherwise unlabeled `#<digits>` maps
+      to `asp-agent-id`; `#` is an Agent ID sigil, not disposable punctuation. Accept intervening
+      whitespace and the full-width `＃` form.
+   4. Forms such as `agent9967`, `agent 9967`, or a numeric ID used as the owner/provider of services
+      map to `asp-agent-id`.
+   5. A bare numeric value, including digits merely adjacent to the generic word `service`,
+      is ambiguous. Ask whether it is a Service ID or Agent ID and wait without searching. Only an
+      explicit Service ID or SID label maps such a value to `sid`.
+
+   Explicit textual labels override the `#` convention. After classification, preserve the value
+   verbatim except for removing its label, quotes, brackets, delimiters, whitespace, and an adjacent
+   `#` or `＃`. Never retry or reinterpret an ID as the other type because a search returned no
+   results.
 2. **Price bounds:** Map lower-bound wording (`above`, `greater than`, `no less than`, `at least`,
    `>`, `>=`) to `min-payment-token-amount`; map upper-bound wording (`below`, `less than`, `no more
-   than`, `at most`, `<`, `<=`) to `max-payment-token-amount`; map an explicit range to both.
+   than`, `at most`, `<`, `<=`) to `max-payment-token-amount`; map an explicit range to both. Map an
+   explicit request for a free or zero-price Service (`free`, `no charge`, `zero-cost`) to `max-payment-token-amount: 0`; because Service prices are non-negative,
+   this means an exact zero price. Treat it as a price constraint, never as a keyword. Do not apply
+   this mapping to a free trial, gas-free wording, a negated request such as `not free`, or text about
+   something other than the Service price.
 3. **Keywords:** MUST keep only requested capabilities and outputs with required subjects, modifiers,
    and scopes. MUST use only keywords explicitly present in the current query or carried-over context;
    MUST NOT invent, infer, paraphrase, translate, or expand them. Exclude names, IDs, price
@@ -61,11 +77,21 @@ Examples show only non-null/non-empty fields; apply the Output contract defaults
 |---|---|---|
 | — | `Find a market analysis service priced between 8 and 20` | `{"min-payment-token-amount":8,"max-payment-token-amount":20,"keywords":["market analysis"]}` |
 | `Find a BTC market-analysis service` | `Switch to ETH, below 10` | `{"max-payment-token-amount":10,"keywords":["ETH market analysis"]}` |
+| — | `Find the free services from #2189` | `{"asp-agent-id":"2189","max-payment-token-amount":0,"keywords":[]}` |
+| — | `用 Service ID #2189 找服务` | `{"sid":"2189","keywords":[]}` |
+| — | `帮我找一下13373服务` | Ask whether `13373` is an Agent ID or Service ID; do not search. |
 
-`sid` and `asp-agent-id` are both numeric strings. An unlabeled numeric value is ambiguous; ask the
-user whether it is a Service ID (SID) or Agent ID and wait; do not search until clarified.
+`sid` and `asp-agent-id` are both numeric strings; never use their numeric shape alone to distinguish
+them.
 
 ### Run the search
+
+Run `service-match` only after extraction has produced unambiguous search arguments.
+
+If an ID requires clarification, ask the User and stop; do not search. Otherwise, for every new
+service-use request, including one with an exact Service ID, Agent ID, or service name, run
+`service-match`, display the results, and wait for the User to select a Service in a subsequent
+message.
 
 Pass the non-null/non-empty arguments to:
 

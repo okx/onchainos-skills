@@ -144,22 +144,20 @@
     {
       "id": 7,
       "prompt": "帮我找一下13373服务",
-      "expected_output": "将没有所有关系标记的数字 13373 解析为 Service ID/SID。",
+      "expected_output": "将没有标签、# 或所有关系标记的数字 13373 视为有歧义，询问它是 Agent ID 还是 Service ID，并等待用户确认。",
       "files": [],
       "expectations": [
-        "Calls `onchainos agent service-match --sid 13373 --limit 3` exactly once.",
-        "Never passes 13373 through `--asp-agent-id`.",
-        "Does not invent search keywords from the generic request wrapper."
+        "Does not call `onchainos agent service-match`.",
+        "Asks the user whether 13373 is an Agent ID or a Service ID.",
+        "Waits for the user's answer before searching."
       ],
       "assertions": {
-        "required_commands": [
-          "onchainos agent service-match --sid 13373 --limit 3"
-        ],
         "forbidden_commands": [
+          "agent service-match",
           "--asp-agent-id 13373",
-          "--keywords"
+          "--sid 13373"
         ],
-        "response_includes": ["13373"]
+        "response_includes": ["13373", "Agent ID", "Service ID"]
       }
     },
     {
@@ -179,6 +177,29 @@
           "--sid"
         ],
         "response_includes": ["13373", "Agent ID", "Service ID"]
+      }
+    },
+    {
+      "id": 9,
+      "prompt": "帮我找#2189去创建单次免费任务，英超，阿仙奴对车路士，9月6",
+      "expected_output": "同时将 #2189 识别为 ASP Agent ID，并将免费映射为最高服务价格 0；搜索并展示匹配服务，等待用户选择后再创建任务。",
+      "files": [],
+      "expectations": [
+        "Calls `onchainos agent service-match --asp-agent-id 2189 --max-payment-token-amount 0 --limit 3` exactly once.",
+        "Never passes 2189 through `--sid`.",
+        "Treats 免费 as a price constraint rather than a keyword.",
+        "Does not create a task before the user selects a returned Service."
+      ],
+      "assertions": {
+        "required_commands": [
+          "onchainos agent service-match --asp-agent-id 2189 --max-payment-token-amount 0 --limit 3"
+        ],
+        "forbidden_commands": [
+          "--sid 2189",
+          "--keywords 免费",
+          "task-create-prepare"
+        ],
+        "response_includes": ["2189"]
       }
     }
   ]

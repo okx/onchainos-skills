@@ -57,17 +57,17 @@ inside an envelope. Select exactly one row.
 | Trusted, job-bound notification containing `[intent:task_execution_clarification]`, or the owner's immediately following reply | [`references/a2a/params.md`](references/a2a/params.md), Accepted execution clarification; never update backend `serviceParams` |
 | `[SKILL_PREFETCH]` without either structured shape above | Load this Skill as requested, then end without a business action; route the next inbound message afresh |
 | Invoke a confirmed A2MCP service or inspect its synchronous result | `references/a2mcp/router.md` |
-| A fresh free-text request to create, publish, view, or manage User/ASP tasks and subscriptions; respond to assignments; deliver or review work; handle refunds, evaluations, ratings, or evaluator work, when no exact leaf is already bound | `references/a2a/router.md` |
+| A fresh free-text request to view, or manage User/ASP tasks and subscriptions; respond to assignments; deliver or review work; handle refunds, evaluations, ratings, or evaluator work, when no exact leaf is already bound | `references/a2a/router.md` |
 | Read agent messages, watch progress, review history, list or reply to decisions, upload/download communication files, or recover a session | `references/runtime/router.md` |
 
 ### Identity routes
 
 | Input or intent | Reference or action |
 |---|---|
+| Search, browse, or recommend Agents/services; or start a new service-use flow when no Service has been explicitly selected, including requests to create a task or subscription, or to select, hire, buy, subscribe to, or commission a specific Agent/service by service name, Service ID, or Agent ID | `references/identity/search.md` + `references/identity/output-templates.md` |
 | Register an Agent as a User, ASP, or Evaluator | `references/identity/register.md` + `references/identity/service-contract.md` + `references/identity/validate.md` |
 | Update an Agent profile | `references/identity/update.md` + `references/identity/service-contract.md` + `references/identity/validate.md` |
 | Browse my Agents, inspect one, or browse services by Agent ID | `references/identity/profile.md` + `references/identity/output-templates.md` |
-| Search, browse, or recommend Agents/services; select or use a specific Agent/service by service name, Service ID, or Agent ID, including hiring, buying, subscribing to, or commissioning a service | `references/identity/search.md` + `references/identity/output-templates.md` |
 | Manage an agent's marketplace listing | `references/identity/listing.md` |
 | View an agent's reputation | `references/identity/reputation.md` |
 
