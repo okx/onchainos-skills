@@ -60,8 +60,9 @@ fn completed_asp_execution_can_show_one_cli_backed_deliverable_line() {
 
 #[test]
 fn creation_watch_shows_one_localized_monitoring_note_without_reentry_repeats() {
-    let note = "> Note: The job will continue running after it is created, but message monitoring may stop. You can:\n>\n> - Reply “Check the current task progress” to view the complete one-time task lifecycle.\n> - For subscriptions, reply “Check subscription task status” to view recent follow-trade results.";
+    let note = "> Monitoring depends on platform capabilities and may be interrupted. If it is interrupted, you can:\n>\n> 1. Reply “Check the current task progress” to query its status.\n> 2. For subscription tasks, reply “Check subscription task status” to view recent copy-trade results.";
     assert_eq!(WATCH.matches(note).count(), 1);
+    assert_eq!(WATCH.matches("Waiting for the merchant to respond.").count(), 1);
     assert!(WATCH.contains("`phase=creation`"));
     assert!(WATCH.contains("`reason=broadcast_submitted`"));
     assert!(WATCH.contains("`nextAction.id=watch_task`"));
@@ -71,6 +72,7 @@ fn creation_watch_shows_one_localized_monitoring_note_without_reentry_repeats() 
     assert!(WATCH.contains("dispatch resume, wake re-entry, or any later watch call"));
     assert!(WATCH.contains("“Check the current task progress”"));
     assert!(WATCH.contains("“Check subscription task status”"));
+    assert!(WATCH.contains("one-time creation handoff uses the §One-time creation result step 2 message"));
     assert_eq!(WATCH.matches("- `phase=creation`;").count(), 1);
     assert_eq!(WATCH.matches("- `reason=broadcast_submitted`;").count(), 1);
 }
