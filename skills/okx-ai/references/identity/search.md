@@ -109,8 +109,9 @@ When requested, `--limit` **MUST** be `1–10`; values outside this range are in
 ### Read the result
 
 Read `services[]`, `searchAfter`, `hasMore`, and `tip`.
-Only now read `output-templates.md` for the selected Agent/Service display, and **MUST** render the
-result according to its applicable template.
+**MUST** render the result with the already-loaded `output-templates.md` applicable template.
+If `output-templates.md` was not loaded with this search reference, do not produce a user-facing
+result until it has been loaded.
 Do not load any A2A creation or action reference before the user explicitly
 selects a Service and `task-create-prepare` returns its next action.
 
