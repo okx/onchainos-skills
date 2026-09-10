@@ -18,6 +18,9 @@ Relevant signals include `job_closed`, `job_refunded`, `job_auto_refunded`,
   `statusLabel` and `statusDescription`.
 - `expired_without_refundable_payment`: render terminal
   `settlement.state=not_required`; never claim funds moved.
+- `zero_amount_task_failed`: render the free one-time task as terminal Failed,
+  with `settlement.state=not_required`; do not request refund provenance,
+  invoke `refund-prepare`, offer evaluation, or continue watching.
 - `refund_operation_pending_reconciliation` or `refund_outcome_unknown`: stay
   pending/read-only and never repeat a write.
 - `zero_amount_task_closed`, `trial_subscription_closed_without_refund`, or
@@ -37,5 +40,7 @@ emit the stable terminal marker, use [`../runtime/cleanup.md`](../runtime/cleanu
 and do not re-enter scoped watch. Global watch continues for other tasks.
 
 Missing proof produces no verdict, rating, notification, terminal marker, or
-cleanup. A later explicit query may inspect pending work; elapsed time alone
+cleanup. This missing-proof rule does not apply to a fresh buyer-owned,
+zero-amount one-time task at Failed(9), because that outcome requires no refund
+settlement. A later explicit query may inspect pending work; elapsed time alone
 never establishes finality.

@@ -38,9 +38,10 @@ mapping to readable business wording.
 
 For free-text user entry, before the first CLI command follow
 [`../okx-agentic-wallet/_shared/preflight.md`](../okx-agentic-wallet/_shared/preflight.md)
-once. Structured A2A envelopes and `[SKILL_PREFETCH]` are exempt here. Route
-each through the exact top-level row below; do not run preflight before its
-bound task-session context is known.
+once. Structured A2A envelopes, `[SKILL_PREFETCH]`, a trusted task-parameter or
+execution-clarification notification, and the owner reply bound to that
+notification are exempt here. Route each through the exact top-level row below;
+do not run preflight before its bound task-session context is known.
 
 ## Top-level routing
 
@@ -51,6 +52,9 @@ inside an envelope. Select exactly one row.
 |---|---|
 | Valid JSON `{agentId,message:{source:"system",event,...}}` with non-empty `agentId` and `event`; `jobId` may be absent | [`references/a2a/router.md`](references/a2a/router.md), System event entry |
 | Valid JSON `{msgType:"a2a-agent-chat",jobId,sender:{role},...}` with non-empty `jobId` | [`references/a2a/peer.md`](references/a2a/peer.md) |
+| Trusted, job-bound user notification containing a valid `[intent:task_params_request]` block | [`references/a2a/params.md`](references/a2a/params.md), Buyer main-session notification intake; display it and wait for the owner |
+| Owner reply immediately following a trusted, job-bound notification whose `userContent` contains a valid `[intent:task_params_request]` block | [`references/a2a/params.md`](references/a2a/params.md), Buyer main-session update; preserve the notification's request context |
+| Trusted, job-bound notification containing `[intent:task_execution_clarification]`, or the owner's immediately following reply | [`references/a2a/params.md`](references/a2a/params.md), Accepted execution clarification; never update backend `serviceParams` |
 | `[SKILL_PREFETCH]` without either structured shape above | Load this Skill as requested, then end without a business action; route the next inbound message afresh |
 | Invoke a confirmed A2MCP service or inspect its synchronous result | `references/a2mcp/router.md` |
 | A fresh free-text request to create, publish, view, or manage User/ASP tasks and subscriptions; respond to assignments; deliver or review work; handle refunds, evaluations, ratings, or evaluator work, when no exact leaf is already bound | `references/a2a/router.md` |

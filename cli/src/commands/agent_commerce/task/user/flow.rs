@@ -565,7 +565,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      **Semantic mapping** — decide which intent the user's reply means, then call the corresponding next-action.\n\n\
                      Two options:\n\
                      \x20\x20• **`approve_review`** — user accepts the deliverable (typical intents: A / 通过 / 同意 / 满意 / 接受 / 验收 / approve / accept / agree / OK / 行 / 可以 — anything meaning satisfaction with the deliverable).\n\
-                     \x20\x20• **`reject_review`** — compatibility route for a review reply already relayed to this task session. B or any unambiguous rejection opens a fresh, read-only Refund confirmation. Preserve any user-authored wording verbatim as context.\n\n\
+                     \x20\x20• **`reject_review`** — review-rejection route. A submitted zero-price one-time task immediately uses the existing reject lifecycle and becomes Failed(9); every other task opens a fresh, read-only Refund confirmation. Preserve any user-authored wording verbatim as context.\n\n\
                      If the reply approves or rejects → call:\n\
                      ```bash\n\
                      # For approve_review (no extra args needed):\n\
@@ -573,7 +573,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
                      # For reject_review, include user-authored wording verbatim via message.data when present:\n\
                      onchainos agent next-action --role user --agentId {agent_id} --message '{{\"event\":\"reject_review\",\"jobId\":\"{job_id}\",\"data\":\"<verbatim user-authored reason, JSON-escaped>\"}}'\n\
                      ```\n\
-                     For a rejection without extra wording, omit `data`. Always render the complete returned Template 6.1 Confirm Refund Request card as a single-record `- Label: value` field list, even when its reason is blank, and end the turn. Never replace it with only a reason question. B is not submission intent and does not arm a reason-only continuation. Continue the refund only after the user provides clear `Submit refund request` intent and a refund reason.\n\
+                     For a rejection without extra wording, omit `data`. If the result action is `request_rejection_reason`, create that returned durable decision and ask for the reason; no reject endpoint has run yet. If the result is `free_rejection_submitted`, report the submitted rejection and end the turn. Otherwise render the complete returned Template 6.1 Confirm Refund Request card as a single-record `- Label: value` field list, even when its reason is blank, and end the turn. Never replace a paid Refund confirmation with only a reason question. For a paid refund, B is not submission intent and does not arm a reason-only continuation. Continue the refund only after the user provides clear `Submit refund request` intent and a refund reason.\n\
                      If the reply is **truly ambiguous** (e.g. non-committal `hmm` / `got it` / unrelated chitchat): re-ask via `pending-decisions-v2 request` with the same `--to-agent-id` as the incoming relay's `[to: …]` header (or none, if it says `[to: backup]` / you run in a backup sub — NEVER your own agentId) and `--source-event {source}`. **`--user-content` and `--list-label` must be localized to the user's language**. Reference (English): \"I didn't catch your reply, please clarify: A=approve  B=reject\".\n"
                 ),
                 "cli_failed" => format!(
@@ -1022,9 +1022,11 @@ mod tests {
 
     #[tokio::test]
     async fn reject_review_without_reason_opens_refund_confirmation() {
-        let output = run(
+        let paid = refund_prefetched(2, "1");
+        let output = run_with_prefetched(
             "reject_review",
             json!({ "event": "reject_review", "jobId": JOB_ID }),
+            &paid,
         )
         .await;
         assert!(output.contains("refund-prepare"), "{output}");
@@ -1784,6 +1786,29 @@ mod tests {
         assert!(!out.contains("session-cleanup"), "{out}");
         assert!(!out.contains("claim-auto-refund"), "{out}");
         assert!(!out.contains("claimAutoRefund"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn free_one_time_asp_reject_expiry_is_terminal_failed_without_refund_reconciliation() {
+        let mut detail = refund_prefetched(9, "0");
+        detail.refund_reason = Some("不想要了".to_string());
+        let out = run_with_prefetched(
+            "job_asp_reject_expire",
+            json!({
+                "event": "job_asp_reject_expire",
+                "jobId": JOB_ID,
+            }),
+            &detail,
+        )
+        .await;
+
+        assert!(out.contains("[Task Failed]"), "{out}");
+        assert!(out.contains("不想要了"), "{out}");
+        assert!(out.contains("Refund: Not required"), "{out}");
+        assert!(out.contains(TERMINAL_NOTIFICATION_MARKER), "{out}");
+        assert!(out.contains("session-cleanup"), "{out}");
+        assert!(!out.contains("refund-prepare"), "{out}");
+        assert!(!out.contains("Automatic Refund"), "{out}");
     }
 
     #[tokio::test]

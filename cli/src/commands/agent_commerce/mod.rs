@@ -4279,6 +4279,13 @@ fn refund_final_context_ready(
         return true;
     }
 
+    if event == "job_asp_reject_expire"
+        && context.job_type == Some(0)
+        && task::user::refund::is_zero_decimal(context.token_amount.trim())
+    {
+        return true;
+    }
+
     task::user::refund::refund_event_settlement_confirmed(context, expected_status, event)
 }
 
@@ -4428,6 +4435,27 @@ fn arbitration_decision_is_stale(
         }
         _ => true,
     }
+}
+
+fn arbitration_context_is_stale(
+    role: &str,
+    event: &str,
+    source_event: &str,
+    expected_agent_id: &str,
+    message: Option<&serde_json::Value>,
+    context: &task::common::PreFetchedTaskContext,
+    detail: &serde_json::Value,
+) -> bool {
+    let asp_free_rejection_is_terminal = role == "asp"
+        && event == "job_rejected"
+        && source_event == task::arbitration::JOB_REJECTED
+        && context.provider_agent_id.as_deref() == Some(expected_agent_id)
+        && context.job_type == Some(0)
+        && context.status == Some(9)
+        && task::user::refund::is_zero_decimal(context.token_amount.trim());
+
+    !asp_free_rejection_is_terminal
+        && arbitration_decision_is_stale(source_event, message, detail)
 }
 
 /// Most network failures degrade to no prefetch. Active-subscription startup
@@ -4802,7 +4830,15 @@ async fn check_status_freshness(
     }
 
     if let Some(source_event) = arbitration_source {
-        if arbitration_decision_is_stale(source_event, message, &resp) {
+        if arbitration_context_is_stale(
+            role,
+            job_status_or_event,
+            source_event,
+            agent_id,
+            message,
+            &ctx,
+            &resp,
+        ) {
             return (
                 Some(task::arbitration::blocked_result(
                     "stale_event",
@@ -5068,6 +5104,32 @@ mod authoritative_detail_path_tests {
             &subscription,
             "sub_failed_notify",
             "buyer-1"
+        ));
+    }
+
+    #[test]
+    fn free_failed_reject_expiry_is_ready_without_refund_provenance() {
+        let detail =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &serde_json::json!({
+                    "jobType": 0,
+                    "status": 9,
+                    "buyerAgentId": "buyer-1",
+                    "paymentTokenAmount": "0",
+                }),
+            );
+
+        assert!(refund_final_context_ready(
+            &detail,
+            "job_asp_reject_expire",
+            "buyer-1"
+        ));
+        assert!(buyer_refund_freshness_ready(
+            &detail,
+            "job_asp_reject_expire",
+            "buyer-1",
+            9,
+            true,
         ));
     }
 
@@ -5460,7 +5522,10 @@ mod authoritative_detail_path_tests {
 
 #[cfg(test)]
 mod arbitration_freshness_tests {
-    use super::{arbitration_decision_is_stale, arbitration_decision_source};
+    use super::{
+        arbitration_context_is_stale, arbitration_decision_is_stale,
+        arbitration_decision_source,
+    };
 
     #[test]
     fn decision_relay_rechecks_task_and_subscription_state() {
@@ -5494,6 +5559,48 @@ mod arbitration_freshness_tests {
             "sub_user_reject",
             Some(&relay),
             &serde_json::json!({"subStatus": 3, "periodIndex": 3})
+        ));
+    }
+
+    #[test]
+    fn asp_free_failed_job_rejected_bypasses_only_the_initial_arbitration_gate() {
+        let detail = serde_json::json!({
+            "jobType": 0,
+            "status": 9,
+            "paymentTokenAmount": "0",
+            "providerAgentId": "asp-1",
+        });
+        let context =
+            crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+                &detail,
+            );
+
+        assert!(!arbitration_context_is_stale(
+            "asp",
+            "job_rejected",
+            "job_rejected",
+            "asp-1",
+            None,
+            &context,
+            &detail,
+        ));
+        assert!(arbitration_context_is_stale(
+            "asp",
+            "user_decision_job_rejected",
+            "job_rejected",
+            "asp-1",
+            None,
+            &context,
+            &detail,
+        ));
+        assert!(arbitration_context_is_stale(
+            "asp",
+            "job_rejected",
+            "job_rejected",
+            "another-asp",
+            None,
+            &context,
+            &detail,
         ));
     }
 }

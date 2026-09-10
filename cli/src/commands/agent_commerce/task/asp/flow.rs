@@ -14,6 +14,12 @@ enum ProviderAssignmentType {
     Subscription,
 }
 
+fn task_params_request_command(job_id: &str, buyer_agent_id: &str, task_type: &str) -> String {
+    format!(
+        "okx-a2a xmtp-send --job-id {job_id} --to-agent-id {buyer_agent_id} --message \"<natural-language request>\\n\\n[intent:task_params_request]\\n{{\\\"version\\\":1,\\\"jobId\\\":\\\"{job_id}\\\",\\\"taskType\\\":\\\"{task_type}\\\",\\\"requestId\\\":\\\"<unique-request-id>\\\",\\\"round\\\":<1-3>,\\\"missing\\\":[\\\"<field>\\\"]}}\" --json"
+    )
+}
+
 async fn provider_assignment_playbook(
     job_id: &str,
     agent_id: &str,
@@ -127,6 +133,7 @@ async fn provider_assignment_playbook(
         .unwrap_or("");
     let buyer_agent_id = p.user_agent_id.as_deref().unwrap_or("<buyerAgentId>");
     let service_params = p.service_params.as_deref().unwrap_or("{}");
+    let request_command = task_params_request_command(job_id, buyer_agent_id, task_type);
 
     format!(
         "[Current state] {event_name}; latest backend status=CREATED(0)\n\
@@ -147,9 +154,9 @@ async fn provider_assignment_playbook(
          onchainos agent {decline_command} {job_id} --agent-id {agent_id} --reason \"<reason>\"\n\
          ```\n\
          The reason is placed in broadcast bizContext; do not use legacy `asp-reject`.\n\n\
-         **NEED_PARAMS** — send one natural-language question followed by the structured block below through the existing A2A session:\n\
+         **NEED_PARAMS** — send one natural-language question followed by the structured block below to the Buyer through peer transport:\n\
          ```bash\n\
-         okx-a2a session send --job-id {job_id} --to-agent-id {buyer_agent_id} --content \"<natural-language request>\\n\\n[intent:task_params_request]\\n{{\\\"version\\\":1,\\\"jobId\\\":\\\"{job_id}\\\",\\\"taskType\\\":\\\"{task_type}\\\",\\\"requestId\\\":\\\"<unique-request-id>\\\",\\\"round\\\":<1-3>,\\\"missing\\\":[\\\"<field>\\\"]}}\" --json\n\
+         {request_command}\n\
          ```\n\
          Count only a response for which the buyer successfully updated the backend as a successful round. Ignore duplicate requestId/response messages. Maximum: 3 successful update/response rounds. After the third successful update, fetch current detail and evaluate once more; if still NEED_PARAMS, decline.\n\n\
          When `[intent:task_params_response]` arrives: fetch latest detail again. If status is not CREATED, stop. If CREATED, evaluate the updated complete serviceParams again. The buyer-side required ordering is:\n\
@@ -552,6 +559,16 @@ pub async fn generate_next_action(
     let event = parse_status_or_event(event_str);
     match &event {
         Event::JobRejected => {
+            if let Some(task) = prefetched.filter(|task| {
+                task.provider_agent_id.as_deref() == Some(agent_id)
+                    && task.job_type == Some(0)
+                    && task.status == Some(9)
+                    && crate::commands::agent_commerce::task::user::refund::is_zero_decimal(
+                        &task.token_amount,
+                    )
+            }) {
+                return super::v2::notification::free_job_rejected_failed(job_id, task, message);
+            }
             return arbitration_decision_playbook(
                 crate::commands::agent_commerce::task::arbitration::JOB_REJECTED,
                 job_id,
@@ -684,10 +701,11 @@ pub async fn generate_next_action(
              )\"\n\
              ```\n\n\
              **Step 4 — After Step 3 ends this turn immediately** (do NOT send any filler `okx-a2a xmtp-send` / `onchainos agent user-notify` — the CLI already notified the User Agent).\n\n\
-             The backend now opens the Buyer review after successful submission. The ASP does **not** wait for `job_submitted`; end this turn and wait for `job_completed` or `job_rejected`.\n\n\
+             The backend now opens the Buyer review after successful submission. The ASP does **not** wait for `job_submitted`; end this turn and wait for the terminal result.\n\n\
              [Follow-up events]\n\
              - `job_completed` (User Agent reviewed and accepted) — auto-rate the User Agent + notify the user\n\
-             - `job_rejected`  (User Agent rejected the deliverable) — push evaluation-vs-refund decision to the user\n"
+             - `job_rejected` with a zero-price one-time task at Failed(9) — notify the ASP owner that the task failed, then clean up; no refund/evaluation decision\n\
+             - `job_rejected` for a paid task — push the refund-vs-evaluation decision to the user\n"
             )
         }
 
@@ -708,10 +726,11 @@ pub async fn generate_next_action(
              content:\n\
              {user_notify}\n\n\
              **Step 2 — End this turn.** Wait for `job_completed` / `job_rejected` to drive the next action.\n\n\
-             When `job_completed` or `job_rejected` arrives, those are **action-required** events (auto-rate the User Agent / push an evaluation-vs-refund decision to the user).\n\n\
+             When `job_completed` or `job_rejected` arrives, use the fresh task status and price to select the terminal or paid-dispute path.\n\n\
              [Follow-up events]\n\
              - `job_completed` (review passed) — auto-rate the User Agent + notify the user\n\
-             - `job_rejected`  (User Agent rejected) — push evaluation-vs-refund decision to the user\n"
+             - `job_rejected` with a zero-price one-time task at Failed(9) — notify Failed and clean up; no refund/evaluation decision\n\
+             - `job_rejected` for a paid task — push the refund-vs-evaluation decision to the user\n"
             )
         },
 
@@ -1755,6 +1774,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn free_one_time_job_rejected_routes_to_terminal_failed_not_arbitration() {
+        let task = notification_task("Daily forecast", 0, "0", "", 9);
+        let output = run_asp_with_task(
+            "job_rejected",
+            json!({
+                "event": "job_rejected",
+                "jobId": ASP_JOB_ID,
+                "reason": "The result did not meet my requirements"
+            }),
+            &task,
+        )
+        .await;
+        let progression: serde_json::Value = serde_json::from_str(&output).unwrap();
+
+        assert_eq!(progression["payload"]["statusLabel"], "Failed");
+        assert_eq!(
+            progression["nextAction"][0]["id"],
+            "notify_and_cleanup_subscription"
+        );
+        assert_eq!(progression["payload"]["cleanup"]["jobId"], ASP_JOB_ID);
+        assert!(!output.contains("pending-decisions-v2 request-prompt"));
+        assert!(!output.contains("raise_arbitration"));
+    }
+
+    #[tokio::test]
     async fn one_time_dispute_approved_is_a_write_free_compatibility_receipt() {
         let task = notification_task("One-time work", 0, "1", "USDT", 3);
         let output = run_asp_with_task(
@@ -2054,6 +2098,14 @@ mod tests {
         .await;
         assert!(subscription.contains("[Current state] sub_open"));
         assert!(!subscription.contains("[Current state] sub_created"));
+    }
+
+    #[test]
+    fn provider_need_params_uses_peer_transport() {
+        let command = task_params_request_command(ASP_JOB_ID, "buyer-1", "single");
+        assert!(command.contains("[intent:task_params_request]"));
+        assert!(command.starts_with("okx-a2a xmtp-send"));
+        assert!(!command.contains("okx-a2a session send"));
     }
 
     #[tokio::test]
