@@ -1,6 +1,6 @@
 ---
 name: okx-dex-market
-description: "For read-only DEX data across token, market, signal, social, trenches, and WebSocket. Use it for token search, rankings, liquidity, holders, risk metadata, clusters, trades, prices, K-lines, indexes, wallet PnL, smart-money/KOL/whale signals, news, sentiment, token vibe, meme-launch and dev research, bundle/sniper/co-investor analysis, or DEX WebSocket clients. Trigger phrases: hot tokens, liquidity, holders, whale, 持仓集中度, trade history, price, K-line/OHLC, wallet PnL, smart money, KOL, signal, 牛人榜, news, sentiment, token vibe, pump.fun, 新盘, 扫链, dev reputation, 捆绑狙击者, co-investor, WebSocket. Prediction markets, Polymarket or supported-asset UpDown, named-DApp writes, Aave/Hyperliquid/PancakeSwap/Morpho timeframes, and pump.fun write verbs route to okx-dapp-discovery. Swaps, wallet execution, and token/honeypot, transaction, or signature safety checks route to okx-agentic-wallet. Agent ID + service route to okx-ai. Market quota/payment notices use the shared payment flow."
+description: "Query read-only DEX token, market, signal, social, trenches, and WebSocket data. Use for token search, rankings, liquidity, holders, risk metadata, clusters, and trades; prices, K-lines/OHLC, indexes, and wallet PnL; smart-money/KOL/whale signals; news, sentiment, and token vibe; meme-launch, developer, bundle/sniper, and co-investor research; or DEX WebSocket clients. Triggers include hot tokens, holder concentration, smart money, top-trader leaderboards, pump.fun research, new token launches, on-chain token scanning, bundled or sniper activity, and WebSocket."
 license: MIT
 metadata:
   author: okx
@@ -20,7 +20,7 @@ Preflight checks: At the start of each thread, complete the checks in `../okx-ag
 
 **Apply these routing gates before selecting a capability:**
 
-- **Polymarket hard block:** if the query names Polymarket, Aave, Hyperliquid, PancakeSwap, or Morpho with any timeframe, or uses an up/down phrase for BTC/ETH/SOL/XRP/BNB/DOGE/HYPE, stop and invoke `okx-dapp-discovery`. Example: "BTC 5-minute up/down market" routes to `okx-dapp-discovery`, not kline or price.
+- **Named-protocol gate:** if a supported DApp is the subject of an operation or protocol-specific analytics request—including APY, TVL, volume, positions, history, or a timeframe—stop and invoke `okx-dapp-discovery`. Polymarket and supported-asset up/down phrases for BTC/ETH/SOL/XRP/BNB/DOGE/HYPE also route there. Example: "BTC 5-minute up/down market" routes to `okx-dapp-discovery`, not kline or price.
 - **Trenches write gate:** buy/sell/snipe/ape verbs, including direct translations and Chinese slang, aimed at a pump.fun-style token are write operations and route to `okx-dapp-discovery`. Analytical bundle/sniper detection requests remain in Trenches; apply the detailed Step 0 in [trenches.md](references/trenches.md).
 
 Select the capability first, then load its core reference. Load an additional reference only when its condition applies.

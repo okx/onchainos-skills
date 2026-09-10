@@ -1,6 +1,6 @@
 ---
 name: okx-defi
-description: "For discovering and managing OKX-aggregated DeFi products and positions across protocols and chains. Use it for yield, APY, or TVL discovery and history; DeFi deposits, staking, liquidity, withdrawals, rewards, lending, CLMM analysis, and positions or holdings. Trigger phrases: earn yield, best APY, DeFi product, APY/TVL history, deposit or stake for yield, provide/remove liquidity, withdraw/redeem a DeFi position, claim DeFi rewards, borrow/repay a lending position, CLMM, DeFi portfolio, DeFi 持仓. Requests targeting a named third-party DApp—Aave, Lido, PancakeSwap, Uniswap, Curve, Compound, Morpho, Pendle, Kamino, Raydium, Hyperliquid, or Polymarket—route to okx-dapp-discovery; generic swaps, wallet balances, and transaction broadcast route to okx-agentic-wallet; token search, market prices, K-lines, and token charts route to okx-dex-market. DeFi APY/TVL and V3 liquidity charts stay here."
+description: "Discover and manage OKX-aggregated DeFi products and positions across protocols and chains. Use for generic or venue-agnostic yield, APY, or TVL discovery and history; DeFi deposits, staking, liquidity, withdrawals, rewards, lending, CLMM analysis; and DeFi portfolio or position views. Requests targeting a named protocol belong to DApp discovery. Triggers include earn yield, best APY, DeFi product, APY/TVL history, deposit, stake, withdraw, redeem, provide or remove liquidity, claim rewards, borrow or repay, CLMM, V3 liquidity charts, DeFi portfolio, and DeFi holdings."
 license: MIT
 metadata:
   author: okx
@@ -37,7 +37,12 @@ Load only the reference files required by the selected route.
 
 Typical flow spans both: view positions (Portfolio) → redeem or claim (Invest). Read both reference files when the request chains them.
 
-Route named third-party DApp requests to `okx-dapp-discovery`, token search/price/chart requests to `okx-dex-market`, and spot swaps, wallet balances, login, contract calls, or transaction broadcasts to `okx-agentic-wallet`.
+Route a named third-party DApp request—including protocol-specific APY, TVL,
+volume, history, or timeframe analysis—to `okx-dapp-discovery`. Generic
+cross-protocol yield/APY/TVL and V3-liquidity analysis stays here. Route token
+search/price/chart requests to `okx-dex-market`, and spot swaps, wallet
+balances, login, contract calls, or transaction broadcasts to
+`okx-agentic-wallet`.
 
 ## Chain Name Support
 
