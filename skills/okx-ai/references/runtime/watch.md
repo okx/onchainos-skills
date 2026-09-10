@@ -110,6 +110,68 @@ If the user's message matched `keep watching` / `continue watching` / `resume mo
   applies for the rest of this session per §Session-scoped sticky.
 - **No jobId found** → fall back to a global session. The behaviour diverges from the user's "keep watching" intent, so **DO emit §Banner** (it's the only signal the user has that the watch was rearmed as global rather than scoped). Then run `okx-a2a user watch --json` (no `--job-id`). Do not ask the user — a continuation phrase plus no recoverable jobId is treated the same as a fresh `task watch` entry.
 
+### One-time creation result — ordered pre-watch output
+
+These exact structured facts define a **creation-start entry**:
+
+- `phase=creation`;
+- `reason=broadcast_submitted`;
+- `nextAction.id=watch_task`;
+- non-empty `nextAction.params.jobId` equal to `payload.jobId`.
+
+This section owns all user-visible output when that entry is a same-turn
+one-time creation handoff from
+[`../a2a/user/create.md`](../a2a/user/create.md). Complete the following
+sequence in order:
+
+1. **Initial progress.** When
+   `payload.initialLifecycle.taskType=one_time` and its `display` contains
+   `progressStep`, `progressTotal`, exactly five `timeline` items,
+   `currentSummary`, `handledBy`, and `next`, render this standalone card before
+   any watch-related message:
+
+   ```text
+   A2A single task · {payload.jobId}
+
+   Task progress  {display.progressStep} / {display.progressTotal}
+
+   {timeline[0].marker} {localized timeline[0].title}
+   │  {localized timeline[0].detail, only when present}
+   {timeline[1].marker} {localized timeline[1].title}
+   │  {localized timeline[1].detail, only when present}
+   {timeline[2].marker} {localized timeline[2].title}
+   │  {localized timeline[2].detail, only when present}
+   {timeline[3].marker} {localized timeline[3].title}
+   │  {localized timeline[3].detail, only when present}
+   {timeline[4].marker} {localized timeline[4].title}
+      {localized timeline[4].detail, only when present}
+
+   Current status: {localized display.currentSummary}
+   Handled by: {localized display.handledBy}
+   Next: {localized display.next}
+   ```
+
+   Preserve the five returned nodes in their original order, including every
+   marker, timestamp, and returned fallback. Translate only user-facing prose.
+   When `initialLifecycle` or any required display field is absent or
+   incomplete, use only `Initial progress unavailable.` for this slot,
+   localized to the conversation language. Continue with the same scoped
+   watch. Events, remembered status, and other task data are not substitutes
+   for the missing initial display.
+2. **Watch banner.** Render the canonical §Banner as a separate user-visible
+   message.
+3. **Creation-start monitoring note.** Render the note below as a separate
+   user-visible message.
+4. **Scoped watch.** Only after steps 1–3, run
+   `okx-a2a user watch --json --job-id <jobId>` with `<jobId>` equal to both
+   `nextAction.params.jobId` and `payload.jobId`.
+
+An empty or mismatched Job ID is a structured contract failure, so report it
+and stop before watch. An explicit `initialLifecycle.taskType` other than
+`one_time` is also a contract failure for this handoff. This ordering applies
+only to the same-turn one-time creation handoff; all other watch entries retain
+their existing behavior.
+
 ### 🛑 Banner before entering watch
 
 **Decide by entry, not by "is this the first watch in this turn".** Look at **what triggered** the `okx-a2a user watch` call — not whether it's the first watch invocation in the current turn.
@@ -134,23 +196,16 @@ English sessions use it verbatim. Other languages translate it faithfully, prese
 
 #### Creation-start monitoring note
 
-Only when this watch entry comes directly from the successful task-creation
-result in the same turn, render one additional note immediately after the
-banner and before calling watch. Require all of these exact structured facts:
+For a creation-start entry, render one additional note immediately after the
+banner and before calling watch. For the one-time creation handoff above, this
+is step 3 of the ordered pre-watch output.
 
-- `phase=creation`;
-- `reason=broadcast_submitted`;
-- `nextAction.id=watch_task`;
-- `nextAction.params.jobId` equals `payload.jobId`.
-
-Use this English source and translate it into the user's initial locale,
-including natural localized equivalents of both quoted reply phrases. In a
-Simplified Chinese session, render `Check the current task progress` as
-`查询当前任务进展` and `Check subscription task status` as `查询订阅任务状态`:
+Use this English source and translate it into the conversation language,
+including natural localized equivalents of both quoted reply phrases:
 
 > Note: The job will continue running after it is created, but message monitoring may stop. You can:
 >
-> - Reply “Check the current task progress” for a one-time status check.
+> - Reply “Check the current task progress” to view the complete one-time task lifecycle.
 > - For subscriptions, reply “Check subscription task status” to view recent follow-trade results.
 
 Show this note exactly once for that creation-start entry. Do not show it for
@@ -171,6 +226,10 @@ in the same generation. The canonical banner remains its own paragraph.
 Watch generation. An outer flow calling Watch its "last action" only forbids unrelated business commands;
 it never authorizes ending the turn after one watch call returns. Dispatch the complete result and re-enter
 until a literal §Stop condition applies or a `decision_request` requires waiting for the user's reply.
+
+For the same-turn one-time creation entry, the first call is the scoped command
+from §One-time creation result and starts only after its initial progress card,
+banner, and monitoring note have been rendered.
 
 ```bash
 okx-a2a user watch --json

@@ -313,15 +313,14 @@ pub(crate) async fn handle_task_create_prepare(
 
     let service = normalize_service(service);
 
-    // Match create-subscribe's write-boundary source and status policy.
-    // Expired subscriptions do not block a new subscription; settlement for
-    // the old job remains isolated in its own reconciliation flow. Normalize
+    // Match create-subscribe's write-boundary source and status policy: only an
+    // Active subscription to this exact service blocks a new purchase. Normalize
     // first because the raw service-detail response exposes subscription[]
     // rather than the derived supportSubscription field.
     let duplicate_subscription =
         if service.get("supportSubscription").and_then(Value::as_bool) == Some(true) {
             let existing_subscriptions =
-                super::subscription_ops::fetch_non_terminal_buyer_subscriptions_for_agent(
+                super::subscription_ops::fetch_active_buyer_subscriptions_for_agent(
                     client,
                     &user_agent_id,
                 )
@@ -470,7 +469,7 @@ mod tests {
     }
 
     #[test]
-    fn inactive_blocking_duplicate_only_allows_stop() {
+    fn inactive_duplicate_context_defensively_offers_stop_only() {
         let summary = super::super::subscription_ops::ExistingSubscriptionSummary {
             job_id: "job-43".to_string(),
             service_id: "svc-43".to_string(),

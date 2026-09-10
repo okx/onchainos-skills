@@ -369,6 +369,8 @@ pub async fn handle_create(client: &mut TaskApiClient, params: CreateTaskParams)
         None,
     );
 
+    let initial_lifecycle = common::lifecycle::initial_creation_display();
+
     crate::output::success(serde_json::json!({
         "phase": "creation",
         "decision": "ready",
@@ -387,6 +389,10 @@ pub async fn handle_create(client: &mut TaskApiClient, params: CreateTaskParams)
             "paymentTokenSymbol": validated.token_symbol,
             "paymentTokenAmount": params.payment_token_amount,
             "runtimeBound": true,
+            "initialLifecycle": {
+                "taskType": "one_time",
+                "display": initial_lifecycle
+            },
             "guideStatus": if guide_and_consent_active { "active" } else { "none" },
             "consentStatus": if guide_and_consent_active { "active" } else { "none" },
             "attachments": receipt.attachments,

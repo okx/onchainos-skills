@@ -21,6 +21,8 @@ const DUPLICATE_SUBSCRIPTION: &str =
     include_str!("../../skills/okx-ai/references/a2a/user/duplicate-subscription.md");
 const NOTIFY: &str = include_str!("../../skills/okx-ai/references/a2a/notify.md");
 const USER_REVIEW: &str = include_str!("../../skills/okx-ai/references/a2a/user/review.md");
+const USER_SUBSCRIPTION: &str =
+    include_str!("../../skills/okx-ai/references/a2a/user/subscription.md");
 const OKX_AI_SKILL: &str = include_str!("../../skills/okx-ai/SKILL.md");
 const TASK_COMMON_SOURCE: &str = include_str!("../src/commands/agent_commerce/task/common/mod.rs");
 const EVALUATOR_FLOW_SOURCE: &str =
@@ -71,14 +73,16 @@ fn action_ids_are_partitioned_by_domain_and_role() {
 
 #[test]
 fn creation_monitoring_query_tips_have_explicit_user_routes() {
-    let task_query_route = "`Check the current task progress` or equivalent wording; list or inspect tasks, saved deliverables, pending evaluations, or tasks the User rejected | [`../task-query.md`](../task-query.md)";
-    assert!(USER_ROUTER.contains(task_query_route));
+    let lifecycle_route = "Ask about a task's progress, status, lifecycle, timeline, current stage, current responsible party, or next step | [`../task-query.md`](../task-query.md)";
+    assert!(USER_ROUTER.contains(lifecycle_route));
+    let details_route = "Explicitly ask for task details, basic information, attributes, type, fee, provider, description, or delivery content; list or inspect tasks, saved deliverables, pending evaluations, or tasks the User rejected | [`../task-query.md`](../task-query.md)";
+    assert!(USER_ROUTER.contains(details_route));
     let subscription_trade_route = "Direct reply to the Runtime Watch creation-start note using `Check subscription task status` or its localized rendering; or query local follow-trade results for a subscription Signal by `jobId` or `deliveryId` | [`subscription-trade-records.md`](subscription-trade-records.md)";
     assert!(USER_ROUTER.contains(subscription_trade_route));
     let generic_subscription_route = "List, inspect, or manage a subscription | [`subscription.md`](subscription.md) or [`subscription-manage.md`](subscription-manage.md)";
     assert!(USER_ROUTER.contains(generic_subscription_route));
     assert!(USER_ROUTER.contains(
-        "Without that direct-reply context, treat subscription\nlifecycle/status wording as a generic subscription query"
+        "All other subscription lifecycle/status wording uses the\ngeneric subscription query"
     ));
     let direct_subscription_tip = USER_ROUTER
         .find("Direct reply to the Runtime Watch creation-start note")
@@ -381,7 +385,12 @@ fn submitted_one_time_status_recovers_and_displays_the_review_card_directly() {
     assert!(TASK_QUERY.contains("onchainos agent pending-decisions-v2 request"));
     assert!(TASK_QUERY.contains("buyer-review:<jobId>:job_submitted"));
     assert!(TASK_QUERY.contains("immediately append the exact same localized"));
-    assert!(TASK_QUERY.contains("`okx-a2a user list`, `outdated-list`, or `watch`"));
+    assert!(TASK_QUERY.contains("call `okx-a2a user list` or\n`outdated-list` before rendering"));
+    assert!(TASK_QUERY.contains("start or resume a watch"));
+    assert!(USER_SUBSCRIPTION.contains("## Status-query handoff"));
+    assert!(USER_SUBSCRIPTION.contains(
+        "Do not run `subscription-list`, `subscribe-detail`, or a one-time timeline"
+    ));
 
     assert!(USER_REVIEW.contains("okx-a2a user list --job-id <jobId> --all-providers --json"));
     assert!(USER_REVIEW.contains("idempotencyKey` exactly"));
