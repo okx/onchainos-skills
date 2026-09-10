@@ -68,9 +68,7 @@ detect_watch_support
 
 ### Scoped subscription watch
 
-All active subscription signals use the Guide-direct lifecycle. Do not run the retired
-`autotrade-watch-precheck`, `autotrade-consent-continue`, route-cache commands, or a legacy
-execution-policy review before starting watch.
+All active subscription signals use the Guide-direct lifecycle.
 
 For an existing subscription, `../a2a/user/subscription-manage.md` first resolves the exact Active job and
 ensures this device receives it. Then emit the applicable banner and run the sticky scoped watch:

@@ -5,7 +5,7 @@ description: "Discover supported third-party DApps and route protocol-specific r
 license: MIT
 metadata:
   author: okx
-  version: "4.9.1-beta"
+  version: "4.9.2-beta"
   homepage: "https://web3.okx.com"
 ---
 

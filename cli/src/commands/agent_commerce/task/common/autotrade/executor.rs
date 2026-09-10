@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 use tokio::process::Command;
 
 use super::amount::Decimal;
-use super::{consent, grants, guide, trade_kit};
+use super::{consent, grants, guide, subscription, subscription_config, trade_kit};
 use crate::asset_class::AssetClass;
 use crate::commands::agent_commerce::task::common::{okx_a2a, user_lang};
 
@@ -185,6 +185,20 @@ pub struct DirectClaimResult {
     pub delivery_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub amount: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Result of restoring the local execution material without reserving a
+/// delivery. A non-ready result is display-only and may be retried by a later
+/// signal after the local condition changes.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GuidePrepareResult {
+    pub ready: bool,
+    pub status: String,
+    pub job_id: String,
+    pub delivery_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }
@@ -1635,11 +1649,87 @@ pub fn claim_direct(
     })
 }
 
+async fn hydrate_guide_direct_contract(
+    job_id: &str,
+    context: &consent::DeliveryContext,
+) -> Result<()> {
+    use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+
+    let mut client = TaskApiClient::new();
+    let active = subscription::determine_active_delivery(&mut client, job_id, &context.agent_id)
+        .await
+        .map_err(|_| anyhow::anyhow!("subscription is no longer Active"))?;
+    if active.provider_agent_id != context.provider_agent_id {
+        bail!("Active subscription no longer matches this delivery")
+    }
+    if !guide::guide_path(job_id)?.is_file() {
+        let service = crate::commands::agent_commerce::task::common::find_service(
+            &context.provider_agent_id,
+            &active.service_id,
+        )
+        .await?
+        .context("service is not available to restore its Guide")?;
+        let source = service
+            .get("serviceGuide")
+            .and_then(Value::as_str)
+            .context("service has no Guide to restore")?;
+        let source_hash = service.get("serviceGuideHash").and_then(Value::as_str);
+        let draft = guide::parse_draft(Some(source), source_hash)?
+            .context("service has no Guide to restore")?;
+        let file = draft
+            .clone()
+            .into_file(job_id, &active.service_id, Some(&context.provider_agent_id));
+        guide::write_guide(&file, &draft.source)?;
+    }
+    guide::migrate_legacy_json_consent_if_needed(job_id, &context.agent_id, &active.service_id)?;
+    if subscription_config::execution_mode(&context.agent_id, &active.service_id)?
+        != Some(subscription_config::ExecutionMode::GuideDirect)
+    {
+        bail!("automatic copy-trading is not enabled for this subscription")
+    }
+    Ok(())
+}
+
+/// Restore local Guide/Consent material for a saved Agent-direct delivery.
+/// Unlike `claim_guide_direct`, this never creates an execution latch and must
+/// not be treated as authorization to invoke a money-moving tool.
+pub async fn prepare_guide_direct(
+    job_id: &str,
+    delivery_id: &str,
+) -> Result<GuidePrepareResult> {
+    use crate::commands::agent_commerce::task::common::config::SubscriptionTradePath;
+
+    let context = consent::load_delivery_context(job_id, delivery_id)
+        .context("trusted delivery context is unavailable")?;
+    if context.execution_path != SubscriptionTradePath::AgentDirect {
+        bail!("delivery is pinned to the legacy execution wrapper");
+    }
+    if !std::path::Path::new(&context.saved_path).is_file() {
+        bail!("saved subscription Signal is not available")
+    }
+    let reason = match hydrate_guide_direct_contract(job_id, &context).await {
+        Ok(()) if guide::has_active_execution_contract(job_id) => None,
+        Ok(()) => Some("active local Service Guide and Guide Consent are required".to_string()),
+        Err(error) => Some(error.to_string()),
+    };
+    Ok(GuidePrepareResult {
+        ready: reason.is_none(),
+        status: if reason.is_none() {
+            "ready".to_string()
+        } else {
+            "not_ready".to_string()
+        },
+        job_id: job_id.to_string(),
+        delivery_id: delivery_id.to_string(),
+        reason,
+    })
+}
+
 /// Claim a delivery for the Guide-driven flow. The runtime Agent determines the
 /// tool call from the exact local Guide, Consent, and saved Signal; the CLI
 /// verifies only the active Guide+Consent contract, the saved delivery, and
 /// exactly-once admission.
-pub fn claim_guide_direct(
+pub async fn claim_guide_direct(
     job_id: &str,
     delivery_id: &str,
 ) -> Result<DirectClaimResult> {
@@ -1653,6 +1743,7 @@ pub fn claim_guide_direct(
     if !std::path::Path::new(&context.saved_path).is_file() {
         bail!("saved subscription Signal is not available")
     }
+    hydrate_guide_direct_contract(job_id, &context).await?;
     if !guide::has_active_execution_contract(job_id) {
         bail!("active local Service Guide and Guide Consent are required")
     }

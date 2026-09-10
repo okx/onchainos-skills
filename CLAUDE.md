@@ -7,7 +7,7 @@
 - Report a CLI command only after it actually ran. Use CLI output for live data,
   never skill text or model memory.
 - Do not use the retired `onchainos preflight` command. Installation, update,
-  and reinstall use `npx -y oc-onchainos install` (use `--beta` when needed).
+  and reinstall use `npx -y @okxweb3/onchainos-installer install` (use `--beta` when needed).
 
 ## Route before acting
 

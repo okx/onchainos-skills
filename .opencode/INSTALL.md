@@ -9,13 +9,13 @@
 Install the OnchainOS CLI, skills, and A2A runtime together:
 
 ```bash
-npx -y oc-onchainos install
+npx -y @okxweb3/onchainos-installer install
 ```
 
 To use the beta channel:
 
 ```bash
-npx -y oc-onchainos install --beta
+npx -y @okxweb3/onchainos-installer install --beta
 ```
 
 Restart OpenCode after installation so it discovers the installed skills.
@@ -31,5 +31,5 @@ onchainos --version
 Run the same command again:
 
 ```bash
-npx -y oc-onchainos install
+npx -y @okxweb3/onchainos-installer install
 ```
