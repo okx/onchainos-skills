@@ -590,6 +590,27 @@ fn add_agent_list_cells_walks_envelope_and_skips_detail_unaffected() {
     assert_eq!(cells.as_array().unwrap().len(), 6);
 }
 
+#[test]
+fn add_agent_list_cells_derives_has_more_from_pagination() {
+    for (page, page_size, total, expected) in [
+        (1, 10, 11, true),
+        (2, 10, 11, false),
+        (1, 10, 10, false),
+    ] {
+        let mut env = json!({
+            "list": [],
+            "page": page,
+            "pageSize": page_size,
+            "total": total,
+            "hasMore": !expected,
+        });
+
+        add_agent_list_cells(&mut env);
+
+        assert_eq!(env["hasMore"], json!(expected));
+    }
+}
+
 // ─── §6 search cells ─────────────────────────────────────────────────
 
 #[test]

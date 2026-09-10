@@ -213,7 +213,7 @@ pub struct GetMyAgentsArgs {
     /// Page number (1-based). Defaults to 1.
     #[arg(long)]
     pub page: Option<String>,
-    /// Results per page. Defaults to 5; values above 50 are clamped to 50.
+    /// Results per page. Defaults to 10; values above 50 are clamped to 50.
     #[arg(long = "page-size")]
     pub page_size: Option<String>,
 }

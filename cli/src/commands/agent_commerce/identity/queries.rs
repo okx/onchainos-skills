@@ -81,21 +81,7 @@ pub(super) async fn get_my_agents_with_access_token(
 ) -> Result<Value> {
     let mut client = wallet_client(ctx)?;
 
-    // Product spec: agent-list identifies the user via JWT; `from` is never needed.
-    let mut query = vec![("chainIndex".to_string(), XLAYER_CHAIN_INDEX.to_string())];
-    // Optional listing filters. `role` accepts the canonical values
-    // user/asp/evaluator only (strict — no aliases) and is sent to the backend
-    // as its integer code (1/2/3). `ownerAddress` filters to a single owner.
-    if let Some(role_raw) = args.role.as_deref().filter(|r| !r.trim().is_empty()) {
-        query.push(("role".to_string(), normalize_role_code(role_raw)?));
-    }
-    push_optional_query(&mut query, "ownerAddress", args.owner_address.as_deref());
-    if let Some(page_raw) = args.page.as_deref() {
-        let page = parse_u32_arg(Some(page_raw), "--page", 1, Some(1), None, false)?;
-        query.push(("page".to_string(), page.to_string()));
-    }
-    let page_size = parse_u32_arg(args.page_size.as_deref(), "--page-size", 5, Some(1), None, false)?;
-    query.push(("pageSize".to_string(), page_size.to_string()));
+    let query = build_get_my_agents_query(args)?;
 
     let query_refs: Vec<(&str, &str)> = query
         .iter()
@@ -142,6 +128,25 @@ pub(super) async fn get_my_agents_with_access_token(
     // always meaningful.
     add_agent_list_cells(&mut out);
     Ok(out)
+}
+
+fn build_get_my_agents_query(args: &GetMyAgentsArgs) -> Result<Vec<(String, String)>> {
+    // Product spec: agent-list identifies the user via JWT; `from` is never needed.
+    let mut query = vec![("chainIndex".to_string(), XLAYER_CHAIN_INDEX.to_string())];
+    // Optional listing filters. `role` accepts the canonical values
+    // user/asp/evaluator only (strict — no aliases) and is sent to the backend
+    // as its integer code (1/2/3). `ownerAddress` filters to a single owner.
+    if let Some(role_raw) = args.role.as_deref().filter(|r| !r.trim().is_empty()) {
+        query.push(("role".to_string(), normalize_role_code(role_raw)?));
+    }
+    push_optional_query(&mut query, "ownerAddress", args.owner_address.as_deref());
+    if let Some(page_raw) = args.page.as_deref() {
+        let page = parse_u32_arg(Some(page_raw), "--page", 1, Some(1), None, false)?;
+        query.push(("page".to_string(), page.to_string()));
+    }
+    let page_size = parse_u32_arg(args.page_size.as_deref(), "--page-size", 10, Some(1), None, false)?;
+    query.push(("pageSize".to_string(), page_size.to_string()));
+    Ok(query)
 }
 
 // ─── `agent get` (original dual-mode agent-list query) ────────────────────
@@ -615,6 +620,19 @@ async fn get_by_address_impl(args: &GetByAddressArgs, ctx: &Context) -> Result<V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn get_my_agents_query_uses_default_page_size_ten() {
+        let query = build_get_my_agents_query(&GetMyAgentsArgs {
+            role: None,
+            owner_address: None,
+            page: None,
+            page_size: None,
+        })
+        .unwrap();
+
+        assert_eq!(query[1], ("pageSize".to_string(), "10".to_string()));
+    }
 
     #[test]
     fn search_output_is_always_table() {
