@@ -12,9 +12,9 @@ metadata:
 
 Discover and manage multi-chain, OKX-aggregated DeFi products and positions through the `onchainos defi` CLI group.
 
-## Pre-flight Checks
+## Preflight
 
-At the start of each thread, complete the checks in `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
+Preflight checks: At the start of each thread, complete the checks in `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
 
 ## Intent Routing
 

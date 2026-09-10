@@ -62,9 +62,9 @@ Three payment paths, distinguished by HTTP signature: **`accepts`-based 402** (c
 
 Any close / topup / settle / voucher / refund near a `channel_id` or session context = MPP mid-session op → `references/session.md`.
 
-## Pre-flight Checks
+## Preflight
 
-At the start of each thread, complete the checks in `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
+Preflight checks: At the start of each thread, complete the checks in `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
 
 ## Command Routing & Reference map
 

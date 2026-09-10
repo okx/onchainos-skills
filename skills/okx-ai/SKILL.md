@@ -36,12 +36,12 @@ mapping to readable business wording.
 
 ## Preflight
 
-For free-text user entry, before the first CLI command follow
-[`../okx-agentic-wallet/_shared/preflight.md`](../okx-agentic-wallet/_shared/preflight.md)
-once. Structured A2A envelopes, `[SKILL_PREFETCH]`, a trusted task-parameter or
+Structured A2A envelopes, `[SKILL_PREFETCH]`, a trusted task-parameter or
 execution-clarification notification, and the owner reply bound to that
 notification are exempt here. Route each through the exact top-level row below;
-do not run preflight before its bound task-session context is known.
+do not run preflight checks before its bound task-session context is known.
+
+Preflight checks: At the start of each thread, complete the checks in `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
 
 ## Top-level routing
 

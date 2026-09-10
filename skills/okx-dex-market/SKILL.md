@@ -12,9 +12,9 @@ metadata:
 
 Query read-only DEX token, market, signal, social, trenches, and WebSocket data through one routed skill.
 
-## Pre-flight Checks
+## Preflight
 
-At the start of each thread, complete the checks in `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
+Preflight checks: At the start of each thread, complete the checks in `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
 
 ## Intent Routing
 

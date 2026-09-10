@@ -38,9 +38,9 @@ Match the user intent to a row, then **read that row's linked file first** — i
 
 ---
 
-## Pre-flight Checks
+## Preflight
 
-At the start of each thread, complete the checks in [_shared/preflight.md](_shared/preflight.md).
+Preflight checks: At the start of each thread, complete the checks in [_shared/preflight.md](_shared/preflight.md).
 
 ## Build the Command
 

@@ -12,10 +12,11 @@ metadata:
 
 Route install/update, onboarding, OKX.AI introduction, and customer-support requests to one reference flow.
 
-## Pre-flight Checks
+## Preflight
 
-At the start of each thread, complete the checks in `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
 Ignore the preflight checks if the user has explicitly indicated an install/update intent.
+
+Preflight checks: At the start of each thread, complete the checks in `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
 
 ## Intent Routing
 
