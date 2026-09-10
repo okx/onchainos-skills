@@ -1286,10 +1286,13 @@ fn build_agent_list_cells(map: &serde_json::Map<String, Value>) -> Vec<Value> {
     ]
 }
 
-/// Add `cells` (per §1) to every agent row in the envelope (single-layer
-/// `list[*]` or double-layer `list[*].agentList[*]`). No-op when the shape
-/// doesn't match. Additive: never removes fields.
+/// Add `cells` (per §1) to every agent row and derive `hasMore` from pagination
+/// metadata. Supports single-layer `list[*]` and double-layer
+/// `list[*].agentList[*]` envelopes. Additive: never removes fields.
 pub(super) fn add_agent_list_cells(v: &mut Value) {
+    if let Some(map) = v.as_object_mut() {
+        derive_has_more(map);
+    }
     for_each_agent_row(v, |row| {
         if let Value::Object(map) = row {
             let cells = build_agent_list_cells(map);
