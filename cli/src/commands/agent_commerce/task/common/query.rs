@@ -243,7 +243,7 @@ pub async fn handle_status(
     Ok(())
 }
 
-fn emit_arbitration_status(
+pub(crate) fn emit_arbitration_status(
     job_id: &str,
     supplement: &Value,
     dispute: &crate::commands::agent_commerce::task::evaluator::dispute_status::DisputeStatusResponse,

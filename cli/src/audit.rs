@@ -478,6 +478,13 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
                 A2mcpProbeCommand::PreparePayment(_) => "a2mcp-probe prepare-payment".into(),
             }
         }
+        AgentCommand::Asp { command } => {
+            use crate::commands::agent_commerce::task::asp::ProviderQueryCommand;
+            match command {
+                ProviderQueryCommand::Status { .. } => "asp status".into(),
+                ProviderQueryCommand::ListTasks { .. } => "asp list-tasks".into(),
+            }
+        }
         // Identity
         AgentCommand::Create(_) => "create".into(),
         AgentCommand::Update(_) => "update".into(),

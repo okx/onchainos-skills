@@ -11,8 +11,8 @@ ASP/Provider. Select exactly one final leaf and stop routing.
 | Missing-parameter negotiation | [`../params.md`](../params.md) |
 | Execute accepted work | [`execution.md`](execution.md) |
 | Submit a deliverable | [`delivery.md`](delivery.md) |
-| List ASP tasks, query a provided one-time task lifecycle/current stage, or view saved deliverables | [`../task-query.md`](../task-query.md) |
-| Query the refund status or refund result of a provided task | [`../task-query.md`](../task-query.md) |
+| List ASP tasks or saved deliverables; query a provided one-time task lifecycle/current stage | [`task-query.md`](task-query.md) |
+| Query the refund status or refund result of a provided task | [`task-query.md`](task-query.md) |
 | List or manage provided subscriptions | [`subscription.md`](subscription.md) |
 | Respond to a rejection, open a selected rejected task for evaluation, or continue its refund-or-evaluation decision | [`arbitration-decision.md`](arbitration-decision.md) |
 | Pending, available, required, or in-progress evaluations and evaluation detail | [`arbitration-query.md`](arbitration-query.md); first query the rejected-task set for pending/available/required evaluation, then query filed evaluations only when requested |
@@ -47,6 +47,7 @@ ASP/Provider. Select exactly one final leaf and stop routing.
 | `agree_refund`, `sub_agree_refund` | [`dispute.md`](dispute.md) |
 | `raise_arbitration`, `raise_subscription_arbitration` | [`dispute.md`](dispute.md) |
 | `view_arbitration` | [`arbitration-query.md`](arbitration-query.md) |
+| `view_provider_task` | [`task-query.md`](task-query.md) |
 
 Cross-domain actions are intercepted before this router is loaded. Unknown
 actions are coverage failures; never infer a replacement from prose.

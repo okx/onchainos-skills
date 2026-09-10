@@ -58,6 +58,14 @@ pub const AGENT_ROLE_ASP: i64 = 2;
 /// Evaluator (arbiter).
 pub const AGENT_ROLE_EVALUATOR: i64 = 3;
 
+/// Whether a backend task-list row represents a sandbox review task.
+/// Missing or malformed values remain backward compatible with older servers.
+pub(crate) fn is_test_task(task: &serde_json::Value) -> bool {
+    task.get("testFlag")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+}
+
 pub use payment_mode::PaymentMode;
 
 pub use util::{ensure_sufficient_balance, ensure_sufficient_balance_at, query_xlayer_balance};

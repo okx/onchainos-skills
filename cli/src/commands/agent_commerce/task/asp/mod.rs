@@ -25,6 +25,7 @@ mod dispute_raise;
 pub mod flow;
 mod provider_decision;
 pub mod subscription;
+mod task_query;
 mod v2;
 
 use anyhow::Result;
@@ -150,6 +151,49 @@ pub enum ProviderCommand {
         #[arg(long = "agent-id")]
         agent_id: String,
     },
+}
+
+/// Read-only ASP query namespace exposed as `onchainos agent asp ...`.
+/// Provider mutations remain on their existing top-level command paths.
+#[derive(Subcommand)]
+pub enum ProviderQueryCommand {
+    /// Get current task status (ASP view).
+    Status {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
+    },
+    /// List my tasks (ASP view).
+    #[command(name = "list-tasks")]
+    ListTasks {
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long, default_value = "1")]
+        page: u32,
+        #[arg(long, default_value = "20")]
+        limit: u32,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
+    },
+}
+
+impl From<ProviderQueryCommand> for ProviderCommand {
+    fn from(command: ProviderQueryCommand) -> Self {
+        match command {
+            ProviderQueryCommand::Status { job_id, agent_id } => Self::Status { job_id, agent_id },
+            ProviderQueryCommand::ListTasks {
+                status,
+                page,
+                limit,
+                agent_id,
+            } => Self::List {
+                status,
+                page,
+                limit,
+                agent_id,
+            },
+        }
+    }
 }
 
 // ─── dispute subcommands ──────────────────────────────────────────────────
@@ -283,14 +327,10 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
             asp_claim::handle_claim_auto_complete(&mut client, &job_id, &agent_id).await
         }
         ProviderCommand::Status { job_id, agent_id } => {
-            use crate::commands::agent_commerce::task::common::{
-                query as common_query, AGENT_ROLE_ASP,
-            };
-            common_query::handle_status(
+            task_query::handle_detail(
                 &mut client,
                 &job_id,
                 agent_id.as_deref().unwrap_or(""),
-                AGENT_ROLE_ASP,
             )
             .await
         }
@@ -300,16 +340,12 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
             limit,
             agent_id,
         } => {
-            use crate::commands::agent_commerce::task::common::{
-                query as common_query, AGENT_ROLE_ASP,
-            };
-            common_query::handle_list(
+            task_query::handle_list(
                 &mut client,
                 status.as_deref(),
                 page,
                 limit,
                 agent_id.as_deref().unwrap_or(""),
-                AGENT_ROLE_ASP,
             )
             .await
         }

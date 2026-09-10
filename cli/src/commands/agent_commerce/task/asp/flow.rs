@@ -14,10 +14,70 @@ enum ProviderAssignmentType {
     Subscription,
 }
 
+const PROVIDER_ASSIGNMENT_OWNERSHIP_RULE: &str = "This provider decision is already delegated to the ASP runtime. Make and execute the decision in this job session without asking the ASP owner or any user for confirmation.";
+
 fn task_params_request_command(job_id: &str, buyer_agent_id: &str, task_type: &str) -> String {
     format!(
         "okx-a2a xmtp-send --job-id {job_id} --to-agent-id {buyer_agent_id} --message \"<natural-language request>\\n\\n[intent:task_params_request]\\n{{\\\"version\\\":1,\\\"jobId\\\":\\\"{job_id}\\\",\\\"taskType\\\":\\\"{task_type}\\\",\\\"requestId\\\":\\\"<unique-request-id>\\\",\\\"round\\\":<1-3>,\\\"missing\\\":[\\\"<field>\\\"]}}\" --json"
     )
+}
+
+fn provider_assignment_decision_rules(
+    assignment_type: ProviderAssignmentType,
+    job_id: &str,
+    agent_id: &str,
+    buyer_agent_id: &str,
+) -> (&'static str, String) {
+    match assignment_type {
+        ProviderAssignmentType::Single => (
+            "Output exactly one internal conclusion: `ACCEPT`, `NEED_PARAMS`, or `REJECT`. Do not invent a fourth result.",
+            format!(
+                "**NEED_PARAMS** — send one natural-language question followed by the structured block below to the Buyer through peer transport:\n\
+                 ```bash\n\
+                 {}\n\
+                 ```\n\
+                 Count only a response for which the buyer successfully updated the backend as a successful round. Ignore duplicate requestId/response messages. Maximum: 3 successful update/response rounds. After the third successful update, fetch current detail and evaluate once more; if still NEED_PARAMS, decline.\n\n\
+                 When `[intent:task_params_response]` arrives: fetch latest detail again. If status is not CREATED, stop. If CREATED, evaluate the updated complete serviceParams again. The buyer-side required ordering is:\n\
+                 ```bash\n\
+                 onchainos agent service-param-update {job_id} --agent-id {buyer_agent_id} --task-type single --request-id '<request-id>' --round <same-round> --service-params '<complete JSON>'\n\
+                 # only after exit 0 and backendUpdated=true:\n\
+                 okx-a2a session send --job-id {job_id} --to-agent-id {agent_id} --content \"[intent:task_params_response]\\n{{\\\"version\\\":1,\\\"jobId\\\":\\\"{job_id}\\\",\\\"requestId\\\":\\\"<request-id>\\\",\\\"round\\\":<same-round>,\\\"backendUpdated\\\":true}}\" --json\n\
+                 ```\n",
+                task_params_request_command(job_id, buyer_agent_id, "single")
+            ),
+        ),
+        ProviderAssignmentType::Subscription => (
+            "Output exactly one internal conclusion: `ACCEPT` or `REJECT`. `NEED_PARAMS` is forbidden for subscriptions; do not ask the Buyer for parameters. Missing or empty serviceParams is valid and is never a rejection reason. copyTrade, Guide Consent, leverage, margin mode, trade amount, target currency, close strategy, credentials, and every other execution setting are Buyer-local state that the ASP must not inspect, reconstruct, request, or use as a rejection reason. Choose `REJECT` only for a concrete mismatch between the requested subscription and the registered Service capability; otherwise choose `ACCEPT`.",
+            "Do not enter task-parameter clarification and do not call `service-param-update` for a subscription.\n".to_string(),
+        ),
+    }
+}
+
+fn provider_assignment_inputs(
+    assignment_type: ProviderAssignmentType,
+    description: &str,
+    service_params: Option<&str>,
+    service_name: &str,
+    service_id: &str,
+    service_description: &str,
+) -> String {
+    match assignment_type {
+        ProviderAssignmentType::Single => format!(
+            "Evaluate ONCE using only these four inputs:\n\
+             - task description: {description}\n\
+             - serviceParams: {}\n\
+             - attachments: inspect the attachments already forwarded into this job session\n\
+             - registered service: {service_name} (`{service_id}`): {service_description}",
+            service_params.unwrap_or("{}")
+        ),
+        ProviderAssignmentType::Subscription => format!(
+            "Evaluate ONCE using only these three inputs:\n\
+             - subscription description: {description}\n\
+             - attachments: inspect the attachments already forwarded into this job session\n\
+             - registered service: {service_name} (`{service_id}`): {service_description}\n\
+             Do not inspect or render serviceParams for a subscription."
+        ),
+    }
 }
 
 async fn provider_assignment_playbook(
@@ -30,6 +90,10 @@ async fn provider_assignment_playbook(
     let task_type = match assignment_type {
         ProviderAssignmentType::Single => "single",
         ProviderAssignmentType::Subscription => "subscription",
+    };
+    let accept_type = match assignment_type {
+        ProviderAssignmentType::Single => 203,
+        ProviderAssignmentType::Subscription => 205,
     };
     let event_name = match assignment_type {
         ProviderAssignmentType::Single => "job_asp_selected",
@@ -132,18 +196,23 @@ async fn provider_assignment_playbook(
         .and_then(|value| value.as_str())
         .unwrap_or("");
     let buyer_agent_id = p.user_agent_id.as_deref().unwrap_or("<buyerAgentId>");
-    let service_params = p.service_params.as_deref().unwrap_or("{}");
-    let request_command = task_params_request_command(job_id, buyer_agent_id, task_type);
+    let (decision_rule, missing_input_rule) =
+        provider_assignment_decision_rules(assignment_type, job_id, agent_id, buyer_agent_id);
+    let evaluation_inputs = provider_assignment_inputs(
+        assignment_type,
+        &p.description,
+        p.service_params.as_deref(),
+        service_name,
+        service_id,
+        service_description,
+    );
 
     format!(
         "[Current state] {event_name}; latest backend status=CREATED(0)\n\
          [Role] ASP\n\n\
-         Evaluate ONCE using only these four inputs:\n\
-         - task description: {description}\n\
-         - serviceParams: {service_params}\n\
-         - attachments: inspect the attachments already forwarded into this job session\n\
-         - registered service: {service_name} (`{service_id}`): {service_description}\n\n\
-         Output exactly one internal conclusion: `ACCEPT`, `NEED_PARAMS`, or `REJECT`. Do not invent a fourth result.\n\n\
+         {PROVIDER_ASSIGNMENT_OWNERSHIP_RULE}\n\n\
+         {evaluation_inputs}\n\n\
+         {decision_rule}\n\n\
          **ACCEPT** — immediately before mutation, rely on the latest detail above (CREATED). Run:\n\
          ```bash\n\
          onchainos agent {accept_command} {job_id} --agent-id {agent_id}\n\
@@ -154,19 +223,7 @@ async fn provider_assignment_playbook(
          onchainos agent {decline_command} {job_id} --agent-id {agent_id} --reason \"<reason>\"\n\
          ```\n\
          The reason is placed in broadcast bizContext; do not use legacy `asp-reject`.\n\n\
-         **NEED_PARAMS** — send one natural-language question followed by the structured block below to the Buyer through peer transport:\n\
-         ```bash\n\
-         {request_command}\n\
-         ```\n\
-         Count only a response for which the buyer successfully updated the backend as a successful round. Ignore duplicate requestId/response messages. Maximum: 3 successful update/response rounds. After the third successful update, fetch current detail and evaluate once more; if still NEED_PARAMS, decline.\n\n\
-         When `[intent:task_params_response]` arrives: fetch latest detail again. If status is not CREATED, stop. If CREATED, evaluate the updated complete serviceParams again. The buyer-side required ordering is:\n\
-         ```bash\n\
-         onchainos agent service-param-update {job_id} --agent-id {buyer_agent_id} --task-type {task_type} --request-id '<request-id>' --round <same-round> --service-params '<complete JSON>'\n\
-         # only after exit 0 and backendUpdated=true:\n\
-         okx-a2a session send --job-id {job_id} --to-agent-id {agent_id} --content \"[intent:task_params_response]\\n{{\\\"version\\\":1,\\\"jobId\\\":\\\"{job_id}\\\",\\\"requestId\\\":\\\"<request-id>\\\",\\\"round\\\":<same-round>,\\\"backendUpdated\\\":true}}\" --json\n\
-         ```\n",
-        description = p.description,
-        accept_type = 203,
+         {missing_input_rule}",
     )
 }
 
@@ -2061,6 +2118,61 @@ mod tests {
         assert!(output.contains("duplicate trigger"));
         assert!(output.contains("Do NOT repeat the mutation or broadcast"));
         assert!(!output.contains("accept-job-by-provider 0xsub01"));
+    }
+
+    #[test]
+    fn subscription_assignment_is_autonomous_and_never_requests_params() {
+        let (decision_rule, missing_input_rule) = provider_assignment_decision_rules(
+            ProviderAssignmentType::Subscription,
+            ASP_JOB_ID,
+            ASP_AGENT_ID,
+            "buyer-1",
+        );
+        assert!(decision_rule.contains("`ACCEPT` or `REJECT`"));
+        assert!(decision_rule.contains("Missing or empty serviceParams is valid"));
+        assert!(decision_rule.contains("Buyer-local state"));
+        assert!(decision_rule.contains("otherwise choose `ACCEPT`"));
+        assert!(!missing_input_rule.contains("task_params_request"));
+        assert!(!missing_input_rule.contains("session send"));
+        assert!(missing_input_rule.contains("do not call `service-param-update`"));
+        assert!(PROVIDER_ASSIGNMENT_OWNERSHIP_RULE.contains("without asking the ASP owner"));
+
+        let inputs = provider_assignment_inputs(
+            ProviderAssignmentType::Subscription,
+            "BTC signals",
+            Some(r#"{"leverage":"100x","credential":"secret"}"#),
+            "Signal service",
+            "service-1",
+            "Publishes BTC signals",
+        );
+        assert!(inputs.contains("three inputs"));
+        assert!(!inputs.contains("serviceParams:"));
+        assert!(!inputs.contains("100x"));
+        assert!(!inputs.contains("secret"));
+    }
+
+    #[test]
+    fn single_assignment_keeps_parameter_clarification() {
+        let (decision_rule, missing_input_rule) = provider_assignment_decision_rules(
+            ProviderAssignmentType::Single,
+            ASP_JOB_ID,
+            ASP_AGENT_ID,
+            "buyer-1",
+        );
+        assert!(decision_rule.contains("`ACCEPT`, `NEED_PARAMS`, or `REJECT`"));
+        assert!(missing_input_rule.contains("[intent:task_params_request]"));
+        assert!(missing_input_rule.contains("--task-type single"));
+
+        let inputs = provider_assignment_inputs(
+            ProviderAssignmentType::Single,
+            "Analyze this wallet",
+            Some(r#"{"chain":"xlayer"}"#),
+            "Analysis service",
+            "service-1",
+            "Analyzes a wallet",
+        );
+        assert!(inputs.contains("four inputs"));
+        assert!(inputs.contains("serviceParams: {\"chain\":\"xlayer\"}"));
     }
 
     #[tokio::test]

@@ -56,6 +56,31 @@ fn lifecycle_command_is_registered() {
 }
 
 #[test]
+fn asp_query_commands_are_registered() {
+    let list = onchainos()
+        .args(["agent", "asp", "list-tasks", "--help"])
+        .output()
+        .expect("run ASP list-tasks help");
+    assert_eq!(list.status.code(), Some(0));
+    let list_help = String::from_utf8_lossy(&list.stdout);
+    for expected in ["--agent-id <AGENT_ID>", "--page <PAGE>", "--limit <LIMIT>"] {
+        assert!(
+            list_help.contains(expected),
+            "ASP list-tasks help missing {expected:?}: {list_help}"
+        );
+    }
+
+    let status = onchainos()
+        .args(["agent", "asp", "status", "job-1", "--help"])
+        .output()
+        .expect("run ASP status help");
+    assert_eq!(status.status.code(), Some(0));
+    let status_help = String::from_utf8_lossy(&status.stdout);
+    assert!(status_help.contains("<JOB_ID>"));
+    assert!(status_help.contains("--agent-id <AGENT_ID>"));
+}
+
+#[test]
 fn provider_subscription_decision_commands_are_registered() {
     for (command, required_args) in [
         ("accept-subscription", vec!["--agent-id <AGENT_ID>"]),

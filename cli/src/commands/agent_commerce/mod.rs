@@ -21,6 +21,12 @@ pub enum AgentCommand {
         command: a2mcp_probe::A2mcpProbeCommand,
     },
 
+    /// Read-only ASP task queries.
+    Asp {
+        #[command(subcommand)]
+        command: task::asp::ProviderQueryCommand,
+    },
+
     // ── Identity ────────────────────────────────────────────────────────────
     /// Register a new Agent identity
     Create(identity::CreateArgs),
@@ -177,7 +183,7 @@ pub enum AgentCommand {
         format: String,
     },
 
-    /// Replace the complete serviceParams during a v2 provider clarification round.
+    /// Replace the complete serviceParams during a single-task provider clarification round.
     #[command(name = "service-param-update")]
     ServiceParamUpdate {
         job_id: String,
@@ -1498,6 +1504,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
     match cmd {
         AgentCommand::A2mcpProbe { command } => a2mcp_probe::run(command, ctx).await,
+        AgentCommand::Asp { command } => task::asp::run_provider(command.into(), ctx).await,
         // ── Identity ────────────────────────────────────────────────
         AgentCommand::Create(args) => identity::create(args, ctx).await,
         AgentCommand::Update(args) => identity::update(args, ctx).await,

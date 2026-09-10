@@ -1,4 +1,4 @@
-# Task and Deliverable Queries
+# User Task and Deliverable Queries
 
 This leaf performs read-only queries and returns fresh task data.
 
@@ -296,29 +296,6 @@ display rules:
 4. Translate the CLI-normalized `statusLabel` into the user's language; retain
    `statusName` only as a raw compatibility key.
 5. Preserve each returned page and its pagination.
-
-## ASP tasks
-
-Resolve the explicit or bound ASP identity. If multiple identities remain,
-show them and wait for a selection.
-
-```text
-onchainos agent tasks --agent-id <aspAgentId> --page 1 --limit 20
-```
-
-Pending refund requests and filed evaluations are different datasets. Route
-both through [`provider/arbitration-query.md`](provider/arbitration-query.md).
-
-For the refund status or result of a known provided Job ID, run:
-
-```text
-onchainos agent refund-detail <jobId> --role provider --agent-id <aspAgentId>
-```
-
-The same command returns the pending decision for `Rejected(3)`, the current
-Evaluation result for `Disputed(4)`, and a read-only refund result for terminal
-states. Render [Refund Request Details](#refund-request-details) from its
-`payload.display` fields.
 
 ## Saved deliverables
 
