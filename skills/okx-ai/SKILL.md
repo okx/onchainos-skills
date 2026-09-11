@@ -59,7 +59,6 @@ file is missing, report an incomplete installation and stop.
 | Owner reply immediately following a trusted, job-bound notification whose `userContent` contains a valid `[intent:task_params_request]` block | [`references/a2a/params.md`](references/a2a/params.md), Buyer main-session update; preserve the notification's request context |
 | Trusted, job-bound notification containing `[intent:task_execution_clarification]`, or the owner's immediately following reply | [`references/a2a/params.md`](references/a2a/params.md), Accepted execution clarification; never update backend `serviceParams` |
 | `[SKILL_PREFETCH]` without either structured shape above | Load this Skill as requested, then end without a business action; route the next inbound message afresh |
-| Invoke a confirmed A2MCP service or inspect its synchronous result | `references/a2mcp/router.md` |
 | Explicit request to review or update the saved Guide Consent for an existing subscription | [`references/a2a/user/execution-policy.md`](references/a2a/user/execution-policy.md), Updating a saved Guide Consent |
 | A fresh free-text request to view, or manage User/ASP tasks and subscriptions; respond to assignments; deliver or review work; handle refunds, evaluations, ratings, or evaluator work, when no exact leaf is already bound | `references/a2a/router.md` |
 
@@ -72,10 +71,55 @@ file is missing, report an incomplete installation and stop.
 | Repair missing/uninitialized `okx-a2a` or a runtime/plugin error | `references/shared/chat-comm-init.md` |
 | Upload or download a file | `references/runtime/attachment.md` |
 
-Bound Runtime continuations are not free-text intents. When a selected
-reference, structured action, or CLI result requires an internal Runtime
-operation without naming its final leaf, read
-[`references/runtime/router.md`](references/runtime/router.md).
+#### Bound Runtime continuation routes
+
+Bound Runtime continuations are not free-text intents. Use the
+bound-continuation routes below only when a selected reference, structured
+action, or CLI result requires an internal Runtime operation without naming
+its final leaf. Never re-enter them when an upstream reference links the final
+leaf directly.
+
+Read exactly one selected reference:
+
+| Input or intent | Reference or action |
+|---|---|
+| A task sub-session must create a durable User decision | `references/runtime/decision-request.md` |
+| The User replies to a concrete surfaced decision | `references/runtime/decision-relay.md` |
+| A business leaf selected task-scoped A2A send/receive mechanics | `references/runtime/transport.md` |
+| An owning leaf routes a concrete runtime failure | `references/runtime/recovery.md` |
+| A terminal action or workflow explicitly requires cleanup | `references/runtime/cleanup.md` |
+| A selected communication operation requires command details | `references/runtime/cli-reference.md` |
+
+Preserve the bound task, session, decision, action parameters, and origin.
+Never infer an internal operation from prose or preload sibling files. A
+missing mapping is a coverage failure—report it and stop.
+
+### A2MCP routes
+
+Use these routes to invoke a confirmed A2MCP service or inspect its synchronous result.
+
+For every active invocation, route only from the latest CLI `nextAction`;
+never infer an action or opaque ID from prose.
+
+| Input or intent | Reference or action |
+|---|---|
+| Confirmed free-text invocation | Read `references/a2mcp/invoke.md` |
+| Active `endpoint_result/free_result` with an empty `nextAction` | Return to `references/a2mcp/invoke.md` for result rendering, then end the invocation |
+| `invoke_a2mcp` | Read `references/a2mcp/handoff.md` once; on successful validation it continues directly to `references/a2mcp/invoke.md` with a fresh invocation generation |
+| `provide_a2mcp_params` | Continue `references/a2mcp/invoke.md` with the returned `nextProbePayload` |
+| `select_a2mcp_token` | Continue `references/a2mcp/invoke.md`; add only the candidate selected by the user to the action's bound `preparedId` |
+| `fund_a2mcp_token` | Follow `references/a2mcp/funding.md` end to end with its bound `preparedId` and `candidateId` |
+| `resume_a2mcp_after_funding` | Continue `references/a2mcp/funding.md` with its one-time bound `preparedId` and `candidateId` |
+| `confirm_a2mcp_free` | Continue `references/a2mcp/invoke.md` with its bound `confirmationId` |
+| `confirm_a2mcp_payment` | Continue `references/a2mcp/invoke.md` with its bound `preparedId` and `candidateId` |
+| `execute_a2mcp_payment` | Hand its bound `paymentId` to `okx-agent-payments-protocol` |
+| `cancel_a2mcp` | End the invocation without another CLI call |
+
+Read `references/a2mcp/recovery.md` only for `phase=invocation_recovery` or when
+`references/a2mcp/invoke.md` routes an error there.
+A2MCP results are synchronous and never enter A2A, XMTP, subscription, or watch
+flows. Keep raw HTTP 402 responses in `references/a2mcp/invoke.md`; only
+`execute_a2mcp_payment.params.paymentId` enters the Payment Protocol.
 
 ### Identity routes
 
@@ -115,9 +159,8 @@ domain-specific rendering or routing rules.
 `invoke_a2mcp` starts an active A2MCP invocation. Its confirmed
 `a2a/user/create-prepare.md` result enters
 [`references/a2mcp/handoff.md`](references/a2mcp/handoff.md); while active,
-route every subsequent result through
-[`references/a2mcp/router.md`](references/a2mcp/router.md), including results
-with an empty `nextAction`. Outside that context, use the router only when the
+route every subsequent result through the A2MCP routes above, including results
+with an empty `nextAction`. Outside that context, use those routes only when the
 latest `nextAction[].id` is A2MCP-namespaced; never classify from prose. Clear
 the context after `endpoint_result/free_result`, payment-protocol handoff,
 `cancel_a2mcp`, `endpoint_probe/invalid_a2mcp_routing`, or blocked

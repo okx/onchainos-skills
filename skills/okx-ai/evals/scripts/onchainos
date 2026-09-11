@@ -35,6 +35,9 @@ case "$*" in
   "agent service-match --sid 13373 --limit 3")
     printf '%s\n' '{"ok":true,"data":{"services":[],"searchAfter":"","hasMore":false,"tip":"No service found for SID 13373."}}'
     ;;
+  "agent service-match --sid 34560 --limit 3")
+    printf '%s\n' '{"ok":true,"data":{"services":[],"searchAfter":"","hasMore":false,"tip":"No service found for SID 34560."}}'
+    ;;
   "agent service-match --asp-agent-id 2189 --max-payment-token-amount 0 --limit 3")
     printf '%s\n' '{"ok":true,"data":{"services":[],"searchAfter":"","hasMore":false,"tip":"No free services found for Agent 2189."}}'
     ;;

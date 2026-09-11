@@ -103,6 +103,8 @@ onchainos agent service-match \
   [--limit <n>]
 ```
 
+A Service ID **MUST** use `--sid`; **NEVER** use `--service-id`.
+
 If the user does not request a result count, **MUST** pass `--limit 3` by default.
 When requested, `--limit` **MUST** be `1–10`; values outside this range are invalid.
 
