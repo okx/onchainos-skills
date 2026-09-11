@@ -180,6 +180,13 @@ display rules:
    must not be shown. For a one-time task with raw status `failed` / code `9`,
    use the CLI label `Refund completed` before translating it.
 4. Preserve the returned Job Description without rewriting it.
+5. For a delivered task, query `task-deliverable-list --job-id <jobId> --role
+   user`. When its matching latest item has a regular-file `path`, render the
+   following line after the card; otherwise omit it:
+
+   ```markdown
+   - Deliverable: [<absolutePath>](<absolutePath>)
+   ```
 
 ### Submitted one-time review recovery
 
