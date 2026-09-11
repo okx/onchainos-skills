@@ -28,8 +28,9 @@ const ONE_TIME_PERMIT_TTL_SEC: u64 = 15 * 60;
 const NOTICE_REF_VERSION: u32 = 1;
 const EXECUTION_LATCH_VERSION: u32 = 2;
 const TERMINAL_JOURNAL_VERSION: u32 = 1;
-const GLOBAL_RETRY_BUDGET: Duration = Duration::from_millis(300);
 const INITIAL_NOTIFY_TIMEOUT: Duration = Duration::from_secs(5);
+const FLUSH_NOTIFY_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_NOTIFICATION_ATTEMPTS: u32 = 10;
 const STALE_LEASE_SEC: u64 = 30;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -2132,6 +2133,12 @@ fn notify_and_persist(
         .notification_attempts
         .saturating_add(max_attempts as u32);
     outcome.updated_at = now_secs();
+    if outcome.notification_attempts >= MAX_NOTIFICATION_ATTEMPTS {
+        outcome.notification_pending = false;
+        outcome.next_notification_attempt_at = 0;
+        let _ = write_outcome(path, outcome);
+        return;
+    }
     let delay = 30u64
         .saturating_mul(1u64 << outcome.notification_attempts.min(5))
         .min(15 * 60);
@@ -2434,7 +2441,6 @@ pub fn cleanup_expired_tickets(limit: usize) -> Result<usize> {
 /// Retry due result/degrade notices across jobs. Called opportunistically on
 /// Agent command startup/heartbeat; it never re-runs a transaction command.
 pub fn flush_all_due(max_records: usize) -> Result<usize> {
-    let deadline = Instant::now() + GLOBAL_RETRY_BUDGET;
     let root = notice_index_root()?;
     let mut pending = Vec::new();
     if root.is_dir() {
@@ -2474,10 +2480,6 @@ pub fn flush_all_due(max_records: usize) -> Result<usize> {
             if reference.next_attempt_at > now_secs() {
                 break;
             }
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining < Duration::from_millis(25) {
-                break;
-            }
             let lease = index_path.with_extension(format!("lease-{}", std::process::id()));
             if std::fs::rename(&index_path, &lease).is_err() {
                 continue;
@@ -2491,7 +2493,7 @@ pub fn flush_all_due(max_records: usize) -> Result<usize> {
             };
             match read_outcome(&path) {
                 Ok(Some(mut outcome)) if outcome.notification_pending => {
-                    notify_and_persist(&path, &mut outcome, false, Some(remaining));
+                    notify_and_persist(&path, &mut outcome, false, Some(FLUSH_NOTIFY_TIMEOUT));
                 }
                 _ => {
                     let _ = std::fs::remove_file(&index_path);
@@ -2502,12 +2504,8 @@ pub fn flush_all_due(max_records: usize) -> Result<usize> {
             let _ = std::fs::remove_file(&lease);
         }
     }
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    let delivered = if remaining >= Duration::from_millis(25) {
-        super::notify::flush_all_pending_bounded(max_records, remaining).unwrap_or(0)
-    } else {
-        0
-    };
+    let delivered =
+        super::notify::flush_all_pending_bounded(max_records, FLUSH_NOTIFY_TIMEOUT).unwrap_or(0);
     Ok(delivered)
 }
 
@@ -2557,6 +2555,58 @@ mod tests {
         write_outcome(&path, &outcome).unwrap();
         assert!(!index.exists());
         assert!(path.exists(), "terminal outcome remains an idempotency tombstone");
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    #[test]
+    fn outcome_notification_stops_after_max_attempts() {
+        let _guard = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let temp = test_tempdir();
+        let empty_path = temp.path().join("empty-path");
+        std::fs::create_dir_all(&empty_path).unwrap();
+        let original_path = std::env::var_os("PATH");
+        std::env::set_var("ONCHAINOS_HOME", temp.path());
+        std::env::set_var("PATH", &empty_path);
+
+        let path = outcome_path("job-max-attempts", "delivery-1").unwrap();
+        let mut outcome = ExecutionOutcome {
+            version: OUTCOME_VERSION,
+            job_id: "job-max-attempts".to_string(),
+            delivery_id: "delivery-1".to_string(),
+            venue: "dex".to_string(),
+            action: "buy".to_string(),
+            amount: "1".to_string(),
+            execution_mode: ExecutionMode::Auto,
+            status: OutcomeStatus::FailedBeforeSubmit,
+            receipt: None,
+            reason: Some("test".to_string()),
+            failure_category: None,
+            notification_pending: true,
+            notification_attempts: MAX_NOTIFICATION_ATTEMPTS - 1,
+            next_notification_attempt_at: 0,
+            created_at: now_secs(),
+            updated_at: now_secs(),
+        };
+        write_outcome(&path, &outcome).unwrap();
+        assert!(notice_ref_path("job-max-attempts", "delivery-1")
+            .unwrap()
+            .exists());
+
+        notify_and_persist(&path, &mut outcome, false, Some(Duration::from_millis(1)));
+
+        let stored = read_outcome(&path).unwrap().unwrap();
+        assert!(!stored.notification_pending);
+        assert_eq!(stored.next_notification_attempt_at, 0);
+        assert!(!notice_ref_path("job-max-attempts", "delivery-1")
+            .unwrap()
+            .exists());
+        if let Some(path) = original_path {
+            std::env::set_var("PATH", path);
+        } else {
+            std::env::remove_var("PATH");
+        }
         std::env::remove_var("ONCHAINOS_HOME");
     }
 

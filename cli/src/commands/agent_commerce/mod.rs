@@ -1413,7 +1413,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         4,
         std::time::Duration::from_millis(100),
     );
-    let _ = task::common::autotrade::executor::flush_all_due(4);
+    let _ = task::common::autotrade::executor::flush_all_due(1);
     let _ = task::common::autotrade::executor::cleanup_expired_tickets(8);
     let _ = task::common::autotrade::delivery_queue::flush_due(
         1,
