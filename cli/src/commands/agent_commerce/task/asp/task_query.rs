@@ -14,6 +14,8 @@ enum TaskKind {
     Subscription,
 }
 
+const ONE_TIME_BACKEND_PAGE_SIZE: u64 = 20;
+
 fn scalar_string(value: Option<&Value>) -> Option<String> {
     let value = value?;
     value
@@ -261,12 +263,9 @@ fn page_has_more(value: &Value, page: u32, page_size: u32) -> bool {
     u64::from(page).saturating_mul(u64::from(page_size)) < page_total(value)
 }
 
-fn subscription_matches_status(value: &Value, status: Option<&str>) -> bool {
-    let Some(status) = status.map(str::trim).filter(|status| !status.is_empty()) else {
-        return true;
-    };
-    let expected = status.parse::<i64>().ok().or_else(|| {
-        match status.to_ascii_lowercase().as_str() {
+fn subscription_status_code(status: &str) -> Option<i64> {
+    status.trim().parse::<i64>().ok().or_else(|| {
+        match status.trim().to_ascii_lowercase().as_str() {
             "init" => Some(-1),
             "created" => Some(0),
             "accepted" | "active" => Some(1),
@@ -280,8 +279,71 @@ fn subscription_matches_status(value: &Value, status: Option<&str>) -> bool {
             // subscriptions into a filtered combined list.
             _ => None,
         }
-    });
-    expected.is_some_and(|expected| task_status(value) == expected)
+    })
+}
+
+fn subscription_matches_status(value: &Value, status: Option<&str>) -> bool {
+    let Some(status) = status.map(str::trim).filter(|status| !status.is_empty()) else {
+        return true;
+    };
+    subscription_status_code(status).is_some_and(|expected| task_status(value) == expected)
+}
+
+fn subscription_list_path(page: u32, page_size: u32, status: Option<&str>) -> Option<String> {
+    let mut path =
+        format!("/priapi/v1/aieco/task/subscribe/my?page={page}&pageSize={page_size}&statusType=0");
+    if let Some(status) = status.map(str::trim).filter(|status| !status.is_empty()) {
+        path.push_str(&format!(
+            "&statusList={}",
+            subscription_status_code(status)?
+        ));
+    }
+    Some(path)
+}
+
+fn one_time_list_path(page: u64, status: Option<&str>) -> String {
+    let mut path =
+        format!("/priapi/v1/aieco/task/my?page={page}&page_size={ONE_TIME_BACKEND_PAGE_SIZE}");
+    if let Some(status) = status.map(str::trim).filter(|status| !status.is_empty()) {
+        path.push_str(&format!("&status={status}"));
+    }
+    path
+}
+
+async fn fetch_one_time_page(
+    client: &mut TaskApiClient,
+    agent_id: &str,
+    page: u32,
+    page_size: u32,
+    status: Option<&str>,
+) -> Result<Value> {
+    // The provider endpoint currently returns fixed 20-row backend pages even
+    // when page_size differs. Translate the public page/limit into that fixed
+    // window so the CLI contract remains exact and stateless.
+    let start = u64::from(page - 1).saturating_mul(u64::from(page_size));
+    let end = start.saturating_add(u64::from(page_size));
+    let first_backend_page = start / ONE_TIME_BACKEND_PAGE_SIZE + 1;
+    let last_backend_page = end.saturating_sub(1) / ONE_TIME_BACKEND_PAGE_SIZE + 1;
+    let mut total = 0;
+    let mut items = Vec::new();
+
+    for backend_page in first_backend_page..=last_backend_page {
+        let path = one_time_list_path(backend_page, status);
+        let response = client.get_with_identity(&path, agent_id).await?;
+        total = page_total(&response);
+        items.extend(page_items(&response).iter().cloned());
+        if backend_page.saturating_mul(ONE_TIME_BACKEND_PAGE_SIZE) >= total {
+            break;
+        }
+    }
+
+    let skip = (start % ONE_TIME_BACKEND_PAGE_SIZE) as usize;
+    let list = items
+        .into_iter()
+        .skip(skip)
+        .take(page_size as usize)
+        .collect::<Vec<_>>();
+    Ok(json!({"page": page, "pageSize": page_size, "total": total, "list": list}))
 }
 
 fn build_list_result(
@@ -300,7 +362,8 @@ fn build_list_result(
         })
         .filter(|item| subscription_matches_status(item, status))
         .collect::<Vec<_>>();
-    let subscription_total = subscription_items.len() as u64;
+    let subscription_total = page_total(subscriptions);
+    let one_time_total = page_total(one_time);
     let mut items = subscription_items
         .iter()
         .map(|item| normalize_item(item, TaskKind::Subscription))
@@ -310,8 +373,8 @@ fn build_list_result(
             .iter()
             .map(|item| normalize_item(item, TaskKind::OneTime)),
     );
-    // `/subscribe/my` is a flat list. Only the one-time source is paginated.
-    let has_more = page_has_more(one_time, page, page_size);
+    let subscription_has_more = page_has_more(subscriptions, page, page_size);
+    let one_time_has_more = page_has_more(one_time, page, page_size);
     let allowed_job_ids = items
         .iter()
         .filter_map(|item| item.get("jobId").and_then(Value::as_str))
@@ -330,8 +393,13 @@ fn build_list_result(
             "agentId": agent_id,
             "page": page,
             "pageSize": page_size,
-            "total": page_total(one_time).saturating_add(subscription_total),
-            "hasMore": has_more,
+            "paginationScope": "per_task_type",
+            "subscriptionTotal": subscription_total,
+            "subscriptionHasMore": subscription_has_more,
+            "oneTimeTotal": one_time_total,
+            "oneTimeHasMore": one_time_has_more,
+            "total": one_time_total.saturating_add(subscription_total),
+            "hasMore": subscription_has_more || one_time_has_more,
             "hasSubscriptionTasks": items.iter().any(|item| item["taskType"] == "subscription"),
             "items": items,
         }
@@ -355,15 +423,30 @@ pub async fn handle_list(
         )
         .await;
     }
-    let mut task_path = format!("/priapi/v1/aieco/task/my?page={page}&page_size={page_size}");
-    if let Some(status) = status.map(str::trim).filter(|status| !status.is_empty()) {
-        task_path.push_str(&format!("&status={status}"));
-    }
-    let subscription_path = "/priapi/v1/aieco/task/subscribe/my";
-    let one_time = client.get_with_identity(&task_path, &agent_id).await?;
-    let subscriptions = client
-        .get_with_agent_id(&subscription_path, &agent_id)
-        .await?;
+    // Refresh once before spawning independent reads. Each request still reads
+    // the stored token, but neither branch can race to rotate an expiring token.
+    crate::commands::agentic_wallet::auth::ensure_tokens_refreshed().await?;
+    let mut one_time_client = client.clone();
+    let mut subscription_client = client.clone();
+    let one_time_request =
+        fetch_one_time_page(&mut one_time_client, &agent_id, page, page_size, status);
+    let subscription_request = async {
+        match subscription_list_path(page, page_size, status) {
+            Some(subscription_path) => {
+                subscription_client
+                    .get_with_agent_id(&subscription_path, &agent_id)
+                    .await
+            }
+            // A one-time-only status cannot match any subscription row.
+            None => Ok(json!({
+                "page": page,
+                "pageSize": page_size,
+                "total": 0,
+                "list": []
+            })),
+        }
+    };
+    let (one_time, subscriptions) = tokio::try_join!(one_time_request, subscription_request)?;
     let result = build_list_result(
         &agent_id,
         page,
@@ -550,7 +633,9 @@ mod tests {
     #[test]
     fn list_applies_one_time_status_names_to_subscription_rows() {
         let subscriptions = json!({
-            "total": 2,
+            // The backend total reflects statusList=1. Keep an extra row in the
+            // fixture to prove the client-side defensive filter still applies.
+            "total": 1,
             "list": [
                 {"jobId": "sub-active", "providerAgentId": "9001", "status": 1},
                 {"jobId": "sub-closed", "providerAgentId": "9001", "status": 7}
@@ -568,6 +653,122 @@ mod tests {
         let submitted =
             build_list_result("9001", 1, 20, Some("submitted"), &one_time, &subscriptions);
         assert!(submitted["payload"]["items"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn list_pages_subscriptions_and_one_time_tasks_independently() {
+        let subscription_page = |start: u32, count: u32| {
+            let list = (start..start + count)
+                .map(|index| {
+                    json!({
+                        "jobId": format!("sub-{index}"),
+                        "providerAgentId": "9001",
+                        "status": 1
+                    })
+                })
+                .collect::<Vec<_>>();
+            json!({"total": 10, "list": list})
+        };
+        let one_time_page = |start: u32, count: u32| {
+            let list = (start..start + count)
+                .map(|index| json!({"jobId": format!("task-{index}"), "status": 0}))
+                .collect::<Vec<_>>();
+            json!({"total": 10, "list": list})
+        };
+
+        let first = build_list_result(
+            "9001",
+            1,
+            3,
+            None,
+            &one_time_page(1, 3),
+            &subscription_page(1, 3),
+        );
+        let first_ids = first["payload"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["jobId"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            first_ids,
+            ["sub-1", "sub-2", "sub-3", "task-1", "task-2", "task-3"]
+        );
+        assert_eq!(first["payload"]["pageSize"], 3);
+        assert_eq!(first["payload"]["subscriptionTotal"], 10);
+        assert_eq!(first["payload"]["subscriptionHasMore"], true);
+        assert_eq!(first["payload"]["oneTimeTotal"], 10);
+        assert_eq!(first["payload"]["oneTimeHasMore"], true);
+        assert_eq!(first["payload"]["total"], 20);
+        assert_eq!(first["payload"]["hasMore"], true);
+        assert_eq!(first["payload"]["hasSubscriptionTasks"], true);
+        assert_eq!(first["payload"]["paginationScope"], "per_task_type");
+
+        let second = build_list_result(
+            "9001",
+            2,
+            3,
+            None,
+            &one_time_page(4, 3),
+            &subscription_page(4, 3),
+        );
+        let second_ids = second["payload"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["jobId"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            second_ids,
+            ["sub-4", "sub-5", "sub-6", "task-4", "task-5", "task-6"]
+        );
+        assert_eq!(second["payload"]["subscriptionTotal"], 10);
+        assert_eq!(second["payload"]["total"], 20);
+        assert_eq!(second["payload"]["hasMore"], true);
+        assert_eq!(second["payload"]["hasSubscriptionTasks"], true);
+        assert_eq!(
+            second["nextAction"][0]["params"]["allowedJobIds"],
+            json!(["sub-4", "sub-5", "sub-6", "task-4", "task-5", "task-6"])
+        );
+
+        let fourth = build_list_result(
+            "9001",
+            4,
+            3,
+            None,
+            &one_time_page(10, 1),
+            &subscription_page(10, 1),
+        );
+        assert_eq!(fourth["payload"]["items"].as_array().unwrap().len(), 2);
+        assert_eq!(fourth["payload"]["items"][0]["jobId"], "sub-10");
+        assert_eq!(fourth["payload"]["items"][1]["jobId"], "task-10");
+        assert_eq!(fourth["payload"]["hasMore"], false);
+        assert_eq!(fourth["payload"]["hasSubscriptionTasks"], true);
+    }
+
+    #[test]
+    fn subscription_list_path_uses_backend_pagination_and_exact_status_filter() {
+        assert_eq!(
+            subscription_list_path(2, 3, None).as_deref(),
+            Some("/priapi/v1/aieco/task/subscribe/my?page=2&pageSize=3&statusType=0")
+        );
+        assert_eq!(
+            subscription_list_path(2, 3, Some("active")).as_deref(),
+            Some("/priapi/v1/aieco/task/subscribe/my?page=2&pageSize=3&statusType=0&statusList=1")
+        );
+        assert!(subscription_list_path(2, 3, Some("submitted")).is_none());
+    }
+
+    #[test]
+    fn one_time_list_path_uses_backend_pagination_and_status_filter() {
+        assert_eq!(
+            one_time_list_path(2, None),
+            "/priapi/v1/aieco/task/my?page=2&page_size=20"
+        );
+        assert_eq!(
+            one_time_list_path(2, Some(" submitted ")),
+            "/priapi/v1/aieco/task/my?page=2&page_size=20&status=submitted"
+        );
     }
 
     #[test]

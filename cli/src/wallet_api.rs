@@ -126,6 +126,7 @@ fn build_query_string(query: &[(&str, &str)]) -> String {
 }
 
 /// HTTP client for the agentic-wallet API endpoints.
+#[derive(Clone)]
 pub struct WalletApiClient {
     http: Client,
     base_url: String,
