@@ -1,6 +1,6 @@
 # Task Watch — live monitor for the user-session task inbox
 
-Loaded from `SKILL.md` §Task Watch. Owns: triggers, the watch command, anti-cron rules, item dispatch (`notification` / `decision_request`), claim semantics, `llmContent` execution, stop conditions.
+Owns: triggers, the watch command, anti-cron rules, item dispatch (`notification` / `decision_request`), claim semantics, `llmContent` execution, stop conditions.
 
 Business actions belong to the A2A domain router (`../a2a/router.md`). This
 file only handles the watch loop.

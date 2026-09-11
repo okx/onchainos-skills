@@ -5,8 +5,8 @@
 Enter fresh from `handoff.md` with its base routing object and empty dynamic
 parameter object. Collect any structured required fields already present in
 that routing; otherwise probe once without interpreting `serviceDescription`
-first. Continue from `router.md` with the latest bound action params.
-`provide_a2mcp_params` instead uses the latest
+first. Continue from the A2MCP routes in `../../SKILL.md` with the latest bound
+action params. `provide_a2mcp_params` instead uses the latest
 `payload.{nextProbePayload,typedParams}`.
 
 - Every `invoke_a2mcp` starts a new generation and discards prior state. Never
@@ -87,7 +87,7 @@ Route exact structured states; never infer progression from prose:
 | `parameter_collection / input_required` | Complete Endpoint fields: collect them directly. `needsDescriptionFallback=true`: consult `serviceDescription` only for the missing interaction details. Then re-probe. |
 | `parameter_collection / invalid_a2mcp_params` | Show only the Endpoint/structured-contract validation fields, collect replacements, and re-probe. |
 | `payment_confirmation / free_confirmation_required` | **MUST now read** the [A2MCP confirmation-card template](output-templates.md), render `payload.presentation`, and wait; confirmation runs `confirm-free --yes` once |
-| `payment_confirmation / {token_selection_required, payment_confirmation_required, insufficient_balance}` | **MUST now read** the [A2MCP confirmation-card template](output-templates.md), render `payload.presentation`, and wait; route only the User-selected latest action through `router.md` |
+| `payment_confirmation / {token_selection_required, payment_confirmation_required, insufficient_balance}` | **MUST now read** the [A2MCP confirmation-card template](output-templates.md), render `payload.presentation` first, then wait for the User's next action |
 | `payment_ready` with `execute_a2mcp_payment` | Send only its bound `paymentId` to the Payment Protocol |
 | `endpoint_result / free_result` | Summarize `payload.result` and end the invocation |
 | `endpoint_probe / invalid_a2mcp_routing` | Follow `recovery.md` |
