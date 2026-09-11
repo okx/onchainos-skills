@@ -12,8 +12,15 @@ show them and wait for a selection.
 onchainos agent asp list-tasks --agent-id <aspAgentId> --page 1 --limit 20
 ```
 
-The ASP list is one combined view of the ASP's subscription and one-time tasks.
+The ASP list combines the same-numbered page from the subscription and one-time
+task sources. `payload.pageSize` applies independently to each source
+(`payload.paginationScope=per_task_type`), so a page can contain up to twice
+that many rows. Subscription rows appear first, followed by one-time rows.
 Render only `payload.items`, in CLI order, and number the rows from 1.
+
+`payload.total` is the sum of `payload.subscriptionTotal` and
+`payload.oneTimeTotal`. `payload.hasMore` is true while either
+`payload.subscriptionHasMore` or `payload.oneTimeHasMore` is true.
 
 scene: ASP task list
 
@@ -58,7 +65,8 @@ display rules:
    subscription delivery-routing data in an ASP task list.
 9. When `payload.hasMore=true`, set `morePrompt` to the localized equivalent of
    `Reply “More” to see more tasks.` When false, set it to an empty string. A
-   More reply increments `--page` and keeps the same `--limit` and ASP Agent ID.
+   More reply increments `--page` and keeps the same `--limit`, ASP Agent ID,
+   and optional `--status` filter.
 
 For a selected row, use its `taskType` only as a routing key and run:
 

@@ -84,6 +84,7 @@ fn redact_session_cert(body: &Value) -> Value {
 }
 
 /// Task backend API client (DoH-enabled, delegates to WalletApiClient).
+#[derive(Clone)]
 pub struct TaskApiClient {
     wallet: WalletApiClient,
     pub(crate) raw_http: reqwest::Client,

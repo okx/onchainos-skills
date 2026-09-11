@@ -89,6 +89,10 @@ fn asp_task_query_uses_one_language_neutral_template() {
     assert!(PROVIDER_TASK_QUERY.contains("### Tasks for {aspName} (Agent ID: {agentId})"));
     assert!(PROVIDER_TASK_QUERY.contains("Translate `taskTypeLabel` into the user's language"));
     assert!(PROVIDER_TASK_QUERY.contains("hasSubscriptionTasks=false"));
+    assert!(PROVIDER_TASK_QUERY.contains("payload.paginationScope=per_task_type"));
+    assert!(PROVIDER_TASK_QUERY.contains("payload.subscriptionHasMore"));
+    assert!(PROVIDER_TASK_QUERY.contains("payload.oneTimeHasMore"));
+    assert!(PROVIDER_TASK_QUERY.contains("optional `--status` filter"));
     assert!(!PROVIDER_TASK_QUERY.contains("platformReviewTagEn"));
     assert!(!PROVIDER_TASK_QUERY.contains("morePromptEn"));
     assert!(!PROVIDER_TASK_QUERY.contains("recommendedActionsEn"));
