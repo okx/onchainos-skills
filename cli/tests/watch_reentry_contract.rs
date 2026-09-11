@@ -59,6 +59,25 @@ fn completed_asp_execution_can_show_one_cli_backed_deliverable_line() {
 }
 
 #[test]
+fn delivered_task_details_show_the_saved_user_deliverable_path() {
+    let task_query = include_str!("../../skills/okx-ai/references/a2a/task-query.md");
+    let details_template = task_query
+        .split_once("scene: One-time task details")
+        .unwrap()
+        .1
+        .split_once("display rules:")
+        .unwrap()
+        .0;
+    assert!(!details_template.contains("Deliverable:"));
+    assert!(task_query.contains("- Deliverable: [<absolutePath>](<absolutePath>)"));
+    assert!(task_query.contains(
+        "onchainos agent task-deliverable-list --job-id <jobId> --role user"
+    ));
+    assert!(task_query.contains("matching latest item has a regular-file `path`"));
+    assert!(task_query.contains("following line after the card; otherwise omit it"));
+}
+
+#[test]
 fn creation_watch_shows_one_localized_monitoring_note_without_reentry_repeats() {
     let note = "> Monitoring depends on platform capabilities and may be interrupted. If it is interrupted, you can:\n>\n> 1. Reply “Check the current task progress” to query its status.\n> 2. For subscription tasks, reply “Check subscription task status” to view recent copy-trade results.";
     assert_eq!(WATCH.matches(note).count(), 1);
