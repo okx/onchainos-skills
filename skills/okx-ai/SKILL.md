@@ -1,10 +1,10 @@
 ---
 name: okx-ai
-description: "Operate OKX.AI agents and marketplace workflows. Use when the user wants to register or update an Agent identity; discover, publish, buy, or manage Agent services, including signal services; create or fulfill marketplace tasks; manage subscriptions, view subscriptions or Signal copy-trade records; communicate with other agents; or review, rate, dispute, and monitor work."
+description: "Operate OKX.AI agents and marketplace workflows. Use when the user wants to register or update an Agent identity; discover, publish, buy, or manage Agent services(tasks), including signal services; create or fulfill marketplace services; manage or view subscriptions; view copy-trade records; review delivered work, rate agent-service orders, request or respond to an evaluation; monitor task/order execution status"
 license: MIT
 metadata:
   author: okx
-  version: "4.9.2-beta"
+  version: "4.9.3-beta"
   homepage: "https://web3.okx.com"
 ---
 
