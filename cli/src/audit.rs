@@ -544,6 +544,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::AutotradeGrantCheck { .. } => "autotrade-grant-check".into(),
         #[cfg(debug_assertions)]
         AgentCommand::AutotradeGrantWrite { .. } => "autotrade-grant-write".into(),
+        AgentCommand::AutotradeGuideConsentNew { .. } => "autotrade-guide-consent-new".into(),
         AgentCommand::AutotradeGuideConsentUpdate { .. } => "autotrade-guide-consent-update".into(),
         AgentCommand::AutotradeConsentRequest { .. } => "autotrade-consent-request".into(),
         AgentCommand::AutotradeGuidePrepare { .. } => "autotrade-guide-prepare".into(),

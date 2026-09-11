@@ -26,11 +26,35 @@ also used for an explicit owner request outside a delivery.
    ```
 
    This command revalidates the Active subscription, restores a missing local
-   Guide, and migrates a local legacy Consent JSON when possible. It never
-   reserves the delivery or authorizes a money-moving call. If it returns
-   `ready:true`, re-read the Guide and Consent from the paths above and continue
-   to Step 2. If it returns `ready:false` or errors, preserve/display the Signal
-   and stop without an execution outcome.
+   Guide from the provider's Service listing, and migrates a local legacy
+   Consent JSON when possible. It never reserves the delivery, asks the user for
+   values, creates a new Consent from scratch, or authorizes a money-moving
+   call.
+
+   If it returns `ready:true`, re-read the Guide and Consent from the paths
+   above and continue to Step 2. If it errors, preserve/display the Signal and
+   stop without an execution outcome.
+
+   If it returns `ready:false`, inspect the local files again:
+
+   - If the Guide is still unavailable, preserve/display the Signal and stop
+     without an execution outcome. Do not ask for Consent values without the
+     exact local Guide.
+   - If the Guide is available but the active Consent is unavailable, tell the
+     user that the current Consent is missing and must be regenerated from the
+     Guide before automatic copy-trading can continue. Read the Guide, ask only
+     for the Guide-defined configuration values, show the complete proposed
+     `values` JSON object, and wait for explicit user confirmation. After
+     confirmation, create the replacement Consent:
+
+     ```bash
+     onchainos agent autotrade-guide-consent-new \
+       --job-id <jobId> --values-json '<complete confirmed JSON object>'
+     ```
+
+     Then re-read the Guide and active Consent. Continue to Step 2 only if both
+     are available; otherwise preserve/display the Signal and stop without an
+     execution outcome. Never infer, default, or fabricate Consent values.
 
 2. Read the available Guide and active Consent together. The Guide is the
    trusted local execution policy: use it to select the corresponding registered
@@ -100,6 +124,10 @@ setting.
 
 3. This command updates Consent only. It never changes the Guide, refreshes a
    Guide, changes the execution path, claims a delivery, or performs a trade.
-   If the Guide or active Consent is unavailable or expired, stop and explain
-   that it cannot be updated; do not recreate or reactivate it from guessed
-   values. A changed Guide requires its own refresh and a new user confirmation.
+   If the active Consent file is missing but the local Guide is available, tell
+   the user the current Consent is missing, collect and confirm a complete new
+   Guide-defined `values` object, then use `autotrade-guide-consent-new` instead
+   of update. If the Guide is unavailable or the Consent is expired/unreadable,
+   stop and explain that it cannot be updated; do not recreate or reactivate it
+   from guessed values. A changed Guide requires its own refresh and a new user
+   confirmation.

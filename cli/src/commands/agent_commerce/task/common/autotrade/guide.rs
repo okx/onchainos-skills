@@ -66,6 +66,9 @@ pub struct GuideConsentSnapshot {
     pub guide_hash: Option<String>,
 }
 
+pub const MISSING_CONSENT_RECOVERY_MESSAGE: &str =
+    "The consent file is missing. Ask the user for the configuration parameters based on the Guide file, then call autotrade-guide-consent-new to generate a new consent.";
+
 pub fn parse_draft(source: Option<&str>, source_hash: Option<&str>) -> Result<Option<GuideDraft>> {
     let Some(source) = source else {
         return Ok(None);
@@ -244,12 +247,40 @@ pub fn update_active_consent_values(
     values: BTreeMap<String, Value>,
 ) -> Result<GuideConsentFile> {
     validate_consent_values(&values)?;
-    let mut consent = read_guide_consent(job_id)?
-        .context("active Guide Consent is not available locally")?;
+    let Some(mut consent) = read_guide_consent(job_id)? else {
+        bail!(MISSING_CONSENT_RECOVERY_MESSAGE)
+    };
     if consent.lifecycle != GuideConsentLifecycle::Active || consent.expires_at <= now_secs() {
         bail!("active Guide Consent is not available locally")
     }
     consent.values = values;
+    write_guide_consent(&consent)?;
+    Ok(consent)
+}
+
+pub fn create_active_consent_from_guide(
+    job_id: &str,
+    values: BTreeMap<String, Value>,
+    ttl_sec: u64,
+) -> Result<GuideConsentFile> {
+    if ttl_sec == 0 {
+        bail!("--ttl-sec must be > 0")
+    }
+    validate_consent_values(&values)?;
+    if load_active_consent(job_id)?.is_some() {
+        bail!("active Guide Consent already exists; use autotrade-guide-consent-update to replace values")
+    }
+    let guide = load_guide(job_id)?;
+    let now = now_secs();
+    let consent = GuideConsentFile {
+        version: GUIDE_CONSENT_VERSION,
+        job_id: job_id.to_string(),
+        guide_hash: guide_contract_hash(&guide)?,
+        lifecycle: GuideConsentLifecycle::Active,
+        values,
+        created_at: now,
+        expires_at: now.saturating_add(ttl_sec),
+    };
     write_guide_consent(&consent)?;
     Ok(consent)
 }
