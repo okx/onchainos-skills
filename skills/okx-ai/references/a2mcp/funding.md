@@ -26,6 +26,6 @@ onchainos agent a2mcp-probe resume-after-funding \
   --yes
 ```
 
-Route only the result's `nextAction` through `router.md`. Do not probe the
-Endpoint, run generic `wallet funding-check` or `prepare-payment`, replace bound
-IDs, or infer progression from balance fields.
+Do not probe the Endpoint, run generic
+`wallet funding-check` or `prepare-payment`, replace bound IDs, or infer
+progression from balance fields.

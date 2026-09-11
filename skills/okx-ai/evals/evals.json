@@ -201,6 +201,29 @@
         ],
         "response_includes": ["2189"]
       }
+    },
+    {
+      "id": 10,
+      "prompt": "我想使用 Agent Post，Service ID 是 34560",
+      "expected_output": "将明确标注的 Service ID 34560 作为 SID 查询，只使用 service-match 的 --sid 参数，并等待用户从查询结果中选择服务。",
+      "files": [],
+      "expectations": [
+        "Calls `onchainos agent service-match --sid 34560 --limit 3` exactly once.",
+        "Never uses `--service-id` with `onchainos agent service-match`.",
+        "Does not probe `onchainos agent service-match --help` or retry the ID under another flag.",
+        "Does not create a task before the user selects a returned Service."
+      ],
+      "assertions": {
+        "required_commands": [
+          "onchainos agent service-match --sid 34560 --limit 3"
+        ],
+        "forbidden_commands": [
+          "onchainos agent service-match --service-id",
+          "onchainos agent service-match --help",
+          "task-create-prepare"
+        ],
+        "response_includes": ["34560"]
+      }
     }
   ]
 }
