@@ -762,6 +762,18 @@ pub enum AgentCommand {
         values_json: String,
     },
 
+    /// Create a new active Guide Consent from the existing local Service Guide.
+    #[command(name = "autotrade-guide-consent-new")]
+    AutotradeGuideConsentNew {
+        #[arg(long = "job-id")]
+        job_id: String,
+        /// Complete JSON object of Guide-defined Consent values.
+        #[arg(long = "values-json")]
+        values_json: String,
+        #[arg(long = "ttl-sec", default_value_t = task::common::autotrade::DEFAULT_AUTOTRADE_TTL_SEC)]
+        ttl_sec: u64,
+    },
+
     /// Compatibility entry point for delivery policy handling. Only an active
     /// automatic policy may continue; every non-auto policy is notify-only and
     /// reported as a terminal skip without a per-delivery decision.
@@ -2253,6 +2265,25 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                 "consentStatus": "active",
                 "guideHash": consent.guide_hash,
                 "updated": true,
+            }));
+            Ok(())
+        }
+
+        AgentCommand::AutotradeGuideConsentNew {
+            job_id,
+            values_json,
+            ttl_sec,
+        } => {
+            let values = serde_json::from_str(&values_json)
+                .map_err(|error| anyhow::anyhow!("--values-json must be a JSON object: {error}"))?;
+            let consent = task::common::autotrade::guide::create_active_consent_from_guide(
+                &job_id, values, ttl_sec,
+            )?;
+            crate::output::success(serde_json::json!({
+                "jobId": consent.job_id,
+                "consentStatus": "active",
+                "guideHash": consent.guide_hash,
+                "created": true,
             }));
             Ok(())
         }

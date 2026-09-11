@@ -37,10 +37,10 @@
 mod common;
 
 use common::{
-    assert_error_contains, create_auto_consent_via_continuation, fresh_home, onchainos,
-    parse_stdout_json, run_with_retry, scrubbed,
+    assert_error_contains, fresh_home, onchainos, parse_stdout_json, run_with_retry, scrubbed,
 };
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::fs;
 
 #[test]
@@ -339,6 +339,69 @@ fn read_consent_metadata(path: &std::path::Path) -> Value {
         .map(|(metadata, _)| metadata)
         .expect("parse consent metadata envelope");
     serde_json::from_str(json).expect("parse consent metadata JSON")
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn write_local_guide(
+    home: &std::path::Path,
+    job_id: &str,
+    service_id: &str,
+    source: &str,
+) -> Value {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let metadata = serde_json::json!({
+        "version": 1,
+        "jobId": job_id,
+        "serviceId": service_id,
+        "providerAgentId": "provider-1",
+        "sourceHash": sha256_hex(source.as_bytes()),
+        "createdAt": now
+    });
+    let guide_dir = home.join("autotrade").join("guide");
+    fs::create_dir_all(&guide_dir).expect("create guide dir");
+    fs::write(
+        guide_dir.join(format!("{job_id}.md")),
+        format!(
+            "<!-- onchainos-autotrade:guide\n{}\n-->\n\n{source}",
+            serde_json::to_string_pretty(&metadata).expect("serialize guide")
+        ),
+    )
+    .expect("write guide");
+    metadata
+}
+
+fn write_active_guide_consent(home: &std::path::Path, job_id: &str, values: Value) -> Value {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let metadata = serde_json::json!({
+        "version": 1,
+        "jobId": job_id,
+        "guideHash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "lifecycle": "active",
+        "values": values,
+        "createdAt": now,
+        "expiresAt": now + 3600
+    });
+    let consent_dir = home.join("autotrade").join("consent");
+    fs::create_dir_all(&consent_dir).expect("create guide consent dir");
+    fs::write(
+        consent_dir.join(format!("{job_id}.md")),
+        format!(
+            "<!-- onchainos-autotrade:consent\n{}\n-->\n\n# Service Consent\n\nValues in this document are defined exclusively by the matching Service Guide.\n",
+            serde_json::to_string_pretty(&metadata).expect("serialize guide consent")
+        ),
+    )
+    .expect("write guide consent");
+    metadata
 }
 
 fn funding_notice_image_dir() -> std::path::PathBuf {
@@ -760,251 +823,225 @@ fn validate_listing_a2a_profit_text_and_url_blocks_for_url_only() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  agent autotrade-consent-set --mode pause — local compatibility contract
+//  agent autotrade-guide-consent-update — local Guide Consent contract
 // ══════════════════════════════════════════════════════════════════════════
 
 #[test]
-fn autotrade_pause_needs_only_job_id_and_clears_execution_policy() {
-    let (_home, dir) = fresh_home("cli_agent_autotrade_pause");
-    let job_id = "job_pause_zh";
-
-    for store in ["consent", "grants", "pending"] {
-        let store_dir = dir.join("autotrade").join(store);
-        std::fs::create_dir_all(&store_dir).expect("create autotrade store");
-        std::fs::write(store_dir.join(format!("{job_id}.json")), b"seed")
-            .expect("seed autotrade state");
-    }
+fn autotrade_guide_consent_update_requires_existing_active_consent() {
+    let (_home, dir) = fresh_home("cli_agent_guide_consent_missing");
     let mut cmd = onchainos();
     scrubbed(&mut cmd, &dir);
     let output = cmd
         .args([
             "agent",
-            "autotrade-consent-set",
+            "autotrade-guide-consent-update",
             "--job-id",
-            job_id,
-            "--mode",
-            "pause",
+            "job_missing_consent",
+            "--values-json",
+            r#"{"tradeEnvironment":"demo"}"#,
         ])
         .output()
-        .expect("run autotrade pause");
-    let data = common::assert_ok_and_extract_data(&output);
+        .expect("update missing Guide Consent");
 
+    assert_error_contains(
+        &output,
+        &[
+            "consent 文件没了，请根据 Guide 文件询问用户配置参数",
+            "autotrade-guide-consent-new",
+        ],
+    );
+}
+
+#[test]
+fn autotrade_guide_consent_update_replaces_values_without_rewriting_metadata() {
+    let (_home, dir) = fresh_home("cli_agent_guide_consent_update");
+    let original = write_active_guide_consent(
+        &dir,
+        "job_guide_settings",
+        serde_json::json!({
+            "tradeEnvironment": "live",
+            "maxTradeAmountU": "10"
+        }),
+    );
+
+    let mut cmd = onchainos();
+    scrubbed(&mut cmd, &dir);
+    let output = cmd
+        .args([
+            "agent",
+            "autotrade-guide-consent-update",
+            "--job-id",
+            "job_guide_settings",
+            "--values-json",
+            r#"{"tradeEnvironment":"demo","marginMode":"isolated","orderPolicy":"signal_price_limit"}"#,
+        ])
+        .output()
+        .expect("update Guide Consent values");
+    let result = common::assert_ok_and_extract_data(&output);
+    assert_eq!(result["jobId"], "job_guide_settings");
+    assert_eq!(result["consentStatus"], "active");
+    assert_eq!(result["guideHash"], original["guideHash"]);
+    assert_eq!(result["updated"], true);
+
+    let stored = read_consent_metadata(
+        &dir.join("autotrade")
+            .join("consent")
+            .join("job_guide_settings.md"),
+    );
+    assert_eq!(stored["version"], original["version"]);
+    assert_eq!(stored["jobId"], original["jobId"]);
+    assert_eq!(stored["guideHash"], original["guideHash"]);
+    assert_eq!(stored["lifecycle"], "active");
+    assert_eq!(stored["createdAt"], original["createdAt"]);
+    assert_eq!(stored["expiresAt"], original["expiresAt"]);
     assert_eq!(
-        data,
-        serde_json::json!({"consentMode":"pause","cleared":true,"jobId":job_id})
+        stored["values"],
+        serde_json::json!({
+            "tradeEnvironment": "demo",
+            "marginMode": "isolated",
+            "orderPolicy": "signal_price_limit"
+        })
+    );
+}
+
+#[test]
+fn autotrade_guide_consent_new_creates_active_consent_from_local_guide() {
+    let (_home, dir) = fresh_home("cli_agent_guide_consent_new");
+    let guide = write_local_guide(
+        &dir,
+        "job_guide_new",
+        "service-1",
+        "Ask the user for Trade Kit environment and max trade size.",
     );
 
-    let consent_path = dir
-        .join("autotrade")
-        .join("consent")
-        .join(format!("{job_id}.json"));
-    assert!(
-        !consent_path.exists(),
-        "pause must leave the subscription without an execution policy"
+    let mut cmd = onchainos();
+    scrubbed(&mut cmd, &dir);
+    let output = cmd
+        .args([
+            "agent",
+            "autotrade-guide-consent-new",
+            "--job-id",
+            "job_guide_new",
+            "--values-json",
+            r#"{"tradeEnvironment":"demo","maxTradeAmountU":"10"}"#,
+            "--ttl-sec",
+            "60",
+        ])
+        .output()
+        .expect("create Guide Consent values");
+    let result = common::assert_ok_and_extract_data(&output);
+    assert_eq!(result["jobId"], "job_guide_new");
+    assert_eq!(result["consentStatus"], "active");
+    assert_eq!(result["guideHash"], guide["sourceHash"]);
+    assert_eq!(result["created"], true);
+
+    let stored = read_consent_metadata(
+        &dir.join("autotrade")
+            .join("consent")
+            .join("job_guide_new.md"),
+    );
+    assert_eq!(stored["version"], 1);
+    assert_eq!(stored["jobId"], "job_guide_new");
+    assert_eq!(stored["guideHash"], guide["sourceHash"]);
+    assert_eq!(stored["lifecycle"], "active");
+    assert_eq!(
+        stored["values"],
+        serde_json::json!({
+            "tradeEnvironment": "demo",
+            "maxTradeAmountU": "10"
+        })
+    );
+    assert_eq!(
+        stored["expiresAt"].as_u64().unwrap() - stored["createdAt"].as_u64().unwrap(),
+        60
+    );
+}
+
+#[test]
+fn autotrade_guide_consent_new_requires_local_guide() {
+    let (_home, dir) = fresh_home("cli_agent_guide_consent_new_missing_guide");
+    let mut cmd = onchainos();
+    scrubbed(&mut cmd, &dir);
+    let output = cmd
+        .args([
+            "agent",
+            "autotrade-guide-consent-new",
+            "--job-id",
+            "job_missing_guide",
+            "--values-json",
+            r#"{"tradeEnvironment":"demo"}"#,
+        ])
+        .output()
+        .expect("create Guide Consent without Guide");
+
+    assert_error_contains(&output, &["service guide is not available locally"]);
+}
+
+#[test]
+fn autotrade_guide_consent_new_rejects_existing_active_consent() {
+    let (_home, dir) = fresh_home("cli_agent_guide_consent_new_existing");
+    write_local_guide(
+        &dir,
+        "job_guide_existing",
+        "service-1",
+        "Ask the user for Trade Kit environment.",
+    );
+    write_active_guide_consent(
+        &dir,
+        "job_guide_existing",
+        serde_json::json!({"tradeEnvironment": "live"}),
     );
 
-    for store in ["grants", "pending"] {
-        assert!(
-            !dir.join("autotrade")
-                .join(store)
-                .join(format!("{job_id}.json"))
-                .exists(),
-            "pause must clear the {store} record"
-        );
-    }
-}
-
-#[test]
-fn autotrade_pause_keeps_legacy_agent_id_compatible() {
-    let (_home, dir) = fresh_home("cli_agent_autotrade_pause_legacy");
     let mut cmd = onchainos();
     scrubbed(&mut cmd, &dir);
     let output = cmd
         .args([
             "agent",
-            "autotrade-consent-set",
+            "autotrade-guide-consent-new",
             "--job-id",
-            "job_pause_legacy",
-            "--agent-id",
-            "5254",
-            "--mode",
-            "pause",
+            "job_guide_existing",
+            "--values-json",
+            r#"{"tradeEnvironment":"demo"}"#,
         ])
         .output()
-        .expect("run legacy autotrade pause");
-    let data = common::assert_ok_and_extract_data(&output);
-    assert_eq!(data["consentMode"], "pause");
-    assert_eq!(data["cleared"], true);
+        .expect("reject overwriting active Guide Consent");
+
+    assert_error_contains(
+        &output,
+        &[
+            "active Guide Consent already exists",
+            "autotrade-guide-consent-update",
+        ],
+    );
 }
 
 #[test]
-fn autotrade_non_pause_modes_still_require_agent_id() {
-    let (_home, dir) = fresh_home("cli_agent_autotrade_non_pause");
-    let mut cmd = onchainos();
-    scrubbed(&mut cmd, &dir);
-    let output = cmd
-        .args([
-            "agent",
-            "autotrade-consent-set",
-            "--job-id",
-            "job_manual",
-            "--mode",
-            "manual",
-        ])
-        .output()
-        .expect("run autotrade manual without agent id");
-
-    assert_error_contains(&output, &["--agent-id is required unless --mode pause"]);
-}
-
-#[test]
-fn autotrade_environment_set_upgrades_only_the_existing_policy() {
-    let (_home, dir) = fresh_home("cli_agent_autotrade_environment_set");
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let consent_dir = dir.join("autotrade/consent");
-    std::fs::create_dir_all(&consent_dir).unwrap();
-    std::fs::write(
-        consent_dir.join("job_environment.json"),
-        serde_json::to_vec_pretty(&serde_json::json!({
-            "version": 1,
-            "jobId": "job_environment",
-            "mode": "auto",
-            "capU": "20",
-            "tradeAmountU": "10",
-            "quoteToken": "usdc",
-            "createdAt": now,
-            "expiresAt": now + 3600
-        }))
-        .unwrap(),
-    )
-    .unwrap();
+fn autotrade_guide_consent_update_rejects_sensitive_values() {
+    let (_home, dir) = fresh_home("cli_agent_guide_consent_sensitive");
+    write_active_guide_consent(
+        &dir,
+        "job_guide_sensitive",
+        serde_json::json!({"tradeEnvironment": "demo"}),
+    );
 
     let mut cmd = onchainos();
     scrubbed(&mut cmd, &dir);
     let output = cmd
         .args([
             "agent",
-            "autotrade-consent-set",
+            "autotrade-guide-consent-update",
             "--job-id",
-            "job_environment",
-            "--agent-id",
-            "8315",
-            "--mode",
-            "environment-set",
-            "--environment",
-            "demo",
+            "job_guide_sensitive",
+            "--values-json",
+            r#"{"apiKey":"do-not-store"}"#,
         ])
         .output()
-        .expect("persist Trade Kit environment");
-    let result = common::assert_ok_and_extract_data(&output);
-    assert_eq!(result["tradeEnvironment"], "demo");
+        .expect("reject sensitive Guide Consent value");
 
-    let stored = read_consent_metadata(&consent_dir.join("job_environment.md"));
-    assert_eq!(stored["version"], 6);
-    assert_eq!(stored["mode"], "auto");
-    assert_eq!(stored["capU"], "20");
-    assert_eq!(stored["tradeAmountU"], "10");
-    assert_eq!(stored["quoteToken"], "usdc");
-    assert_eq!(stored["tradeEnvironment"], "demo");
-    assert_eq!(stored["createdAt"], now);
-    assert_eq!(stored["expiresAt"], now + 3600);
-}
-
-#[test]
-fn autotrade_settings_update_persists_all_trade_kit_choices_without_rewriting_policy() {
-    let (_home, dir) = fresh_home("cli_agent_autotrade_settings_update");
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let consent_dir = dir.join("autotrade/consent");
-    std::fs::create_dir_all(&consent_dir).unwrap();
-    std::fs::write(
-        consent_dir.join("job_settings.json"),
-        serde_json::to_vec_pretty(&serde_json::json!({
-            "version": 2,
-            "jobId": "job_settings",
-            "mode": "auto",
-            "capU": "20",
-            "tradeAmountU": "10",
-            "quoteToken": "usdc",
-            "createdAt": now,
-            "expiresAt": now + 3600
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-
-    let mut cmd = onchainos();
-    scrubbed(&mut cmd, &dir);
-    let output = cmd
-        .args([
-            "agent",
-            "autotrade-consent-set",
-            "--job-id",
-            "job_settings",
-            "--agent-id",
-            "8315",
-            "--mode",
-            "settings-update",
-            "--environment",
-            "demo",
-            "--margin-mode",
-            "isolated",
-            "--order-policy",
-            "signal_price_limit",
-        ])
-        .output()
-        .expect("persist complete Trade Kit settings");
-    let result = common::assert_ok_and_extract_data(&output);
-    assert_eq!(result["tradeEnvironment"], "demo");
-    assert_eq!(result["marginMode"], "isolated");
-    assert_eq!(result["orderPolicy"], "signal_price_limit");
-
-    let stored = read_consent_metadata(&consent_dir.join("job_settings.md"));
-    assert_eq!(stored["version"], 6);
-    assert_eq!(stored["mode"], "auto");
-    assert_eq!(stored["capU"], "20");
-    assert_eq!(stored["tradeAmountU"], "10");
-    assert_eq!(stored["quoteToken"], "usdc");
-    assert_eq!(stored["tradeEnvironment"], "demo");
-    assert_eq!(stored["marginMode"], "isolated");
-    assert_eq!(stored["orderPolicy"], "signal_price_limit");
-    assert_eq!(stored["createdAt"], now);
-    assert_eq!(stored["expiresAt"], now + 3600);
-}
-
-#[test]
-fn autotrade_auto_accepts_missing_cap_and_authorizes_any_positive_amount() {
-    let (_home, dir) = fresh_home("cli_agent_autotrade_unbounded_auto");
-    create_auto_consent_via_continuation(&dir, "job_unbounded_auto", "8315", None, None);
-
-    let mut check = onchainos();
-    scrubbed(&mut check, &dir);
-    let check_output = check
-        .args([
-            "agent",
-            "autotrade-grant-check",
-            "--job-id",
-            "job_unbounded_auto",
-            "--venue",
-            "dex",
-            "--action",
-            "buy",
-            "--amount",
-            "999999",
-            "--format",
-            "json",
-        ])
-        .output()
-        .expect("check unbounded auto grant");
-    assert!(check_output.status.success());
-    let result: serde_json::Value =
-        serde_json::from_slice(&check_output.stdout).expect("parse grant-check result");
-    assert_eq!(result, serde_json::json!({"ok": true}));
+    assert_error_contains(
+        &output,
+        &["credentials must not be stored in Guide Consent", "apiKey"],
+    );
 }
 
 #[test]
@@ -1012,7 +1049,6 @@ fn autotrade_consent_request_suppresses_mode_card_for_auto_policy() {
     let (_home, dir) = fresh_home("cli_agent_autotrade_consent_request_existing_policy");
 
     for job_id in ["job_auto"] {
-        create_auto_consent_via_continuation(&dir, job_id, "8315", Some("1"), Some("10"));
         let context_dir = dir.join("autotrade/delivery-context").join(job_id);
         std::fs::create_dir_all(&context_dir).unwrap();
         std::fs::write(

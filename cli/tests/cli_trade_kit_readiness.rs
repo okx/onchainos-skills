@@ -224,7 +224,9 @@ fn signal_playbook_uses_guide_direct_lifecycle() {
     assert!(playbook.contains("Signal: `savedPath`"));
     assert!(!playbook.contains("autotrade-guide-intent-resolve"));
     assert!(playbook.contains("autotrade-direct-claim"));
+    assert!(playbook.contains("autotrade-guide-consent-new"));
     assert!(playbook.contains("autotrade-direct-finalize"));
     assert!(playbook.contains("autotrade-delivery-report"));
+    assert!(playbook.contains("Never infer, default, or fabricate Consent values"));
     assert!(playbook.contains("registered command or tool"));
 }
