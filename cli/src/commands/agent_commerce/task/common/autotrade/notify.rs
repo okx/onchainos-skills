@@ -29,6 +29,7 @@ use super::super::user_lang::{self, Lang};
 
 const NOTICE_VERSION: u32 = 1;
 const MAX_FLUSH_BATCH: usize = 4;
+const MAX_NOTIFICATION_ATTEMPTS: u32 = 10;
 const STALE_LEASE_SEC: u64 = 30;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,6 +130,10 @@ fn deliver_pending(
         Err(_) => {
             notice.attempts = notice.attempts.saturating_add(1);
             notice.updated_at = now_secs();
+            if notice.attempts >= MAX_NOTIFICATION_ATTEMPTS {
+                let _ = std::fs::remove_file(path);
+                return Ok(false);
+            }
             let delay = 30u64
                 .saturating_mul(1u64 << notice.attempts.min(5))
                 .min(15 * 60);
@@ -717,6 +722,45 @@ mod tests {
         assert_eq!(flush_all_pending(4).unwrap(), 0);
         assert!(notice_path("job1", "notice-key").unwrap().exists());
 
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    #[test]
+    fn failed_notice_is_removed_after_max_attempts() {
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let root = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join("notification-outbox-test");
+        std::fs::create_dir_all(&root).unwrap();
+        let home = tempfile::tempdir_in(root).unwrap();
+        let empty_path = home.path().join("empty-path");
+        std::fs::create_dir_all(&empty_path).unwrap();
+        let original_path = std::env::var_os("PATH");
+        std::env::set_var("ONCHAINOS_HOME", home.path());
+        std::env::set_var("PATH", &empty_path);
+
+        persist_failed_notice(
+            "job-max-attempts",
+            "notice-key",
+            "safe user notice",
+            MAX_NOTIFICATION_ATTEMPTS - 2,
+        )
+        .unwrap();
+        let path = notice_path("job-max-attempts", "notice-key").unwrap();
+        let notice: PendingNotice = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(notice.attempts, MAX_NOTIFICATION_ATTEMPTS - 1);
+
+        assert!(!deliver_pending(&path, notice, true, Some(Duration::from_millis(1))).unwrap());
+        assert!(!path.exists());
+
+        if let Some(path) = original_path {
+            std::env::set_var("PATH", path);
+        } else {
+            std::env::remove_var("PATH");
+        }
         std::env::remove_var("ONCHAINOS_HOME");
     }
 }

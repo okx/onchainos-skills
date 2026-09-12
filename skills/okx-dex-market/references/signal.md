@@ -2,24 +2,6 @@
 
 5 commands for tracking smart money, KOL, and whale activity — raw transaction feed, aggregated buy signals, and top trader leaderboard.
 
-## Keyword Glossary
-
-> If the user's query contains Chinese text (中文), read `references/signal-keyword-glossary.md` for keyword-to-command mappings.
-
-## Related Workflows
-
-When one of the following commands is used, show the related workflow hint after displaying results:
-
-| Command | Workflow | File |
-|---------|----------|------|
-| `signal list` | Smart Money Signals | `~/.onchainos/workflows/smart-money-signals.md` |
-| `signal list` | Daily Brief | `~/.onchainos/workflows/daily-brief.md` |
-| `signal list --token-address` | Token Research | `~/.onchainos/workflows/token-research.md` |
-| `tracker activities` | Wallet Analysis | `~/.onchainos/workflows/wallet-analysis.md` |
-| `tracker activities` | Wallet Monitor | `~/.onchainos/workflows/wallet-monitor.md` |
-
-> Hint format: *"You can also try out our **[workflow name]** workflow for more comprehensive results. Would you like to try it?"*
-
 ## Commands
 
 | # | Command | Use When |
@@ -30,9 +12,7 @@ When one of the following commands is used, show the related workflow hint after
 | 4 | `onchainos leaderboard supported-chains` | Check which chains support leaderboard |
 | 5 | `onchainos leaderboard list --chain <chain> --time-frame <tf> --sort-by <sort>` | Top trader leaderboard ranked by PnL/win rate/volume/ROI (max 20) |
 
-<IMPORTANT>
-**Rule**: If the user wants to see actual trades (transaction-level, can include sells) → tracker. If the user wants to know which tokens have triggered buy alerts across multiple wallets → signal list.
-</IMPORTANT>
+> **Mandatory routing rule:** If the user wants actual transaction-level trades, including sells, use tracker. If the user wants tokens that triggered buy alerts across multiple wallets, use signal list.
 
 ### Step 1: Collect Parameters
 
@@ -58,7 +38,7 @@ When one of the following commands is used, show the related workflow hint after
 - Missing chain → call `onchainos leaderboard supported-chains` to confirm support; default to `solana` if user doesn't specify
 - `--time-frame` and `--sort-by` are required by the CLI but the agent should infer them from user language before asking — use the mappings below. Only prompt the user if intent is genuinely ambiguous.
 - Missing `--time-frame` → map "today/1D" → `1`, "3 days/3D" → `2`, "7 days/1W/7D" → `3`, "1 month/30D" → `4`, "3 months/3M" → `5`
-- Missing `--sort-by` → map "PnL/盈亏" → `1`, "win rate/胜率" → `2`, "tx count/交易笔数" → `3`, "volume/交易量" → `4`, "ROI/收益率" → `5`
+- Missing `--sort-by` → map "PnL" → `1`, "win rate" → `2`, "transaction count" → `3`, "volume" → `4`, "ROI" → `5`
 - **`--wallet-type` is single-select only** (one value at a time: `sniper`, `dev`, `fresh`, `pump`, `smartMoney`, `influencer`) — do NOT pass comma-separated values or it will error; if omitted, all types are returned
 
 ### Step 2: Call and Display
@@ -77,50 +57,8 @@ When one of the following commands is used, show the related workflow hint after
 - Present as a ranked table: rank, wallet address (truncated), PnL, win rate, tx count, volume
 - Translate field names — never dump raw JSON keys to the user
 
-### Step 3: Suggest Next Steps
-
-Present next actions conversationally — never expose command paths to the user.
-
-| After | Suggest |
-|---|---|
-| `signal chains` | `signal list` |
-| `tracker activities` | `market price`, `token price-info`, `swap execute` |
-| `signal list` | `tracker activities`, `market kline`, `token price-info`, `swap execute` |
-| `leaderboard list` | `market portfolio-overview`, `portfolio all-balances`, `tracker activities --tracker-type multi_address` |
-
 ## Data Freshness
 
 ### `requestTime` Field
 
 When a response includes a `requestTime` field (Unix milliseconds), display it alongside results so the user knows when the snapshot was taken. When chaining commands (e.g., showing trade details after a signal), use the `requestTime` from the most recent response as the reference point for any time-based parameters.
-
-## Additional Resources
-
-For detailed params and return field schemas for a specific command:
-- Run: `grep -A 80 "## [0-9]*\. onchainos <subgroup> <command>" references/signal-cli-reference.md`
-  - Subgroups: `tracker` (activities), `signal` (chains, list), `leaderboard` (supported-chains, list)
-- Only read the full `references/signal-cli-reference.md` if you need multiple command details at once.
-
-## Real-time WebSocket Monitoring
-
-For real-time signal and tracker data, use the `onchainos ws` CLI:
-
-```bash
-# KOL + smart money aggregated trade feed
-onchainos ws start --channel kol_smartmoney-tracker-activity
-
-# Track custom wallet addresses
-onchainos ws start --channel address-tracker-activity --wallet-addresses 0xAAA,0xBBB
-
-# Buy signal alerts on specific chains
-onchainos ws start --channel dex-market-new-signal-openapi --chain-index 1,501
-
-# Poll events
-onchainos ws poll --id <ID>
-```
-
-For custom WebSocket scripts/bots, read **`references/signal-ws-protocol.md`** for the complete protocol specification.
-
-## Troubleshooting
-
-> Edge cases, error codes, and region restrictions: read `references/signal-troubleshooting.md`.

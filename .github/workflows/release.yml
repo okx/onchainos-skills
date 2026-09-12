@@ -175,7 +175,7 @@ jobs:
           fi
           cp "$src" "${BIN_NAME}-${TARGET}"
           chmod +x "${BIN_NAME}-${TARGET}"
-          # Create gnu-named alias for musl builds (install.sh expects -gnu name)
+          # Keep GNU-named downloads available while publishing static musl binaries.
           if echo "$TARGET" | grep -q 'musl'; then
             gnu_name=$(echo "${BIN_NAME}-${TARGET}" | sed 's/musl/gnu/')
             cp "${BIN_NAME}-${TARGET}" "$gnu_name"
@@ -370,14 +370,11 @@ jobs:
           test -d workflows/ || { echo "::error::workflows/ directory missing"; exit 1; }
           tar -czf workflows.tar.gz workflows/
 
-      - name: Generate installer checksums
-        run: sha256sum install.sh install.ps1 > installer-checksums.txt
-
       - name: Generate workflows checksum
         run: sha256sum workflows.tar.gz > workflows-checksums.txt
 
       - name: List all release artifacts
-        run: ls -lh && echo "---" && cat checksums.txt && echo "---" && cat installer-checksums.txt && echo "---" && cat workflows-checksums.txt
+        run: ls -lh && echo "---" && cat checksums.txt && echo "---" && cat workflows-checksums.txt
 
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
@@ -388,6 +385,5 @@ jobs:
           files: |
             ${{ env.BIN_NAME }}-*
             checksums.txt
-            installer-checksums.txt
             workflows.tar.gz
             workflows-checksums.txt

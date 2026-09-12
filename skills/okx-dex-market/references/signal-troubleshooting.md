@@ -1,6 +1,6 @@
 # Capability: Signal — Troubleshooting
 
-Error handling, edge cases, and region restrictions for the Signal capability. Operational flow lives in `signal.md`; parameter schemas in `signal-cli-reference.md`.
+Error handling, edge cases, and region restrictions for the Signal capability. Load operational flow and parameter schemas separately through the top-level conditional-reference table.
 
 ## Edge Cases
 

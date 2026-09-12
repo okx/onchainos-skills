@@ -1,0 +1,74 @@
+{
+  "phase": "subscription_browsing",
+  "decision": "ready",
+  "reason": "subscription_list_loaded",
+  "nextAction": [
+    {"id":"manage_subscription_devices","actionLabel":"Adjust receiving devices","recommend":true,"params":{"allowedJobIds":["job-active-1","job-active-2"]}},
+    {"id":"view_subscription_detail","actionLabel":"View subscription details","recommend":false,"params":{"allowedJobIds":["job-active-1","job-active-2","job-ended-1"]}},
+    {"id":"cancel_subscription","actionLabel":"Cancel subscription","recommend":false,"params":{"allowedJobIds":["job-active-1","job-active-2"]}},
+    {"id":"next_subscription_page","actionLabel":"View next page","recommend":false,"params":{"cursor":"cursor-next","pageSize":10}}
+  ],
+  "payload": {
+    "items": [
+      {
+        "jobId": "job-active-1",
+        "listStatus": "active",
+        "title": "Alpha Signal",
+        "providerAgentId": "8136",
+        "statusName": "ACTIVE",
+        "feeLabel": "20",
+        "nextChargeAt": "2026-09-16 18:10 UTC",
+        "nextChargeLabel": "2026-09-16 18:10 UTC",
+        "autoRenewLabel": "Enabled",
+        "billingPeriodLabel": "Billing Period 1",
+        "deviceList": null,
+        "hasNoReceivingDevices": false,
+        "deviceReceipts": [
+          {"deviceId":"d1","deviceName":"MacBook Pro","isThisDevice":true,"receives":true,"receivesLabel":"✅"},
+          {"deviceId":"d2","deviceName":"iPhone","isThisDevice":false,"receives":true,"receivesLabel":"✅"}
+        ]
+      },
+      {
+        "jobId": "job-active-2",
+        "listStatus": "active",
+        "title": "No Receiver Signal",
+        "providerAgentId": "9967",
+        "statusName": "ACTIVE",
+        "feeLabel": "1",
+        "nextChargeAt": null,
+        "nextChargeLabel": "—",
+        "autoRenewLabel": "Disabled",
+        "billingPeriodLabel": "Trial Period",
+        "deviceList": [],
+        "hasNoReceivingDevices": true,
+        "deviceReceipts": [
+          {"deviceId":"d1","deviceName":"MacBook Pro","isThisDevice":true,"receives":false,"receivesLabel":"❌"},
+          {"deviceId":"d2","deviceName":"iPhone","isThisDevice":false,"receives":false,"receivesLabel":"❌"}
+        ]
+      },
+      {
+        "jobId": "job-ended-1",
+        "listStatus": "ended",
+        "title": "Old Signal",
+        "providerAgentId": "8415",
+        "statusName": "CLOSED",
+        "feeLabel": "0.02",
+        "nextChargeAt": null,
+        "nextChargeLabel": "—",
+        "autoRenewLabel": "Disabled",
+        "billingPeriodLabel": "Billing Period 1",
+        "deviceList": ["d1"],
+        "hasNoReceivingDevices": false,
+        "deviceReceipts": []
+      }
+    ],
+    "nextCursor": "cursor-next",
+    "pageSize": 10,
+    "summary": {"activeCount": 2, "endedCount": 1},
+    "deviceDataAvailable": true,
+    "devices": [
+      {"deviceId":"d1","deviceName":"MacBook Pro","isThisDevice":true},
+      {"deviceId":"d2","deviceName":"iPhone","isThisDevice":false}
+    ]
+  }
+}

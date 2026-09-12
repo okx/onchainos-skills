@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${ONCHAINOS_EVAL_FIXTURES:?ONCHAINOS_EVAL_FIXTURES is required}"
+
+if [[ -n "${ONCHAINOS_EVAL_LOG:-}" ]]; then
+  printf '%s\n' "$*" >> "$ONCHAINOS_EVAL_LOG"
+fi
+
+case "$*" in
+  "preflight --skill-version 5.8.3-beta")
+    printf '%s\n' '{"data":{"action":null}}'
+    ;;
+  "agent feedback-list --agent-id 42")
+    cat "$ONCHAINOS_EVAL_FIXTURES/reputation-page-1.json"
+    ;;
+  "agent activate --agent-id 42 --preferred-language zh-CN")
+    cat "$ONCHAINOS_EVAL_FIXTURES/listing-submitted.json"
+    ;;
+  "agent subscription-list --page-size 10")
+    cat "$ONCHAINOS_EVAL_FIXTURES/subscription-list.json"
+    ;;
+  "agent lifecycle test-job-001 --agent-id 11040")
+    cat "$ONCHAINOS_EVAL_FIXTURES/lifecycle-asp-executing.json"
+    ;;
+  "agent get-agents --agent-ids 9967")
+    printf '%s\n' '{"ok":true,"data":[{"agentInfo":{"agentId":"9967","role":"asp"},"card":{"agentId":"9967","name":"Service Agent","role":"ASP","status":"Published","approvalStatus":"Approved","address":"—","description":"Test agent","profilePhoto":"—","rating":"—"}}]}'
+    ;;
+  "agent service-list --agent-id 9967 --page 1 --page-size 3")
+    printf '%s\n' '{"ok":true,"data":{"agentInfo":{"aspAgentId":"9967","aspName":"Service Agent"},"hasMore":false,"list":[],"page":1,"pageSize":3,"total":0}}'
+    ;;
+  "agent service-match --asp-agent-id 13373 --limit 3")
+    printf '%s\n' '{"ok":true,"data":{"services":[],"searchAfter":"","hasMore":false,"tip":"No services found for Agent 13373."}}'
+    ;;
+  "agent service-match --sid 13373 --limit 3")
+    printf '%s\n' '{"ok":true,"data":{"services":[],"searchAfter":"","hasMore":false,"tip":"No service found for SID 13373."}}'
+    ;;
+  "agent service-match --sid 34560 --limit 3")
+    printf '%s\n' '{"ok":true,"data":{"services":[],"searchAfter":"","hasMore":false,"tip":"No service found for SID 34560."}}'
+    ;;
+  "agent service-match --asp-agent-id 2189 --max-payment-token-amount 0 --limit 3")
+    printf '%s\n' '{"ok":true,"data":{"services":[],"searchAfter":"","hasMore":false,"tip":"No free services found for Agent 2189."}}'
+    ;;
+  *)
+    printf 'Unexpected onchainos invocation: %s\n' "$*" >&2
+    exit 64
+    ;;
+esac

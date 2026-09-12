@@ -10,6 +10,8 @@
 //!    (or `crate::commands::agent_commerce::task::common::config::FOO`).
 //! 3. Typically wire it as `if config::FOO { hint_keep } else { hint_delete }` — a two-way string selector.
 
+use serde::{Deserialize, Serialize};
+
 /// Whether terminal task states (`completed` / `refunded` / `close` / `dispute_resolved`) keep the
 /// sub session history.
 ///
@@ -28,6 +30,30 @@ const KEEP_CONVERSATION_ON_TERMINAL_DEFAULT: bool = false;
 
 fn parse_bool(s: &str) -> bool {
     s.eq_ignore_ascii_case("true") || s == "1"
+}
+
+/// Historical delivery records retain their original enum value for decoding,
+/// but new subscription deliveries are always admitted through `AgentDirect`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SubscriptionTradePath {
+    AgentDirect,
+    LegacyWrapper,
+}
+
+impl SubscriptionTradePath {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AgentDirect => "agent_direct",
+            Self::LegacyWrapper => "legacy_wrapper",
+        }
+    }
+}
+
+impl Default for SubscriptionTradePath {
+    fn default() -> Self {
+        Self::AgentDirect
+    }
 }
 
 pub fn keep_conversation_on_terminal() -> bool {
@@ -55,14 +81,5 @@ pub fn is_cli_mode() -> bool {
             .is_some()
 }
 
-/// Task protocol version number — a single value used in both directions: it is both
-/// "the version I am currently on" and "the minimum version I require the peer to be on".
-///
-/// - **Sender**: every `okx-a2a xmtp-send` puts this value into `payload.taskMinVersion`.
-/// - **Receiver**: next-action reads peer's value via `--peerTaskMinVersion`;
-///   if `local TASK_MIN_VERSION < peer.taskMinVersion` then the local side is stale and
-///   the version_mismatch script is emitted, prompting the user to run `onchainos upgrade`.
-///
-/// Bump rule: only +1 when the task protocol (state machine / envelope schema / payload schema)
-/// changes in a **backwards-incompatible** way; pure bug fixes / copy tweaks must not bump it.
-pub const TASK_MIN_VERSION: u32 = 1;
+#[cfg(test)]
+mod tests {}

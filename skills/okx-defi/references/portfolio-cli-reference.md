@@ -2,7 +2,7 @@
 
 Parameter tables and return schemas for the position-viewing commands.
 
-> `defi support-chains` / `defi support-platforms` and full flow examples live in `invest-cli-reference.md`.
+> Load `defi support-chains` / `defi support-platforms` and full flow examples through the top-level shared-support route.
 
 ## 1. onchainos defi positions
 

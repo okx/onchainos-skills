@@ -16,14 +16,17 @@
 
 mod agreerefund;
 mod apply;
+mod asp_claim;
 mod asp_reject;
 mod content;
 mod deliver;
 mod dispute_confirm;
 mod dispute_raise;
 pub mod flow;
-mod asp_claim;
+mod provider_decision;
 pub mod subscription;
+mod task_query;
+mod v2;
 
 use anyhow::Result;
 use clap::Subcommand;
@@ -58,8 +61,6 @@ pub enum ProviderCommand {
         job_id: String,
         #[arg(long, default_value = "")]
         file: String,
-        #[arg(long, default_value = "Task completed, please review")]
-        message: String,
         /// Text deliverable content for auto-save. When non-empty and --file is empty,
         /// the CLI writes this to a temp file and persists it as a text deliverable.
         #[arg(long = "deliverable-text", default_value = "")]
@@ -68,10 +69,6 @@ pub enum ProviderCommand {
         /// the providerAgentId field in job detail may be null, so reverse lookup is unreliable.
         #[arg(long = "agent-id")]
         agent_id: String,
-        /// Deprecated compatibility argument. Accepted but ignored; only the
-        /// explicit text/file deliverable is sent and processed.
-        #[arg(long, default_value = "")]
-        autotrade: String,
     },
     /// ASP agrees to refund (agreeRefund API → sign → broadcast)
     AgreeRefund {
@@ -90,6 +87,34 @@ pub enum ProviderCommand {
         agent_id: String,
         /// Optional decline reason surfaced to the User Agent's backend record.
         #[arg(long, default_value = "")]
+        reason: String,
+    },
+    /// Accept a designated one-time task under the v2 create-and-fund flow.
+    AcceptJobByProvider {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+    },
+    /// Decline and refund a designated one-time task under the v2 flow.
+    DeclineJobByProvider {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        #[arg(long)]
+        reason: String,
+    },
+    /// Accept a designated subscription under the v2 flow.
+    AcceptSubscription {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+    },
+    /// Decline and refund a designated subscription under the v2 flow.
+    DeclineSubscription {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        #[arg(long)]
         reason: String,
     },
     /// ASP claims after submit→complete timeout (claimAutoComplete API → sign → broadcast)
@@ -116,7 +141,7 @@ pub enum ProviderCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
-    /// Account-pull: query pending rewards (balance accumulated from arbitration wins, etc.).
+    /// Account-pull: query pending rewards (balance accumulated from evaluation wins, etc.).
     Claimable {
         #[arg(long = "agent-id")]
         agent_id: String,
@@ -128,12 +153,55 @@ pub enum ProviderCommand {
     },
 }
 
+/// Read-only ASP query namespace exposed as `onchainos agent asp ...`.
+/// Provider mutations remain on their existing top-level command paths.
+#[derive(Subcommand)]
+pub enum ProviderQueryCommand {
+    /// Get current task status (ASP view).
+    Status {
+        job_id: String,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
+    },
+    /// List my tasks (ASP view).
+    #[command(name = "list-tasks")]
+    ListTasks {
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long, default_value = "1")]
+        page: u32,
+        #[arg(long, default_value = "20")]
+        limit: u32,
+        #[arg(long = "agent-id")]
+        agent_id: Option<String>,
+    },
+}
+
+impl From<ProviderQueryCommand> for ProviderCommand {
+    fn from(command: ProviderQueryCommand) -> Self {
+        match command {
+            ProviderQueryCommand::Status { job_id, agent_id } => Self::Status { job_id, agent_id },
+            ProviderQueryCommand::ListTasks {
+                status,
+                page,
+                limit,
+                agent_id,
+            } => Self::List {
+                status,
+                page,
+                limit,
+                agent_id,
+            },
+        }
+    }
+}
+
 // ─── dispute subcommands ──────────────────────────────────────────────────
 
 #[derive(Subcommand)]
 pub enum DisputeCommand {
-    /// Dispute stage 1: call the approve API to grant the dispute contract token approval (calldata → sign → broadcast).
-    /// After completion, wait for the on-chain `dispute_approved` notification, then run `dispute confirm` for stage 2.
+    /// Request evaluation with one combined approve-and-create transaction.
+    /// The `job_disputed` signal starts evidence preparation in the task session.
     Raise {
         job_id: String,
         #[arg(long)]
@@ -142,17 +210,28 @@ pub enum DisputeCommand {
         #[arg(long = "agent-id")]
         agent_id: String,
     },
-    /// Dispute stage 2: call the dispute API to actually raise the dispute (calldata → sign → broadcast).
-    /// The `dispute_approved` system notification must have been received first. After completion, wait for the `job_disputed` notification.
+    /// Retired compatibility command. Evaluation creation now completes in `raise`.
     Confirm {
         job_id: String,
-        #[arg(long)]
-        reason: String,
+        /// Original evaluation reason in plain text.
+        #[arg(
+            long,
+            required_unless_present = "reason_b64",
+            conflicts_with = "reason_b64"
+        )]
+        reason: Option<String>,
+        /// URL-safe base64 form supplied by the task-session reason handoff.
+        #[arg(
+            long = "reason-b64",
+            required_unless_present = "reason",
+            conflicts_with = "reason"
+        )]
+        reason_b64: Option<String>,
         /// ASP agentId (required).
         #[arg(long = "agent-id")]
         agent_id: String,
     },
-    /// [Internal] Upload offchain evidence (multipart, 1h preparation window only) — shared by both sides.
+    /// [Internal] Upload offchain evaluation evidence (multipart, 1h preparation window only) — shared by both sides.
     ///
     /// ⚠️ **Not user-facing**: this command is invoked automatically by the User Agent / ASP sub
     /// session on the `job_disputed` event (via the next-action playbook). Users must NOT call it
@@ -194,23 +273,81 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
     let mut client = TaskApiClient::new();
 
     match cmd {
-        ProviderCommand::Apply { job_id, token_amount, token_symbol, agent_id } =>
-            apply::handle_apply(&mut client, &job_id, &token_amount, &token_symbol, &agent_id).await,
-        ProviderCommand::Deliver { job_id, file, message: _, deliverable_text, agent_id, autotrade } =>
-            deliver::handle_deliver(&mut client, &job_id, &file, &deliverable_text, &agent_id, &autotrade).await,
-        ProviderCommand::AgreeRefund { job_id, agent_id } =>
-            agreerefund::handle_agree_refund(&mut client, &job_id, &agent_id).await,
-        ProviderCommand::AspReject { job_id, agent_id, reason } =>
-            asp_reject::handle_asp_reject(&mut client, &job_id, &agent_id, &reason).await,
-        ProviderCommand::ClaimAutoComplete { job_id, agent_id } =>
-            asp_claim::handle_claim_auto_complete(&mut client, &job_id, &agent_id).await,
-        ProviderCommand::Status { job_id, agent_id } => {
-            use crate::commands::agent_commerce::task::common::{query as common_query, AGENT_ROLE_ASP};
-            common_query::handle_status(&mut client, &job_id, agent_id.as_deref().unwrap_or(""), AGENT_ROLE_ASP).await
+        ProviderCommand::Apply {
+            job_id,
+            token_amount,
+            token_symbol,
+            agent_id,
+        } => {
+            apply::handle_apply(
+                &mut client,
+                &job_id,
+                &token_amount,
+                &token_symbol,
+                &agent_id,
+            )
+            .await
         }
-        ProviderCommand::List { status, page, limit, agent_id } => {
-            use crate::commands::agent_commerce::task::common::{query as common_query, AGENT_ROLE_ASP};
-            common_query::handle_list(&mut client, status.as_deref(), page, limit, agent_id.as_deref().unwrap_or(""), AGENT_ROLE_ASP).await
+        ProviderCommand::Deliver {
+            job_id,
+            file,
+            deliverable_text,
+            agent_id,
+        } => {
+            deliver::handle_deliver(&mut client, &job_id, &file, &deliverable_text, &agent_id).await
+        }
+        ProviderCommand::AgreeRefund { job_id, agent_id } => {
+            agreerefund::handle_agree_refund(&mut client, &job_id, &agent_id).await
+        }
+        ProviderCommand::AspReject {
+            job_id,
+            agent_id,
+            reason,
+        } => asp_reject::handle_asp_reject(&mut client, &job_id, &agent_id, &reason).await,
+        ProviderCommand::AcceptJobByProvider { job_id, agent_id } => {
+            provider_decision::handle_accept_job(&mut client, &job_id, &agent_id).await
+        }
+        ProviderCommand::DeclineJobByProvider {
+            job_id,
+            agent_id,
+            reason,
+        } => provider_decision::handle_decline_job(&mut client, &job_id, &agent_id, &reason).await,
+        ProviderCommand::AcceptSubscription { job_id, agent_id } => {
+            provider_decision::handle_accept_subscription(&mut client, &job_id, &agent_id).await
+        }
+        ProviderCommand::DeclineSubscription {
+            job_id,
+            agent_id,
+            reason,
+        } => {
+            provider_decision::handle_decline_subscription(&mut client, &job_id, &agent_id, &reason)
+                .await
+        }
+        ProviderCommand::ClaimAutoComplete { job_id, agent_id } => {
+            asp_claim::handle_claim_auto_complete(&mut client, &job_id, &agent_id).await
+        }
+        ProviderCommand::Status { job_id, agent_id } => {
+            task_query::handle_detail(
+                &mut client,
+                &job_id,
+                agent_id.as_deref().unwrap_or(""),
+            )
+            .await
+        }
+        ProviderCommand::List {
+            status,
+            page,
+            limit,
+            agent_id,
+        } => {
+            task_query::handle_list(
+                &mut client,
+                status.as_deref(),
+                page,
+                limit,
+                agent_id.as_deref().unwrap_or(""),
+            )
+            .await
         }
 
         // account-pull claim calls common::claim inline:
@@ -245,8 +382,13 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
                 bail!("--agent-id is required (pass the ASP's own agentId; beta backend rejects empty agenticId header)");
             }
             let (account_id, address) = signing::resolve_wallet_by_agent_id(&agent_id).await?;
-            let tx_hash =
-                common_claim::submit_claim_and_broadcast(&mut client, &account_id, &address, &agent_id).await?;
+            let tx_hash = common_claim::submit_claim_and_broadcast(
+                &mut client,
+                &account_id,
+                &address,
+                &agent_id,
+            )
+            .await?;
             audit::log(
                 "cli",
                 "ASP/arbitration_claimed",
@@ -260,8 +402,7 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
                 None,
             );
             println!("✓ reward claim submitted (account={address})");
-            println!("  txHash: {tx_hash}");
-            println!("note: All settled dispute rewards are claimed in one go; the credited amount will be notified after on-chain confirmation.");
+            println!("note: All settled evaluation rewards are claimed in one go; the credited amount will be notified after on-chain confirmation.");
             Ok(())
         }
     }
@@ -270,13 +411,39 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
 pub async fn run_dispute(cmd: DisputeCommand, _ctx: &Context) -> Result<()> {
     let mut client = TaskApiClient::new();
     match cmd {
-        DisputeCommand::Raise { job_id, reason, agent_id } =>
-            dispute_raise::handle_dispute_raise(&mut client, &job_id, &reason, &agent_id).await,
-        DisputeCommand::Confirm { job_id, reason, agent_id } =>
-            dispute_confirm::handle_dispute_confirm(&mut client, &job_id, &reason, &agent_id).await,
-        DisputeCommand::Upload { job_id, agent_id, role, text, files, max_files } =>
+        DisputeCommand::Raise {
+            job_id,
+            reason,
+            agent_id,
+        } => dispute_raise::handle_dispute_raise(&mut client, &job_id, &reason, &agent_id).await,
+        DisputeCommand::Confirm {
+            job_id,
+            reason,
+            reason_b64,
+            agent_id,
+        } => {
+            let reason =
+                dispute_confirm::decode_reason_input(reason.as_deref(), reason_b64.as_deref())?;
+            dispute_confirm::handle_dispute_confirm(&mut client, &job_id, &reason, &agent_id).await
+        }
+        DisputeCommand::Upload {
+            job_id,
+            agent_id,
+            role,
+            text,
+            files,
+            max_files,
+        } => {
             dispute_upload::handle_upload_evidence(
-                &mut client, &job_id, &agent_id, &role, text.as_deref(), &files, max_files,
-            ).await,
+                &mut client,
+                &job_id,
+                &agent_id,
+                &role,
+                text.as_deref(),
+                &files,
+                max_files,
+            )
+            .await
+        }
     }
 }

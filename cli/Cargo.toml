@@ -1,6 +1,6 @@
 [package]
 name = "onchainos-cli"
-version = "4.5.3"
+version = "4.9.3-beta"
 edition = "2021"
 
 [[bin]]
@@ -31,6 +31,7 @@ hmac = "0.12"
 sha2 = "0.10"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["clock"] }
+rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
 
 # Encryption
 aes-gcm = "0.10"

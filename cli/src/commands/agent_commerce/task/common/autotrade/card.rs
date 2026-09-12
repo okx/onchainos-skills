@@ -409,15 +409,13 @@ pub fn make_notify_only(saved_path: &str, reason: &str) -> NotifyOnly {
 // ── Consent flow (product revision 2026-07-17) ───────────────────────────────
 //
 // The client-side consent gate (after the backend Active gate) pushes a `DecisionRequest`
-// on the first-time / manual / over-cap paths: a decision card via
+// only on the manual / over-cap paths: a decision card via
 // `pending-decisions-v2 request` (enqueue to the shared queue so the user session's
 // watch surfaces it — the deliverable pipeline runs in a sub session, where the
 // `request-prompt` direct-push would land invisibly), executing nothing until the user answers.
-// The first-time A/B/C card chooses a mode once. Missing values after A/B are
-// collected by a separate natural-language prompt that never repeats A/B/C.
 
-/// The `--source-event` value carried by the first-time consent decision; becomes
-/// the `user_decision_autotrade_consent` relay event handled in `user/flow.rs`.
+/// Source event accepted only for replies to cards produced by older releases.
+/// Current code must never create a decision with this event.
 pub const CONSENT_SOURCE_EVENT: &str = "autotrade_consent";
 /// Natural-language follow-up after A/B selected a mode but omitted values.
 pub const CONFIG_REQUIRED_SOURCE_EVENT: &str = "autotrade_config_required";
@@ -447,28 +445,14 @@ or any number. Then run the command to push the decision. Act on the trade only 
 // and passes it verbatim (DECISION_GUIDANCE).
 // Key granularity is per-job, so the copy says "this subscription", not "this ASP".
 //
-fn consent_first_time_content(lang: Lang) -> String {
-    match lang {
-        Lang::En => "[Confirmation Needed] A trading signal has arrived, but auto-execution is not enabled for this subscription. Please choose:\n\
-             \x20\x20A. Execute this trade and enable auto-execution for future signals (give a fixed amount and a per-trade limit in USDT; pays with USDT by default — say \"use USDC\" to switch)\n\
-             \x20\x20B. Execute this trade only — give the amount, then confirm manually each time going forward\n\
-             \x20\x20C. Skip automatic execution (the saved deliverable remains available for manual handling with any tool)"
-            .to_string(),
-        Lang::Zh => "[请确认] 收到一条交易信号,但该订阅尚未开启自动执行。请选择:\n\
-             \x20\x20A. 执行本次交易,并为后续信号开启自动执行(需设置固定跟单金额和每笔金额上限,单位 USDT;默认用 USDT 支付,可注明「用 USDC」)\n\
-             \x20\x20B. 仅执行本次 — 请给出本次金额,之后每次都手动确认\n\
-             \x20\x20C. 跳过本次自动执行(交付物仍会保存,可稍后使用任意可用工具手动处理)"
-            .to_string(),
-    }
-}
-
 fn consent_input_required_content(mode: &str, lang: Lang) -> String {
     match (mode, lang) {
         ("auto", Lang::En) => "[More information required] Auto-execution was selected, but the fixed per-signal amount and/or per-trade limit is missing. Provide only the missing values in USDT; optionally say use USDC. If one number is supplied for both fields, state that explicitly.".to_string(),
         ("auto", Lang::Zh) => "[需要补充信息] 已选择开启自动执行,但固定跟单金额和/或每笔上限尚不完整。请直接补充缺失值(单位 USDT);也可以注明使用 USDC。若同一个数字同时作为两项,请明确说明。".to_string(),
         ("manual", Lang::En) => "[More information required] One-time execution was selected, but this trade's amount is missing. Provide the amount in USDT; optionally say use USDC.".to_string(),
         ("manual", Lang::Zh) => "[需要补充信息] 已选择仅执行本次,但尚未提供本次交易金额。请直接提供金额(单位 USDT),也可以注明使用 USDC。".to_string(),
-        _ => consent_first_time_content(lang),
+        (_, Lang::En) => "[More information required] The copy-trade execution policy is incomplete. Update the policy explicitly before processing future deliveries; this delivery remains saved and no trade will be executed.".to_string(),
+        (_, Lang::Zh) => "[需要补充信息] 跟单执行策略尚不完整。请明确更新执行策略后再处理后续交付物；本次交付物仍会保存，不会执行交易。".to_string(),
     }
 }
 
@@ -487,7 +471,8 @@ fn consent_over_cap_content(amount_u: &str, cap_u: &str, quote_sym: &str, lang: 
     }
 }
 
-/// Emitted on the consent decision path (first-time / over-cap / plugin-install).
+/// Emitted on the remaining delivery decision paths (manual / over-cap /
+/// plugin-install).
 /// Normally the CLI pushes it to the user in-process (`pending_v2::push_decision_direct`)
 /// and the consumer only sees a `decisionPushed:true` envelope; this full payload is
 /// the FALLBACK hand-off (direct push failed), where the model runs `command` with
@@ -668,23 +653,6 @@ fn make_decision(
     }
 }
 
-/// First-time consent decision (no record yet) — the three-way prompt.
-pub fn make_first_time_decision(
-    delivery_id: &str,
-    signal_type: &str,
-    job_id: &str,
-    agent_id: &str,
-) -> DecisionRequest {
-    make_decision(
-        delivery_id,
-        signal_type,
-        job_id,
-        agent_id,
-        CONSENT_SOURCE_EVENT,
-        consent_first_time_content(user_lang::resolve(job_id)),
-    )
-}
-
 pub fn make_manual_signal_decision(
     delivery_id: &str,
     signal_type: &str,
@@ -734,8 +702,7 @@ pub fn make_consent_input_required_decision(
 }
 
 /// Canonical confirmation used only when the foreground model marks one or
-/// more extracted policy fields as ambiguous. The normal A/B/C card and its
-/// missing-field follow-up remain unchanged.
+/// more extracted policy fields as ambiguous.
 pub fn make_consent_confirmation_decision(
     job_id: &str,
     agent_id: &str,
@@ -916,39 +883,6 @@ mod tests {
             params,
         };
         parse_and_validate(&sig).unwrap()
-    }
-
-    #[test]
-    fn consent_card_shows_canonical_delivery_then_blank_line_before_choices() {
-        let _guard = crate::home::TEST_ENV_MUTEX.lock().unwrap();
-        let temp = tempfile::tempdir().unwrap();
-        std::env::set_var("ONCHAINOS_HOME", temp.path());
-        let artifact = temp.path().join("signal.txt");
-        std::fs::write(
-            &artifact,
-            r#"[ACTIONABLE_TRADING_SIGNAL]
-{"actionable":true,"params":{"amount":"0.01","amountUnit":"quote","chainIndex":"196","quoteCurrency":"USDT","side":"buy","tokenAddress":"0xe538"},"signalId":"20260815-66542","signalType":"dex_trade"}
-[intent:deliver]"#,
-        )
-        .unwrap();
-        super::super::consent::register_delivery_context(
-            "job-card",
-            "7",
-            "8",
-            Some("session:test"),
-            "delivery-1",
-            artifact.to_str().unwrap(),
-            "text",
-            1,
-        )
-        .unwrap();
-        let decision = make_first_time_decision("delivery-1", "spot", "job-card", "7");
-        assert!(decision.user_content.contains("20260815-66542"));
-        assert!(decision.user_content.contains("0.01 quote USDT"));
-        assert!(decision
-            .user_content
-            .contains("Token: 0xe538\n\n[Confirmation Needed]"));
-        std::env::remove_var("ONCHAINOS_HOME");
     }
 
     /// `defi_rebalance` is a reserved (demoted) type: `parse_and_validate` degrades it
@@ -1147,15 +1081,6 @@ mod tests {
 
     #[test]
     fn decision_contents_are_single_language_per_variant() {
-        // en variant carries no Chinese; zh variant carries no English sentence —
-        // option letters stay A/B/C in both (language-neutral reply protocol).
-        let en = consent_first_time_content(Lang::En);
-        assert!(en.contains("[Confirmation Needed]") && en.contains("C. Skip automatic execution"));
-        assert!(!en.contains("请确认"), "got: {en}");
-        let zh = consent_first_time_content(Lang::Zh);
-        assert!(zh.contains("[请确认]") && zh.contains("C. 跳过本次"));
-        assert!(!zh.contains("Please choose"), "got: {zh}");
-
         let oc_en = consent_over_cap_content("120", "50", "USDT", Lang::En);
         assert!(
             oc_en.contains("120 USDT") && oc_en.contains("50 USDT") && oc_en.contains("B. Skip")
@@ -1231,16 +1156,6 @@ mod tests {
                 .contains(&format!("--list-label \"{plugin_label}\"")),
             "got: {}",
             plugin.command
-        );
-        let consent = make_first_time_decision("d1", "dex_trade", "job1", "7");
-        let consent_label = decision_list_label(&consent);
-        assert_eq!(consent_label, "[Auto Copy-Trade consent] dex_trade");
-        assert!(
-            consent
-                .command
-                .contains(&format!("--list-label \"{consent_label}\"")),
-            "got: {}",
-            consent.command
         );
     }
 

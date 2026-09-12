@@ -1526,6 +1526,25 @@ pub async fn fetch_pay(
     yes: bool,
 ) -> Result<Value> {
     let owner = state::current_owner_id().unwrap_or_default();
+    if super::a2mcp::inspect_payment_source(payment_id)?
+        == super::a2mcp::A2mcpPaymentSource::OkxAiA2mcp
+    {
+        if selected_index.is_some() || !param.is_empty() {
+            bail!(
+                "{}: A2MCP payment intent does not accept pay-time overrides",
+                super::a2mcp::ERR_OVERRIDES_FORBIDDEN
+            );
+        }
+        // The upstream card creates the intent, while `--yes` is the final
+        // mechanical execution authorization. Do not emit another card here.
+        if !yes {
+            bail!(
+                "{}: payment pay requires --yes",
+                super::a2mcp::ERR_CONFIRMATION_REQUIRED
+            );
+        }
+        return pay_a2mcp_intent(payment_id, &owner).await;
+    }
     let st = state::read(payment_id, &owner, now_unix())?;
 
     // Validate --selected-index against the persisted accepts.
@@ -1552,6 +1571,110 @@ pub async fn fetch_pay(
 
     let data = pay_from_state(&st, selected_index, &biz_params).await?;
     Ok(data)
+}
+
+async fn pay_a2mcp_intent(payment_id: &str, owner: &str) -> Result<Value> {
+    use super::a2mcp::A2mcpExecutionState;
+
+    let mut intent = super::a2mcp::read_a2mcp_payment_intent(payment_id, owner, now_unix())?;
+    intent.begin_signing(now_unix())?;
+    let accepts = json!([intent.selected_accept().raw().clone()]);
+
+    let (proof, entry) = loop {
+        intent.record_signature_attempt()?;
+        match sign_payment_with_preference(&accepts, Some(intent.payer_address()), None, None).await
+        {
+            Ok(signed) => break signed,
+            Err(error)
+                if intent.signature_attempts() < 3
+                    && is_retryable_a2mcp_signing_authorization_error(&error) =>
+            {
+                continue;
+            }
+            Err(error) => {
+                intent.mark_failed_terminal()?;
+                return Err(error);
+            }
+        }
+    };
+    intent.mark_proof_generated()?;
+
+    let header = match intent.frozen_request().resource() {
+        Some(resource) => assemble_v2_payment_header(&proof, &entry, resource),
+        None => serde_json::to_vec(&proof.to_pay_json())
+            .map(|body| ("PAYMENT-SIGNATURE", B64.encode(body)))
+            .map_err(Into::into),
+    };
+    let (header_name, header_value) = match header {
+        Ok(header) => header,
+        Err(error) => {
+            // The signature already exists. Make this invocation terminal so a
+            // retry cannot sign again or later replay a different request.
+            intent.mark_failed_terminal()?;
+            return Err(error);
+        }
+    };
+    intent.mark_replaying()?;
+
+    // There is exactly one signed Endpoint replay. No automatic retry is
+    // permitted after proof generation, including transport failures.
+    let (status, tx_hash, result, error, decoded_receipt) =
+        replay_a2mcp(&intent, header_name, &header_value).await;
+    match status.as_str() {
+        "success" => intent.mark_success()?,
+        "pending" => intent.mark_pending_terminal()?,
+        _ => intent.mark_failed_terminal()?,
+    }
+    debug_assert!(matches!(
+        intent.execution_state(),
+        A2mcpExecutionState::Success
+            | A2mcpExecutionState::PendingTerminal
+            | A2mcpExecutionState::FailedTerminal
+    ));
+
+    let out = PayResult {
+        ok: status == "success",
+        payment_id: payment_id.to_string(),
+        scheme: intent.selected_accept().scheme().to_string(),
+        status,
+        tx_hash,
+        result,
+        error,
+        decoded_receipt,
+    };
+    serde_json::to_value(out).map_err(Into::into)
+}
+
+fn is_retryable_a2mcp_signing_authorization_error(error: &anyhow::Error) -> bool {
+    let message = format!("{error:#}").to_ascii_lowercase();
+    [
+        "payment gen-msg-hash failed",
+        "payment sign-msg failed",
+        "permit2 gen-msg-hash failed",
+        "permit2 sign-msg failed",
+        "missing signature in sign-msg response",
+        "missing msghash in gen-msg-hash response",
+    ]
+    .iter()
+    .any(|needle| message.contains(needle))
+}
+
+#[allow(clippy::type_complexity)]
+async fn replay_a2mcp(
+    intent: &super::a2mcp::A2mcpPaymentIntentV1,
+    header_name: &str,
+    header_value: &str,
+) -> (String, Option<String>, Value, Option<String>, Option<Value>) {
+    let frozen = intent.frozen_request();
+    replay_a2mcp_merchant(
+        frozen.endpoint(),
+        frozen.method(),
+        frozen.param_plan(),
+        frozen.typed_params(),
+        header_name,
+        header_value,
+    )
+    .await
 }
 
 /// Sign (TEE) → assemble header → replay to the merchant → decode receipt.
@@ -1621,6 +1744,95 @@ async fn pay_from_state(
         decoded_receipt,
     };
     serde_json::to_value(out).map_err(Into::into)
+}
+
+#[allow(clippy::type_complexity)]
+async fn replay_a2mcp_merchant(
+    url: &str,
+    method: &str,
+    plan: &[ParamSpec],
+    typed_params: &serde_json::Map<String, Value>,
+    header_name: &str,
+    header_value: &str,
+) -> (String, Option<String>, Value, Option<String>, Option<Value>) {
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        // A signed payment replay is a single request to the frozen Endpoint.
+        // Following 3xx could both violate the one-replay contract and forward
+        // PAYMENT-SIGNATURE to a different host.
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+    {
+        Ok(client) => client,
+        Err(error) => return failed_replay(error.to_string()),
+    };
+    let request =
+        match super::http_carrier::build_typed_request(&client, method, url, typed_params, plan) {
+            Ok(request) => request.header(header_name, header_value),
+            Err(error) => return failed_replay(error.to_string()),
+        };
+    let response = match request.send().await {
+        Ok(response) => response,
+        Err(error) => return failed_replay(error.to_string()),
+    };
+    map_http_replay_response(response).await
+}
+
+#[allow(clippy::type_complexity)]
+fn failed_replay(error: String) -> (String, Option<String>, Value, Option<String>, Option<Value>) {
+    ("failed".into(), None, Value::Null, Some(error), None)
+}
+
+#[allow(clippy::type_complexity)]
+async fn map_http_replay_response(
+    response: reqwest::Response,
+) -> (String, Option<String>, Value, Option<String>, Option<Value>) {
+    let status_code = response.status().as_u16();
+    let payment_response = response
+        .headers()
+        .get("PAYMENT-RESPONSE")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    let body = response.text().await.unwrap_or_default();
+    let result = serde_json::from_str(&body).unwrap_or(Value::String(body));
+    map_replay_parts(status_code, payment_response, result)
+}
+
+#[allow(clippy::type_complexity)]
+fn map_replay_parts(
+    status_code: u16,
+    payment_response: Option<String>,
+    result: Value,
+) -> (String, Option<String>, Value, Option<String>, Option<Value>) {
+    let decoded_receipt = payment_response
+        .as_deref()
+        .and_then(|header| super::decode_receipt::decode_receipt(Some(header), None).ok())
+        .and_then(|receipt| serde_json::to_value(receipt).ok());
+    let tx_hash = decoded_receipt
+        .as_ref()
+        .and_then(|receipt| receipt.get("transaction"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if (200..300).contains(&status_code) {
+        ("success".into(), tx_hash, result, None, decoded_receipt)
+    } else if status_code == 402 {
+        (
+            "pending".into(),
+            tx_hash,
+            result,
+            Some("facilitator non-terminal: HTTP 402".into()),
+            decoded_receipt,
+        )
+    } else {
+        (
+            "failed".into(),
+            tx_hash,
+            result,
+            Some(format!("merchant returned HTTP {status_code}")),
+            decoded_receipt,
+        )
+    }
 }
 
 /// Replay the paid request to the merchant. Never returns `Err` — a transport /
@@ -3499,6 +3711,56 @@ mod tests {
         assert!(error.is_none(), "success must carry no error: {error:?}");
     }
 
+    #[tokio::test]
+    async fn a2mcp_signed_replay_does_not_follow_redirects() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let redirected_target = TcpListener::bind("127.0.0.1:0").expect("bind redirect target");
+        redirected_target
+            .set_nonblocking(true)
+            .expect("nonblocking target");
+        let target_url = format!(
+            "http://{}/stolen",
+            redirected_target.local_addr().expect("target addr")
+        );
+
+        let redirector = TcpListener::bind("127.0.0.1:0").expect("bind redirector");
+        let redirect_url = format!(
+            "http://{}/pay",
+            redirector.local_addr().expect("redirect addr")
+        );
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = redirector.accept().expect("redirect request");
+            let mut request = [0u8; 2048];
+            let _ = stream.read(&mut request);
+            let response = format!(
+                "HTTP/1.1 307 Temporary Redirect\r\nLocation: {target_url}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("redirect response");
+        });
+
+        let (status, _tx, _result, error, _receipt) = replay_a2mcp_merchant(
+            &redirect_url,
+            "POST",
+            &[],
+            &serde_json::Map::new(),
+            "PAYMENT-SIGNATURE",
+            "must-not-be-forwarded",
+        )
+        .await;
+        handle.join().expect("redirector thread");
+
+        assert_eq!(status, "failed");
+        assert!(error.as_deref().unwrap_or_default().contains("HTTP 307"));
+        assert!(
+            redirected_target.accept().is_err(),
+            "signed payment header was forwarded to redirect target"
+        );
+    }
+
     // ── replay_mcp status mapping (mock MCP endpoint, hermetic) ───────────
     //
     // Mirrors the replay_merchant tests above for the MCP-transport branch.
@@ -3695,5 +3957,26 @@ mod tests {
         // No schema, no overrides → persisted args unchanged.
         let merged = apply_param_overrides(&known, &[], None);
         assert_eq!(merged, json!({ "q": "hello" }));
+    }
+
+    #[test]
+    fn a2mcp_retry_classifier_is_narrowly_limited_to_signing_authorization() {
+        assert!(is_retryable_a2mcp_signing_authorization_error(&anyhow!(
+            "payment sign-msg failed: transient"
+        )));
+        assert!(is_retryable_a2mcp_signing_authorization_error(&anyhow!(
+            "permit2 gen-msg-hash failed: transient"
+        )));
+        for terminal in [
+            "login_required",
+            "Permit2 allowance insufficient",
+            "invalid token address",
+            "chain not found",
+        ] {
+            assert!(
+                !is_retryable_a2mcp_signing_authorization_error(&anyhow!(terminal)),
+                "must not retry terminal precondition: {terminal}"
+            );
+        }
     }
 }

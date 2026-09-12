@@ -505,7 +505,7 @@ fn build_agent_list_cells_full_asp_row() {
 }
 
 #[test]
-fn build_agent_list_cells_count_zero_no_rating_and_truncates_name() {
+fn build_agent_list_cells_user_role_and_truncated_name() {
     let row = json!({
         "agentId": "58",
         "name": "A really long agent name that exceeds twenty",
@@ -523,13 +523,10 @@ fn build_agent_list_cells_count_zero_no_rating_and_truncates_name() {
         ("Name".to_string(), "A really long agent …".to_string())
     );
     assert_eq!(pairs[2].1, "User");
-    // count 0 → No rating yet (never `—` in list view).
-    assert_eq!(
-        pairs[5],
-        ("Rating".to_string(), "No rating yet".to_string())
-    );
-    // no approvalDisplayStatus → `—`.
+    // User status and approval are not applicable.
+    assert_eq!(pairs[3], ("Status".to_string(), "—".to_string()));
     assert_eq!(pairs[4], ("Approval status".to_string(), "—".to_string()));
+    assert_eq!(pairs[5], ("Rating".to_string(), "No rating yet".to_string()));
 }
 
 #[test]
@@ -591,6 +588,27 @@ fn add_agent_list_cells_walks_envelope_and_skips_detail_unaffected() {
     let cells = &env["list"][0]["agentList"][0]["cells"];
     assert!(cells.is_array());
     assert_eq!(cells.as_array().unwrap().len(), 6);
+}
+
+#[test]
+fn add_agent_list_cells_derives_has_more_from_pagination() {
+    for (page, page_size, total, expected) in [
+        (1, 10, 11, true),
+        (2, 10, 11, false),
+        (1, 10, 10, false),
+    ] {
+        let mut env = json!({
+            "list": [],
+            "page": page,
+            "pageSize": page_size,
+            "total": total,
+            "hasMore": !expected,
+        });
+
+        add_agent_list_cells(&mut env);
+
+        assert_eq!(env["hasMore"], json!(expected));
+    }
 }
 
 // ─── §6 search cells ─────────────────────────────────────────────────
@@ -706,7 +724,7 @@ fn build_search_table_has_fixed_columns_and_walks_flat_list() {
 
 #[test]
 fn build_service_cells_a2mcp_pascalcase() {
-    // service-list returns PascalCase keys per references/discover.md §service-list.
+    // service-list returns PascalCase keys per references/identity/profile.md §Services for an explicit Agent ID.
     let svc = json!({
         "ServiceName": "TVL Query",
         "ServiceType": "A2MCP",
@@ -720,7 +738,7 @@ fn build_service_cells_a2mcp_pascalcase() {
         vec![
             ("#".to_string(), "1".to_string()),
             ("Name".to_string(), "TVL Query".to_string()),
-            ("Type".to_string(), "API service".to_string()),
+            ("Type".to_string(), "A2MCP".to_string()),
             ("Fee".to_string(), "10 USDT".to_string()),
             ("Subscription".to_string(), "—".to_string()),
             ("Free trial".to_string(), "—".to_string()),
@@ -734,6 +752,21 @@ fn build_service_cells_a2mcp_pascalcase() {
             ),
         ]
     );
+}
+
+#[test]
+fn build_service_cells_a2mcp_hides_legacy_service_guide() {
+    let svc = json!({
+        "ServiceName": "TVL Query",
+        "ServiceType": "A2MCP",
+        "Fee": "10",
+        "Endpoint": "https://api.example.com/mcp",
+        "ServiceDescription": "Query protocol TVL by chain.",
+        "ServiceGuide": "Legacy value that must remain internal.",
+    });
+    let cells = build_service_cells(1, &svc).expect("cells");
+    let pairs = cell_pairs(&Value::Array(cells));
+    assert!(!pairs.iter().any(|(label, _)| label == "Service guide"));
 }
 
 #[test]
@@ -774,6 +807,7 @@ fn build_service_cells_a2a_subscription() {
         "ServiceType": "A2A",
         "fee": "",
         "subscription": [{ "interval": "month", "fee": "10" }],
+        "serviceGuide": "Choose a strategy and submit your budget.",
     });
     let cells = build_service_cells(2, &svc).expect("cells");
     let pairs = cell_pairs(&Value::Array(cells));
@@ -785,6 +819,23 @@ fn build_service_cells_a2a_subscription() {
     // No freeTrial in this fixture → `—`.
     assert_eq!(pairs[5], ("Free trial".to_string(), "—".to_string()));
     assert_eq!(pairs[6], ("Endpoint".to_string(), "—".to_string()));
+    assert!(!pairs.iter().any(|(label, _)| label == "Service guide"));
+}
+
+#[test]
+fn build_service_cells_hides_service_guide_on_read() {
+    let guide = ["Follow this complete instruction exactly."; 4].join(" ");
+    assert!(guide.chars().count() > 80);
+    let svc = json!({
+        "ServiceName": "Loop Helper",
+        "ServiceType": "A2A",
+        "fee": "",
+        "subscription": [{ "interval": "month", "fee": "10" }],
+        "serviceGuide": guide,
+    });
+    let cells = build_service_cells(1, &svc).expect("cells");
+    let pairs = cell_pairs(&Value::Array(cells));
+    assert!(!pairs.iter().any(|(label, _)| label == "Service guide"));
 }
 
 #[test]
@@ -937,9 +988,8 @@ fn build_feedback_cells_full_entry() {
     assert_eq!(
         cell_pairs(&Value::Array(cells)),
         vec![
-            ("Score".to_string(), "★ 5".to_string()),
+            ("Score".to_string(), "5".to_string()),
             ("Reviewer".to_string(), "#88".to_string()),
-            ("Task".to_string(), "0xabc03e8".to_string()),
             ("Date".to_string(), "2026-04-20".to_string()),
             (
                 "Comment".to_string(),
@@ -950,7 +1000,7 @@ fn build_feedback_cells_full_entry() {
 }
 
 #[test]
-fn build_feedback_cells_no_comment_and_missing_task() {
+fn build_feedback_cells_no_comment() {
     let item = json!({
         "creatorId": 77,
         "score": 4.45,
@@ -958,14 +1008,58 @@ fn build_feedback_cells_no_comment_and_missing_task() {
     });
     let cells = build_feedback_cells(item.as_object().unwrap());
     let pairs = cell_pairs(&Value::Array(cells));
-    assert_eq!(pairs[0], ("Score".to_string(), "★ 4.45".to_string()));
-    // missing taskId → `—`.
-    assert_eq!(pairs[2], ("Task".to_string(), "—".to_string()));
+    assert_eq!(pairs[0], ("Score".to_string(), "4.45".to_string()));
     // empty/missing description → `(no comment)`.
     assert_eq!(
-        pairs[4],
+        pairs[3],
         ("Comment".to_string(), "(no comment)".to_string())
     );
+}
+
+#[test]
+fn build_feedback_cells_accepts_live_agent_name_and_content() {
+    let time = 1_751_587_200_000_i64;
+    let expected_date = chrono::Local
+        .timestamp_millis_opt(time)
+        .single()
+        .unwrap()
+        .format("%Y-%m-%d")
+        .to_string();
+    let item = json!({
+        "agentName": "ScoutGate Buyer",
+        "content": "x402 completion confirmed; no replay issues",
+        "valueString": "100",
+        "time": time,
+    });
+    let cells = build_feedback_cells(item.as_object().unwrap());
+    let pairs = cell_pairs(&Value::Array(cells));
+    assert_eq!(pairs[0], ("Score".to_string(), "5".to_string()));
+    assert_eq!(
+        pairs[1],
+        ("Reviewer".to_string(), "ScoutGate Buyer".to_string())
+    );
+    assert_eq!(pairs[2], ("Date".to_string(), expected_date));
+    assert_eq!(
+        pairs[3],
+        (
+            "Comment".to_string(),
+            "x402 completion confirmed; no replay issues".to_string()
+        )
+    );
+}
+
+#[test]
+fn build_feedback_cells_accepts_numeric_live_value() {
+    let item = json!({ "value": 70 });
+    let cells = build_feedback_cells(item.as_object().unwrap());
+    assert_eq!(cells[0], json!({ "label": "Score", "value": "3.5" }));
+}
+
+#[test]
+fn build_feedback_cells_accepts_suffixed_live_value_string() {
+    let item = json!({ "valueString": "90/100" });
+    let cells = build_feedback_cells(item.as_object().unwrap());
+    assert_eq!(cells[0], json!({ "label": "Score", "value": "4.5" }));
 }
 
 #[test]
@@ -978,8 +1072,8 @@ fn add_feedback_list_cells_walks_items() {
         ],
     });
     add_feedback_list_cells(&mut resp);
-    assert_eq!(resp["items"][0]["cells"].as_array().unwrap().len(), 5);
-    assert_eq!(resp["items"][0]["cells"][0]["value"], json!("★ 4.5"));
+    assert_eq!(resp["items"][0]["cells"].as_array().unwrap().len(), 4);
+    assert_eq!(resp["items"][0]["cells"][0]["value"], json!("4.5"));
 }
 
 #[test]
@@ -1076,6 +1170,58 @@ fn build_agent_card_reads_live_backend_field_names() {
 }
 
 #[test]
+fn add_service_list_cells_preserves_service_guide_in_array_wrapper_shape() {
+    // The live backend wraps `data` in a one-element array of
+    // `{ agentInfo, list:[service…] }`; serviceGuide must pass through
+    // untouched after cells are stamped.
+    let mut data = json!([
+        {
+            "agentInfo": { "agentId": "1921", "name": "Goudan Monitor" },
+            "list": [
+                { "serviceId": "4a7f30a7-46fb-4695-80a1-25d160da33b3",
+                  "serviceName": "Bot Monitor", "serviceType": "A2MCP",
+                  "fee": "0.005", "endpoint": "https://x",
+                  "serviceGuide": "## Summary\nSubscribe checklist body" },
+            ],
+            "page": 1, "pageSize": 9, "total": 1,
+        }
+    ]);
+    add_service_list_cells(&mut data);
+    let svc = &data[0]["list"][0];
+    assert_eq!(
+        svc["serviceGuide"],
+        json!("## Summary\nSubscribe checklist body")
+    );
+    assert!(svc["serviceGuideHash"]
+        .as_str()
+        .is_some_and(|value| value.starts_with("sha256:") && value.len() == 71));
+    assert!(svc.get("cells").is_some());
+}
+
+#[test]
+fn add_service_list_cells_preserves_service_guide_in_bare_object_shape() {
+    // Backend doc examples show a bare object with no array envelope; both
+    // shapes must pass the guide through, and an absent guide stays absent
+    // (no key invented).
+    let mut data = json!({
+        "list": [
+            { "serviceName": "Guided", "serviceType": "A2A",
+              "serviceGuide": "step 1; step 2" },
+            { "serviceName": "Unguided", "serviceType": "A2MCP" },
+        ],
+        "page": 1, "pageSize": 9, "total": 2,
+    });
+    add_service_list_cells(&mut data);
+    assert_eq!(data["list"][0]["serviceGuide"], json!("step 1; step 2"));
+    assert!(data["list"][0]["serviceGuideHash"]
+        .as_str()
+        .is_some_and(|value| value.starts_with("sha256:") && value.len() == 71));
+    assert!(data["list"][1].get("serviceGuide").is_none());
+    assert!(data["list"][1].get("serviceGuideHash").is_none());
+    assert!(data["list"][0].get("cells").is_some());
+}
+
+#[test]
 fn add_service_list_cells_walks_array_of_wrappers_with_list_key() {
     // Live `/service-list` shape: data is an ARRAY of
     // `{ agentInfo, list:[service…] }`; services under `list`.
@@ -1099,13 +1245,75 @@ fn add_service_list_cells_walks_array_of_wrappers_with_list_key() {
     );
     assert_eq!(
         svcs[0]["cells"][2],
-        json!({ "label": "Type", "value": "API service" })
+        json!({ "label": "Type", "value": "A2MCP" })
     );
     assert_eq!(svcs[1]["cells"][0], json!({ "label": "#", "value": "2" }));
     assert_eq!(
         svcs[1]["cells"][2],
-        json!({ "label": "Type", "value": "agent-to-agent" })
+        json!({ "label": "Type", "value": "A2A" })
     );
+    assert_eq!(data[0]["page"], json!(1));
+    assert_eq!(data[0]["pageSize"], json!(20));
+    assert_eq!(data[0]["total"], json!(2));
+    assert_eq!(data[0]["hasMore"], json!(false));
+}
+
+#[test]
+fn add_service_list_cells_preserves_empty_page_metadata() {
+    for total in [0, 12] {
+        let mut data = json!([{
+            "agentInfo": { "agentId": "392", "name": "Agent 392" },
+            "list": [],
+            "page": 3,
+            "pageSize": 5,
+            "total": total,
+        }]);
+
+        add_service_list_cells(&mut data);
+
+        assert_eq!(data[0]["list"], json!([]));
+        assert_eq!(data[0]["page"], json!(3));
+        assert_eq!(data[0]["pageSize"], json!(5));
+        assert_eq!(data[0]["total"], json!(total));
+        assert_eq!(data[0]["hasMore"], json!(false));
+    }
+}
+
+#[test]
+fn add_service_list_cells_derives_has_more_from_pagination() {
+    for (page, page_size, total, expected) in [
+        (1, 3, 7, true),
+        (2, 3, 7, true),
+        (3, 3, 7, false),
+        (1, 3, 3, false),
+        (1, 3, 0, false),
+    ] {
+        let mut data = json!([{
+            "list": [],
+            "page": page,
+            "pageSize": page_size,
+            "total": total,
+            "hasMore": !expected,
+        }]);
+
+        add_service_list_cells(&mut data);
+
+        assert_eq!(data[0]["hasMore"], json!(expected));
+    }
+}
+
+#[test]
+fn add_service_list_cells_derives_has_more_from_string_metadata() {
+    let mut data = json!([{
+        "list": [],
+        "page": "2",
+        "pageSize": "3",
+        "total": "7",
+    }]);
+
+    add_service_list_cells(&mut data);
+
+    assert_eq!(data[0]["hasMore"], json!(true));
 }
 
 #[test]
@@ -1120,9 +1328,46 @@ fn add_feedback_list_cells_walks_list_key() {
     });
     add_feedback_list_cells(&mut data);
     let cells = &data["list"][0]["cells"];
-    assert_eq!(cells[0], json!({ "label": "Score", "value": "★ 5" }));
+    assert_eq!(cells[0], json!({ "label": "Score", "value": "5" }));
     assert_eq!(cells[1], json!({ "label": "Reviewer", "value": "#88" }));
-    assert_eq!(cells[4], json!({ "label": "Comment", "value": "Great" }));
+    assert_eq!(cells[3], json!({ "label": "Comment", "value": "Great" }));
+}
+
+#[test]
+fn add_feedback_list_cells_derives_has_more_from_pagination() {
+    for (page, page_size, total, expected) in [
+        (1, 3, 7, true),
+        (2, 3, 7, true),
+        (3, 3, 7, false),
+        (1, 3, 3, false),
+        (1, 3, 0, false),
+    ] {
+        let mut data = json!({
+            "list": [],
+            "page": page,
+            "pageSize": page_size,
+            "total": total,
+            "hasMore": !expected,
+        });
+
+        add_feedback_list_cells(&mut data);
+
+        assert_eq!(data["hasMore"], json!(expected));
+    }
+}
+
+#[test]
+fn add_feedback_list_cells_derives_has_more_from_string_metadata() {
+    let mut data = json!({
+        "items": [],
+        "page": "2",
+        "pageSize": "3",
+        "total": "7",
+    });
+
+    add_feedback_list_cells(&mut data);
+
+    assert_eq!(data["hasMore"], json!(true));
 }
 
 // ─── build_precheck (registration §2 uniqueness) ─────────────────────
@@ -1473,6 +1718,86 @@ fn parse_services_valid_a2a_endpoint_cleared() {
 }
 
 #[test]
+fn parse_services_a2a_subscription_allows_missing_or_blank_service_guide() {
+    for guide_fragment in ["", r#","serviceGuide":"   ""#] {
+        let raw = format!(
+            r#"[{{"serviceName":"Yield","serviceDescription":"yields","serviceType":"A2A","fee":"","subscription":[{{"interval":"month","fee":"5"}}]{guide_fragment}}}]"#
+        );
+        let services = parse_services(Some(&raw)).expect("subscription A2A guide is optional");
+        assert!(services[0].service_guide.is_empty());
+        assert!(serde_json::to_value(&services[0]).unwrap()["serviceGuide"].is_null());
+    }
+}
+
+#[test]
+fn parse_services_a2a_subscription_trims_and_preserves_service_guide() {
+    let raw = r#"[{"serviceName":"Yield","serviceDescription":"yields","serviceGuide":"  Choose a strategy and submit your budget.  ","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"5"}]}]"#;
+    let svcs = parse_services(Some(raw)).unwrap();
+    assert_eq!(svcs[0].service_guide, "Choose a strategy and submit your budget.");
+    assert_eq!(serde_json::to_value(&svcs[0]).unwrap()["serviceGuide"], "Choose a strategy and submit your budget.");
+}
+
+#[test]
+fn parse_services_enforces_service_guide_display_width_limit() {
+    for guide in ["x".repeat(10000), "中".repeat(5000)] {
+        let raw = json!([{
+            "serviceName": "Yield",
+            "serviceDescription": "yields",
+            "serviceGuide": guide,
+            "serviceType": "A2A",
+            "fee": "",
+            "subscription": [{"interval": "month", "fee": "5"}]
+        }])
+        .to_string();
+        assert!(parse_services(Some(&raw)).is_ok());
+    }
+
+    for guide in ["x".repeat(10001), "中".repeat(5001)] {
+        let raw = json!([{
+            "serviceName": "Yield",
+            "serviceDescription": "yields",
+            "serviceGuide": guide,
+            "serviceType": "A2A",
+            "fee": "",
+            "subscription": [{"interval": "month", "fee": "5"}]
+        }])
+        .to_string();
+        let err = parse_services(Some(&raw)).unwrap_err().to_string();
+        assert!(err.contains("service guide for [Yield] exceeds the length limit"));
+    }
+}
+
+#[test]
+fn parse_services_forwards_optional_service_guide_for_a2a_and_a2mcp() {
+    let a2a = r#"[{"serviceName":"Yield","serviceDescription":"yields","serviceGuide":"Provide a wallet address.","serviceType":"A2A","fee":"5"}]"#;
+    let a2mcp = r#"[{"serviceName":"TVL Query","serviceDescription":"desc","serviceGuide":"Call with a chain id.","serviceType":"A2MCP","fee":"10","endpoint":"https://x"}]"#;
+    assert_eq!(parse_services(Some(a2a)).unwrap()[0].service_guide, "Provide a wallet address.");
+    let service = parse_services(Some(a2mcp)).unwrap().remove(0);
+    assert_eq!(service.service_guide, "Call with a chain id.");
+    assert_eq!(serde_json::to_value(&service).unwrap()["serviceGuide"], "Call with a chain id.");
+}
+
+#[test]
+fn parse_services_preserves_legacy_a2mcp_guide_on_update() {
+    let raw = r#"[{"operation":"update","id":"7","serviceName":"TVL Query","serviceDescription":"desc","serviceGuide":"Legacy guide","serviceType":"A2MCP","fee":"10","endpoint":"https://x"}]"#;
+    let service = parse_services(Some(raw)).unwrap().remove(0);
+    assert_eq!(service.service_guide, "Legacy guide");
+    assert_eq!(serde_json::to_value(&service).unwrap()["serviceGuide"], "Legacy guide");
+}
+
+#[test]
+fn parse_services_a2a_per_call_allows_missing_or_blank_service_guide() {
+    for guide_fragment in ["", r#","serviceGuide":"   ""#] {
+        let raw = format!(
+            r#"[{{"serviceName":"Yield","serviceDescription":"yields","serviceType":"A2A","fee":"5","subscription":[]{guide_fragment}}}]"#
+        );
+        let services = parse_services(Some(&raw)).expect("per-call A2A guide is optional");
+        assert!(services[0].service_guide.is_empty());
+        assert!(serde_json::to_value(&services[0]).unwrap()["serviceGuide"].is_null());
+    }
+}
+
+#[test]
 fn parse_services_uppercases_servicetype() {
     let raw = r#"[{"serviceName":"S","serviceDescription":"d","serviceType":"a2a","fee":"1"}]"#;
     let svcs = parse_services(Some(raw)).unwrap();
@@ -1531,7 +1856,14 @@ fn parse_services_operation_update_with_id_ok() {
     let raw = r#"[{"operation":"update","id":"7","serviceName":"S","serviceDescription":"d","serviceType":"A2A","fee":"1"}]"#;
     let svcs = parse_services(Some(raw)).unwrap();
     assert_eq!(svcs[0].operation, Some(ServiceOperation::Update));
-    assert_eq!(svcs[0].id.as_deref(), Some("7"));
+    assert_eq!(svcs[0].id.as_ref(), Some(&json!("7")));
+}
+
+#[test]
+fn parse_services_operation_update_with_numeric_id_ok() {
+    let raw = r#"[{"operation":"update","id":7,"serviceName":"S","serviceDescription":"d","serviceType":"A2A","fee":"1"}]"#;
+    let svcs = parse_services(Some(raw)).unwrap();
+    assert_eq!(serde_json::to_value(&svcs[0]).unwrap()["id"], json!(7));
 }
 
 #[test]
@@ -1541,17 +1873,46 @@ fn parse_services_operation_update_without_id_is_err() {
 }
 
 #[test]
-fn parse_services_operation_delete_without_id_is_err() {
-    let raw = r#"[{"operation":"delete","serviceName":"S","serviceDescription":"d","serviceType":"A2A","fee":"1"}]"#;
-    assert!(parse_services(Some(raw)).is_err());
+fn parse_service_deltas_delete_without_id_is_err() {
+    let raw = r#"[{"operation":"delete"}]"#;
+    assert!(parse_service_deltas(Some(raw)).is_err());
 }
 
 #[test]
-fn parse_services_operation_delete_with_id_ok() {
-    let raw = r#"[{"operation":"delete","id":"9","serviceName":"S","serviceDescription":"d","serviceType":"A2A","fee":"1"}]"#;
-    let svcs = parse_services(Some(raw)).unwrap();
-    assert_eq!(svcs[0].operation, Some(ServiceOperation::Delete));
-    assert_eq!(svcs[0].id.as_deref(), Some("9"));
+fn parse_service_deltas_delete_with_id_ok() {
+    let raw = r#"[{"operation":"delete","id":"9"}]"#;
+    let deltas = parse_service_deltas(Some(raw)).unwrap();
+    assert_eq!(deltas, vec![json!({ "operation": "delete", "id": "9" })]);
+}
+
+#[test]
+fn parse_service_deltas_delete_with_numeric_id_ok() {
+    let raw = r#"[{"operation":"delete","id":9}]"#;
+    let deltas = parse_service_deltas(Some(raw)).unwrap();
+    assert_eq!(deltas, vec![json!({ "operation": "delete", "id": 9 })]);
+}
+
+#[test]
+fn parse_service_deltas_update_with_numeric_id_ok() {
+    let raw = r#"[{"operation":"update","id":7,"serviceName":"Signals","serviceDescription":"Provides signals","serviceType":"A2A","fee":"10","subscription":[]}]"#;
+    let deltas = parse_service_deltas(Some(raw)).unwrap();
+    assert_eq!(deltas[0]["id"], json!(7));
+}
+
+#[test]
+fn parse_service_deltas_delete_strips_other_fields() {
+    let raw = r#"[{"operation":"delete","id":"9","serviceName":"S","serviceDescription":"d","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}]}]"#;
+    let deltas = parse_service_deltas(Some(raw)).unwrap();
+    assert_eq!(deltas, vec![json!({ "operation": "delete", "id": "9" })]);
+}
+
+#[test]
+fn parse_service_deltas_mixed_create_and_delete() {
+    let raw = r#"[{"operation":"create","serviceName":"Signals","serviceDescription":"Provides signals","serviceType":"A2A","fee":"10","subscription":[]},{"operation":"delete","id":"9"}]"#;
+    let deltas = parse_service_deltas(Some(raw)).unwrap();
+    assert_eq!(deltas.len(), 2);
+    assert_eq!(deltas[0]["operation"], "create");
+    assert_eq!(deltas[1], json!({ "operation": "delete", "id": "9" }));
 }
 
 #[test]
@@ -1570,6 +1931,7 @@ fn make_a2a_service() -> AgentService {
         id: None,
         service_name: "Svc".to_string(),
         service_description: "d".to_string(),
+        service_guide: String::new(),
         fee: "1".to_string(),
         service_type: "A2A".to_string(),
         subscription: Vec::new(),
@@ -1970,6 +2332,7 @@ fn normalize_service_a2mcp_empty_fee_is_err() {
         id: None,
         service_name: "My Service".to_string(),
         service_description: "desc".to_string(),
+        service_guide: String::new(),
         fee: "".to_string(),
         service_type: "A2MCP".to_string(),
         subscription: Vec::new(),
@@ -1989,6 +2352,7 @@ fn normalize_service_a2mcp_whitespace_only_fee_is_err() {
         id: None,
         service_name: "My Service".to_string(),
         service_description: "desc".to_string(),
+        service_guide: String::new(),
         fee: "   ".to_string(),
         service_type: "A2MCP".to_string(),
         subscription: Vec::new(),
@@ -2005,10 +2369,16 @@ fn normalize_service_a2mcp_whitespace_only_fee_is_err() {
 // ─── subscription pricing (A2A) ──────────────────────────────────────
 
 fn a2a_with(fee: &str, subs: Vec<(&str, &str)>) -> AgentService {
+    let service_guide = if subs.is_empty() {
+        String::new()
+    } else {
+        "Choose a strategy and submit your budget.".to_string()
+    };
     AgentService {
         id: None,
         service_name: "Aave loop assistant".to_string(),
         service_description: "desc".to_string(),
+        service_guide,
         fee: fee.to_string(),
         service_type: "A2A".to_string(),
         subscription: subs
@@ -2078,11 +2448,47 @@ fn normalize_a2a_bad_subscription_fee_is_err() {
 }
 
 #[test]
+fn normalize_a2a_prices_allow_at_most_two_decimals() {
+    assert!(normalize_service(a2a_with("0.12", vec![])).is_ok());
+    let single_err = normalize_service(a2a_with("0.123", vec![]))
+        .unwrap_err()
+        .to_string();
+    assert!(single_err.contains("2 decimal places"), "got: {single_err}");
+
+    assert!(normalize_service(a2a_with("", vec![("month", "0.12")])).is_ok());
+    let subscription_err = normalize_service(a2a_with("", vec![("month", "0.123")]))
+        .unwrap_err()
+        .to_string();
+    assert!(subscription_err.contains("2 decimal places"), "got: {subscription_err}");
+}
+
+#[test]
+fn normalize_a2mcp_fee_keeps_six_decimal_precision() {
+    let build = |fee: &str| AgentService {
+        id: None,
+        service_name: "Price feed svc".to_string(),
+        service_description: "desc".to_string(),
+        service_guide: String::new(),
+        fee: fee.to_string(),
+        service_type: "A2MCP".to_string(),
+        subscription: vec![],
+        free_trial: None,
+        operation: None,
+        endpoint: Some("https://api.example.com/mcp".to_string()),
+    };
+
+    assert!(normalize_service(build("0.123456")).is_ok());
+    let err = normalize_service(build("0.1234567")).unwrap_err().to_string();
+    assert!(err.contains("6 decimal places"), "got: {err}");
+}
+
+#[test]
 fn normalize_a2mcp_with_subscription_is_err() {
     let svc = AgentService {
         id: None,
         service_name: "Price feed svc".to_string(),
         service_description: "desc".to_string(),
+        service_guide: String::new(),
         fee: "0.5".to_string(),
         service_type: "A2MCP".to_string(),
         subscription: vec![SubscriptionTier {
@@ -2110,7 +2516,7 @@ fn update_delete_subscription_serializes_empty_array() {
     // User drops the subscription (keeps per-call): backend must receive
     // subscription:[] explicitly so it clears the existing subscription.
     let mut svc = a2a_with("0.11", vec![]);
-    svc.id = Some("7".to_string());
+    svc.id = Some(json!("7"));
     svc.operation = Some(ServiceOperation::Update);
     let svc = normalize_service(svc).unwrap();
     let v = serde_json::to_value(&svc).unwrap();
@@ -2123,7 +2529,7 @@ fn update_subscription_service_serializes_empty_fee() {
     // A subscription-priced service (keeps subscription): backend must receive
     // fee:"" so it carries "no single-purchase price".
     let mut svc = a2a_with("", vec![("month", "10")]);
-    svc.id = Some("7".to_string());
+    svc.id = Some(json!("7"));
     svc.operation = Some(ServiceOperation::Update);
     let svc = normalize_service(svc).unwrap();
     let v = serde_json::to_value(&svc).unwrap();
@@ -2148,12 +2554,117 @@ fn serialized_service_always_carries_subscription_array() {
     assert_eq!(v2["subscription"][0]["fee"], "10");
 }
 
+// ─── FE-PRICE-01 / FE-PRICE-02: A2A subscription tier price (strict path) ──
+//
+// New rules in the A2A subscription-tier loop of normalize_service (spec §6.1
+// / §6.2 / §6.3):
+//   • FE-PRICE-01 — an empty tier price bails with the empty-price message,
+//     running BEFORE the is_plain_number format check so an empty fee surfaces
+//     the empty-price copy (not the generic "invalid subscription fee" error).
+//   • FE-PRICE-02 — a zero tier price ("0" / "0.0" / … / "0.000000") bails with
+//     the ">0" message, running AFTER is_plain_number (is_zero_value's
+//     precondition). Order is empty-BEFORE-zero.
+// Single-purchase A2A and A2MCP fees of 0 are NOT subject to FE-PRICE-02
+// (§6.2 scope). Strict path uses bail!() → fail-fast on the first error.
+//
+// The message strings MUST be byte-identical to the QA path (validate.rs), so
+// each test asserts on the FULLY-interpolated canonical text. a2a_with(...) sets
+// service_name = "Aave loop assistant", which is interpolated into {serviceName}.
+
+const FE_PRICE_01_MSG: &str = "The price for \"Aave loop assistant\" cannot be empty. Please enter a price and try again.";
+const FE_PRICE_02_MSG: &str = "The subscription price for \"Aave loop assistant\" must be greater than 0. Please update the price and try again.";
+
+#[test]
+fn normalize_a2a_subscription_empty_tier_fee_is_fe_price_01() {
+    // fee:"" + subscription:[{month, ""}] → FE-PRICE-01 (empty tier price).
+    let err = normalize_service(a2a_with("", vec![("month", "")]))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains(FE_PRICE_01_MSG),
+        "expected FE-PRICE-01 message; got: {err}"
+    );
+}
+
+#[test]
+fn normalize_a2a_subscription_whitespace_tier_fee_is_fe_price_01() {
+    // A whitespace-only tier fee is trimmed to "" (utils.rs:247), so it hits
+    // FE-PRICE-01 (empty) — NOT the generic plain-number format error.
+    let err = normalize_service(a2a_with("", vec![("month", "  ")]))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains(FE_PRICE_01_MSG),
+        "expected FE-PRICE-01 message for whitespace-trimmed-to-empty; got: {err}"
+    );
+}
+
+#[test]
+fn normalize_a2a_subscription_zero_tier_fee_is_fe_price_02() {
+    // Every plain-number zero form is rejected with the FE-PRICE-02 (>0) message.
+    // "0.000000" (6 decimals) is intentionally NOT here: A2A subscription fees
+    // now cap at 2 decimals (skills-v2), so a 6-decimal value fails the format
+    // check (invalid subscription fee) before reaching this zero check.
+    for fee in ["0", "0.0", "0.00"] {
+        let err = normalize_service(a2a_with("", vec![("month", fee)]))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(FE_PRICE_02_MSG),
+            "fee={fee}: expected FE-PRICE-02 message; got: {err}"
+        );
+    }
+}
+
+#[test]
+fn normalize_a2a_subscription_positive_tier_fee_ok() {
+    // A positive subscription price passes both new checks.
+    for fee in ["10", "0.01"] {
+        let svc = normalize_service(a2a_with("", vec![("month", fee)]))
+            .unwrap_or_else(|e| panic!("subscription fee={fee} should be Ok; got: {e}"));
+        assert_eq!(svc.fee, "");
+        assert_eq!(svc.subscription[0].fee, fee);
+    }
+}
+
+#[test]
+fn normalize_a2a_single_purchase_zero_and_positive_fee_ok() {
+    // §6.2 scope: single-purchase (non-subscription) A2A fees are NOT subject to
+    // the FE-PRICE-02 > 0 rule — 0 and any positive plain number are accepted.
+    for fee in ["10", "0"] {
+        let svc = normalize_service(a2a_with(fee, vec![]))
+            .unwrap_or_else(|e| panic!("single-purchase fee={fee} should be Ok; got: {e}"));
+        assert_eq!(svc.fee, fee);
+        assert!(svc.subscription.is_empty());
+    }
+}
+
+#[test]
+fn normalize_a2mcp_zero_fee_ok() {
+    // A2MCP is exempt from FE-PRICE-02: a 0 single-purchase fee stays Ok (the > 0
+    // rule applies only to A2A subscription tiers, §6.2 / acceptance crit #13).
+    let svc = AgentService {
+        id: None,
+        service_name: "Price feed svc".to_string(),
+        service_description: "desc".to_string(),
+        service_guide: String::new(),
+        fee: "0".to_string(),
+        service_type: "A2MCP".to_string(),
+        subscription: Vec::new(),
+        free_trial: None,
+        operation: None,
+        endpoint: Some("https://api.example.com/mcp".to_string()),
+    };
+    let out = normalize_service(svc).expect("A2MCP fee 0 must be Ok");
+    assert_eq!(out.fee, "0");
+}
+
 // ─── freeTrial (A2A subscription only) ────────────────────────────────
 
 #[test]
 fn normalize_a2a_subscription_with_free_trial_ok() {
-    // A positive-integer freeTrial (hours) alongside a subscription is accepted
-    // and serialized as "freeTrial".
+    // A positive-integer freeTrial alongside a subscription is accepted and
+    // serialized as "freeTrial".
     let mut svc = a2a_with("", vec![("month", "10")]);
     svc.free_trial = Some("72".to_string());
     let svc = normalize_service(svc).unwrap();
@@ -2191,11 +2702,34 @@ fn normalize_free_trial_without_subscription_is_err() {
 
 #[test]
 fn normalize_free_trial_non_integer_is_err() {
-    // freeTrial must be a positive integer number of hours.
+    // The duration must be a positive integer number of hours.
     let mut svc = a2a_with("", vec![("month", "10")]);
     svc.free_trial = Some("24.5".to_string());
     let err = normalize_service(svc).unwrap_err().to_string();
     assert!(err.contains("freeTrial"), "expected freeTrial format error; got: {err}");
+}
+
+#[test]
+fn normalize_free_trial_legacy_positive_integer_is_ok() {
+    // Existing positive-hour values remain valid for write-back compatibility.
+    let mut svc = a2a_with("", vec![("month", "10")]);
+    svc.free_trial = Some("24".to_string());
+    let svc = normalize_service(svc).unwrap();
+    assert_eq!(svc.free_trial.as_deref(), Some("24"));
+    assert_eq!(serde_json::to_value(&svc).unwrap()["freeTrial"], "24");
+}
+
+#[test]
+fn normalize_delete_preserves_legacy_positive_free_trial() {
+    let mut svc = a2a_with("", vec![("month", "10")]);
+    svc.id = Some(json!("9"));
+    svc.operation = Some(ServiceOperation::Delete);
+    svc.service_guide.clear();
+    svc.free_trial = Some("24".to_string());
+
+    let svc = normalize_service(svc).unwrap();
+    assert_eq!(svc.free_trial.as_deref(), Some("24"));
+    assert_eq!(serde_json::to_value(&svc).unwrap()["freeTrial"], "24");
 }
 
 #[test]
@@ -2213,6 +2747,7 @@ fn normalize_a2mcp_with_free_trial_is_err() {
         id: None,
         service_name: "Price feed svc".to_string(),
         service_description: "desc".to_string(),
+        service_guide: String::new(),
         fee: "0.5".to_string(),
         service_type: "A2MCP".to_string(),
         subscription: Vec::new(),
@@ -2273,4 +2808,26 @@ fn validate_avatar_image_errors_with_supported_types() {
 fn validate_avatar_image_accepts_supported() {
     let png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
     assert_eq!(validate_avatar_image(&png).unwrap(), ("PNG", "image/png"));
+}
+
+// ─── is_zero_value: only reached after is_plain_number passes ─────────
+
+#[test]
+fn is_zero_value_detects_all_zero_forms() {
+    // Every input here already satisfies is_plain_number (^\d+(\.\d{1,6})?$)
+    // and represents zero: stripping all '0' and '.' leaves the empty string.
+    assert!(is_zero_value("0"));
+    assert!(is_zero_value("0.0"));
+    assert!(is_zero_value("0.00"));
+    assert!(is_zero_value("0.000000"));
+    // "00" passes is_plain_number (no leading-zero rejection), then strips to
+    // empty → zero.
+    assert!(is_zero_value("00"));
+}
+
+#[test]
+fn is_zero_value_rejects_nonzero() {
+    assert!(!is_zero_value("0.01"));
+    assert!(!is_zero_value("1"));
+    assert!(!is_zero_value("10"));
 }

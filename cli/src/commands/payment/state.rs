@@ -213,7 +213,7 @@ fn payments_dir() -> Result<PathBuf> {
 }
 
 /// `~/.onchainos/payments/{id}.json`.
-fn state_path(id: &str) -> Result<PathBuf> {
+pub(crate) fn state_path(id: &str) -> Result<PathBuf> {
     Ok(payments_dir()?.join(format!("{id}.json")))
 }
 

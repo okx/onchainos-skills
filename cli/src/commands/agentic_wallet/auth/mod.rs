@@ -289,7 +289,11 @@ fn is_token_expired_at(token: &str, now: i64) -> bool {
 }
 
 fn should_refresh_tokens(access_token: &str, refresh_token: &str) -> bool {
-    should_refresh_tokens_at(access_token, refresh_token, chrono::Utc::now().timestamp())
+    should_refresh_tokens_at(
+        access_token,
+        refresh_token,
+        chrono::Utc::now().timestamp(),
+    )
 }
 
 fn should_refresh_tokens_at(access_token: &str, refresh_token: &str, now: i64) -> bool {
@@ -417,6 +421,9 @@ const MAX_CONSECUTIVE_TRANSIENT_POLLS: u32 = 5;
 const SOCIAL_LOGIN_TIMEOUT_DEFAULT_SECS: u64 = 300;
 /// Minimum accepted override; values below this fall back to the default.
 const SOCIAL_LOGIN_TIMEOUT_FLOOR_SECS: u64 = 10;
+/// Social-login result poll cadence. Keep the login response prompt without
+/// making the user wait longer than two seconds for a completed authorization.
+const SOCIAL_LOGIN_POLL_INTERVAL_SECS: u64 = 2;
 /// The complete login-only device classification, heartbeat and routing flow
 /// shares one deadline instead of stacking three independent timeout budgets.
 const POST_LOGIN_SETUP_TIMEOUT_SECS: u64 = 15;
@@ -439,13 +446,13 @@ fn resolve_social_login_timeout_secs(raw: Option<&str>) -> u64 {
 }
 
 /// Poll `session/result` until login completes or the deadline elapses.
-/// Cadence: 3s interval, default 300s (5 min) timeout (override via
+/// Cadence: 2s interval, default 300s (5 min) timeout (override via
 /// `SOCIAL_LOGIN_TIMEOUT_SECS`, floor 10s).
 async fn poll_session_result(
     client: &mut WalletApiClient,
     auth_session_id: &str,
 ) -> Result<serde_json::Value> {
-    let interval = Duration::from_secs(3);
+    let interval = Duration::from_secs(SOCIAL_LOGIN_POLL_INTERVAL_SECS);
     let timeout_secs = resolve_social_login_timeout_secs(
         std::env::var("SOCIAL_LOGIN_TIMEOUT_SECS").ok().as_deref(),
     );
@@ -751,8 +758,9 @@ async fn complete_login(
     Ok(())
 }
 
-/// Phase `init`: mint the login session, persist its state for `poll`,
-/// best-effort open the URL, and return `{ loginUrl, authSessionId, opened }`.
+/// Phase `init`: mint the login session, persist its state for `poll`, open the
+/// login page, and return the login URL. The caller displays the returned login
+/// information in the Agent conversation before invoking `poll`.
 pub(super) async fn cmd_login_init() -> Result<()> {
     // Drop the previous pending session's key so repeated `init`s don't accumulate.
     if let Some(prev) = keyring_store::get_opt(PENDING_AUTH_SESSION_ID).filter(|s| !s.is_empty()) {
@@ -767,7 +775,6 @@ pub(super) async fn cmd_login_init() -> Result<()> {
         (pending_key.as_str(), session_private_key.as_str()),
     ])?;
 
-    // Best-effort, non-blocking open; `loginUrl` is returned regardless.
     let opened = is_browsable_url(&login_url) && try_open_browser(&login_url);
 
     output::success(json!({
@@ -782,17 +789,22 @@ pub(super) async fn cmd_login_init() -> Result<()> {
 /// Build ready-to-paste next-step commands for the `init` success packet,
 /// mirroring the `next_steps_for_swap` / `next_steps_for_bridge` pattern.
 ///
-/// `completeLogin` is always emitted — the exact `poll` command with
-/// `authSessionId` interpolated. `openLoginUrl` (= `loginUrl`) is emitted only
-/// when the browser was not opened, so the caller knows to open it manually.
+/// `completeLogin` is the exact poll command for the same session. Callers
+/// follow `requiredOrder`: display `loginUrl` in the Agent conversation, then
+/// poll. `openLoginUrl` carries the manual-open fallback when needed.
 fn next_steps_for_login(auth_session_id: &str, opened: bool, login_url: &str) -> Value {
     let mut steps = serde_json::Map::new();
+    steps.insert("displayLoginUrl".to_string(), json!(login_url));
     steps.insert(
         "completeLogin".to_string(),
         json!(format!(
             "onchainos wallet login --phase poll --session-id {}",
             auth_session_id
         )),
+    );
+    steps.insert(
+        "requiredOrder".to_string(),
+        json!(["displayLoginUrl", "completeLogin"]),
     );
     if !opened {
         steps.insert("openLoginUrl".to_string(), json!(login_url));
@@ -1771,8 +1783,25 @@ mod tests {
     }
 
     #[test]
-    fn next_steps_for_login_opened_has_only_complete_login() {
-        let steps = next_steps_for_login("test-session-abc-123", true, "https://login.example/x");
+    fn social_login_poll_cadence_is_two_seconds() {
+        assert_eq!(SOCIAL_LOGIN_POLL_INTERVAL_SECS, 2);
+    }
+
+    #[test]
+    fn next_steps_for_login_requires_display_before_poll() {
+        let steps = next_steps_for_login(
+            "test-session-abc-123",
+            true,
+            "https://login.example/x",
+        );
+        assert_eq!(
+            steps["displayLoginUrl"].as_str(),
+            Some("https://login.example/x")
+        );
+        assert_eq!(
+            steps["requiredOrder"],
+            json!(["displayLoginUrl", "completeLogin"])
+        );
         // completeLogin is the exact poll command with authSessionId interpolated.
         assert_eq!(
             steps["completeLogin"].as_str(),
@@ -1783,25 +1812,19 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("test-session-abc-123"));
-        // openLoginUrl is omitted when the browser was already opened.
         assert!(steps.get("openLoginUrl").is_none());
     }
 
     #[test]
-    fn next_steps_for_login_not_opened_includes_open_login_url() {
+    fn next_steps_for_login_includes_manual_url_when_opening_fails() {
         let steps = next_steps_for_login(
             "test-session-abc-123",
             false,
-            "https://web3.okx.com/login?session=abc123",
+            "https://login.example/x",
         );
-        assert_eq!(
-            steps["completeLogin"].as_str(),
-            Some("onchainos wallet login --phase poll --session-id test-session-abc-123")
-        );
-        // openLoginUrl is present and equals loginUrl when not opened.
         assert_eq!(
             steps["openLoginUrl"].as_str(),
-            Some("https://web3.okx.com/login?session=abc123")
+            Some("https://login.example/x")
         );
     }
 }

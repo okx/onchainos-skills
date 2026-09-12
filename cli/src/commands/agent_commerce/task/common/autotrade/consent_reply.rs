@@ -142,6 +142,13 @@ where
     if !is_candidate_source(source_event) {
         bail!("auto-trade candidate JSON is not valid for this decision type");
     }
+    if super::is_retired_mode_configuration_decision(Some(source_event)) {
+        // A reply may race an upgrade after the old card was already visible.
+        // Ignore even a complete/valid candidate before parsing it, remove any
+        // draft left by the old flow, and let the relay report a terminal skip.
+        clear_candidate_draft(job_id);
+        return Ok(ApplyResult::FallbackRelay);
+    }
     let candidate: CandidateInput = serde_json::from_str(candidate_json)
         .map_err(|e| anyhow::anyhow!("invalid auto-trade candidate JSON: {e}"))?;
     let context = match consent::load_pending_delivery_context(job_id)? {
@@ -184,9 +191,10 @@ where
     }
 
     let Some(mut draft) = draft else {
-        let decision =
-            card::make_first_time_decision(&context.delivery_id, "trade", job_id, agent_id);
-        return Ok(awaiting_outcome("mode_required", None, &decision, &push));
+        // Replies to a legacy mode-selection card may still arrive after an
+        // upgrade. Never recreate that retired card when the reply does not
+        // contain a usable mode; let the legacy relay fail closed instead.
+        return Ok(ApplyResult::FallbackRelay);
     };
 
     merge_candidate(&mut draft, &candidate)?;
@@ -552,140 +560,61 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_auto_reply_persists_draft_then_completes_synchronously() {
+    fn retired_policy_replies_never_write_authorization_or_push_follow_ups() {
         with_home(|| {
-            let first = apply(
-                card::CONSENT_SOURCE_EVENT,
-                r#"{"mode":"auto","tradeAmount":"1","quote":"USDT"}"#,
-            )
+            let now = now_secs();
+            write_draft(&PendingConfig {
+                version: DRAFT_VERSION,
+                job_id: "job1".to_string(),
+                agent_id: "8315".to_string(),
+                delivery_id: "delivery-1".to_string(),
+                mode: ConsentMode::Auto,
+                trade_amount_u: Some("1".to_string()),
+                cap_u: None,
+                quote_token: Some("usdt".to_string()),
+                confirmation_required: false,
+                created_at: now,
+                expires_at: now.saturating_add(DRAFT_TTL_SEC),
+            })
             .unwrap();
-            assert!(matches!(first, ApplyResult::Awaiting(_)));
-            assert!(draft_path("job1").unwrap().exists());
-            assert!(consent::load_consent("job1").unwrap().is_none());
 
-            let second = apply(card::CONFIG_REQUIRED_SOURCE_EVENT, r#"{"cap":"10"}"#).unwrap();
-            assert!(matches!(second, ApplyResult::Relay { .. }));
-            let saved = consent::load_consent("job1").unwrap().unwrap();
-            assert_eq!(saved.mode, ConsentMode::Auto);
-            assert_eq!(saved.trade_amount_u.as_deref(), Some("1"));
-            assert_eq!(saved.cap_u.as_deref(), Some("10"));
-            assert_eq!(saved.quote_token.as_deref(), Some("usdt"));
-            assert!(grants::check_grant("job1", "dex", "buy", "10").is_ok());
-            assert!(consent::load_pending_delivery_context("job1")
-                .unwrap()
-                .is_some());
-            clear_candidate_draft("job1");
-            assert!(!draft_path("job1").unwrap().exists());
-        });
-    }
-
-    #[test]
-    fn ambiguous_complete_candidate_requires_confirmation_before_write() {
-        with_home(|| {
-            let first = apply(
+            for source in [
                 card::CONSENT_SOURCE_EVENT,
-                r#"{"mode":"auto","tradeAmount":"1","cap":"10","ambiguousFields":["cap"]}"#,
-            )
-            .unwrap();
-            assert!(matches!(first, ApplyResult::Awaiting(_)));
-            assert!(consent::load_consent("job1").unwrap().is_none());
-
-            let second = apply(card::CONFIG_REQUIRED_SOURCE_EVENT, r#"{"confirm":true}"#).unwrap();
-            assert!(matches!(second, ApplyResult::Relay { .. }));
-            assert!(consent::load_consent("job1").unwrap().is_some());
-        });
-    }
-
-    #[test]
-    fn ambiguity_survives_missing_fields_until_explicit_confirmation() {
-        with_home(|| {
-            assert!(matches!(
-                apply(
-                    card::CONSENT_SOURCE_EVENT,
-                    r#"{"mode":"auto","tradeAmount":"1","ambiguousFields":["mode"]}"#,
+                card::CONFIG_REQUIRED_SOURCE_EVENT,
+            ] {
+                let pushed = std::cell::Cell::new(false);
+                let result = apply_candidate_json_with(
+                    "job1",
+                    "8315",
+                    source,
+                    r#"{"mode":"auto","tradeAmount":"1","cap":"10"}"#,
+                    |_| {
+                        pushed.set(true);
+                        Ok(())
+                    },
                 )
-                .unwrap(),
-                ApplyResult::Awaiting(_)
-            ));
-            assert!(matches!(
-                apply(card::CONFIG_REQUIRED_SOURCE_EVENT, r#"{"cap":"10"}"#,).unwrap(),
-                ApplyResult::Awaiting(_)
-            ));
-            assert!(consent::load_consent("job1").unwrap().is_none());
-            assert!(matches!(
-                apply(card::CONFIG_REQUIRED_SOURCE_EVENT, r#"{"confirm":true}"#,).unwrap(),
-                ApplyResult::Relay { .. }
-            ));
-            assert!(consent::load_consent("job1").unwrap().is_some());
-        });
-    }
-
-    #[test]
-    fn decline_relays_skip_without_writing_authorization() {
-        with_home(|| {
-            let result = apply(card::CONSENT_SOURCE_EVENT, r#"{"mode":"decline"}"#).unwrap();
-            match result {
-                ApplyResult::Relay {
-                    normalized_reply,
-                    outcome,
-                } => {
-                    assert_eq!(normalized_reply, "C");
-                    assert_eq!(outcome["authorizationPersisted"], false);
-                }
-                _ => panic!("decline should be ready to relay"),
+                .unwrap();
+                assert!(matches!(result, ApplyResult::FallbackRelay));
+                assert!(!pushed.get(), "retired reply must not push another card");
+                assert!(!draft_path("job1").unwrap().exists());
+                assert!(consent::load_consent("job1").unwrap().is_none());
+                assert!(grants::check_grant("job1", "dex", "buy", "10").is_err());
             }
-            assert!(consent::load_consent("job1").unwrap().is_none());
-            assert!(grants::check_grant("job1", "dex", "buy", "1").is_err());
         });
     }
 
     #[test]
-    fn retry_repairs_a_missing_grant_for_an_identical_persisted_policy() {
+    fn retired_policy_replies_ignore_even_malformed_candidate_json() {
         with_home(|| {
-            let candidate = r#"{"mode":"auto","tradeAmount":"1","cap":"10"}"#;
-            assert!(matches!(
-                apply(card::CONSENT_SOURCE_EVENT, candidate).unwrap(),
-                ApplyResult::Relay { .. }
-            ));
-            grants::clear_grant("job1");
-            assert!(grants::check_grant("job1", "dex", "buy", "1").is_err());
-
-            assert!(matches!(
-                apply(card::CONSENT_SOURCE_EVENT, candidate).unwrap(),
-                ApplyResult::Relay { .. }
-            ));
-            assert!(grants::check_grant("job1", "dex", "buy", "10").is_ok());
-        });
-    }
-
-    #[test]
-    fn amount_above_cap_is_rejected_without_authorization() {
-        with_home(|| {
-            let err = apply(
+            for source in [
                 card::CONSENT_SOURCE_EVENT,
-                r#"{"mode":"auto","tradeAmount":"11","cap":"10"}"#,
-            )
-            .err()
-            .unwrap();
-            assert!(err.to_string().contains("must not exceed cap"));
-            assert!(consent::load_consent("job1").unwrap().is_none());
-            assert!(grants::check_grant("job1", "dex", "buy", "1").is_err());
-        });
-    }
-
-    #[test]
-    fn candidate_json_rejects_unknown_or_numeric_fields() {
-        with_home(|| {
-            assert!(apply(
-                card::CONSENT_SOURCE_EVENT,
-                r#"{"mode":"auto","tradeAmount":1,"cap":"10"}"#,
-            )
-            .is_err());
-            assert!(apply(
-                card::CONSENT_SOURCE_EVENT,
-                r#"{"mode":"auto","tradeAmount":"1","cap":"10","extra":true}"#,
-            )
-            .is_err());
+                card::CONFIG_REQUIRED_SOURCE_EVENT,
+            ] {
+                assert!(matches!(
+                    apply(source, "not-json").unwrap(),
+                    ApplyResult::FallbackRelay
+                ));
+            }
         });
     }
 }

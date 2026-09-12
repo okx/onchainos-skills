@@ -2,7 +2,7 @@
 
 Detailed parameter tables, return field schemas, and usage examples for all 15 DeFi commands.
 
-> `defi positions` / `defi position-detail` parameter schemas live in `portfolio-cli-reference.md`.
+> Load `defi positions` / `defi position-detail` parameter schemas through the top-level positions-schema route.
 
 ## 1. onchainos defi support-chains
 

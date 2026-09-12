@@ -1,0 +1,229 @@
+{
+  "skill_name": "okx-ai",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "View Agent #42 feedback and ratings.",
+      "expected_output": "Query Agent #42 reputation and display the returned average rating, review count, and review content without changing numeric values.",
+      "files": ["evals/fixtures/reputation-page-1.json"],
+      "expectations": [
+        "Calls `onchainos agent feedback-list --agent-id 42` exactly once.",
+        "Does not call a write command.",
+        "Reports the returned average rating, total review count, and review data."
+      ],
+      "assertions": {
+        "required_commands": ["onchainos agent feedback-list --agent-id 42"],
+        "forbidden_commands": [
+          "onchainos agent activate",
+          "onchainos agent deactivate",
+          "onchainos agent feedback ",
+          "onchainos agent register",
+          "onchainos agent update"
+        ],
+        "response_includes": ["4.80", "5.00", "4.60"]
+      }
+    },
+    {
+      "id": 2,
+      "prompt": "What is the reputation of the Market Maker Agent?",
+      "expected_output": "Ask the user for an Agent ID rather than inferring one from the Agent name.",
+      "files": [],
+      "expectations": [
+        "Does not invoke `onchainos`.",
+        "Does not guess or fabricate an Agent ID.",
+        "Asks the user to provide or select an Agent ID."
+      ],
+      "assertions": {
+        "forbidden_commands": ["onchainos "],
+        "response_includes": ["ID"],
+        "response_excludes": ["#42"]
+      }
+    },
+    {
+      "id": 3,
+      "prompt": "Publish Agent #42 to the marketplace.",
+      "expected_output": "Publish Agent #42 using the user's language preference and state that the listing request was submitted for review.",
+      "files": ["evals/fixtures/listing-submitted.json"],
+      "expectations": [
+        "Calls `onchainos agent activate --agent-id 42 --preferred-language zh-CN` exactly once.",
+        "Does not make a follow-up read.",
+        "States that the listing was submitted for review."
+      ],
+      "assertions": {
+        "required_commands": ["onchainos agent activate --agent-id 42 --preferred-language zh-CN"],
+        "forbidden_commands": [
+          "onchainos agent detail",
+          "onchainos agent my-agents",
+          "onchainos agent search"
+        ],
+        "response_includes": ["review"]
+      }
+    },
+    {
+      "id": 4,
+      "prompt": "View my subscriptions.",
+      "expected_output": "Read the subscription list, render the standard Active and Ended fields, device-receipt state, no-receiver warnings, and next actions from nextAction.actionLabel.",
+      "files": ["evals/fixtures/subscription-list.json"],
+      "expectations": [
+        "Calls `onchainos agent subscription-list --page-size 10` exactly once.",
+        "Renders both active and ended subscriptions from the returned page.",
+        "Warns only for the explicit empty device list and renders each returned `nextAction.actionLabel` in order without executing it."
+      ],
+      "assertions": {
+        "required_commands": ["onchainos agent subscription-list --page-size 10"],
+        "forbidden_commands": [
+          "onchainos agent subscribe-detail",
+          "onchainos agent subscribe-device-update",
+          "onchainos agent subscribe-cancel",
+          "okx-a2a user watch"
+        ],
+        "response_includes": [
+          "Alpha Signal",
+          "Old Signal",
+          "2026-09-16 18:10 UTC",
+          "Trial",
+          "MacBook Pro",
+          "iPhone",
+          "No Receiver Signal",
+          "1. Adjust receiving devices",
+          "2. View subscription details",
+          "3. Cancel subscription",
+          "4. View next page"
+        ],
+        "response_excludes": [
+          "Start watching",
+          "Recommend",
+          "allowedJobIds",
+          "next_subscription_page"
+        ]
+      }
+    },
+    {
+      "id": 5,
+      "prompt": "查一下 agent9967 的服务。",
+      "expected_output": "将自然语言中的 agent9967 规范化为数字 Agent ID 9967，并只使用数字值查询 Agent 详情及服务。",
+      "files": [],
+      "expectations": [
+        "Calls `onchainos agent get-agents --agent-ids 9967` exactly once.",
+        "Calls `onchainos agent service-list --agent-id 9967 --page 1 --page-size 3` exactly once.",
+        "Never passes `agent9967` as an Agent ID CLI argument."
+      ],
+      "assertions": {
+        "required_commands": [
+          "onchainos agent get-agents --agent-ids 9967",
+          "onchainos agent service-list --agent-id 9967 --page 1 --page-size 3"
+        ],
+        "forbidden_commands": [
+          "--agent-ids agent9967",
+          "--agent-id agent9967"
+        ],
+        "response_includes": ["9967"]
+      }
+    },
+    {
+      "id": 6,
+      "prompt": "帮我找一下13373的服务",
+      "expected_output": "将作为服务所有者出现的数字 13373 解析为 ASP Agent ID，而不是 Service ID/SID。",
+      "files": [],
+      "expectations": [
+        "Calls `onchainos agent service-match --asp-agent-id 13373 --limit 3` exactly once.",
+        "Never passes 13373 through `--sid`.",
+        "Does not invent search keywords from the generic request wrapper."
+      ],
+      "assertions": {
+        "required_commands": [
+          "onchainos agent service-match --asp-agent-id 13373 --limit 3"
+        ],
+        "forbidden_commands": [
+          "--sid 13373",
+          "--keywords"
+        ],
+        "response_includes": ["13373"]
+      }
+    },
+    {
+      "id": 7,
+      "prompt": "帮我找一下13373服务",
+      "expected_output": "将没有标签、# 或所有关系标记的数字 13373 视为有歧义，询问它是 Agent ID 还是 Service ID，并等待用户确认。",
+      "files": [],
+      "expectations": [
+        "Does not call `onchainos agent service-match`.",
+        "Asks the user whether 13373 is an Agent ID or a Service ID.",
+        "Waits for the user's answer before searching."
+      ],
+      "assertions": {
+        "forbidden_commands": [
+          "agent service-match",
+          "--asp-agent-id 13373",
+          "--sid 13373"
+        ],
+        "response_includes": ["13373", "Agent ID", "Service ID"]
+      }
+    },
+    {
+      "id": 8,
+      "prompt": "Find the Agent or service identified by 13373.",
+      "expected_output": "Ask whether 13373 is an ASP Agent ID or a Service ID and wait without searching.",
+      "files": [],
+      "expectations": [
+        "Does not call `onchainos agent service-match`.",
+        "Asks the user whether 13373 is an Agent ID or a Service ID.",
+        "Waits for the user's answer before searching."
+      ],
+      "assertions": {
+        "forbidden_commands": [
+          "agent service-match",
+          "--asp-agent-id",
+          "--sid"
+        ],
+        "response_includes": ["13373", "Agent ID", "Service ID"]
+      }
+    },
+    {
+      "id": 9,
+      "prompt": "帮我找#2189去创建单次免费任务，英超，阿仙奴对车路士，9月6",
+      "expected_output": "同时将 #2189 识别为 ASP Agent ID，并将免费映射为最高服务价格 0；搜索并展示匹配服务，等待用户选择后再创建任务。",
+      "files": [],
+      "expectations": [
+        "Calls `onchainos agent service-match --asp-agent-id 2189 --max-payment-token-amount 0 --limit 3` exactly once.",
+        "Never passes 2189 through `--sid`.",
+        "Treats 免费 as a price constraint rather than a keyword.",
+        "Does not create a task before the user selects a returned Service."
+      ],
+      "assertions": {
+        "required_commands": [
+          "onchainos agent service-match --asp-agent-id 2189 --max-payment-token-amount 0 --limit 3"
+        ],
+        "forbidden_commands": [
+          "--sid 2189",
+          "--keywords 免费",
+          "task-create-prepare"
+        ],
+        "response_includes": ["2189"]
+      }
+    },
+    {
+      "id": 10,
+      "prompt": "我想使用 Agent Post，Service ID 是 34560",
+      "expected_output": "将明确标注的 Service ID 34560 作为 SID 查询，只使用 service-match 的 --sid 参数，并等待用户从查询结果中选择服务。",
+      "files": [],
+      "expectations": [
+        "Calls `onchainos agent service-match --sid 34560 --limit 3` exactly once.",
+        "Never uses `--service-id` with `onchainos agent service-match`.",
+        "Does not probe `onchainos agent service-match --help` or retry the ID under another flag.",
+        "Does not create a task before the user selects a returned Service."
+      ],
+      "assertions": {
+        "required_commands": [
+          "onchainos agent service-match --sid 34560 --limit 3"
+        ],
+        "forbidden_commands": [
+          "onchainos agent service-match --service-id",
+          "onchainos agent service-match --help",
+          "task-create-prepare"
+        ],
+        "response_includes": ["34560"]
+      }
+    }
+  ]
+}

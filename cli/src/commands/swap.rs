@@ -201,6 +201,74 @@ pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
             .await?;
             // SW2 (§1.4 / §2.4): always-on per-route risk classification.
             classify_swap_response(&mut quote);
+
+            // Balance context (spec §2.2 / §2.3): query the from-asset balance.
+            // On ANY query failure the balance is unavailable → `walletBalance`
+            // is JSON null and the quote still succeeds (§3.2) — never an exit-1
+            // by itself. Native assets are keyed by the empty token address in
+            // the balance response, so map the native placeholder back to "".
+            let resolved_from = resolve_token_address(&chain_index, &from);
+            let native = crate::chains::native_token_address(&chain_index);
+            let balance_token = if resolved_from.eq_ignore_ascii_case(native) {
+                ""
+            } else {
+                resolved_from.as_str()
+            };
+            let wallet_balance =
+                crate::commands::agentic_wallet::balance::query_token_readable_balance(
+                    &chain_index,
+                    balance_token,
+                )
+                .await
+                .ok()
+                .flatten();
+
+            // Insufficient-balance scene (spec §2.2): compare the held from-token
+            // balance with the actual from-token requirement. For exactIn the
+            // request amount already is the from-token amount; for exactOut it is
+            // the desired to-token amount, so only the quote's fromTokenAmount is
+            // authoritative. Symbol + decimals come from that same quote route.
+            // Missing or malformed facts degrade to the normal quote rather than
+            // incorrectly entering Funding.
+            let required_from_amount =
+                quote_required_from_amount(&quote, &swap_mode, &raw_amount);
+            if let (Some(balance), (symbol, Some(decimals)), Some(required_minimal)) = (
+                wallet_balance.as_deref(),
+                quote_from_token_meta(&quote),
+                required_from_amount.as_deref(),
+            )
+            {
+                let insufficient = match readable_to_minimal_str(balance, decimals) {
+                    Ok(balance_minimal) => {
+                        is_allowance_insufficient(&balance_minimal, required_minimal)
+                    }
+                    // Balance can't be normalized → cannot compare cleanly, so do
+                    // NOT block (safe degrade; the normal quote still emits).
+                    Err(_) => false,
+                };
+                if insufficient {
+                    if let Ok(requested_amount) =
+                        crate::commands::agentic_wallet::shared::common::amount::minimal_to_readable(
+                            required_minimal,
+                            decimals,
+                        )
+                    {
+                        let params = SwapSceneParams {
+                            from_token: &resolved_from,
+                            from_symbol: symbol.as_deref().unwrap_or(""),
+                            requested_amount: &requested_amount,
+                        };
+                        let value = crate::funding::build_funding_bundle(
+                            &chain_index,
+                            swap_funding_input(&params, balance),
+                        )
+                        .await?;
+                        return Err(output::CliFundingBlocked { data: value }.into());
+                    }
+                }
+            }
+
+            attach_wallet_balance(&mut quote, wallet_balance);
             output::success(quote);
         }
         SwapCommand::Swap {
@@ -1452,7 +1520,7 @@ async fn cmd_execute_batch(
         chain_index,
         Some(wallet_address),
         &tx_params,
-        true,        // is_contract_call
+        true, // is_contract_call
         mev_protection,
         force,
         None,        // tx_source — backend coerces with parseInt; omit to match single-tx path
@@ -1481,7 +1549,8 @@ async fn cmd_execute_batch(
     }
 
     let hashes: Vec<String> = responses.iter().map(|r| r.tx_hash.clone()).collect();
-    let (approve_tx_hash, swap_tx_hash) = extract_batch_hashes(&hashes, needs_approve, needs_revoke);
+    let (approve_tx_hash, swap_tx_hash) =
+        extract_batch_hashes(&hashes, needs_approve, needs_revoke);
     if cfg!(feature = "debug-log") && needs_revoke && responses.len() >= 2 {
         eprintln!(
             "[DEBUG][cmd_execute_batch] revoke txHash={} (silent)",
@@ -1491,7 +1560,13 @@ async fn cmd_execute_batch(
 
     let router_result = &swap_result["routerResult"];
     // Batch path never uses Gas Station → no orderId; txHash is always present.
-    let next_steps = next_steps_for_swap(chain_index, &swap_tx_hash, "", approve_tx_hash.as_deref(), None);
+    let next_steps = next_steps_for_swap(
+        chain_index,
+        &swap_tx_hash,
+        "",
+        approve_tx_hash.as_deref(),
+        None,
+    );
     let out = json!({
         "approveTxHash": approve_tx_hash,
         "swapTxHash": swap_tx_hash,
@@ -1614,6 +1689,122 @@ pub(crate) fn is_allowance_insufficient(spendable: &str, amount: &str) -> bool {
     spendable_val < amount_val
 }
 
+// ── Balance context + insufficient-balance scene (spec §2.2 / §2.3 / §7.2) ──
+
+/// Attach `walletBalance` to a normal (sufficient) swap-quote response so the
+/// field is ALWAYS present (spec §2.3): `Some(bal)` → the readable-decimal
+/// string; `None` (balance query failed / unavailable) → JSON `null` (never
+/// `0`, never omitted, never a string sentinel — the Skill layer branches on
+/// `walletBalance === null`). The aggregator quote `data` is an array of route
+/// objects (integration asserts `data.is_array()`), so the field is attached to
+/// every route to preserve that shape; a single-object response gets it at the
+/// top level. Non-object/array roots are left untouched.
+pub(crate) fn attach_wallet_balance(quote: &mut Value, wallet_balance: Option<String>) {
+    let value = match wallet_balance {
+        Some(balance) => Value::String(balance),
+        None => Value::Null,
+    };
+    match quote {
+        Value::Array(routes) => {
+            for route in routes.iter_mut() {
+                if let Some(obj) = route.as_object_mut() {
+                    obj.insert("walletBalance".to_string(), value.clone());
+                }
+            }
+        }
+        Value::Object(obj) => {
+            obj.insert("walletBalance".to_string(), value);
+        }
+        _ => {}
+    }
+}
+
+/// Read the from-token `(symbol, decimals)` out of a fetched quote response —
+/// the aggregator already returns these on `fromToken`, so the Swap scene needs
+/// no extra token-info call. Handles both the array-of-routes and single-object
+/// shapes and both string / numeric `decimal`. Missing fields yield `None`.
+fn quote_from_token_meta(quote: &Value) -> (Option<String>, Option<u32>) {
+    let route = first_quote_route(quote);
+    let from = route.and_then(|r| r.get("fromToken"));
+    let symbol = from
+        .and_then(|f| f.get("tokenSymbol"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let decimals = from.and_then(|f| f.get("decimal")).and_then(|d| match d {
+        Value::String(s) => s.parse::<u32>().ok(),
+        Value::Number(n) => n.as_u64().map(|v| v as u32),
+        _ => None,
+    });
+    (symbol, decimals)
+}
+
+fn first_quote_route(quote: &Value) -> Option<&Value> {
+    match quote {
+        Value::Array(routes) => routes.first(),
+        Value::Object(_) => Some(quote),
+        _ => None,
+    }
+}
+
+/// Resolve the authoritative from-token requirement in minimal units.
+/// `exactIn` supplies it directly; `exactOut` must use the quote result because
+/// the request amount belongs to the destination token.
+fn quote_required_from_amount(
+    quote: &Value,
+    swap_mode: &str,
+    request_amount: &str,
+) -> Option<String> {
+    if swap_mode != "exactOut" {
+        return Some(request_amount.to_string());
+    }
+    first_quote_route(quote)
+        .and_then(|route| route.get("fromTokenAmount"))
+        .and_then(
+            crate::commands::agentic_wallet::shared::common::amount::value_as_decimal_string,
+        )
+}
+
+/// Fixed business facts supplied to the shared Funding result builder when a
+/// quote is blocked by the from-token balance.
+struct SwapSceneParams<'a> {
+    /// Resolved full from-token contract address.
+    from_token: &'a str,
+    /// From-token display symbol (may be empty when unavailable).
+    from_symbol: &'a str,
+    /// Readable requested amount.
+    requested_amount: &'a str,
+}
+
+fn swap_funding_input<'a>(
+    params: &'a SwapSceneParams<'a>,
+    wallet_balance: &'a str,
+) -> crate::funding::FundingBlockedInput<'a> {
+    crate::funding::FundingBlockedInput {
+        asset: if params.from_symbol.is_empty() {
+            params.from_token
+        } else {
+            params.from_symbol
+        },
+        token_address: params.from_token,
+        required: params.requested_amount,
+        balance: Some(wallet_balance),
+        operation: Some(crate::funding::FUNDING_OPERATION_SWAP),
+        error_code: None,
+        error_message: None,
+    }
+}
+
+/// Pure fixture helper for the shared Funding contract. Production calls the
+/// one-call `build_funding_bundle` facade after the business proves a shortfall.
+#[cfg(test)]
+fn build_swap_insufficient_scene(
+    bundle: &crate::funding::FundingBundle,
+    params: &SwapSceneParams,
+    wallet_balance: &str,
+) -> Value {
+    crate::funding::build_funding_blocked_result(bundle, swap_funding_input(params, wallet_balance))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1722,15 +1913,30 @@ mod tests {
         const USDC_ETH: &str = "0xA0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48";
 
         // spendable >= amount → no approve / no revoke (Layer 4 case)
-        assert_eq!(classify_approve_action("1", USDT_ETH, "1000000", "500000"), (false, false));
+        assert_eq!(
+            classify_approve_action("1", USDT_ETH, "1000000", "500000"),
+            (false, false)
+        );
         // spendable == 0 → approve only (no revoke even for USDT)
-        assert_eq!(classify_approve_action("1", USDT_ETH, "0", "1000000"), (true, false));
+        assert_eq!(
+            classify_approve_action("1", USDT_ETH, "0", "1000000"),
+            (true, false)
+        );
         // 0 < spendable < amount, USDT-pattern token → revoke + approve
-        assert_eq!(classify_approve_action("1", USDT_ETH, "100", "1000000"), (true, true));
+        assert_eq!(
+            classify_approve_action("1", USDT_ETH, "100", "1000000"),
+            (true, true)
+        );
         // 0 < spendable < amount, non-USDT-pattern token (USDC) → approve only
-        assert_eq!(classify_approve_action("1", USDC_ETH, "100", "1000000"), (true, false));
+        assert_eq!(
+            classify_approve_action("1", USDC_ETH, "100", "1000000"),
+            (true, false)
+        );
         // 0 < spendable < amount, USDT but on chain without entry → approve only
-        assert_eq!(classify_approve_action("56", USDT_ETH, "100", "1000000"), (true, false));
+        assert_eq!(
+            classify_approve_action("56", USDT_ETH, "100", "1000000"),
+            (true, false)
+        );
     }
 
     // ── approve amount validation (allows 0 for revoke) ────────────
@@ -1843,7 +2049,6 @@ mod tests {
     fn test_validate_tips_trims_whitespace() {
         assert!(validate_tips("  1  ").is_ok());
     }
-
 
     // ── extract_tx_hash_and_order_id (Gas Station orderId propagation) ──
 
@@ -2060,5 +2265,182 @@ mod tests {
         assert_eq!(quote[1]["reason"], json!(""));
         // Outer shape preserved: array stays an array.
         assert!(quote.is_array());
+    }
+
+    // ── T11: Swap balance context + insufficient-balance scene (§2.2/§2.3/§7.2) ──
+
+    use crate::funding::{FundingBundle, FundingTarget};
+    use crate::qr::QrOutput;
+
+    const USDT_ETH_CA: &str = "0xdac17f958d2ee523a2206206994597c13d831ec7";
+    const USDC_ETH_CA: &str = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+
+    /// Hermetic FundingBundle for chain 1 (Ethereum) with a terminal-mode QR —
+    /// no disk / network (mirrors funding.rs's own fixtures).
+    fn eth_funding_bundle() -> FundingBundle {
+        FundingBundle {
+            target: FundingTarget {
+                account_name: "Trading".to_string(),
+                chain_index: "1".to_string(),
+                chain_name: "Ethereum".to_string(),
+                receive_address: "0xEvmShared".to_string(),
+                gas_free: false,
+                same_network_required: true,
+            },
+            qr: QrOutput {
+                requested_format: "auto".to_string(),
+                resolved_format: Some("unicode".to_string()),
+                display_mode: "terminal-unicode".to_string(),
+                terminal_qr: Some("QR-BLOCK".to_string()),
+                image_path: None,
+                mime_type: None,
+                markdown_image: None,
+                notify_command_args: None,
+            },
+        }
+    }
+
+    fn base_scene_params() -> SwapSceneParams<'static> {
+        SwapSceneParams {
+            from_token: USDT_ETH_CA,
+            from_symbol: "USDT",
+            requested_amount: "100",
+        }
+    }
+
+    // ── (a) normal-quote walletBalance ─────────────────────────────────
+
+    #[test]
+    fn attach_wallet_balance_object_shape_present_is_string() {
+        let mut data = json!({ "fromToken": { "tokenSymbol": "USDT" } });
+        attach_wallet_balance(&mut data, Some("500.25".to_string()));
+        assert_eq!(data["walletBalance"], json!("500.25"));
+    }
+
+    #[test]
+    fn attach_wallet_balance_none_is_json_null_never_omitted() {
+        // §2.3: on balance-query failure the field is ALWAYS present as JSON null
+        // (never 0, never omitted, never a string sentinel).
+        let mut data = json!({ "fromToken": {} });
+        attach_wallet_balance(&mut data, None);
+        assert!(data.get("walletBalance").is_some(), "field must be present");
+        assert!(data["walletBalance"].is_null(), "value must be JSON null");
+        assert_ne!(data["walletBalance"], json!("null"));
+        assert_ne!(data["walletBalance"], json!(0));
+    }
+
+    #[test]
+    fn attach_wallet_balance_array_shape_each_route_carries_it() {
+        // Real aggregator quote data is an array of routes (data.is_array()); the
+        // field is attached to every route so it survives the array shape.
+        let mut data = json!([{ "fromToken": {} }, { "fromToken": {} }]);
+        attach_wallet_balance(&mut data, Some("500.25".to_string()));
+        assert!(data.is_array(), "array shape must be preserved");
+        assert_eq!(data[0]["walletBalance"], json!("500.25"));
+        assert_eq!(data[1]["walletBalance"], json!("500.25"));
+    }
+
+    #[test]
+    fn attach_wallet_balance_array_none_is_null_on_each_route() {
+        let mut data = json!([{ "fromToken": {} }]);
+        attach_wallet_balance(&mut data, None);
+        assert!(data[0].get("walletBalance").is_some());
+        assert!(data[0]["walletBalance"].is_null());
+    }
+
+    // ── quote_from_token_meta (symbol + decimals from the quote we hold) ──
+
+    #[test]
+    fn quote_from_token_meta_reads_string_decimal_from_array_route() {
+        let quote = json!([{
+            "fromToken": { "tokenSymbol": "USDT", "decimal": "6" },
+            "toToken": { "tokenSymbol": "USDC" }
+        }]);
+        let (symbol, decimals) = quote_from_token_meta(&quote);
+        assert_eq!(symbol.as_deref(), Some("USDT"));
+        assert_eq!(decimals, Some(6));
+    }
+
+    #[test]
+    fn quote_from_token_meta_reads_numeric_decimal_and_object_shape() {
+        let quote = json!({ "fromToken": { "tokenSymbol": "ETH", "decimal": 18 } });
+        let (symbol, decimals) = quote_from_token_meta(&quote);
+        assert_eq!(symbol.as_deref(), Some("ETH"));
+        assert_eq!(decimals, Some(18));
+    }
+
+    #[test]
+    fn quote_from_token_meta_missing_yields_none() {
+        let quote = json!([{ "toToken": {} }]);
+        let (symbol, decimals) = quote_from_token_meta(&quote);
+        assert!(symbol.is_none());
+        assert!(decimals.is_none());
+    }
+
+    // ── authoritative from-token requirement ────────────────────────
+
+    #[test]
+    fn quote_required_from_amount_uses_request_for_exact_in() {
+        let quote = json!([{"fromTokenAmount": "1250000"}]);
+        assert_eq!(
+            quote_required_from_amount(&quote, "exactIn", "1000000").as_deref(),
+            Some("1000000")
+        );
+    }
+
+    #[test]
+    fn quote_required_from_amount_uses_quoted_input_for_exact_out() {
+        let quote = json!([{"fromTokenAmount": "1250000"}]);
+        assert_eq!(
+            quote_required_from_amount(&quote, "exactOut", "1000000").as_deref(),
+            Some("1250000")
+        );
+    }
+
+    #[test]
+    fn quote_required_from_amount_exact_out_requires_quote_fact() {
+        let quote = json!([{"toTokenAmount": "1000000"}]);
+        assert!(quote_required_from_amount(&quote, "exactOut", "1000000").is_none());
+    }
+
+    // ── (b) insufficient scene uses the common Funding contract ───────
+
+    #[test]
+    fn build_swap_insufficient_scene_matches_spec_2_2() {
+        let bundle = eth_funding_bundle();
+        let params = base_scene_params();
+        let v = build_swap_insufficient_scene(&bundle, &params, "20");
+
+        assert_eq!(v["phase"], crate::funding::FUNDING_REQUIRED_PHASE);
+        assert_eq!(v["decision"], "blocked");
+        assert_eq!(v["reason"], "insufficient_balance");
+        assert_eq!(v["nextAction"], json!([]));
+        assert_eq!(v["payload"]["operation"], "swap");
+        // chainName + fundingAddress come from the FundingTarget (single source).
+        assert_eq!(v["payload"]["fundingTarget"]["chainIndex"], "1");
+        assert_eq!(v["payload"]["fundingTarget"]["chainName"], "Ethereum");
+        assert_eq!(v["payload"]["fundingTarget"]["receiveAddress"], "0xEvmShared");
+        // Consumable scene flags projected from the FundingTarget (§2.5): Ethereum
+        // is same-network-required but not gas-free.
+        assert_eq!(v["payload"]["fundingTarget"]["sameNetworkRequired"], json!(true));
+        assert_eq!(v["payload"]["fundingTarget"]["gasFree"], json!(false));
+        assert_eq!(v["payload"]["fundingNeed"]["asset"], "USDT");
+        assert_eq!(v["payload"]["fundingNeed"]["tokenAddress"], USDT_ETH_CA);
+        assert_eq!(v["payload"]["fundingNeed"]["shortfall"], "80");
+        assert_eq!(v["payload"]["fundingNeed"]["required"], "100");
+        assert_eq!(v["payload"]["fundingNeed"]["balance"], "20");
+        assert_eq!(
+            v["payload"]["fundingTarget"]["receiveAddress"],
+            "0xEvmShared"
+        );
+
+        // Full Common QR field set embedded per display mode (§2.5 / TBC[4]).
+        assert_eq!(v["payload"]["qr"]["requestedFormat"], "auto");
+        assert_eq!(v["payload"]["qr"]["resolvedFormat"], "unicode");
+        assert_eq!(v["payload"]["qr"]["displayMode"], "terminal-unicode");
+        assert_eq!(v["payload"]["qr"]["terminalQr"], "QR-BLOCK");
+        assert!(v["payload"]["qr"].get("imagePath").is_none());
+
+        assert!(v.get("next").is_none());
     }
 }

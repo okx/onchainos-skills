@@ -6,7 +6,7 @@
 //! helpers; it no longer parses or executes delivered signal text.
 //!
 //! This module is shared by:
-//! - the retired ASP `agent deliver --autotrade` argument (accepted but ignored);
+//! - legacy ASP delivery metadata is no longer accepted by `agent deliver`;
 //! - the Active-subscription route cache and consent/grant commands used by the
 //!   model-selected Skill/tool;
 //! - compatibility rendering for decisions produced by earlier releases.
@@ -19,14 +19,36 @@ pub(crate) mod continuation;
 pub(crate) mod delivery_queue;
 pub(crate) mod executor;
 pub(crate) mod grants;
+pub(crate) mod guide;
 pub(crate) mod notify;
 pub(crate) mod profile;
 pub(crate) mod schema;
 pub(crate) mod subscription;
+pub(crate) mod subscription_config;
 pub(crate) mod tooling;
 pub(crate) mod trade_kit;
 
 pub const DEFAULT_AUTOTRADE_TTL_SEC: u64 = 31_536_000;
+
+/// Compatibility skip reason for a retired fixed-field execution-policy flow.
+/// It never restores or updates an execution policy.
+pub const EXECUTION_POLICY_NOT_CONFIGURED_REASON: &str = "execution_policy_not_configured";
+
+/// A Signal cannot enter execution until a locally persisted Service Guide and
+/// matching active Guide Consent form one valid contract. This is a normal
+/// signal-only state, including for subscriptions created before Guide-driven
+/// execution existed.
+pub const GUIDE_EXECUTION_UNAVAILABLE_REASON: &str = "guide_execution_unavailable";
+
+/// Delivery-time mode/configuration prompts removed from the current flow.
+/// Replies from older releases are retained only long enough to fail closed;
+/// they must never write policy or produce another configuration card.
+pub const RETIRED_MODE_CONFIGURATION_EVENTS: &[&str] =
+    &["autotrade_consent", "autotrade_config_required"];
+
+pub fn is_retired_mode_configuration_decision(source_event: Option<&str>) -> bool {
+    source_event.is_some_and(|event| RETIRED_MODE_CONFIGURATION_EVENTS.contains(&event))
+}
 
 pub const RETIRED_DELIVERY_DECISION_EVENTS: &[&str] = &[
     "autotrade_consent",
@@ -41,38 +63,6 @@ pub const RETIRED_DELIVERY_DECISION_EVENTS: &[&str] = &[
 
 pub fn is_retired_delivery_decision(source_event: Option<&str>) -> bool {
     source_event.is_some_and(|event| RETIRED_DELIVERY_DECISION_EVENTS.contains(&event))
-}
-
-pub fn ensure_default_auto(job_id: &str, ttl_sec: u64) -> anyhow::Result<bool> {
-    if let Some(existing) = consent::load_consent(job_id)? {
-        match existing.mode {
-            consent::ConsentMode::Auto => {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|duration| duration.as_secs())
-                    .unwrap_or(0);
-                grants::write_auto_grant(job_id, existing.expires_at.saturating_sub(now).max(1))?;
-            }
-            consent::ConsentMode::Manual | consent::ConsentMode::Decline => {
-                grants::clear_grant(job_id);
-            }
-        }
-        return Ok(false);
-    }
-    consent::write_consent_with_trade_amount(
-        job_id,
-        consent::ConsentMode::Auto,
-        None,
-        None,
-        Some(consent::DEFAULT_QUOTE),
-        ttl_sec,
-    )?;
-    if let Err(error) = grants::write_auto_grant(job_id, ttl_sec) {
-        consent::clear_consent(job_id);
-        grants::clear_grant(job_id);
-        return Err(error);
-    }
-    Ok(true)
 }
 
 // ── Stable audit action names ────────────────────────────────────────────
@@ -109,8 +99,6 @@ pub enum DegradeReason {
     MissingTradeAmount,
     /// The selected execution tool is not installed locally.
     ToolMissing,
-    /// The selected execution tool exists but is not configured/authenticated.
-    ToolNeedsConfiguration,
     /// Current market price is outside the signal's entry interval.
     EntryOutsideRange,
     /// Parsed successfully, but the current runtime supports only one take-profit level.
@@ -145,7 +133,6 @@ impl DegradeReason {
             DegradeReason::LookupOff => "lookup_off",
             DegradeReason::MissingTradeAmount => "missing_trade_amount",
             DegradeReason::ToolMissing => "tool_missing",
-            DegradeReason::ToolNeedsConfiguration => "tool_needs_configuration",
             DegradeReason::EntryOutsideRange => "entry_outside_range",
             DegradeReason::MultipleTakeProfitUnsupported => "multiple_take_profit_unsupported",
             DegradeReason::SchemaVersionTooNew => "schema_version_too_new",

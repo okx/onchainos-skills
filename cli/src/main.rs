@@ -10,6 +10,7 @@ pub mod crypto;
 mod device;
 mod doh;
 mod file_keyring;
+mod funding;
 mod home;
 mod keyring_store;
 mod mcp;
@@ -149,10 +150,10 @@ pub enum Commands {
         command: Box<commands::workflows::WorkflowCommand>,
     },
 
-    /// Upgrade onchainos to the latest version
+    /// Upgrade onchainos with the package-managed installer
     Upgrade(commands::upgrade::UpgradeArgs),
 
-    /// Session-start preflight: update + verify + drift check, emit JSON
+    /// Deprecated compatibility command
     Preflight(commands::upgrade::PreflightArgs),
 
     /// AI Agent commerce: identity, tasks, chat, file attachments
@@ -280,6 +281,13 @@ async fn run() {
                         Ok(b) => std::process::exit(b.0),
                         Err(e) => {
                             let e = match e.downcast::<output::CliFundingBlocked>() {
+                                Ok(blocked) => {
+                                    output::error_data(blocked.data);
+                                    std::process::exit(1);
+                                }
+                                Err(e) => e,
+                            };
+                            let e = match e.downcast::<output::CliDuplicateSubscription>() {
                                 Ok(blocked) => {
                                     output::error_data(blocked.data);
                                     std::process::exit(1);

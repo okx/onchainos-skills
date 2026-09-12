@@ -28,9 +28,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-use crate::commands::agent_commerce::task::common::subscription_identity::{
-    select_subscription_agent_id,
-};
+use crate::commands::agent_commerce::task::common::subscription_identity::select_subscription_agent_id;
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::output;
 
@@ -984,12 +982,8 @@ mod tests {
                 { "jobId": "updated-now", "deviceList": [], "thisDeviceReceives": false }
             ]
         });
-        reflect_new_device_in_snapshot(
-            &mut snapshot,
-            "d-new",
-            &["updated-now".to_string()],
-        )
-        .unwrap();
+        reflect_new_device_in_snapshot(&mut snapshot, "d-new", &["updated-now".to_string()])
+            .unwrap();
 
         assert_eq!(snapshot["list"][0]["deviceList"], json!([]));
         assert_eq!(snapshot["list"][0]["thisDeviceReceives"], json!(false));

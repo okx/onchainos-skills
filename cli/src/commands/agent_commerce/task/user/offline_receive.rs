@@ -21,9 +21,7 @@ use serde_json::{json, Value};
 
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::okx_a2a::{self, OfflineReplayCapability};
-use crate::commands::agent_commerce::task::common::subscription_identity::{
-    select_subscription_agent_id,
-};
+use crate::commands::agent_commerce::task::common::subscription_identity::select_subscription_agent_id;
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 use crate::output;
 

@@ -1,0 +1,177 @@
+{
+  "schemaVersion": 1,
+  "evidenceClass": "repository-contract",
+  "contracts": [
+    {
+      "id": "A04",
+      "input": "login_required",
+      "role": "user",
+      "stateGate": "task-create-prepare blocks before mutation",
+      "targetLeaf": "references/a2a/user/create-prepare.md",
+      "sideEffectOwner": "onchainos CLI login action",
+      "sourceSymbols": ["task/user/task_create_prepare.rs"]
+    },
+    {
+      "id": "A07",
+      "input": "a2mcp_service_confirmed",
+      "role": "user",
+      "stateGate": "schemaVersion=1 and immutable serviceSnapshot",
+      "targetLeaf": "references/a2mcp/handoff.md",
+      "sideEffectOwner": "A2MCP invoke flow; no A2A mutation",
+      "sourceSymbols": ["task/user/task_create_prepare.rs"]
+    },
+    {
+      "id": "A08",
+      "input": "all_checks_passed/open_create_playbook",
+      "role": "user",
+      "stateGate": "ready is not authorization",
+      "targetLeaf": "references/a2a/user/create.md",
+      "sideEffectOwner": "onchainos agent create-task",
+      "sourceSymbols": ["task/user/task_create_prepare.rs", "task/user/v2/create_and_fund.rs"]
+    },
+    {
+      "id": "A13",
+      "input": "broadcast_submitted/watch_task",
+      "role": "user",
+      "stateGate": "broadcast is pending; job_created is authoritative",
+      "targetLeaf": "references/runtime/watch.md",
+      "sideEffectOwner": "okx-a2a long poll",
+      "sourceSymbols": ["task/user/v2/create_and_fund.rs"]
+    },
+    {
+      "id": "A15",
+      "input": "job_created",
+      "role": "user",
+      "stateGate": "fresh event and designated provider binding",
+      "targetLeaf": "references/a2a/user/created.md",
+      "sideEffectOwner": "CLI-returned session playbook",
+      "sourceSymbols": ["task/user/flow_negotiate/events.rs"]
+    },
+    {
+      "id": "A18",
+      "input": "job_asp_selected",
+      "role": "asp",
+      "stateGate": "Created and assigned to exact ASP",
+      "targetLeaf": "references/a2a/provider/assignment.md",
+      "sideEffectOwner": "provider decision CLI",
+      "sourceSymbols": ["task/asp/provider_decision.rs"]
+    },
+    {
+      "id": "A20",
+      "input": "task_params_request/task_params_response",
+      "role": "user|asp",
+      "stateGate": "same requestId/round; at most three successful backend updates",
+      "targetLeaf": "references/a2a/params.md",
+      "sideEffectOwner": "service-param update and A2A transport CLI",
+      "sourceSymbols": ["task/user/service_param_update.rs"]
+    },
+    {
+      "id": "A22",
+      "input": "job_accepted",
+      "role": "asp",
+      "stateGate": "fresh Accepted state",
+      "targetLeaf": "references/a2a/provider/execution.md",
+      "sideEffectOwner": "registered Service workflow",
+      "sourceSymbols": ["task/asp/flow.rs"]
+    },
+    {
+      "id": "A24",
+      "input": "deliver",
+      "role": "asp",
+      "stateGate": "Accepted one-time task",
+      "targetLeaf": "references/a2a/provider/delivery.md",
+      "sideEffectOwner": "onchainos agent deliver",
+      "sourceSymbols": ["task/asp/deliver.rs"]
+    },
+    {
+      "id": "A25",
+      "input": "intent:deliver",
+      "role": "user",
+      "stateGate": "receiver/job/sender/file validation",
+      "targetLeaf": "references/a2a/user/intake.md",
+      "sideEffectOwner": "next-action --a2a-file persistence",
+      "sourceSymbols": ["task/user/flow_lifecycle/core.rs"]
+    },
+    {
+      "id": "A27",
+      "input": "saved deliverable plus submitted marker",
+      "role": "user",
+      "stateGate": "single durable review marker",
+      "targetLeaf": "references/a2a/user/review.md",
+      "sideEffectOwner": "pending-decisions-v2 request",
+      "sourceSymbols": ["task/common/review_gate.rs", "task/common/pending_v2.rs"]
+    },
+    {
+      "id": "A29",
+      "input": "approve_review",
+      "role": "user",
+      "stateGate": "real claimed reply bound to current card",
+      "targetLeaf": "references/a2a/user/review-decision.md",
+      "sideEffectOwner": "CLI completion submission",
+      "sourceSymbols": ["task/user/v2/complete.rs"]
+    },
+    {
+      "id": "A30",
+      "input": "Submit refund request with a verbatim reason, or provide the reason when prompted",
+      "role": "user",
+      "stateGate": "fresh Refund prepare and matching context",
+      "targetLeaf": "references/a2a/user/refund-confirm.md",
+      "sideEffectOwner": "refund-execute request-refund",
+      "sourceSymbols": ["task/user/refund.rs", "task/common/pending_v2.rs"]
+    },
+    {
+      "id": "A35",
+      "input": "Accepted refund request",
+      "role": "user",
+      "stateGate": "accepted_task_refund_contract_required",
+      "targetLeaf": "references/a2a/user/refund-prepare.md",
+      "sideEffectOwner": "none; read-only",
+      "sourceSymbols": ["task/user/refund.rs"]
+    },
+    {
+      "id": "A39",
+      "input": "refund terminal read versus scoped event",
+      "role": "user",
+      "stateGate": "fresh finality matrix proof",
+      "targetLeaf": "references/a2a/refund-reconcile.md",
+      "sideEffectOwner": "direct stop or scoped cleanup",
+      "sourceSymbols": ["task/user/refund.rs", "task/user/flow_lifecycle/terminal.rs"]
+    },
+    {
+      "id": "A43",
+      "input": "job_rejected/sub_user_reject",
+      "role": "asp",
+      "stateGate": "fresh rejected task and current decision binding",
+      "targetLeaf": "references/a2a/provider/arbitration-decision.md",
+      "sideEffectOwner": "pending-decisions-v2 and combined evaluation action CLI",
+      "sourceSymbols": ["task/arbitration.rs", "task/common/pending_v2.rs"]
+    },
+    {
+      "id": "A47",
+      "input": "evaluator_selected",
+      "role": "evaluator",
+      "stateGate": "selected=yes, current round, readable rubric/evidence",
+      "targetLeaf": "references/a2a/evaluator/evidence.md",
+      "sideEffectOwner": "vote-commit CLI",
+      "sourceSymbols": ["task/evaluator/flow.rs", "task/evaluator/info.rs"]
+    },
+    {
+      "id": "A50",
+      "input": "reveal_started",
+      "role": "evaluator",
+      "stateGate": "current reveal window and stored Commit",
+      "targetLeaf": "references/a2a/evaluator/reveal.md",
+      "sideEffectOwner": "vote-reveal CLI without vote argument",
+      "sourceSymbols": ["task/evaluator/reveal.rs"]
+    },
+    {
+      "id": "A56",
+      "input": "finalize_*",
+      "role": "user|asp",
+      "stateGate": "fresh authoritative terminal progression",
+      "targetLeaf": "references/a2a/completion.md",
+      "sideEffectOwner": "feedback then notify then session-cleanup",
+      "sourceSymbols": ["task/user/v2/job_completed.rs", "task/asp/v2/job_completed.rs"]
+    }
+  ]
+}

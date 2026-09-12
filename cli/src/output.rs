@@ -64,6 +64,23 @@ impl std::fmt::Display for CliFundingBlocked {
 
 impl std::error::Error for CliFundingBlocked {}
 
+/// Structured pre-create block for an already-existing non-terminal
+/// subscription. The payload is rendered through the same `{ok:false,data}`
+/// envelope as other product-level blocks so CLI and MCP callers can branch on
+/// stable fields instead of parsing prose.
+#[derive(Debug)]
+pub struct CliDuplicateSubscription {
+    pub data: Value,
+}
+
+impl std::fmt::Display for CliDuplicateSubscription {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "duplicate subscription")
+    }
+}
+
+impl std::error::Error for CliDuplicateSubscription {}
+
 pub fn error_data(data: Value) {
     let out = JsonOutput {
         ok: false,

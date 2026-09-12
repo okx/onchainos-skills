@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "evidenceClass": "contract-derived-trace",
+  "containsProductionCredentials": false,
+  "traces": [
+    {
+      "id": "one-time-a2a-success",
+      "sessions": ["user-main", "user-task-sub", "asp-task-sub"],
+      "steps": [
+        {"session": "user-main", "input": "natural-language purchase", "route": "SKILL.md -> identity/search.md"},
+        {"session": "user-main", "input": "selected sid", "route": "identity/search.md -> create-prepare.md", "command": "task-create-prepare"},
+        {"session": "user-main", "input": "all_checks_passed", "route": "create-prepare.md -> create-guide.md -> create.md", "effect": "one final confirmation binds the Guide Consent, task facts, and payment before create-task"},
+        {"session": "user-main", "input": "watch_task", "route": "create.md -> runtime/watch.md", "effect": "scoped long poll"},
+        {"session": "user-task-sub", "input": "job_created", "route": "a2a/router.md -> user/router.md -> created.md", "effect": "bound A2A session"},
+        {"session": "asp-task-sub", "input": "job_asp_selected", "route": "a2a/router.md -> provider/router.md -> assignment.md", "effect": "provider decision"},
+        {"session": "asp-task-sub", "input": "job_accepted", "route": "a2a/router.md -> provider/router.md -> execution.md -> delivery.md", "effect": "one deliver command"},
+        {"session": "user-task-sub", "input": "intent:deliver", "route": "SKILL.md -> a2a/peer.md -> user/intake.md -> user/review.md", "effect": "one durable review card"},
+        {"session": "user-main", "input": "A", "route": "runtime/decision-relay.md -> user/review-decision.md", "effect": "claim then approve once"},
+        {"session": "user-task-sub", "input": "job_completed", "route": "a2a/router.md -> user/router.md -> completion.md", "effect": "rating, notification, cleanup"}
+      ]
+    },
+    {
+      "id": "review-rejection-refund-pending",
+      "sessions": ["user-main", "user-task-sub", "asp-task-sub"],
+      "steps": [
+        {"session": "user-main", "input": "B", "route": "decision-relay.md -> user/review-decision.md -> user/refund-prepare.md", "effect": "Confirm Refund Request card"},
+        {"session": "user-main", "input": "Submit refund request with a verbatim refund reason", "route": "user/refund-confirm.md -> user/refund-execute.md", "effect": "one request-refund broadcast"},
+        {"session": "user-main", "input": "refund_request_broadcast_submitted", "route": "user/refund-execute.md", "effect": "pending notice; no automatic watch resume"},
+        {"session": "asp-task-sub", "input": "job_rejected", "route": "a2a/router.md -> provider/router.md -> arbitration-decision.md", "effect": "durable refund-or-evaluation decision card"}
+      ]
+    },
+    {
+      "id": "live-environment-readiness",
+      "status": "green",
+      "observed": "checkout-local wrappers and dev.json are present; A2A child probes use the prebuilt checkout-local OnchainOS binary",
+      "verification": "dev:test plus a completed three-session beta one-time A2A replay"
+    }
+  ]
+}
