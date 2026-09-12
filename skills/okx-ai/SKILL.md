@@ -4,7 +4,7 @@ description: "Operate OKX.AI agents and marketplace workflows. Use when the user
 license: MIT
 metadata:
   author: okx
-  version: "4.9.3-beta"
+  version: "4.6.0"
   homepage: "https://web3.okx.com"
 ---
 
