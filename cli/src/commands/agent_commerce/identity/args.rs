@@ -56,19 +56,29 @@ pub struct CreateArgs {
     ///                          A2MCP request example necessarily carries the
     ///                          endpoint URL), and no test/env markers. A wallet
     ///                          or contract address is allowed anywhere.
+    ///   • serviceGuide       — optional for every A2A pricing model. Guided
+    ///                          flows never collect or display it for A2MCP,
+    ///                          but the CLI accepts and forwards an explicitly
+    ///                          supplied A2MCP value. Any supplied value must be at most
+    ///                          2000 East-Asian display width (CJK/full-width
+    ///                          characters count as 2, Latin/half-width as 1).
     ///   • serviceType        — `A2A` (agent-to-agent) or `A2MCP` (API service).
     ///   • fee                — single-purchase price. A plain number as a JSON
-    ///                          string ("10"), USDT implied, ≤6 decimals. An
+    ///                          string ("10"), USDT implied. A2A allows ≤2
+    ///                          decimals; A2MCP allows ≤6 decimals. An
     ///                          EMPTY string ("") means "no single price"
     ///                          (subscription-priced A2A) and is forwarded
     ///                          verbatim.
     ///   • subscription       — A2A only. Array of monthly tiers, e.g.
     ///                          [{"interval":"month","fee":"10"}]. `interval` is
     ///                          currently limited to "month"; each `fee` is a
-    ///                          plain number.
-    ///   • freeTrial          — OPTIONAL. Free-trial duration in HOURS for a
-    ///                          subscription-priced service. A positive integer
-    ///                          string ("72" = 3 days). Only allowed when
+    ///                          plain number with ≤2 decimals.
+    ///   • freeTrial          — OPTIONAL. Free-trial duration in HOURS as a
+    ///                          positive integer string ("72" = 3 days) for a
+    ///                          subscription-priced A2A service. The low-level CLI
+    ///                          accepts legacy positive-hour values for write-back;
+    ///                          guided product flows create 72-hour trials only.
+    ///                          Only allowed when
     ///                          `subscription` is non-empty; forbidden on
     ///                          single-purchase A2A and on A2MCP. Absent or an
     ///                          empty "" both mean NO trial (equivalent).
@@ -89,8 +99,8 @@ pub struct CreateArgs {
     /// Examples:
     ///   A2MCP:            [{"serviceName":"Realtime price feed","serviceDescription":"Returns realtime token price quotes\ntokenAddress (string, required): token contract; chainIndex (string, required): chain id\nPOST\ncurl -X POST https://api.example.com/mcp -H \"Content-Type: application/json\" -d '{\"tokenAddress\":\"0xdac17f...\",\"chainIndex\":\"1\"}'","serviceType":"A2MCP","fee":"0.5","endpoint":"https://api.example.com/mcp"}]
     ///   A2A single only:  [{"serviceName":"DEX arbitrage signals","serviceDescription":"Provides DEX arbitrage trading signals for onchain traders\nUser provides the target chain and budget\nDelivers structured signals, copy-trading supported","serviceType":"A2A","fee":"0.11"}]
-    ///   A2A sub only:     [{"serviceName":"DEX arbitrage signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals, copy-trading supported","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}]}]
-    ///   A2A sub + trial:  [{"serviceName":"DEX arbitrage signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals, copy-trading supported","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}],"freeTrial":"72"}]
+    ///   A2A sub only:     [{"serviceName":"DEX arbitrage signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals, copy-trading supported","serviceGuide":"Choose a market and submit your risk limit.","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}]}]
+    ///   A2A sub + trial:  [{"serviceName":"DEX arbitrage signals","serviceDescription":"Provides DEX arbitrage trading signals\nUser provides the target chain and budget\nDelivers structured signals, copy-trading supported","serviceGuide":"Choose a market and submit your risk limit.","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}],"freeTrial":"72"}]
     #[arg(long)]
     pub service: Option<String>,
 }
@@ -153,16 +163,26 @@ pub struct UpdateArgs {
     /// (2000 half-width), no per-part length limit; no URLs (A2A only — the
     /// A2MCP request example necessarily carries the endpoint URL) / test
     /// markers),
+    /// `serviceGuide` (optional for every A2A pricing model; guided flows never
+    /// collect or display it for A2MCP, but the CLI accepts and forwards an
+    /// explicitly supplied A2MCP value; when provided, at most 2000
+    /// East-Asian display width, with
+    /// CJK/full-width characters counting as 2 and Latin/half-width as 1),
     /// `serviceType` (`A2A` | `A2MCP`),
-    /// `fee` (single-purchase price — plain number, USDT implied, ≤6 decimals),
+    /// `fee` (single-purchase price — plain number, USDT implied; ≤2 decimals
+    /// for A2A and ≤6 decimals for A2MCP),
     /// `subscription` (A2A only — array of `{interval, fee}`, `interval`
-    /// limited to `"month"`), `freeTrial` (OPTIONAL — free-trial duration in
-    /// HOURS as a positive integer string, e.g. `"72"`; only allowed on a
-    /// subscription-priced service, forbidden on single-purchase A2A / A2MCP;
+    /// limited to `"month"`, with a plain-number `fee` of ≤2 decimals),
+    /// `freeTrial` (OPTIONAL — free-trial duration in
+    /// HOURS as a positive integer string, e.g. `"72"`; the low-level CLI
+    /// accepts legacy positive-hour values for write-back, while guided product
+    /// flows create 72-hour trials only; only allowed on a subscription-priced service,
+    /// forbidden on single-purchase A2A / A2MCP;
     /// absent or an empty `""` both mean NO trial, so an update that omits it
     /// leaves the service with no trial), `endpoint` (A2MCP only), plus `operation`:
     /// `create` (new service, no `id`) / `update` (modify, carry the existing
-    /// service `id`) / `delete` (remove, carry the existing service `id`).
+    /// service `id`) / `delete` (remove, send only `operation` and the existing
+    /// service `id`).
     /// Same pricing rules as create: A2MCP requires a real `fee` (a plain
     /// number — an empty `fee` is rejected) and forbids `subscription`; A2A
     /// carries EXACTLY ONE billing model — a single-purchase `fee` XOR a
@@ -173,11 +193,11 @@ pub struct UpdateArgs {
     /// `fee`. Omitting the whole `services` flag changes no service (omission
     /// does NOT clear existing services).
     ///
-    /// Example — add one A2MCP service and delete an existing one:
-    ///   --service '[{"operation":"create","serviceName":"Price feed","serviceDescription":"Returns realtime token price quotes\ntokenAddress (string, required): token contract; chainIndex (string, required): chain id\nPOST\ncurl -X POST https://api.example.com/mcp -H \"Content-Type: application/json\" -d \"{\\\"tokenAddress\\\":\\\"0xdac17f...\\\",\\\"chainIndex\\\":\\\"1\\\"}\"","serviceType":"A2MCP","fee":"0.5","endpoint":"https://api.example.com/mcp"},{"operation":"delete","id":"svc_123"}]'
+    /// Example — add one A2A service and delete an existing one:
+    ///   --service '[{"operation":"create","serviceName":"Market Signals","serviceDescription":"Provides market signals for onchain traders","serviceType":"A2A","fee":"10","subscription":[]},{"operation":"delete","id":"svc_123"}]'
     ///
     /// Example — update a subscription-priced A2A service (empty single fee):
-    ///   --service '[{"operation":"update","id":"7","serviceName":"…","serviceDescription":"…","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}]}]'
+    ///   --service '[{"operation":"update","id":"7","serviceName":"Market Signals","serviceDescription":"Provides market signals for onchain traders","serviceGuide":"Choose a market and submit your risk limit.","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}]}]'
     #[arg(long)]
     pub service: Option<String>,
 }
@@ -190,10 +210,10 @@ pub struct GetMyAgentsArgs {
     /// Filter to agents owned by this address.
     #[arg(long = "owner-address")]
     pub owner_address: Option<String>,
-    /// Page number (1-based). Omitted → backend default.
+    /// Page number (1-based). Defaults to 1.
     #[arg(long)]
     pub page: Option<String>,
-    /// Results per page. Omitted → backend default.
+    /// Results per page. Defaults to 10; values above 50 are clamped to 50.
     #[arg(long = "page-size")]
     pub page_size: Option<String>,
 }
@@ -342,6 +362,52 @@ pub struct ServiceListArgs {
     /// list. Missing → `missing required parameter: --agent-id`.
     #[arg(long = "agent-id")]
     pub agent_id: Option<String>,
+    /// Optional service id (UUID) to narrow the listing to one service —
+    /// backend-side filter, used to fetch a single service's detail
+    /// (including its `serviceGuide`) without pulling the agent's full
+    /// service page. Omitted → the backend returns all services.
+    #[arg(long = "service-id")]
+    pub service_id: Option<String>,
+    /// Page number (1-based). Defaults to 1.
+    #[arg(long, default_value = "1")]
+    pub page: Option<String>,
+    /// Services per page. Defaults to 3.
+    #[arg(long = "page-size", default_value = "3")]
+    pub page_size: Option<String>,
+}
+
+#[cfg(test)]
+mod service_list_args_tests {
+    use super::ServiceListArgs;
+    use clap::Parser;
+
+    #[derive(Debug, Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        service_list: ServiceListArgs,
+    }
+
+    #[test]
+    fn service_list_defaults_to_first_page_with_three_services() {
+        let cli = TestCli::parse_from(["test", "--agent-id", "42"]);
+        assert_eq!(cli.service_list.page.as_deref(), Some("1"));
+        assert_eq!(cli.service_list.page_size.as_deref(), Some("3"));
+    }
+
+    #[test]
+    fn service_list_accepts_explicit_pagination() {
+        let cli = TestCli::parse_from([
+            "test",
+            "--agent-id",
+            "42",
+            "--page",
+            "3",
+            "--page-size",
+            "20",
+        ]);
+        assert_eq!(cli.service_list.page.as_deref(), Some("3"));
+        assert_eq!(cli.service_list.page_size.as_deref(), Some("20"));
+    }
 }
 
 /// `onchainos agent service-match`: search marketplace services directly.
@@ -360,11 +426,8 @@ pub struct ServiceMatchArgs {
     #[arg(long = "service-name")]
     pub service_name: Option<String>,
     /// Initial-search filter: match a Service by its Service ID.
-    #[arg(long = "service-id")]
+    #[arg(long = "sid")]
     pub service_id: Option<String>,
-    /// Optional User Agent ID sent as the `agenticId` request header to exclude already-subscribed Services; valid for initial and continuation requests.
-    #[arg(long = "agentic-id")]
-    pub agentic_id: Option<String>,
     /// Initial-search minimum acceptable Service price; maps to `minPaymentTokenAmount` and must be >= 0.
     #[arg(long = "min-payment-token-amount")]
     pub min_payment_token_amount: Option<String>,
@@ -374,9 +437,9 @@ pub struct ServiceMatchArgs {
     /// Cursor returned by the previous response; cannot be combined with initial-search filters.
     #[arg(long = "search-after")]
     pub search_after: Option<String>,
-    /// Requested number of Services, from 1 through 10.
-    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..=10))]
-    pub limit: u8,
+    /// Requested number of Services.
+    #[arg(long, default_value_t = 3)]
+    pub limit: u64,
 }
 
 #[cfg(test)]
@@ -391,15 +454,13 @@ mod service_match_args_tests {
     }
 
     #[test]
-    fn accepts_multiple_keywords_and_agentic_id() {
+    fn accepts_multiple_keywords() {
         let cli = TestCli::parse_from([
             "test",
             "--keywords",
             "smart contract",
             "audit",
-            "--agentic-id",
-            "user-agent-001",
-            "--service-id",
+            "--sid",
             "svc-001",
             "--min-payment-token-amount",
             "5",
@@ -407,10 +468,6 @@ mod service_match_args_tests {
             "10",
         ]);
         assert_eq!(cli.service_match.keywords, ["smart contract", "audit"]);
-        assert_eq!(
-            cli.service_match.agentic_id.as_deref(),
-            Some("user-agent-001")
-        );
         assert_eq!(cli.service_match.service_id.as_deref(), Some("svc-001"));
         assert_eq!(
             cli.service_match.min_payment_token_amount.as_deref(),
@@ -420,16 +477,30 @@ mod service_match_args_tests {
             cli.service_match.max_payment_token_amount.as_deref(),
             Some("10")
         );
-        assert_eq!(cli.service_match.limit, 1);
+        assert_eq!(cli.service_match.limit, 3);
     }
 
     #[test]
-    fn rejects_limit_outside_documented_range() {
-        for limit in ["0", "11"] {
-            assert!(
-                TestCli::try_parse_from(["test", "--keywords", "audit", "--limit", limit,])
-                    .is_err()
-            );
+    fn rejects_removed_agentic_id_argument() {
+        assert!(TestCli::try_parse_from(["test", "--agentic-id", "user-agent-001"]).is_err());
+    }
+
+    #[test]
+    fn rejects_removed_query_json_argument() {
+        assert!(TestCli::try_parse_from([
+            "test",
+            "--query-json",
+            r#"{"keywords":["smart contract audit"]}"#,
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn accepts_limit_without_a_service_range_constraint() {
+        for limit in ["0", "11", "1000"] {
+            let cli = TestCli::try_parse_from(["test", "--keywords", "audit", "--limit", limit])
+                .expect("limit should not have a service-specific range constraint");
+            assert_eq!(cli.service_match.limit.to_string(), limit);
         }
     }
 }
@@ -483,8 +554,8 @@ pub struct FeedbackListArgs {
 /// INITIATOR) left for a specific task. Read-only; hits `GET /agent/task-feedback`.
 /// Returns the backend `data` array verbatim. When the rater already reviewed the
 /// task it holds one review row (the echoed `agentId`, `taskId` and `chainIndex`
-/// plus `feedbackId` and `comment`); otherwise it is empty, which also serves as
-/// the duplicate-review guard before `feedback-submit`.
+/// plus `feedbackId` and `comment`); otherwise it is empty. Callers may use this
+/// to disclose that a user-authored rating will replace an existing AI rating.
 #[derive(Args, Clone, Debug)]
 pub struct TaskFeedbackArgs {
     /// The rater's agent id — the review INITIATOR (backend `feedBackAgentId`),

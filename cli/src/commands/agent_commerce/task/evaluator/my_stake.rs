@@ -16,10 +16,7 @@ fn fmt_unix_seconds(ts: i64, none_label: &str) -> String {
     }
 }
 
-pub async fn handle_my_stake(
-    client: &mut TaskApiClient,
-    agent_id: &str,
-) -> Result<()> {
+pub async fn handle_my_stake(client: &mut TaskApiClient, agent_id: &str) -> Result<()> {
     let s = staking_types::get_my_stake(client, agent_id).await?;
 
     println!("my stake (on-chain staking state)");
@@ -41,7 +38,7 @@ pub async fn handle_my_stake(
         s.valid_stake_okb
     );
     println!(
-        "  activeDisputes     : {}  # disputes in progress (unstake blocked while >0)",
+        "  activeDisputes     : {}  # evaluations in progress (unstake available when 0)",
         s.active_disputes
     );
     println!(

@@ -6,7 +6,67 @@
 //! Keeping the ceiling-days math and the formatting here (instead of copy-pasted into
 //! each renderer) satisfies the no-duplication / cognitive-complexity constraint.
 
-use chrono::{Local, TimeZone};
+use chrono::{DateTime, Local, TimeZone, Utc};
+use serde_json::Value;
+
+pub(crate) const REVIEW_WINDOW_SECONDS: i64 = 3 * 86_400;
+
+/// Normalize a positive Unix timestamp expressed in seconds or milliseconds.
+pub(crate) fn normalize_timestamp_seconds(value: i64) -> Option<i64> {
+    let seconds = if value.unsigned_abs() >= 100_000_000_000 {
+        value.checked_div(1_000)?
+    } else {
+        value
+    };
+    (seconds > 0).then_some(seconds)
+}
+
+/// Parse a seconds/milliseconds Unix timestamp or an RFC3339 timestamp.
+pub(crate) fn parse_timestamp_seconds(value: &str) -> Option<i64> {
+    let value = value.trim();
+    value
+        .parse::<i64>()
+        .ok()
+        .and_then(normalize_timestamp_seconds)
+        .or_else(|| {
+            DateTime::parse_from_rfc3339(value)
+                .ok()
+                .and_then(|date_time| normalize_timestamp_seconds(date_time.timestamp()))
+        })
+}
+
+/// Parse a timestamp from the scalar forms used by task APIs and events.
+pub(crate) fn parse_timestamp_value(value: &Value) -> Option<i64> {
+    value
+        .as_i64()
+        .and_then(normalize_timestamp_seconds)
+        .or_else(|| {
+            value
+                .as_u64()
+                .and_then(|value| i64::try_from(value).ok())
+                .and_then(normalize_timestamp_seconds)
+        })
+        .or_else(|| value.as_str().and_then(parse_timestamp_seconds))
+}
+
+/// Return the first valid timestamp found under the supplied keys.
+pub(crate) fn first_timestamp(detail: &Value, keys: &[&str]) -> Option<i64> {
+    keys.iter()
+        .find_map(|key| detail.get(*key).and_then(parse_timestamp_value))
+}
+
+/// Prefer the absolute review deadline returned by the service, then derive
+/// the confirmed three-day window from the authoritative submission time.
+pub(crate) fn review_deadline_from_detail(detail: &Value) -> Option<i64> {
+    first_timestamp(
+        detail,
+        &["reviewDeadlineAt", "reviewWindowEndsAt", "expireTime"],
+    )
+    .or_else(|| {
+        first_timestamp(detail, &["submittedAt", "submitTime"])
+            .and_then(|submitted| submitted.checked_add(REVIEW_WINDOW_SECONDS))
+    })
+}
 
 /// Which decision card the reminder is for; selects the auto-resolution wording.
 #[derive(Clone, Copy)]
@@ -31,10 +91,36 @@ pub(crate) fn days_left(expire_time: i64, now: i64) -> i64 {
 /// Format a unix-seconds deadline as local `MM-DD HH:mm`. `None` when the
 /// timestamp is not representable in local time (graceful no-line).
 pub(crate) fn format_local_deadline(expire_time: i64) -> Option<String> {
+    let expire_time = normalize_timestamp_seconds(expire_time)?;
     Local
         .timestamp_opt(expire_time, 0)
         .single()
         .map(|dt| dt.format("%m-%d %H:%M").to_string())
+}
+
+/// Format a seconds-or-milliseconds Unix timestamp to minute precision with
+/// the local UTC offset. Display templates consume this value directly.
+pub(crate) fn format_local_timestamp_with_offset(timestamp: i64) -> Option<String> {
+    let seconds = normalize_timestamp_seconds(timestamp)?;
+    let local = Local.timestamp_opt(seconds, 0).single()?;
+    let offset = local.offset().local_minus_utc();
+    let sign = if offset < 0 { '-' } else { '+' };
+    let absolute = offset.unsigned_abs();
+    Some(format!(
+        "{} (UTC{sign}{:02}:{:02})",
+        local.format("%Y-%m-%d %H:%M"),
+        absolute / 3_600,
+        (absolute % 3_600) / 60,
+    ))
+}
+
+/// Format an authoritative unix timestamp to minute precision with an explicit
+/// UTC offset. Millisecond-scale values are tolerated because some legacy event
+/// envelopes used milliseconds while the current contract uses seconds.
+pub(crate) fn format_utc_timestamp(timestamp: i64) -> Option<String> {
+    let timestamp = normalize_timestamp_seconds(timestamp)?;
+    chrono::DateTime::<Utc>::from_timestamp(timestamp, 0)
+        .map(|dt| dt.format("%Y-%m-%d %H:%M (UTC+00:00)").to_string())
 }
 
 /// Build the `⏰` reminder line for a decision card. `None` when no line should
@@ -44,7 +130,7 @@ pub(crate) fn deadline_reminder_line(
     now: i64,
     kind: DeadlineKind,
 ) -> Option<String> {
-    let expire = expire_time.filter(|&t| t > 0)?;
+    let expire = expire_time.and_then(normalize_timestamp_seconds)?;
     let when = format_local_deadline(expire)?;
     let line = match (expire <= now, kind) {
         (true, DeadlineKind::Review) => format!(
@@ -117,6 +203,50 @@ mod tests {
     #[test]
     fn format_local_deadline_out_of_range_is_none() {
         assert!(format_local_deadline(i64::MAX).is_none());
+    }
+
+    #[test]
+    fn format_utc_timestamp_is_explicit_and_tolerates_milliseconds() {
+        assert_eq!(
+            format_utc_timestamp(1_700_000_000),
+            Some("2023-11-14 22:13 (UTC+00:00)".to_string())
+        );
+        assert_eq!(
+            format_utc_timestamp(1_700_000_000_000),
+            Some("2023-11-14 22:13 (UTC+00:00)".to_string())
+        );
+        assert!(format_utc_timestamp(i64::MAX).is_none());
+    }
+
+    #[test]
+    fn shared_timestamp_parser_accepts_seconds_milliseconds_and_rfc3339() {
+        assert_eq!(parse_timestamp_seconds("1700000000"), Some(1_700_000_000));
+        assert_eq!(
+            parse_timestamp_seconds("1700000000000"),
+            Some(1_700_000_000)
+        );
+        assert_eq!(
+            parse_timestamp_seconds("2023-11-14T22:13:20Z"),
+            Some(1_700_000_000)
+        );
+    }
+
+    #[test]
+    fn shared_review_deadline_prefers_exact_then_submitted_plus_three_days() {
+        assert_eq!(
+            review_deadline_from_detail(&serde_json::json!({
+                "reviewDeadlineAt": 1_700_000_123,
+                "submittedAt": 1_700_000_000
+            })),
+            Some(1_700_000_123)
+        );
+        assert_eq!(
+            review_deadline_from_detail(&serde_json::json!({
+                "submittedAt": 1_700_000_000_000_i64
+            })),
+            Some(1_700_000_000 + REVIEW_WINDOW_SECONDS)
+        );
+        assert_eq!(review_deadline_from_detail(&serde_json::json!({})), None);
     }
 
     // ── deadline_reminder_line ───────────────────────────────────────────

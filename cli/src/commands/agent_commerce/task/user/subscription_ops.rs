@@ -18,13 +18,12 @@ use std::time::Duration;
 use super::create::resolve_user_agent;
 use super::create_subscribe::SUBSCRIBE_API_PREFIX;
 use crate::audit;
+use crate::commands::agent_commerce::task::common;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::okx_a2a;
 use crate::commands::agent_commerce::task::common::query as common_query;
 use crate::commands::agent_commerce::task::common::state_machine::SubStatus;
-use crate::commands::agent_commerce::task::common::subscription_identity::{
-    select_subscription_agent_id,
-};
+use crate::commands::agent_commerce::task::common::subscription_identity::select_subscription_agent_id;
 use crate::commands::agent_commerce::task::common::{AGENT_ROLE_ASP, AGENT_ROLE_USER};
 use crate::commands::agent_commerce::task::signing;
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
@@ -150,6 +149,11 @@ pub async fn handle_subscribe_cancel(client: &mut TaskApiClient, sub_id: &str) -
     println!("  subId:  {sub_id}");
     println!("  txHash: {tx_hash}");
 
+    // A card created by a pre-upgrade delivery must not resurface from the
+    // outstanding queue after cancellation. This clears only the retired
+    // delivery-time mode selector and leaves unrelated decisions untouched.
+    let _ = okx_a2a::mark_retired_autotrade_mode_decisions_handled(sub_id);
+
     if super::content::is_cli_mode() {
         println!();
         println!("{}", super::content::scoped_watch_handoff(sub_id));
@@ -176,12 +180,12 @@ pub async fn handle_start_autorenew(client: &mut TaskApiClient, sub_id: &str) ->
         .await
         .map_err(|e| anyhow::anyhow!("providerConfirmStatus failed: {e}"))?;
 
-    if confirm_resp.is_null() || confirm_resp.as_object().map_or(true, |o| o.is_empty()) {
+    if confirm_resp.is_null() || confirm_resp.as_object().is_none_or(|o| o.is_empty()) {
         bail!("providerConfirmStatus returned empty terms");
     }
 
     let typed_data = &confirm_resp["typedData"];
-    if typed_data.is_null() || typed_data.as_object().map_or(true, |o| o.is_empty()) {
+    if typed_data.is_null() || typed_data.as_object().is_none_or(|o| o.is_empty()) {
         bail!("providerConfirmStatus response missing typedData");
     }
 
@@ -236,32 +240,13 @@ pub async fn handle_start_autorenew(client: &mut TaskApiClient, sub_id: &str) ->
 
 // ── subscribe-reject ────────────────────────────────────────────────────
 
-/// Direct CLI entry — validates reason, resolves agent, then delegates to inner.
-pub async fn handle_subscribe_reject(
-    client: &mut TaskApiClient,
-    sub_id: &str,
-    reason: &str,
-) -> Result<()> {
-    if reason.is_empty() {
-        bail!("--reason is required for subscribe-reject");
-    }
-    if reason.chars().count() > 2000 {
-        bail!("--reason exceeds 2000 characters");
-    }
-
-    ensure_tokens_refreshed().await?;
-    let (user_agent_id, _) = resolve_user_agent().await?;
-
-    handle_subscribe_reject_inner(client, sub_id, reason, &user_agent_id).await
-}
-
 /// Inner implementation — caller has already validated reason and resolved agent_id.
 pub(crate) async fn handle_subscribe_reject_inner(
     client: &mut TaskApiClient,
     sub_id: &str,
     reason: &str,
     user_agent_id: &str,
-) -> Result<()> {
+) -> Result<String> {
     let user_agent_id = select_subscription_agent_id(user_agent_id, "")?;
     let (account_id, address) = signing::resolve_wallet_by_agent_id(&user_agent_id).await?;
 
@@ -297,16 +282,19 @@ pub(crate) async fn handle_subscribe_reject_inner(
         None,
     );
 
-    println!("✓ Subscription rejection in progress (transaction broadcast)");
-    println!("  subId:  {sub_id}");
-    println!("  txHash: {tx_hash}");
+    Ok(tx_hash)
+}
 
-    if super::content::is_cli_mode() {
-        println!();
-        println!("{}", super::content::scoped_watch_handoff(sub_id));
-    }
-
-    Ok(())
+/// Disabled legacy CLI entry. Refund owns paid subscription rejection.
+pub async fn handle_subscribe_reject(
+    client: &mut TaskApiClient,
+    sub_id: &str,
+    reason: &str,
+) -> Result<()> {
+    let _ = (client, reason);
+    bail!(
+        "direct subscribe-reject is disabled by Refund; run `onchainos agent refund-prepare {sub_id} --reason <user-authored-reason>` and execute only the returned confirmed action"
+    )
 }
 
 // ── subscribe-detail ────────────────────────────────────────────────────
@@ -333,8 +321,7 @@ pub async fn handle_subscribe_detail(
     let json_mode = format.eq_ignore_ascii_case("json");
 
     let resp = fetch_subscribe_detail_for_agent(client, sub_id, &agent_id).await?;
-    let is_buyer =
-        !agent_id.is_empty() && resp["buyerAgentId"].as_str() == Some(agent_id.as_str());
+    let is_buyer = !agent_id.is_empty() && resp["buyerAgentId"].as_str() == Some(agent_id.as_str());
 
     // Checking an active subscription on a fresh device establishes the provider
     // session (drains any held deliverables). Runs before the json early-return so
@@ -348,8 +335,13 @@ pub async fn handle_subscribe_detail(
     }
 
     if json_mode {
-        let enriched =
-            enrich_subscription_detail(resp, crate::device::id::get_cached_device_id(), is_buyer);
+        let display_facts = resolve_subscription_display_facts(&resp).await?;
+        let enriched = enrich_subscription_detail(
+            resp,
+            crate::device::id::get_cached_device_id(),
+            is_buyer,
+            &display_facts,
+        );
         crate::output::success(enriched);
         return Ok(());
     }
@@ -369,7 +361,7 @@ pub async fn handle_subscribe_detail(
     let status_label = if sub_status == SubStatus::Active && trial_type == 1 {
         "Active (Trial)"
     } else {
-        sub_status.as_str()
+        status_label(status)
     };
 
     println!("Subscription Detail: {title}");
@@ -495,6 +487,10 @@ pub struct SubscriptionInfo {
     pub status: i64,
     #[serde(skip_deserializing)]
     pub status_name: String,
+    #[serde(skip_deserializing)]
+    pub status_label: String,
+    #[serde(skip_deserializing)]
+    pub status_description: String,
     pub chain_id: i64,
     pub title: String,
     pub description: String,
@@ -504,12 +500,15 @@ pub struct SubscriptionInfo {
     pub provider_agent_id: String,
     pub provider_agent_address: String,
     pub trial_type: i64,
+    #[serde(rename = "trialStartTime", alias = "trailStartTime")]
     pub trail_start_time: Option<i64>,
+    #[serde(rename = "trialEndTime", alias = "trailEndTime")]
     pub trail_end_time: Option<i64>,
     pub sub_start_time: Option<i64>,
     pub sub_end_time: Option<i64>,
     pub sub_buffer_end_time: Option<i64>,
     pub auto_renew: i64,
+    pub copy_trade: i64,
     pub period_index: Option<i64>,
     pub service_id: String,
     /// Canonical ASP service description when the subscription API includes it.
@@ -524,6 +523,9 @@ pub struct SubscriptionInfo {
     pub payment_token_address: String,
     pub payment_token_amount: String,
     pub payment_currency_amount: String,
+    pub offline_receive_flag: i64,
+    pub role: String,
+    pub has_feed_back: bool,
     // ── Device routing (additive) ─────────────────────────────────────────
     // Receive-device list for this subscription. Tri-state on the wire:
     // missing | null | array — all tolerated (Option so an explicit `null` on
@@ -546,6 +548,14 @@ pub struct SubscriptionInfo {
 struct SubscriptionList {
     #[serde(default)]
     list: Vec<SubscriptionInfo>,
+    #[serde(default)]
+    total: u64,
+    #[serde(default, rename = "totalNoCondition")]
+    total_no_condition: Option<u64>,
+    #[serde(default)]
+    page: Option<u32>,
+    #[serde(default, rename = "pageSize")]
+    page_size: Option<u32>,
 }
 
 /// Programmatic form of `my-subscriptions`, shared by the standalone command
@@ -558,16 +568,137 @@ pub(crate) struct MySubscriptionsSnapshot {
     pub(crate) is_empty: bool,
 }
 
+/// Minimal machine-readable view used by subscription creation prechecks.
+/// Only active buyer subscriptions are ever exposed through this type.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ExistingSubscriptionSummary {
+    pub(crate) job_id: String,
+    pub(crate) service_id: String,
+    pub(crate) provider_agent_id: String,
+    /// Raw backend state retained for compatibility with internal callers only.
+    #[serde(skip_serializing)]
+    pub(crate) status_name: String,
+    /// CLI-owned business wording for any user-facing duplicate-subscription card.
+    pub(crate) status_label: String,
+    pub(crate) status_description: String,
+    pub(crate) restore_listening_available: bool,
+    /// Retained for preparation-time confirmation cards, but deliberately
+    /// omitted from the create-subscribe duplicate error contract.
+    #[serde(skip_serializing)]
+    pub(crate) title: String,
+    /// Raw backend status used by task-create-prepare so its decision matches
+    /// the write-boundary duplicate check exactly.
+    #[serde(skip_serializing)]
+    pub(crate) status: i64,
+}
+
+fn is_active_subscription(status: i64) -> bool {
+    // A purchase may be resumed only when this Buyer already has an Active
+    // subscription to the exact service. Pending, rejected, disputed, terminal,
+    // and unknown states must not turn an old record into a duplicate block.
+    status == SubStatus::Active.code()
+}
+
+fn summarize_active_buyer_subscriptions(
+    list: Vec<SubscriptionInfo>,
+    buyer_agent_id: &str,
+) -> Vec<ExistingSubscriptionSummary> {
+    let mut summaries = list
+        .into_iter()
+        .filter(|item| item.buyer_agent_id == buyer_agent_id)
+        .filter(|item| is_active_subscription(item.status))
+        .map(|item| ExistingSubscriptionSummary {
+            job_id: item.job_id,
+            service_id: item.service_id,
+            provider_agent_id: item.provider_agent_id,
+            status_name: status_name(item.status),
+            status_label: status_label(item.status).to_string(),
+            status_description: status_description(item.status).to_string(),
+            restore_listening_available: item.status == SubStatus::Active.code(),
+            title: item.title,
+            status: item.status,
+        })
+        .collect::<Vec<_>>();
+
+    // This list contains only Active rows, for which the product may offer
+    // "Restore listening". Sort deterministically in case historical data has
+    // more than one Active record for the same service.
+    summaries.sort_by_key(|item| item.job_id.clone());
+    summaries
+}
+
+/// Read Active subscriptions that block duplicate creation for an already-resolved buyer.
+/// Unlike the user-facing listing, this precheck does not create sessions or
+/// alter device routing.
+pub(crate) async fn fetch_active_buyer_subscriptions_for_agent(
+    client: &mut TaskApiClient,
+    buyer_agent_id: &str,
+) -> Result<Vec<ExistingSubscriptionSummary>> {
+    let buyer_agent_id = select_subscription_agent_id(buyer_agent_id, "")?;
+    let data = client
+        .get_with_agent_id(&my_subscriptions_path(), &buyer_agent_id)
+        .await
+        .map_err(|e| anyhow!("failed to check existing subscriptions: {e}"))?;
+    let wrapper: SubscriptionList = serde_json::from_value(data)
+        .map_err(|e| anyhow!("failed to parse existing subscriptions: {e}"))?;
+    Ok(summarize_active_buyer_subscriptions(
+        wrapper.list,
+        &buyer_agent_id,
+    ))
+}
+
+pub(crate) fn existing_subscription_for_service<'a>(
+    subscriptions: &'a [ExistingSubscriptionSummary],
+    service_id: &str,
+) -> Option<&'a ExistingSubscriptionSummary> {
+    subscriptions
+        .iter()
+        .find(|item| item.service_id == service_id)
+}
+
 pub fn status_name(status: i64) -> String {
     match status {
         -1 => "INIT".to_string(),
+        0 => "CREATED".to_string(),
         1 => "ACTIVE".to_string(),
         3 => "REJECTED".to_string(),
         4 => "DISPUTED".to_string(),
         6 => "COMPLETED".to_string(),
         7 => "CLOSED".to_string(),
+        8 => "EXPIRED".to_string(),
         9 => "FAILED".to_string(),
         n => format!("UNKNOWN_{n}"),
+    }
+}
+
+pub fn status_label(status: i64) -> &'static str {
+    match status {
+        -1 => "Initializing",
+        0 => "Awaiting ASP acceptance",
+        1 => "Active",
+        3 => "Awaiting ASP decision",
+        4 => "Evaluation in progress",
+        6 => "Completed",
+        7 => "Closed",
+        8 => "Expired",
+        9 => "Refund completed",
+        _ => "Status unavailable",
+    }
+}
+
+pub fn status_description(status: i64) -> &'static str {
+    match status {
+        -1 => "The subscription record was created and is awaiting on-chain confirmation.",
+        0 => "The subscription is waiting for an ASP to accept it.",
+        1 => "The subscription is active.",
+        3 => "The buyer rejected the current delivery and is waiting for the ASP's decision.",
+        4 => "The refund request is in Evaluation.",
+        6 => "The subscription completed without a refund.",
+        7 => "The subscription is closed.",
+        8 => "The subscription expired.",
+        9 => "The refund completed successfully.",
+        _ => "The subscription status is currently unavailable.",
     }
 }
 
@@ -581,15 +712,17 @@ pub fn parse_status_filter(s: &str) -> Result<i32, String> {
     }
     match s.to_ascii_uppercase().as_str() {
         "INIT" => Ok(-1),
+        "CREATED" => Ok(0),
         "ACTIVE" => Ok(1),
         "REJECTED" => Ok(3),
         "DISPUTED" => Ok(4),
         "COMPLETED" => Ok(6),
         "CLOSED" => Ok(7),
+        "EXPIRED" => Ok(8),
         "FAILED" => Ok(9),
         _ => Err(format!(
-            "invalid status '{s}': expected a code (-1/1/3/4/6/7/9) or a name \
-             (INIT/ACTIVE/REJECTED/DISPUTED/COMPLETED/CLOSED/FAILED)"
+            "invalid status '{s}': expected a code (-1/0/1/3/4/6/7/8/9) or a name \
+             (INIT/CREATED/ACTIVE/REJECTED/DISPUTED/COMPLETED/CLOSED/EXPIRED/FAILED)"
         )),
     }
 }
@@ -710,6 +843,178 @@ struct DeviceEnrichment {
     this_device_receives: bool,
 }
 
+#[derive(Debug, Default)]
+struct SubscriptionDisplayFacts {
+    provider_name: Option<String>,
+    token_symbol: Option<String>,
+    supports_trial: Option<bool>,
+    trial_hours: Option<i64>,
+}
+
+fn display_string(value: Option<&serde_json::Value>) -> Option<String> {
+    let value = value?;
+    value
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| value.as_i64().map(|value| value.to_string()))
+        .or_else(|| value.as_u64().map(|value| value.to_string()))
+}
+
+fn positive_trial_hours(value: Option<&serde_json::Value>) -> Option<i64> {
+    let hours = value
+        .and_then(|value| {
+            value
+                .as_i64()
+                .or_else(|| value.as_str()?.trim().parse::<i64>().ok())
+        })
+        .filter(|hours| *hours > 0)?;
+    Some(hours)
+}
+
+fn catalog_trial_facts(service: Option<&serde_json::Value>) -> (Option<bool>, Option<i64>) {
+    let Some(service) = service else {
+        return (None, None);
+    };
+    let trial_hours = positive_trial_hours(service.get("freeTrial")).or_else(|| {
+        positive_trial_hours(
+            service
+                .get("subscriptionInfo")
+                .and_then(|value| value.get("freeTrial")),
+        )
+    });
+    let explicit = service
+        .get("supportTrial")
+        .and_then(serde_json::Value::as_bool)
+        .or_else(|| {
+            service
+                .get("subscriptionInfo")
+                .and_then(|value| value.get("supportTrial"))
+                .and_then(serde_json::Value::as_bool)
+        });
+    (explicit.or(Some(trial_hours.is_some())), trial_hours)
+}
+
+async fn resolve_subscription_display_facts(
+    detail: &serde_json::Value,
+) -> Result<SubscriptionDisplayFacts> {
+    let provider_agent_id = display_string(detail.get("providerAgentId"));
+    let service_id = display_string(detail.get("serviceId"));
+    let catalog_service = match (provider_agent_id.as_deref(), service_id.as_deref()) {
+        (Some(provider_agent_id), Some(service_id)) => {
+            common::find_service(provider_agent_id, service_id).await?
+        }
+        _ => None,
+    };
+
+    let provider_name = ["providerAgentName", "aspAgentName", "providerName"]
+        .into_iter()
+        .find_map(|key| display_string(detail.get(key)))
+        .or_else(|| {
+            catalog_service
+                .as_ref()
+                .and_then(|service| display_string(service.get("providerAgentName")))
+        });
+    let provider_name = match (provider_name, provider_agent_id.as_deref()) {
+        (Some(name), _) => Some(name),
+        (None, Some(provider_agent_id)) => {
+            common::fetch_agent_profile(provider_agent_id).await.name
+        }
+        (None, None) => None,
+    };
+
+    let token_symbol = ["serviceTokenSymbol", "tokenSymbol", "paymentTokenSymbol"]
+        .into_iter()
+        .find_map(|key| display_string(detail.get(key)));
+    let token_symbol = match token_symbol {
+        Some(symbol) => Some(symbol),
+        None => {
+            let token_address = display_string(detail.get("serviceTokenAddress"));
+            match token_address.as_deref() {
+                Some(address) => Some(
+                    common::util::resolve_token_symbol_by_address(
+                        common::XLAYER_CHAIN_INDEX,
+                        address,
+                    )
+                    .await?,
+                ),
+                None => None,
+            }
+        }
+    };
+    let (catalog_supports_trial, catalog_trial_hours) =
+        catalog_trial_facts(catalog_service.as_ref());
+    let inline_trial_hours = positive_trial_hours(detail.get("freeTrial"));
+    let supports_trial = detail
+        .get("supportTrial")
+        .and_then(serde_json::Value::as_bool)
+        .or(catalog_supports_trial)
+        .or_else(|| {
+            (detail.get("trialType").and_then(serde_json::Value::as_i64) == Some(1)).then_some(true)
+        });
+
+    Ok(SubscriptionDisplayFacts {
+        provider_name,
+        token_symbol,
+        supports_trial,
+        trial_hours: inline_trial_hours.or(catalog_trial_hours),
+    })
+}
+
+fn trial_duration_label(hours: i64) -> String {
+    if hours % 24 == 0 {
+        let days = hours / 24;
+        format!("{days}-day")
+    } else {
+        format!("{hours}-hour")
+    }
+}
+
+fn subscription_fee_label(amount: Option<&str>, symbol: Option<&str>) -> Option<String> {
+    let amount = amount.map(str::trim).filter(|value| !value.is_empty())?;
+    if super::refund::is_zero_decimal(amount) {
+        return Some("Free".to_string());
+    }
+    let symbol = symbol.map(str::trim).filter(|value| !value.is_empty())?;
+    Some(format!("{amount} {symbol} / month"))
+}
+
+fn free_trial_label(
+    detail: &serde_json::Value,
+    facts: &SubscriptionDisplayFacts,
+) -> Option<String> {
+    match detail.get("trialType").and_then(serde_json::Value::as_i64) {
+        Some(1) => {
+            let (trial_start, trial_end) = trial_window(detail);
+            let derived_hours = (trial_start > 0 && trial_end > trial_start)
+                .then_some((trial_end - trial_start) / 3600)
+                .filter(|hours| *hours > 0);
+            let hours = facts.trial_hours.or(derived_hours)?;
+            let first_charge = common::deadline::format_utc_timestamp(trial_end)?;
+            let amount = detail
+                .get("serviceTokenAmount")
+                .and_then(serde_json::Value::as_str)?;
+            let symbol = facts.token_symbol.as_deref()?;
+            Some(format!(
+                "{} free trial. The first subscription fee of {} {} will be charged at {}.",
+                trial_duration_label(hours),
+                amount,
+                symbol,
+                first_charge,
+            ))
+        }
+        Some(0) if facts.supports_trial == Some(true) => Some(
+            "You have already used the free trial for this service. The subscription fee is charged directly."
+                .to_string(),
+        ),
+        Some(0) if facts.supports_trial == Some(false) => {
+            Some("Free trial is not supported.".to_string())
+        }
+        _ => None,
+    }
+}
+
 /// Derive the shared device-routing enrichment from the two (already tolerant-read)
 /// arrays and the client's this-device id. Pure: device-list `None` is preserved
 /// and means default-all only when `default_all_receives` is true; an explicit
@@ -736,12 +1041,21 @@ fn enrich_subscription_detail(
     mut detail: serde_json::Value,
     this_device_id: Option<&str>,
     default_all_receives: bool,
+    display_facts: &SubscriptionDisplayFacts,
 ) -> serde_json::Value {
     if let Some(obj) = detail.as_object_mut() {
         let code = obj.get("status").and_then(|v| v.as_i64()).unwrap_or(-1);
         obj.insert(
             "statusName".to_string(),
             serde_json::Value::String(status_name(code)),
+        );
+        obj.insert(
+            "statusLabel".to_string(),
+            serde_json::Value::String(status_label(code).to_string()),
+        );
+        obj.insert(
+            "statusDescription".to_string(),
+            serde_json::Value::String(status_description(code).to_string()),
         );
         // Preserve deviceList's wire-level tri-state while categoryCodes
         // continues to normalize to []. Default-all receipt is buyer-side only.
@@ -774,6 +1088,122 @@ fn enrich_subscription_detail(
             FIELD_THIS_DEVICE_NAME.to_string(),
             serde_json::Value::String(this_device_name().to_string()),
         );
+        obj.insert(
+            "autoRenewLabel".to_string(),
+            serde_json::Value::String(
+                match obj.get("autoRenew").and_then(serde_json::Value::as_i64) {
+                    Some(1) => "Enabled",
+                    Some(0) => "Disabled",
+                    _ => "—",
+                }
+                .to_string(),
+            ),
+        );
+        let billing_period_label =
+            if obj.get("trialType").and_then(serde_json::Value::as_i64) == Some(1) {
+                "Trial Period".to_string()
+            } else {
+                obj.get("periodIndex")
+                    .and_then(serde_json::Value::as_i64)
+                    .filter(|period| *period > 0)
+                    .map(|period| format!("Billing Period {period}"))
+                    .unwrap_or_else(|| "—".to_string())
+            };
+        obj.insert(
+            "billingPeriodLabel".to_string(),
+            serde_json::Value::String(billing_period_label),
+        );
+        obj.insert(
+            "offlineMessageHandlingLabel".to_string(),
+            serde_json::Value::String(
+                match obj
+                    .get("offlineReceiveFlag")
+                    .and_then(serde_json::Value::as_i64)
+                {
+                    Some(1) => "Clear",
+                    Some(0) => "Resume delivery when back online",
+                    _ => "—",
+                }
+                .to_string(),
+            ),
+        );
+        obj.insert(
+            "receiveOnThisDeviceLabel".to_string(),
+            serde_json::Value::String(
+                if enrichment.this_device_receives {
+                    "Receive"
+                } else {
+                    "Do not receive"
+                }
+                .to_string(),
+            ),
+        );
+        obj.insert(
+            "providerName".to_string(),
+            display_facts
+                .provider_name
+                .clone()
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null),
+        );
+        let provider_label = display_facts
+            .provider_name
+            .as_deref()
+            .zip(
+                obj.get("providerAgentId")
+                    .and_then(serde_json::Value::as_str),
+            )
+            .map(|(name, id)| format!("{name} ({id})"));
+        obj.insert(
+            "serviceProviderLabel".to_string(),
+            provider_label
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null),
+        );
+        obj.insert(
+            "feeTokenSymbol".to_string(),
+            display_facts
+                .token_symbol
+                .clone()
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null),
+        );
+        let fee_label = subscription_fee_label(
+            obj.get("serviceTokenAmount")
+                .and_then(serde_json::Value::as_str),
+            display_facts.token_symbol.as_deref(),
+        );
+        obj.insert(
+            "feeLabel".to_string(),
+            fee_label
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null),
+        );
+        let trial_label = free_trial_label(&serde_json::Value::Object(obj.clone()), display_facts);
+        obj.insert(
+            "freeTrialLabel".to_string(),
+            trial_label
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null),
+        );
+        let mut missing = Vec::new();
+        for (field, key) in [
+            ("Service Provider", "serviceProviderLabel"),
+            ("Free Trial", "freeTrialLabel"),
+            ("Fee", "feeLabel"),
+        ] {
+            if obj.get(key).is_none_or(serde_json::Value::is_null) {
+                missing.push(serde_json::Value::String(field.to_string()));
+            }
+        }
+        obj.insert(
+            "displayReady".to_string(),
+            serde_json::Value::Bool(missing.is_empty()),
+        );
+        obj.insert(
+            "displayMissingFields".to_string(),
+            serde_json::Value::Array(missing),
+        );
     }
     detail
 }
@@ -785,6 +1215,8 @@ fn enrich_subscription_info(
     default_all_receives: bool,
 ) {
     item.status_name = status_name(item.status);
+    item.status_label = status_label(item.status).to_string();
+    item.status_description = status_description(item.status).to_string();
     let enrichment = derive_device_enrichment(
         item.device_list.take(),
         item.category_codes.take(),
@@ -811,6 +1243,47 @@ fn filter_subscriptions(
         .collect()
 }
 
+/// Prepare one paginated buyer subscription response for the unified task list.
+/// The backend owns grouping and totals; this adapter only preserves the existing
+/// buyer filtering and device/status enrichment used by `my-subscriptions`.
+pub(crate) fn enrich_buyer_subscription_page(
+    data: serde_json::Value,
+    agent_id: &str,
+) -> Result<serde_json::Value> {
+    let wrapper: SubscriptionList = serde_json::from_value(data)
+        .map_err(|e| anyhow!("failed to parse subscription page: {e}"))?;
+    let this_device_id = crate::device::id::get_cached_device_id();
+    let mut list = filter_subscriptions(wrapper.list, SubscriptionRole::Buyer, agent_id, None);
+    for item in &mut list {
+        enrich_subscription_info(item, this_device_id, true);
+    }
+
+    let mut page = serde_json::Map::new();
+    page.insert("list".to_string(), serde_json::json!(list));
+    page.insert("total".to_string(), serde_json::json!(wrapper.total));
+    if let Some(total_no_condition) = wrapper.total_no_condition {
+        page.insert(
+            "totalNoCondition".to_string(),
+            serde_json::json!(total_no_condition),
+        );
+    }
+    if let Some(page_number) = wrapper.page {
+        page.insert("page".to_string(), serde_json::json!(page_number));
+    }
+    if let Some(page_size) = wrapper.page_size {
+        page.insert("pageSize".to_string(), serde_json::json!(page_size));
+    }
+    page.insert(
+        FIELD_THIS_DEVICE_ID.to_string(),
+        serde_json::json!(this_device_id),
+    );
+    page.insert(
+        FIELD_THIS_DEVICE_NAME.to_string(),
+        serde_json::json!(this_device_name()),
+    );
+    Ok(serde_json::Value::Object(page))
+}
+
 pub(crate) async fn fetch_my_subscriptions_snapshot(
     client: &mut TaskApiClient,
     role: SubscriptionRole,
@@ -828,6 +1301,27 @@ pub(crate) async fn fetch_my_subscriptions_snapshot_for_agent(
     role: SubscriptionRole,
     status: Option<i32>,
     header_agent: String,
+) -> Result<MySubscriptionsSnapshot> {
+    fetch_my_subscriptions_snapshot_for_agent_with_mode(client, role, status, header_agent, true)
+        .await
+}
+
+pub(crate) async fn fetch_my_subscriptions_snapshot_for_agent_read_only(
+    client: &mut TaskApiClient,
+    role: SubscriptionRole,
+    status: Option<i32>,
+    header_agent: String,
+) -> Result<MySubscriptionsSnapshot> {
+    fetch_my_subscriptions_snapshot_for_agent_with_mode(client, role, status, header_agent, false)
+        .await
+}
+
+async fn fetch_my_subscriptions_snapshot_for_agent_with_mode(
+    client: &mut TaskApiClient,
+    role: SubscriptionRole,
+    status: Option<i32>,
+    header_agent: String,
+    establish_sessions: bool,
 ) -> Result<MySubscriptionsSnapshot> {
     let header_agent = select_subscription_agent_id(&header_agent, "")?;
 
@@ -852,14 +1346,10 @@ pub(crate) async fn fetch_my_subscriptions_snapshot_for_agent(
     }
     // Buyer listing subscriptions on any device establishes the provider session for
     // every active subscription (drains held deliverables cross-device).
-    if matches!(role, SubscriptionRole::Buyer) {
+    if establish_sessions && matches!(role, SubscriptionRole::Buyer) {
         for item in &list {
             if should_ensure_subscription_session(item.status) {
-                ensure_subscription_session(
-                    &item.job_id,
-                    &header_agent,
-                    &item.provider_agent_id,
-                );
+                ensure_subscription_session(&item.job_id, &header_agent, &item.provider_agent_id);
             }
         }
     }
@@ -898,6 +1388,67 @@ pub async fn handle_my_subscriptions(
 mod tests {
     use super::*;
     use clap::Parser;
+
+    #[test]
+    fn enrich_buyer_subscription_page_preserves_total_and_device_fields() {
+        let data = serde_json::json!({
+            "total": 2,
+            "totalNoCondition": 7,
+            "page": 2,
+            "pageSize": 20,
+            "list": [{
+                "jobId": "sub-1",
+                "status": 1,
+                "buyerAgentId": "user-1",
+                "providerAgentId": "asp-1",
+                "deviceList": null,
+                "categoryCodes": null
+            }]
+        });
+
+        let page = enrich_buyer_subscription_page(data, "user-1").unwrap();
+
+        assert_eq!(page["total"], 2);
+        assert_eq!(page["totalNoCondition"], 7);
+        assert_eq!(page["page"], 2);
+        assert_eq!(page["pageSize"], 20);
+        assert_eq!(page["list"][0]["statusName"], "ACTIVE");
+        assert_eq!(page["list"][0]["statusLabel"], "Active");
+        assert_eq!(
+            page["list"][0]["statusDescription"],
+            "The subscription is active."
+        );
+        assert!(page["list"][0]["deviceList"].is_null());
+        assert_eq!(page["list"][0]["categoryCodes"], serde_json::json!([]));
+        assert_eq!(page["list"][0]["thisDeviceReceives"], true);
+        assert!(page.get("thisDeviceId").is_some());
+        assert!(page.get("thisDeviceName").is_some());
+    }
+
+    #[test]
+    fn enrich_buyer_subscription_page_filters_other_buyers_without_rewriting_total() {
+        let data = serde_json::json!({
+            "total": 9,
+            "list": [
+                {
+                    "jobId": "mine",
+                    "buyerAgentId": "user-1",
+                    "providerAgentId": "asp-1"
+                },
+                {
+                    "jobId": "theirs",
+                    "buyerAgentId": "user-2",
+                    "providerAgentId": "asp-2"
+                }
+            ]
+        });
+
+        let page = enrich_buyer_subscription_page(data, "user-1").unwrap();
+
+        assert_eq!(page["total"], 9);
+        assert_eq!(page["list"].as_array().unwrap().len(), 1);
+        assert_eq!(page["list"][0]["jobId"], "mine");
+    }
     use serde_json::json;
 
     #[derive(Parser)]
@@ -910,8 +1461,58 @@ mod tests {
     fn subscription_session_is_gated_only_by_active_status() {
         assert!(should_ensure_subscription_session(SubStatus::Active.code()));
         assert!(!should_ensure_subscription_session(SubStatus::Init.code()));
-        assert!(!should_ensure_subscription_session(SubStatus::Closed.code()));
-        assert!(!should_ensure_subscription_session(SubStatus::Failed.code()));
+        assert!(!should_ensure_subscription_session(
+            SubStatus::Closed.code()
+        ));
+        assert!(!should_ensure_subscription_session(
+            SubStatus::Failed.code()
+        ));
+        assert!(!should_ensure_subscription_session(
+            SubStatus::Expired.code()
+        ));
+    }
+
+    #[test]
+    fn duplicate_creation_blocks_only_active_status() {
+        assert!(is_active_subscription(SubStatus::Active.code()));
+        for status in [-1, 0, 3, 4, 6, 7, 8, 9, 42] {
+            assert!(
+                !is_active_subscription(status),
+                "non-active status {status} must allow a new subscription"
+            );
+        }
+    }
+
+    #[test]
+    fn duplicate_summary_prefers_active_and_only_active_can_restore_listening() {
+        let row = |job_id: &str, service_id: &str, buyer: &str, status: i64| SubscriptionInfo {
+            job_id: job_id.to_string(),
+            service_id: service_id.to_string(),
+            buyer_agent_id: buyer.to_string(),
+            provider_agent_id: "asp-1".to_string(),
+            status,
+            ..SubscriptionInfo::default()
+        };
+        let summaries = summarize_active_buyer_subscriptions(
+            vec![
+                row("job-rejected", "svc-1", "buyer-1", 3),
+                row("job-active", "svc-1", "buyer-1", 1),
+                row("job-closed", "svc-1", "buyer-1", 7),
+                row("job-other-buyer", "svc-1", "buyer-2", 1),
+            ],
+            "buyer-1",
+        );
+
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].job_id, "job-active");
+        assert!(summaries[0].restore_listening_available);
+        assert_eq!(
+            existing_subscription_for_service(&summaries, "svc-1")
+                .expect("service must be blocked")
+                .job_id,
+            "job-active"
+        );
+        assert!(existing_subscription_for_service(&summaries, "svc-other").is_none());
     }
 
     #[test]
@@ -1043,13 +1644,23 @@ mod tests {
     }
 
     #[test]
-    fn subscription_info_ignores_retired_server_field() {
+    fn subscription_info_preserves_current_copy_trade_field() {
         let wire = detail_fixture();
         assert!(wire.get("copyTrade").is_some());
 
         let info: SubscriptionInfo = serde_json::from_value(wire).unwrap();
         let list_output = serde_json::to_value(info).unwrap();
-        assert!(list_output.get("copyTrade").is_none());
+        assert_eq!(list_output["copyTrade"], 0);
+    }
+
+    #[test]
+    fn current_trial_field_names_are_emitted_with_legacy_input_compatibility() {
+        let info: SubscriptionInfo = serde_json::from_value(detail_fixture()).unwrap();
+        let output = serde_json::to_value(info).unwrap();
+        assert_eq!(output["trialStartTime"], 1_700_000_000i64);
+        assert_eq!(output["trialEndTime"], 1_700_600_000i64);
+        assert!(output.get("trailStartTime").is_none());
+        assert!(output.get("trailEndTime").is_none());
     }
 
     #[test]
@@ -1079,7 +1690,7 @@ mod tests {
     #[test]
     fn status_filter_accepts_codes_and_names_and_rejects_garbage() {
         // Name arm is the inverse of status_name for every documented code.
-        for code in [-1i64, 1, 3, 4, 6, 7, 9] {
+        for code in [-1i64, 0, 1, 3, 4, 6, 7, 8, 9] {
             assert_eq!(parse_status_filter(&status_name(code)), Ok(code as i32));
         }
         assert_eq!(parse_status_filter("1"), Ok(1));
@@ -1093,16 +1704,34 @@ mod tests {
     }
 
     #[test]
-    fn status_name_covers_all_seven_codes_and_unknown() {
+    fn status_name_covers_all_documented_codes_and_unknown() {
         assert_eq!(status_name(-1), "INIT");
+        assert_eq!(status_name(0), "CREATED");
         assert_eq!(status_name(1), "ACTIVE");
         assert_eq!(status_name(3), "REJECTED");
         assert_eq!(status_name(4), "DISPUTED");
         assert_eq!(status_name(6), "COMPLETED");
         assert_eq!(status_name(7), "CLOSED");
+        assert_eq!(status_name(8), "EXPIRED");
         assert_eq!(status_name(9), "FAILED");
         assert_eq!(status_name(2), "UNKNOWN_2");
         assert_eq!(status_name(42), "UNKNOWN_42");
+    }
+
+    #[test]
+    fn subscription_status_display_uses_business_meaning() {
+        assert_eq!(status_label(0), "Awaiting ASP acceptance");
+        assert_eq!(
+            status_description(0),
+            "The subscription is waiting for an ASP to accept it."
+        );
+        assert_eq!(status_label(1), "Active");
+        assert_eq!(status_label(3), "Awaiting ASP decision");
+        assert_eq!(status_label(4), "Evaluation in progress");
+        assert_eq!(status_label(6), "Completed");
+        assert_eq!(status_label(7), "Closed");
+        assert_eq!(status_label(9), "Refund completed");
+        assert_eq!(status_description(9), "The refund completed successfully.");
     }
 
     #[test]
@@ -1444,28 +2073,82 @@ mod tests {
     fn detail_json_preserves_device_routing_tri_state() {
         let mut historical = detail_fixture();
         historical["deviceList"] = serde_json::Value::Null;
-        let historical = enrich_subscription_detail(historical, Some("d1"), true);
+        let historical = enrich_subscription_detail(
+            historical,
+            Some("d1"),
+            true,
+            &SubscriptionDisplayFacts::default(),
+        );
         assert_eq!(historical["deviceList"], serde_json::Value::Null);
         assert_eq!(historical["categoryCodes"], json!([]));
         assert_eq!(historical["thisDeviceReceives"], json!(true));
 
         let mut explicitly_none = detail_fixture();
         explicitly_none["deviceList"] = json!([]);
-        let explicitly_none = enrich_subscription_detail(explicitly_none, Some("d1"), true);
+        let explicitly_none = enrich_subscription_detail(
+            explicitly_none,
+            Some("d1"),
+            true,
+            &SubscriptionDisplayFacts::default(),
+        );
         assert_eq!(explicitly_none["deviceList"], json!([]));
         assert_eq!(explicitly_none["thisDeviceReceives"], json!(false));
 
         let mut selected = detail_fixture();
         selected["deviceList"] = json!(["d1"]);
-        let selected = enrich_subscription_detail(selected, Some("d1"), true);
+        let selected = enrich_subscription_detail(
+            selected,
+            Some("d1"),
+            true,
+            &SubscriptionDisplayFacts::default(),
+        );
         assert_eq!(selected["deviceList"], json!(["d1"]));
         assert_eq!(selected["thisDeviceReceives"], json!(true));
 
         let mut provider = detail_fixture();
         provider["deviceList"] = serde_json::Value::Null;
-        let provider = enrich_subscription_detail(provider, Some("d1"), false);
+        let provider = enrich_subscription_detail(
+            provider,
+            Some("d1"),
+            false,
+            &SubscriptionDisplayFacts::default(),
+        );
         assert_eq!(provider["deviceList"], serde_json::Value::Null);
         assert_eq!(provider["thisDeviceReceives"], json!(false));
+    }
+
+    #[test]
+    fn detail_json_adds_authoritative_display_labels() {
+        let mut detail = detail_fixture();
+        detail["trialType"] = json!(0);
+        detail["periodIndex"] = json!(2);
+        detail["autoRenew"] = json!(1);
+        detail["offlineReceiveFlag"] = json!(1);
+        detail["deviceList"] = json!(["d1"]);
+
+        let detail = enrich_subscription_detail(
+            detail,
+            Some("d1"),
+            true,
+            &SubscriptionDisplayFacts {
+                provider_name: Some("Provider".to_string()),
+                token_symbol: Some("USDT".to_string()),
+                supports_trial: Some(true),
+                trial_hours: Some(24),
+            },
+        );
+
+        assert_eq!(detail["autoRenewLabel"], "Enabled");
+        assert_eq!(detail["billingPeriodLabel"], "Billing Period 2");
+        assert_eq!(detail["offlineMessageHandlingLabel"], "Clear");
+        assert_eq!(detail["receiveOnThisDeviceLabel"], "Receive");
+        assert_eq!(detail["serviceProviderLabel"], "Provider (2002)");
+        assert_eq!(detail["feeLabel"], "10.500000 USDT / month");
+        assert_eq!(
+            detail["freeTrialLabel"],
+            "You have already used the free trial for this service. The subscription fee is charged directly."
+        );
+        assert_eq!(detail["displayReady"], true);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 {
   "name": "onchainos-skills",
-  "version": "4.5.3",
+  "version": "4.9.3-beta",
   "description": "onchainos skills for AI coding assistants — token search, market data, wallet balance, swap execution, and transaction broadcasting across 20+ chains",
   "keywords": [
     "claude-code",
@@ -43,6 +43,15 @@
     ".mcp.json.example"
   ],
   "scripts": {
+    "dev:init": "node scripts/dev/dev.mjs init",
+    "dev:skills": "node scripts/dev/dev.mjs skills",
+    "dev:env": "node scripts/dev/dev.mjs env",
+    "dev:cli": "bash scripts/dev/onchainos.sh --version",
+    "dev:a2a": "bash scripts/dev/okx-a2a.sh",
+    "dev:doctor": "node scripts/dev/dev.mjs doctor",
+    "dev:stop": "node scripts/dev/dev.mjs stop",
+    "dev:clean": "node scripts/dev/dev.mjs clean",
+    "dev:test": "node --test scripts/dev/dev.test.mjs",
     "sync-shared": "bash scripts/sync-shared.sh",
     "bumpVersion": "bash scripts/bump-version.sh",
     "postinstall": "echo '\\n  onchainos-skills installed!\\n  Skills: okx-agentic-wallet, okx-dex-market, okx-defi, okx-ai, okx-guide, okx-agent-payments-protocol, okx-dapp-discovery\\n  Docs: https://web3.okx.com\\n'"

@@ -28,7 +28,7 @@ We will acknowledge receipt within 48 hours and aim to provide a fix or mitigati
 This policy covers:
 - The `onchainos` CLI binary and its dependencies
 - The skill definitions (SKILL.md files)
-- The install scripts (`install.sh`, `install.ps1`)
+- The `@okxweb3/onchainos-installer` installer integration
 - The CI/CD workflows
 
 ## Security Practices

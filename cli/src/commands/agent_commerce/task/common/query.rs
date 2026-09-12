@@ -112,7 +112,10 @@ fn format_ambiguous_identities(agents: &[Value]) -> String {
 /// - R4: Layer 2 list empty / lookup failed → abort mentioning `--agent-id`.
 /// - R5: Layer 2 list has ≥2 usable identities → abort enumerating every candidate.
 /// - R6: Layer 2 single malformed entry → abort mentioning `--agent-id`.
-async fn resolve_agent_id_or_error(explicit_agent_id: &str, role: i64) -> Result<String> {
+pub(crate) async fn resolve_agent_id_or_error(
+    explicit_agent_id: &str,
+    role: i64,
+) -> Result<String> {
     // R1 — explicit --agent-id wins; skip all resolution.
     let explicit = explicit_agent_id.trim();
     if !explicit.is_empty() {
@@ -143,22 +146,116 @@ async fn resolve_agent_id_or_error(explicit_agent_id: &str, role: i64) -> Result
     }
 }
 
-/// Query task status.
-pub async fn handle_status(client: &mut TaskApiClient, job_id: &str, agent_id: &str, role: i64) -> Result<()> {
-    let agent_id = resolve_agent_id_or_error(agent_id, role).await?;
-    let resp = client.get_with_identity(&client.task_path(job_id), &agent_id).await?;
+/// Fetch authoritative task detail for an already-resolved querying identity.
+pub async fn fetch_task_detail(
+    client: &mut TaskApiClient,
+    job_id: &str,
+    agent_id: &str,
+) -> Result<Value> {
+    client
+        .get_with_identity(&client.task_path(job_id), agent_id)
+        .await
+}
 
-    let t = &resp;
-    let token_sym = t["tokenSymbol"].as_str().unwrap_or("?");
-    println!("Task status: {}", t["status"].as_i64().map(status_name).unwrap_or("?"));
-    println!("  jobId:    {job_id}");
-    println!("  title:    {}", t["title"].as_str().unwrap_or("?"));
-    println!("  budget:   {} {}", t["tokenAmount"].as_str().unwrap_or("?"), token_sym);
-    println!("  user:    {}", t["buyerAgentId"].as_str().unwrap_or("?"));
-    if let Some(pid) = t["providerAgentId"].as_str() {
-        println!("  asp: {pid}");
+/// Query task status.
+pub async fn handle_status(
+    client: &mut TaskApiClient,
+    job_id: &str,
+    agent_id: &str,
+    role: i64,
+) -> Result<()> {
+    let resolved_agent_id = resolve_agent_id_or_error(agent_id, role).await?;
+    let resp = match fetch_task_detail(client, job_id, &resolved_agent_id).await {
+        Ok(resp) => resp,
+        Err(task_error) => {
+            // Subscription disputes may not exist on the ordinary one-time
+            // task-detail endpoint. The shared dispute endpoint remains the
+            // authoritative existence/permission check for both task types.
+            let dispute = crate::commands::agent_commerce::task::evaluator::dispute_status::get_dispute_status(
+                client, job_id, &resolved_agent_id,
+            )
+            .await
+            .map_err(|_| task_error)?;
+            let supplement = if dispute.job_type == Some(1) {
+                client
+                    .fetch_subscription(job_id, &resolved_agent_id)
+                    .await
+                    .unwrap_or_else(|_| json!({}))
+            } else {
+                json!({})
+            };
+            emit_arbitration_status(job_id, &supplement, &dispute);
+            return Ok(());
+        }
+    };
+    let status_code = resp["status"].as_i64();
+    let dispute = match status_code {
+        Some(4) => Some(
+            crate::commands::agent_commerce::task::evaluator::dispute_status::get_dispute_status(
+                client,
+                job_id,
+                &resolved_agent_id,
+            )
+            .await?,
+        ),
+        Some(6 | 9) => {
+            crate::commands::agent_commerce::task::evaluator::dispute_status::get_dispute_status(
+                client,
+                job_id,
+                &resolved_agent_id,
+            )
+            .await
+            .ok()
+        }
+        _ => None,
+    };
+    if let Some(dispute) = dispute.as_ref() {
+        emit_arbitration_status(job_id, &resp, dispute);
+    } else {
+        let t = &resp;
+        let token_sym = t["tokenSymbol"].as_str().unwrap_or("?");
+        let code = t["status"].as_i64();
+        println!(
+            "Task status: {}",
+            code.map(task_status_label).unwrap_or("Status unavailable")
+        );
+        println!(
+            "Status detail: {}",
+            code.map(task_status_description)
+                .unwrap_or("The task status is currently unavailable.")
+        );
+        println!("  jobId:    {job_id}");
+        println!("  title:    {}", t["title"].as_str().unwrap_or("?"));
+        println!(
+            "  description: {}",
+            t["description"].as_str().unwrap_or("?")
+        );
+        println!(
+            "  budget:   {} {}",
+            t["tokenAmount"].as_str().unwrap_or("?"),
+            token_sym
+        );
+        println!("  user:    {}", t["buyerAgentId"].as_str().unwrap_or("?"));
+        if let Some(pid) = t["providerAgentId"].as_str() {
+            println!("  asp: {pid}");
+        }
     }
     Ok(())
+}
+
+pub(crate) fn emit_arbitration_status(
+    job_id: &str,
+    supplement: &Value,
+    dispute: &crate::commands::agent_commerce::task::evaluator::dispute_status::DisputeStatusResponse,
+) {
+    let result = crate::commands::agent_commerce::task::arbitration::build_detail_result(
+        job_id,
+        supplement,
+        Some(dispute),
+        None,
+        None,
+    );
+    crate::output::success(result);
 }
 
 /// Query the "my tasks" list.
@@ -171,17 +268,33 @@ pub async fn handle_list(
     role: i64,
 ) -> Result<()> {
     let agent_id = resolve_agent_id_or_error(agent_id, role).await?;
-    let mut path = format!("/priapi/v1/aieco/task/my?page={page}&page_size={limit}");
-    if let Some(s) = status { path.push_str(&format!("&status={s}")); }
+    let is_dispute = status == Some("disputed");
+    if is_dispute {
+        // Compatibility route for the original `tasks --status disputed`
+        // entrypoint. The canonical implementation and output contract live in
+        // the task-level arbitration domain.
+        return crate::commands::agent_commerce::task::arbitration::handle_arbitration_list(
+            client, &agent_id, page, limit,
+        )
+        .await;
+    }
 
+    let mut path = format!("/priapi/v1/aieco/task/my?page={page}&page_size={limit}");
+    if let Some(s) = status {
+        path.push_str(&format!("&status={s}"));
+    }
     let resp = client.get_with_identity(&path, &agent_id).await?;
     let tasks = resp["list"].as_array().cloned().unwrap_or_default();
     let total = resp["total"].as_u64().unwrap_or(0);
     println!("Task list ({total} total, page {page}):");
     for t in &tasks {
         let sym = t["tokenSymbol"].as_str().unwrap_or("?");
-        println!("  [{}] {} — {} {}",
-            t["status"].as_i64().map(status_name).unwrap_or("?"),
+        let status_code = t["status"].as_i64();
+        println!(
+            "  [{}] {} — {} {}",
+            status_code
+                .map(task_status_label)
+                .unwrap_or("Status unavailable"),
             t["jobId"].as_str().unwrap_or("?"),
             t["tokenAmount"].as_str().unwrap_or("?"),
             sym,
@@ -209,6 +322,44 @@ pub fn status_name(code: i64) -> &'static str {
     }
 }
 
+/// User-facing one-time task status. The backend key remains available through
+/// `status_name`; this label carries the business meaning shown in templates.
+pub fn task_status_label(code: i64) -> &'static str {
+    match code {
+        -1 => "Initializing",
+        0 => "Awaiting ASP acceptance",
+        1 => "In progress",
+        2 => "Awaiting buyer review",
+        3 => "Awaiting refund decision",
+        4 => "Evaluation in progress",
+        5 => "Stopped by platform",
+        6 => "Completed",
+        7 => "Closed",
+        8 => "Expired",
+        // For one-time tasks, backend Failed(9) is the canonical terminal
+        // projection after the buyer refund path succeeds.
+        9 => "Refund completed",
+        _ => "Status unavailable",
+    }
+}
+
+pub fn task_status_description(code: i64) -> &'static str {
+    match code {
+        -1 => "The task is being initialized.",
+        0 => "The task is waiting for an ASP to accept it.",
+        1 => "The ASP accepted the task and is working on it.",
+        2 => "The ASP submitted the deliverable and is waiting for buyer review.",
+        3 => "The buyer rejected the deliverable and the refund request awaits an ASP decision.",
+        4 => "The refund request is in Evaluation.",
+        5 => "The platform stopped the task.",
+        6 => "The task completed and funds were released to the ASP.",
+        7 => "The task is closed.",
+        8 => "The task expired.",
+        9 => "The refund completed and the task is closed.",
+        _ => "The task status is currently unavailable.",
+    }
+}
+
 fn role_name(code: i64) -> &'static str {
     match code {
         1 => "user",
@@ -218,10 +369,9 @@ fn role_name(code: i64) -> &'static str {
     }
 }
 
-/// Non-terminal statuses (per SKILL.md Critical Field Mapping Table):
-/// 0 created / 1 accepted / 2 submitted / 3 rejected / 4 disputed.
-/// Terminal (excluded by default): 5 admin_stopped / 6 complete / 7 close / 8 expired / 9 failed.
-fn is_non_terminal(code: i64) -> bool {
+/// Actionable/non-terminal statuses. Expired(8) is terminal because the
+/// backend projects it only after any applicable automatic refund completes.
+fn is_non_terminal_for_role(code: i64, _role: i64) -> bool {
     matches!(code, 0..=4)
 }
 
@@ -234,8 +384,8 @@ fn short_job_id(jid: &str) -> String {
 
 fn parse_role_arg(raw: &str) -> Option<i64> {
     match raw.trim().to_lowercase().as_str() {
-        "user"      => Some(1),
-        "asp"       => Some(2),
+        "user" => Some(1),
+        "asp" => Some(2),
         "evaluator" => Some(3),
         _ => None,
     }
@@ -287,9 +437,7 @@ pub async fn handle_active_tasks(
     // Optional --role filter.
     if let Some(raw) = role_filter {
         let want = parse_role_arg(raw).ok_or_else(|| {
-            anyhow::anyhow!(
-                "unrecognized --role value: {raw:?} (expected user / asp / evaluator)"
-            )
+            anyhow::anyhow!("unrecognized --role value: {raw:?} (expected user / asp / evaluator)")
         })?;
         agents.retain(|a| a.get("role").and_then(|v| v.as_i64()) == Some(want));
     }
@@ -307,7 +455,9 @@ pub async fn handle_active_tasks(
         let resp = match client.get_with_identity(path, agent_id).await {
             Ok(r) => r,
             Err(e) => {
-                if DEBUG_LOG { eprintln!("[active-tasks] agent {agent_id} query failed: {e}"); }
+                if DEBUG_LOG {
+                    eprintln!("[active-tasks] agent {agent_id} query failed: {e}");
+                }
                 continue;
             }
         };
@@ -315,12 +465,15 @@ pub async fn handle_active_tasks(
         let tasks = resp["list"].as_array().cloned().unwrap_or_default();
         for t in tasks {
             let status_code = t.get("status").and_then(|v| v.as_i64()).unwrap_or(-1);
-            if !include_terminal && !is_non_terminal(status_code) {
+            if !include_terminal && !is_non_terminal_for_role(status_code, role) {
                 continue;
             }
 
             let user_id = t.get("buyerAgentId").and_then(|v| v.as_str()).unwrap_or("");
-            let provider_id = t.get("providerAgentId").and_then(|v| v.as_str()).unwrap_or("");
+            let provider_id = t
+                .get("providerAgentId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
 
             // Counterparty inferred from my role:
             // - I'm user (1) → counterparty is asp
@@ -338,6 +491,8 @@ pub async fn handle_active_tasks(
                 "jobId":               job_id,
                 "shortJobId":          short_job_id(job_id),
                 "status":               status_name(status_code),
+                "statusLabel":          task_status_label(status_code),
+                "statusDescription":    task_status_description(status_code),
                 "statusCode":           status_code,
                 "title":                t.get("title").and_then(|v| v.as_str()).unwrap_or(""),
                 "tokenAmount":          t.get("tokenAmount").and_then(|v| v.as_str()).unwrap_or(""),
@@ -470,6 +625,16 @@ mod tests {
         }
     }
 
+    #[test]
+    fn one_time_failed_backend_status_has_refund_business_label() {
+        assert_eq!(status_name(9), "failed");
+        assert_eq!(task_status_label(9), "Refund completed");
+        assert_eq!(
+            task_status_description(9),
+            "The refund completed and the task is closed."
+        );
+    }
+
     // ─── R1 verbatim passthrough (no identity lookup) ────────────────────
     // An explicit --agent-id returns before any await on role/list lookup, so
     // this is deterministic and network-free.
@@ -501,6 +666,26 @@ mod tests {
                 classification,
                 Classification::None | Classification::MalformedSingle
             ));
+        }
+    }
+
+    #[test]
+    fn active_task_filter_excludes_expired_for_every_role() {
+        for role in [1, 2, 3] {
+            for status in [0, 1, 2, 3, 4] {
+                assert!(
+                    is_non_terminal_for_role(status, role),
+                    "status {status} must stay visible for role {role}"
+                );
+            }
+        }
+        for role in [1, 2, 3] {
+            for status in [5, 6, 7, 8, 9] {
+                assert!(
+                    !is_non_terminal_for_role(status, role),
+                    "status {status} must be terminal for role {role}"
+                );
+            }
         }
     }
 }

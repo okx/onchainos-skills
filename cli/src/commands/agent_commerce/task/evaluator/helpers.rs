@@ -10,12 +10,7 @@ use anyhow::Result;
 /// concurrent writes do not race. On round re-draws the local cache is
 /// overwritten on demand by the next `evidence-info` run.
 pub(super) fn evidence_dir(job_id: &str, agent_id: &str) -> Result<PathBuf> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("failed to resolve HOME directory"))?;
-    Ok(home
-        .join(".onchainos")
-        .join("task")
-        .join(job_id)
+    Ok(crate::home::task_state_dir(job_id)?
         .join("dispute")
         .join(agent_id))
 }

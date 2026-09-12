@@ -24,6 +24,9 @@ use zeroize::Zeroize;
 
 use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_error};
 use crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN;
+use crate::funding::build_funding_bundle;
+#[cfg(test)]
+use crate::funding::FundingBundle;
 use crate::output;
 use crate::wallet_api::WalletApiClient;
 use crate::{keyring_store, wallet_store};
@@ -454,6 +457,23 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
             .get("errorReason")
             .and_then(Value::as_str)
             .unwrap_or("unknown");
+        // Enrich ONLY the insufficient_balance refusal with the §2.4 funding
+        // scene (deposit address + QR on the payment chain), emitted via the
+        // existing structured `CliFundingBlocked` envelope. Any
+        // address-resolution failure degrades to the
+        // original hard-failure path (§3.2 — no partial scene); every other
+        // errorReason is unchanged (§11.1).
+        if reason == "insufficient_balance" {
+            if let Some(value) = build_a2a_insufficient_balance_scene(
+                &chain_index,
+                &currency,
+                &amount,
+            )
+            .await
+            {
+                return Err(output::CliFundingBlocked { data: value }.into());
+            }
+        }
         bail!("payment {} rejected (reason={reason})", p.payment_id);
     }
 
@@ -468,6 +488,90 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         tx_hash: cred_resp["txHash"].as_str().map(|s| s.to_string()),
         signature: signature_hex,
     })
+}
+
+// ── A2A insufficient-balance scene (§2.4) ────────────────────────────────
+
+fn a2a_funding_input<'a>(
+    currency: &'a str,
+    asset_symbol: &'a str,
+    required: &'a str,
+    balance: Option<&'a str>,
+) -> crate::funding::FundingBlockedInput<'a> {
+    crate::funding::FundingBlockedInput {
+        asset: asset_symbol,
+        token_address: currency,
+        required,
+        balance,
+        operation: Some(crate::funding::FUNDING_OPERATION_A2A_PAYMENT),
+        error_code: None,
+        error_message: None,
+    }
+}
+
+/// Pure fixture helper for the shared Funding contract. Production calls the
+/// one-call `build_funding_bundle` facade after the server reports a shortfall.
+#[cfg(test)]
+fn build_a2a_insufficient_balance_value(
+    currency: &str,
+    asset_symbol: &str,
+    required: &str,
+    balance: Option<&str>,
+    bundle: &FundingBundle,
+) -> Value {
+    crate::funding::build_funding_blocked_result(
+        bundle,
+        a2a_funding_input(currency, asset_symbol, required, balance),
+    )
+}
+
+/// Build the §2.4 Funding result for the current account and payment chain.
+///
+/// Returns `None` on any wallet-load or address-resolution failure so the caller
+/// degrades to the original hard-failure path (§3.2) — never a partial scene.
+/// `chain_index` is the already-resolved payment `chainIndex`; the common facade
+/// owns current-address resolution and QR output (spec §4.4).
+async fn build_a2a_insufficient_balance_scene(
+    chain_index: &str,
+    currency: &str,
+    amount: &str,
+) -> Option<Value> {
+    let matched_query =
+        crate::commands::agentic_wallet::balance::query_token_readable(chain_index, currency).await;
+    let (balance, mut decimals, mut asset_symbol) = match matched_query {
+        Ok(Some(token)) => (Some(token.balance), token.decimals, token.symbol),
+        Ok(None) => (Some("0".to_string()), None, None),
+        Err(_) => (None, None, None),
+    };
+    if decimals.is_none() || asset_symbol.is_none() {
+        if let Ok(metadata) =
+            crate::commands::agentic_wallet::balance::query_token_metadata(chain_index, currency)
+                .await
+        {
+            decimals.get_or_insert(metadata.decimals);
+            if let Some(symbol) = metadata.symbol {
+                asset_symbol.get_or_insert(symbol);
+            }
+        }
+    }
+    let required =
+        crate::commands::agentic_wallet::shared::common::amount::minimal_to_readable(
+            amount,
+            decimals?,
+        )
+        .ok()?;
+    let asset_symbol = asset_symbol.unwrap_or_else(|| currency.to_string());
+    build_funding_bundle(
+        chain_index,
+        a2a_funding_input(
+            currency,
+            &asset_symbol,
+            &required,
+            balance.as_deref(),
+        ),
+    )
+    .await
+    .ok()
 }
 
 // ── Buyer side: sign_escrow (offline TEE sign, no payment-server I/O) ───
@@ -567,7 +671,7 @@ pub async fn sign_escrow(p: SignEscrowParams) -> Result<SignEscrowOutput> {
     let escrow_addr: Address = p.escrow_contract.parse().context("escrow_contract parse")?;
     let fields = EscrowAuthFields {
         from: from_addr,
-        provider: p.hook.parse().context("provider parse")?, // TODO: use provider or hook?
+        provider: p.provider.parse().context("provider parse")?,
         receiver: p.receiver.parse().context("receiver parse")?,
         arbitrator: p.arbitrator.parse().context("arbitrator parse")?,
         currency: p.currency.parse().context("currency parse")?,
@@ -691,7 +795,10 @@ async fn tee_sign_eip3009(
     sign_body["sessionSignature"] = json!(session_signature_b64);
 
     if cfg!(feature = "debug-log") {
-        eprintln!("[DEBUG][a2a-pay] POST sign-msg body={sign_body}");
+        let mut redacted = sign_body.clone();
+        redacted["sessionCert"] = json!("<redacted>");
+        redacted["sessionSignature"] = json!("<redacted>");
+        eprintln!("[DEBUG][a2a-pay] POST sign-msg body={redacted}");
     }
     let signed_resp: Value = wallet_client
         .post_authed(
@@ -702,9 +809,6 @@ async fn tee_sign_eip3009(
         .await
         .map_err(format_api_error)
         .context("a2a-pay: sign-msg failed")?;
-    if cfg!(feature = "debug-log") {
-        eprintln!("[DEBUG][a2a-pay] sign-msg response={signed_resp}");
-    }
     Ok(signed_resp[0]["signature"]
         .as_str()
         .ok_or_else(|| anyhow!("missing 'signature' in sign-msg response"))?
@@ -947,6 +1051,83 @@ mod tests {
         let b2 = parse_bytes32_hex(&s[2..], "test").unwrap();
         assert_eq!(b, b2);
         assert!(parse_bytes32_hex("0x01", "test").is_err());
+    }
+
+    // ── T12: A2A insufficient-balance scene (§2.4) ───────────────────
+    use crate::funding::FundingTarget;
+    use crate::qr::QrOutput;
+
+    /// Hermetic `FundingBundle` fixture on X Layer (196), terminal-unicode mode —
+    /// no disk, no network (every field is public), so the Value-builder test is
+    /// fully self-contained.
+    fn x_layer_bundle(receive_address: &str) -> FundingBundle {
+        FundingBundle {
+            target: FundingTarget {
+                account_name: "Trading".to_string(),
+                chain_index: "196".to_string(),
+                chain_name: "X Layer".to_string(),
+                receive_address: receive_address.to_string(),
+                gas_free: true,
+                same_network_required: true,
+            },
+            qr: QrOutput {
+                requested_format: "auto".to_string(),
+                resolved_format: Some("unicode".to_string()),
+                display_mode: "terminal-unicode".to_string(),
+                terminal_qr: Some("▟▙ unicode-qr-block ▟▙".to_string()),
+                image_path: None,
+                mime_type: None,
+                markdown_image: None,
+                notify_command_args: None,
+            },
+        }
+    }
+
+    // §2.4: the builder returns the standard structured Funding result; the
+    // command wraps it once in the existing `CliFundingBlocked` error envelope.
+    #[test]
+    fn a2a_insufficient_balance_value_matches_spec_2_4() {
+        // Full token contract address (currency) carried verbatim from the challenge.
+        let currency = "0x382bb369d343125bfb2117af9c149795c6c65c50";
+        let bundle = x_layer_bundle("0xBuyerXLayerAddr");
+
+        let v = build_a2a_insufficient_balance_value(
+            currency,
+            "USDT",
+            "10",
+            Some("0.08504764"),
+            &bundle,
+        );
+
+        assert_eq!(v["phase"], crate::funding::FUNDING_REQUIRED_PHASE);
+        assert_eq!(v["decision"], "blocked");
+        assert_eq!(v["reason"], "insufficient_balance");
+        assert_eq!(v["nextAction"], serde_json::json!([]));
+        assert_eq!(v["payload"]["operation"], "a2a_payment");
+        assert_eq!(v["payload"]["fundingNeed"]["shortfall"], "9.91495236");
+        assert_eq!(
+            v["payload"]["fundingTarget"]["receiveAddress"],
+            "0xBuyerXLayerAddr"
+        );
+        let data = &v["payload"];
+        assert_eq!(data["fundingNeed"]["balance"], "0.08504764");
+        assert_eq!(data["fundingNeed"]["required"], "10");
+        assert_eq!(data["fundingNeed"]["shortfall"], "9.91495236");
+        assert_eq!(data["fundingTarget"]["receiveAddress"], "0xBuyerXLayerAddr");
+
+        // Consumable scene flags projected from the FundingTarget (§2.5): X Layer
+        // (196) is both same-network-required and gas-free.
+        assert_eq!(data["fundingTarget"]["sameNetworkRequired"], serde_json::json!(true));
+        assert_eq!(data["fundingTarget"]["gasFree"], serde_json::json!(true));
+
+        // Full Common QR field set embedded (camelCase, terminal-unicode mode).
+        assert_eq!(data["qr"]["requestedFormat"], "auto");
+        assert_eq!(data["qr"]["resolvedFormat"], "unicode");
+        assert_eq!(data["qr"]["displayMode"], "terminal-unicode");
+        assert!(
+            data["qr"]["terminalQr"].is_string(),
+            "terminal-unicode qr must carry terminalQr"
+        );
     }
 
     /// Lock in escrow nonce determinism for fixed input — guards against

@@ -1,110 +1,194 @@
-//! Publish a task (custom signing flow).
-//!
-//! User action: publish a task — `onchainos agent create-task`.
-//!
-//! Identity check: invokes the identity-module CLI (`onchainos agent get-my-agents`) to verify
-//! that the current user has a user identity (role=1) before running the publish flow.
+//! Buyer create-and-fund entry point for a one-time A2A task.
 
-use anyhow::{bail, Result};
-use std::io::Write;
+use anyhow::{bail, Context, Result};
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use crate::audit;
-
 use crate::commands::agent_commerce::task::common::{
-    self, fetch_my_agents_by_role, network::task_api_client::TaskApiClient,
-    payment_mode::PaymentMode, AGENT_ROLE_USER, DEBUG_LOG, XLAYER_CHAIN_ID,
+    self, fetch_my_agents_by_role_strict, network::task_api_client::TaskApiClient, AGENT_ROLE_USER,
+    DEBUG_LOG, XLAYER_CHAIN_ID,
 };
 use crate::commands::agent_commerce::task::signing;
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 
-// ─── Constants ───────────────────────────────────────────────────────────
-
 pub const MAX_BUDGET: f64 = 10_000_000.0;
 pub const MIN_DESCRIPTION_CHARS: usize = 20;
 pub const MAX_DESCRIPTION_CHARS: usize = 2000;
+pub const MAX_DESCRIPTION_SUMMARY_CHARS: usize = 200;
 pub const MAX_BUDGET_DECIMALS: usize = 6;
 pub const MAX_TITLE_CHARS: usize = 30;
 
-// ─── Parameter struct ────────────────────────────────────────────────────
-
 pub struct CreateTaskParams {
+    pub title: String,
     pub description: String,
-    pub budget: f64,
-    pub max_budget: f64,
-    pub currency: String,
-    pub title: Option<String>,
-    pub provider: String,
+    pub description_summary: Option<String>,
+    pub provider_agent_id: String,
+    pub payment_token_symbol: String,
+    pub payment_token_amount: String,
     pub attachments: Option<Vec<String>>,
-    pub endpoint: Option<String>,
-    pub payment_mode: String,
     pub service_id: String,
-    pub service_params: Option<String>,
-    pub service_token_address: Option<String>,
-    pub service_token_amount: Option<String>,
+    pub service_params: String,
+    pub service_token_address: String,
+    pub service_token_amount: String,
+    pub category_code: Option<String>,
+    pub min_credit_score: Option<f64>,
+    pub visibility: String,
+    pub chain_id: u64,
+    pub service_guide: Option<String>,
+    pub service_guide_hash: Option<String>,
+    pub guide_consent_json: Option<String>,
 }
 
 struct ValidatedParams {
-    currency: String,
     title: String,
+    token_symbol: String,
+    visibility: i64,
+    guide_consent: Option<GuideConsentInput>,
+}
+
+#[derive(Debug)]
+struct GuideConsentInput {
+    draft: super::super::common::autotrade::guide::GuideDraft,
+    consent_values: BTreeMap<String, serde_json::Value>,
 }
 
 impl CreateTaskParams {
-    fn validate(&self) -> Result<ValidatedParams> {
-        let desc_len = self.description.chars().count();
-        if desc_len < MIN_DESCRIPTION_CHARS {
-            bail!("description is too short; please add more detail (minimum {MIN_DESCRIPTION_CHARS} chars, currently {desc_len})");
-        }
-        if desc_len > MAX_DESCRIPTION_CHARS {
-            bail!(
-                "task description may not exceed {MAX_DESCRIPTION_CHARS} chars (currently {desc_len}); \
-                ask the AI to summarize, or shorten it manually and retry."
-            );
-        }
+    fn guide_draft(&self) -> Result<Option<super::super::common::autotrade::guide::GuideDraft>> {
+        super::super::common::autotrade::guide::parse_draft(
+            self.service_guide.as_deref(),
+            self.service_guide_hash.as_deref(),
+        )
+    }
 
-        let currency = normalize_currency(&self.currency)?;
-        validate_budget(self.budget)?;
-        validate_budget_decimals(self.budget)?;
-
-        if self.max_budget < self.budget {
-            bail!(
-                "--max-budget ({}) may not be less than --budget ({})",
-                self.max_budget,
-                self.budget
-            );
-        }
-        validate_budget(self.max_budget)?;
-        validate_budget_decimals(self.max_budget)?;
-
-        let title = match &self.title {
-            Some(t) if t.chars().count() > MAX_TITLE_CHARS => {
-                t.chars().take(MAX_TITLE_CHARS).collect()
-            }
-            Some(t) => t.clone(),
-            None => self.description.chars().take(MAX_TITLE_CHARS).collect(),
+    fn guide_consent_values(&self) -> Result<BTreeMap<String, serde_json::Value>> {
+        let Some(raw) = self.guide_consent_json.as_deref() else {
+            return Ok(BTreeMap::new());
         };
-        // Neutralize shell metacharacters after truncation and before the title is accepted —
-        // covers both the explicit --title and derive-from-description branches (WBW-14039 FR-3).
-        // Sanitization only removes/replaces chars, so the ≤ MAX_TITLE_CHARS invariant still holds.
-        let title = common::util::sanitize_title_for_shell(&title);
+        serde_json::from_str(raw).context("--guide-consent-json must be a JSON object")
+    }
 
-        if self.provider.trim().is_empty() {
-            bail!("A designated provider is required. Use task-service-select to find a provider first.");
+    fn validated_guide_consent(&self) -> Result<Option<GuideConsentInput>> {
+        let Some(draft) = self.guide_draft()? else {
+            if self.service_guide_hash.is_some() || self.guide_consent_json.is_some() {
+                bail!("Guide Consent requires --service-guide");
+            }
+            return Ok(None);
+        };
+        if self.guide_consent_json.is_none() {
+            bail!("--guide-consent-json is required with --service-guide, including {{}} when the Guide declares no consent fields");
+        }
+        let consent_values = self.guide_consent_values()?;
+        super::super::common::autotrade::guide::validate_consent_values(&consent_values)?;
+        Ok(Some(GuideConsentInput {
+            draft,
+            consent_values,
+        }))
+    }
+
+    fn validate(&self) -> Result<ValidatedParams> {
+        validate_title(&self.title)?;
+        let description_len = self.description.chars().count();
+        if self.description.trim().is_empty() {
+            bail!("--description must not be empty");
+        }
+        if description_len > MAX_DESCRIPTION_CHARS {
+            bail!(
+                "--description may not exceed {MAX_DESCRIPTION_CHARS} characters (currently {description_len})"
+            );
+        }
+        if self
+            .description_summary
+            .as_deref()
+            .is_some_and(|value| value.chars().count() > MAX_DESCRIPTION_SUMMARY_CHARS)
+        {
+            bail!(
+                "--description-summary may not exceed {MAX_DESCRIPTION_SUMMARY_CHARS} characters"
+            );
+        }
+        if self.provider_agent_id.trim().is_empty() {
+            bail!("--provider-agent-id is required; use the confirmed Service result unchanged");
         }
         if self.service_id.trim().is_empty() {
-            bail!("A service id is required. Use task-service-select to find a service first.");
+            bail!("--service-id is required; use the confirmed Service result unchanged");
         }
-
-        if let Some(ref files) = self.attachments {
-            for f in files {
-                if !std::path::Path::new(f).exists() {
-                    bail!("attachment file not found: {f}");
-                }
-            }
+        if self.service_token_address.trim().is_empty() {
+            bail!("--service-token-address must not be empty");
         }
+        serde_json::from_str::<serde_json::Value>(&self.service_params)
+            .map_err(|e| anyhow::anyhow!("--service-params must be valid JSON: {e}"))?;
 
-        Ok(ValidatedParams { currency, title })
+        let token_symbol = normalize_currency(&self.payment_token_symbol)?;
+        validate_decimal_amount(&self.payment_token_amount, "payment-token-amount")?;
+        validate_decimal_amount(&self.service_token_amount, "service-token-amount")?;
+        if self.chain_id != XLAYER_CHAIN_ID as u64 {
+            bail!("--chain-id currently supports X Layer ({XLAYER_CHAIN_ID}) only");
+        }
+        if self
+            .min_credit_score
+            .is_some_and(|score| !(0.0..=1.0).contains(&score))
+        {
+            bail!("--min-credit-score must be between 0 and 1");
+        }
+        let visibility = match self.visibility.as_str() {
+            "private" => 1,
+            "public" => 0,
+            _ => bail!("--visibility must be private or public"),
+        };
+        super::attachments::validate_attachment_sources(
+            self.attachments.as_deref().unwrap_or(&[]),
+        )?;
+
+        Ok(ValidatedParams {
+            title: common::util::sanitize_title_for_shell(&self.title),
+            token_symbol,
+            visibility,
+            guide_consent: self.validated_guide_consent()?,
+        })
     }
+}
+
+fn validate_decimal_amount(value: &str, flag: &str) -> Result<()> {
+    let value = value.trim();
+    if value.is_empty() || value.starts_with(['-', '+']) {
+        bail!("--{flag} must be a non-negative decimal string");
+    }
+    let mut parts = value.split('.');
+    let whole = parts.next().unwrap_or_default();
+    let fraction = parts.next();
+    if parts.next().is_some()
+        || whole.is_empty()
+        || !whole.bytes().all(|byte| byte.is_ascii_digit())
+        || fraction.is_some_and(|part| {
+            part.is_empty()
+                || part.len() > MAX_BUDGET_DECIMALS
+                || !part.bytes().all(|byte| byte.is_ascii_digit())
+        })
+    {
+        bail!(
+            "--{flag} must be a decimal string with at most {MAX_BUDGET_DECIMALS} decimal places"
+        );
+    }
+    Ok(())
+}
+
+fn prepare_guide_consent(
+    job_id: &str,
+    params: &CreateTaskParams,
+    execution: &GuideConsentInput,
+) -> Result<()> {
+    let guide_file = execution.draft.clone().into_file(
+        job_id,
+        &params.service_id,
+        Some(&params.provider_agent_id),
+    );
+    super::super::common::autotrade::guide::write_guide(&guide_file, &execution.draft.source)?;
+    super::super::common::autotrade::guide::write_prepared_consent(
+        job_id,
+        &guide_file,
+        execution.consent_values.clone(),
+        super::super::common::autotrade::DEFAULT_AUTOTRADE_TTL_SEC,
+    )
 }
 
 // ─── Validation helpers ─────────────────────────────────────────────────
@@ -112,7 +196,7 @@ impl CreateTaskParams {
 pub fn normalize_currency(currency: &str) -> Result<String> {
     let normalized: String = currency
         .chars()
-        .map(|c| if c == '₮' { 'T' } else { c })
+        .map(|character| if character == '₮' { 'T' } else { character })
         .collect::<String>()
         .to_uppercase();
     match normalized.as_str() {
@@ -136,244 +220,215 @@ pub fn validate_budget(budget: f64) -> Result<()> {
 }
 
 pub fn validate_budget_decimals(budget: f64) -> Result<()> {
-    let s = format!("{budget}");
-    if let Some(dot_pos) = s.find('.') {
-        let frac = s[dot_pos + 1..].trim_end_matches('0');
-        if frac.len() > MAX_BUDGET_DECIMALS {
+    let value = format!("{budget}");
+    if let Some(dot) = value.find('.') {
+        let fraction = value[dot + 1..].trim_end_matches('0');
+        if fraction.len() > MAX_BUDGET_DECIMALS {
             bail!(
                 "budget precision is limited to {MAX_BUDGET_DECIMALS} decimal places, currently {}",
-                frac.len()
+                fraction.len()
             );
         }
     }
     Ok(())
 }
 
-// ─── Identity check ─────────────────────────────────────────────────────
-
 pub(crate) async fn resolve_user_agent() -> Result<(String, String)> {
-    let agents = fetch_my_agents_by_role("user").await;
-
-    let user = agents.iter()
-        .find(|a| a["role"].as_i64() == Some(AGENT_ROLE_USER))
-        .ok_or_else(|| anyhow::anyhow!("the current account has no user (requestor) identity; run `onchainos agent create --role user` first"))?;
-
+    let agents = fetch_my_agents_by_role_strict("user").await?;
+    let user = agents
+        .iter()
+        .find(|agent| agent["role"].as_i64() == Some(AGENT_ROLE_USER))
+        .ok_or_else(|| anyhow::anyhow!("the current account has no user identity; run `onchainos agent create --role user` first"))?;
     let agent_id = user["agentId"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("agent is missing the agentId field"))?
         .to_string();
-    let owner_address = user["ownerAddress"].as_str().unwrap_or("").to_string();
-    Ok((agent_id, owner_address))
+    Ok((
+        agent_id,
+        user["ownerAddress"].as_str().unwrap_or("").to_string(),
+    ))
 }
 
-// ─── Create task ────────────────────────────────────────────────────────
-
-/// Build the `POST /priapi/v1/aieco/task/create` request body.
-///
-/// Extracted from `handle_create` so the body shape is reachable from unit
-/// tests. The `descriptionSummary` key is deliberately NOT emitted (WBW-14172
-/// FR-1.3 / AC-3) — the field was removed from the CLI surface.
-fn build_create_body(
-    params: &CreateTaskParams,
-    validated: &ValidatedParams,
-) -> Result<serde_json::Value> {
-    let mut body = serde_json::json!({
-        "title":              validated.title,
-        "description":        params.description,
-        "paymentTokenSymbol": validated.currency.to_uppercase(),
-        "paymentTokenAmount": params.budget.to_string(),
-        "paymentMostTokenAmount": params.max_budget.to_string(),
-        "chainId":            XLAYER_CHAIN_ID,
-        "paymentMode":        PaymentMode::parse_flag(Some(&params.payment_mode))?,
-        // Public task type removed: always private. The backend still owns the
-        // visibility field (Phase 2 migration is backend-side), so keep sending
-        // the constant private value rather than dropping it from the body.
-        "visibility":         1
-    });
-    body["providerAgentId"] = serde_json::json!(params.provider);
-    body["serviceId"] = serde_json::json!(params.service_id);
-    if let Some(ref sp) = params.service_params {
-        body["serviceParams"] = serde_json::json!(sp);
-    }
-    if let Some(ref sta) = params.service_token_address {
-        body["serviceTokenAddress"] = serde_json::json!(sta);
-    }
-    if let Some(ref stm) = params.service_token_amount {
-        body["serviceTokenAmount"] = serde_json::json!(stm);
-    }
-    Ok(body)
-}
-
-pub async fn handle_create(
-    client: &mut TaskApiClient,
-    params: CreateTaskParams,
-) -> Result<()> {
+pub async fn handle_create(client: &mut TaskApiClient, params: CreateTaskParams) -> Result<()> {
     let validated = params.validate()?;
+
+    crate::home::ensure_task_state_writable().context(
+        "task state storage is not writable; set ONCHAINOS_HOME to a writable directory",
+    )?;
 
     ensure_tokens_refreshed().await.map_err(|e| {
         anyhow::anyhow!("session has expired; run `onchainos wallet login` first: {e}")
     })?;
-
+    let has_session_cert = crate::wallet_store::load_session()?
+        .is_some_and(|session| !session.session_cert.trim().is_empty());
+    if !has_session_cert {
+        bail!("current login has no sessionCert; run `onchainos wallet login` again before create-task");
+    }
     let (user_agent_id, _) = resolve_user_agent().await?;
     if DEBUG_LOG {
         eprintln!("[task-create] user identity check passed (agentId: {user_agent_id})");
     }
 
-    // Blocking balance gate for regular task creation. If the caller is under-funded,
-    // do not create the backend task or broadcast anything. Query failures remain
-    // non-blocking so an unavailable balance service does not prevent creation.
-    if let Err(e) = common::ensure_sufficient_balance(params.budget, &validated.currency).await {
-        if DEBUG_LOG {
-            let mut err = std::io::stderr();
-            let _ = writeln!(err, "[task-create] ⚠ balance check: {e}");
-        }
-        if let Some(ib) = e.downcast_ref::<common::deposit_qr::InsufficientBalanceError>() {
-            let ib_owned = ib.clone();
-            let (warning, _) =
-                common::deposit_qr::balance_warning_json(&ib_owned, &user_agent_id).await;
-            crate::output::success(common::funding_notice::funding_blocked_envelope(
-                &warning,
-                "task-payment",
-                "Task creation",
-            ));
+    // Repeat the prepare-time balance check immediately before the V2
+    // create-and-fund write boundary. A typed shortfall returns the shared
+    // Funding contract without creating or broadcasting the task.
+    let required = params
+        .payment_token_amount
+        .parse::<f64>()
+        .context("--payment-token-amount is outside the supported numeric range")?;
+    if let Err(error) = common::ensure_sufficient_balance(required, &validated.token_symbol).await {
+        if let Some(insufficient) =
+            error.downcast_ref::<common::deposit_qr::InsufficientBalanceError>()
+        {
+            let deposit = common::deposit_qr::resolve_current_deposit_info(&user_agent_id)
+                .await
+                .ok_or_else(|| anyhow::anyhow!("failed to resolve the funding address"))?;
+            crate::output::success(build_task_creation_funding_result(
+                insufficient,
+                &deposit,
+                &params.service_token_address,
+            )?);
             return Ok(());
         }
     }
 
     let (account_id, address) = signing::resolve_wallet_by_agent_id(&user_agent_id).await?;
-
-    let body = build_create_body(&params, &validated)?;
-
-    let resp = client
-        .post_with_identity("/priapi/v1/aieco/task/create", &body, &user_agent_id)
-        .await?;
-    let job_id = resp["jobId"].as_str().unwrap_or("?").to_string();
-
-    if let Some(ref files) = params.attachments {
-        if !files.is_empty() {
-            super::attachments::copy_attachments_to_job(&job_id, files)?;
-        }
-    }
-
-    // Progress chatter goes to stderr so stdout stays a pure JSON envelope.
-    if DEBUG_LOG {
-        let mut err = std::io::stderr();
-        let _ = writeln!(err, "✓ Calldata generated (jobId: {job_id})");
-    }
-
-    // Save designated-provider BEFORE broadcast: job_created event fires
-    // on-chain during broadcast and may be processed by the agent before
-    // sign_uop_and_broadcast returns — the file must already exist.
-    //
-    // FR-8.2/8.4: when --endpoint is omitted/empty but a serviceId is given,
-    // auto-resolve the x402 endpoint from the provider's service catalog and
-    // persist it. Explicit --endpoint is used verbatim (unchanged). A2A /
-    // no-endpoint services resolve to None → endpoint-less save, unchanged
-    // routing (FR-8.5/AC-11).
-    let resolved_endpoint: Option<String> =
-        if let Some(ep) = params.endpoint.as_deref().filter(|s| !s.is_empty()) {
-            Some(ep.to_string())
-        } else if !params.service_id.trim().is_empty() {
-            common::find_service(&params.provider, &params.service_id)
-                .await?
-                .and_then(|svc| svc.get("endpoint").and_then(|v| v.as_str()).map(str::to_string))
-                .filter(|s| !s.is_empty())
-        } else {
-            None
-        };
-    super::negotiate::save_designated_provider_with_endpoint(
-        &job_id,
-        &params.provider,
-        resolved_endpoint.as_deref(),
-    )?;
-    let provider_prebind = common::a2a_binding::bind_job_provider_to_current_runtime(&job_id).await;
-
-    let tx_hash = match signing::sign_uop_and_broadcast(
+    let receipt = super::v2::execute(
         client,
-        &resp["uopData"],
+        super::v2::CreateAndFundInput {
+            title: &validated.title,
+            description: &params.description,
+            description_summary: params.description_summary.as_deref(),
+            token_symbol: &validated.token_symbol,
+            amount: &params.payment_token_amount,
+            provider_agent_id: &params.provider_agent_id,
+            service_id: &params.service_id,
+            service_params: &params.service_params,
+            service_token_address: &params.service_token_address,
+            service_token_amount: &params.service_token_amount,
+            category_code: params.category_code.as_deref(),
+            min_credit_score: params.min_credit_score,
+            visibility: validated.visibility,
+            chain_id: params.chain_id,
+            attachments: params.attachments.as_deref().unwrap_or(&[]),
+        },
         &account_id,
         &address,
-        &job_id,
-        1,
         &user_agent_id,
-        None,
-    )
-    .await
-    {
-        Ok(tx_hash) => tx_hash,
-        Err(err) => {
-            if let Some(prebind) = &provider_prebind {
-                prebind.rollback_if_created().await;
+        |job_id| {
+            if let Some(ref guide_consent) = validated.guide_consent {
+                prepare_guide_consent(job_id, &params, guide_consent)?;
             }
-            return Err(err);
-        }
-    };
+            Ok(())
+        },
+    )
+    .await?;
 
+    let tx_hash = receipt.broadcast["txHash"].as_str().unwrap_or("pending");
+    let guide_and_consent_active = if validated.guide_consent.is_some() {
+        match super::super::common::autotrade::guide::activate_prepared_consent(&receipt.job_id) {
+            Ok(()) => true,
+            Err(err) => {
+                eprintln!("[guide-execution] task created, but Guide Consent could not be activated: {err}");
+                false
+            }
+        }
+    } else {
+        false
+    };
     audit::log(
         "cli",
-        "user/task_created",
+        "user/task_create_and_fund_submitted",
         true,
         Duration::default(),
         Some(vec![
-            format!("jobId={job_id}"),
+            format!("jobId={}", receipt.job_id),
             format!("agentId={user_agent_id}"),
-            format!("currency={}", validated.currency),
-            format!("budget={}", params.budget),
-            format!("maxBudget={}", params.max_budget),
-            format!("designatedProvider={}", params.provider),
-            format!("paymentMode={}", params.payment_mode),
+            format!("paymentTokenSymbol={}", validated.token_symbol),
+            format!("paymentTokenAmount={}", params.payment_token_amount),
+            format!("designatedProvider={}", params.provider_agent_id),
+            "bizType=201".to_string(),
+            format!(
+                "guideStatus={}",
+                if guide_and_consent_active {
+                    "active"
+                } else {
+                    "none"
+                }
+            ),
+            format!(
+                "consentStatus={}",
+                if guide_and_consent_active {
+                    "active"
+                } else {
+                    "none"
+                }
+            ),
             format!("txHash={tx_hash}"),
         ]),
         None,
     );
 
-    // Terminal success emit — routed through `output::success` so stdout stays a
-    // pure JSON envelope. The human/agent-facing guidance remains under
-    // `data.guidance` so agent orchestration is unchanged.
-    let mut guidance = String::new();
-    guidance.push_str(
-        "✓ Task publish in progress (transaction broadcast, awaiting on-chain confirmation)\n",
-    );
-    guidance.push_str(&format!("  jobId:  {job_id}\n"));
-    guidance.push_str(&format!("  txHash: {tx_hash}\n"));
-    if !params.provider.is_empty() {
-        guidance.push_str(&format!("  Designated provider: {}\n", params.provider));
-    }
-    guidance.push('\n');
-    // In CLI mode (Claude Code / Codex), skip the "Next: wait for ..." hint —
-    // its passive "wait" + "automatically" phrasing reads as a conversation-ending
-    // cue to LLM-driven watch loops and was observed to suppress the immediately
-    // following [Watch] block. Native push clients (Hermes / OpenClaw) still get
-    // the hint since a human reads it directly.
-    if !super::content::is_cli_mode() {
-        guidance.push_str("Next: wait for the on-chain confirmation; the designated provider will be contacted automatically.\n");
-    }
-    if super::content::is_cli_mode() {
-        guidance.push_str(&super::content::scoped_watch_handoff(&job_id));
-        guidance.push('\n');
-    }
-    guidance.push_str("🛑 Do NOT call set-payment-mode.");
+    let initial_lifecycle = common::lifecycle::initial_creation_display();
 
-    let mut data = serde_json::json!({
-        "jobId": job_id,
-        "txHash": tx_hash,
-        "guidance": guidance,
-    });
-    if !params.provider.is_empty() {
-        data["designatedProvider"] = serde_json::json!(params.provider);
-    }
-    crate::output::success(data);
+    crate::output::success(serde_json::json!({
+        "phase": "creation",
+        "decision": "ready",
+        "reason": "broadcast_submitted",
+        "nextAction": [{
+            "id": "watch_task",
+            "recommend": true,
+            "params": {"jobId": receipt.job_id}
+        }],
+        "payload": {
+            "jobId": receipt.job_id,
+            "type": 201,
+            "bizType": 201,
+            "status": "broadcast_submitted",
+            "providerAgentId": params.provider_agent_id,
+            "paymentTokenSymbol": validated.token_symbol,
+            "paymentTokenAmount": params.payment_token_amount,
+            "runtimeBound": true,
+            "initialLifecycle": {
+                "taskType": "one_time",
+                "display": initial_lifecycle
+            },
+            "guideStatus": if guide_and_consent_active { "active" } else { "none" },
+            "consentStatus": if guide_and_consent_active { "active" } else { "none" },
+            "attachments": receipt.attachments,
+            "broadcast": receipt.broadcast
+        }
+    }));
     Ok(())
 }
 
-// ─── Field validation helpers (shared with prepare-create) ───────────────
+pub(super) fn build_task_creation_funding_result(
+    insufficient: &common::deposit_qr::InsufficientBalanceError,
+    deposit: &common::deposit_qr::DepositInfo,
+    token_address: &str,
+) -> Result<serde_json::Value> {
+    crate::funding::build_funding_bundle_for_address(
+        "",
+        &deposit.chain_index,
+        &deposit.address,
+        crate::funding::FundingBlockedInput {
+            asset: &insufficient.currency,
+            token_address,
+            required: &insufficient.required,
+            balance: Some(&insufficient.available),
+            operation: Some(crate::funding::FUNDING_OPERATION_TASK_CREATION),
+            error_code: None,
+            error_message: None,
+        },
+    )
+}
 
 fn validate_title(title: &str) -> Result<()> {
-    if title.is_empty() {
-        anyhow::bail!("title must not be empty");
+    if title.trim().is_empty() {
+        bail!("title must not be empty");
     }
     if title.chars().count() > MAX_TITLE_CHARS {
-        anyhow::bail!(
+        bail!(
             "title may not exceed {MAX_TITLE_CHARS} characters (currently {})",
             title.chars().count()
         );
@@ -381,28 +436,21 @@ fn validate_title(title: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_description_body(desc: &str) -> Result<()> {
-    let len = desc.chars().count();
-    if len < MIN_DESCRIPTION_CHARS {
-        anyhow::bail!(
-            "description is too short (minimum {MIN_DESCRIPTION_CHARS} chars, currently {len})"
+fn validate_description_body(description: &str) -> Result<()> {
+    let length = description.chars().count();
+    if length < MIN_DESCRIPTION_CHARS {
+        bail!(
+            "description is too short (minimum {MIN_DESCRIPTION_CHARS} chars, currently {length})"
         );
     }
-    if len > MAX_DESCRIPTION_CHARS {
-        anyhow::bail!("description may not exceed {MAX_DESCRIPTION_CHARS} chars (currently {len})");
+    if length > MAX_DESCRIPTION_CHARS {
+        bail!("description may not exceed {MAX_DESCRIPTION_CHARS} chars (currently {length})");
     }
     Ok(())
 }
 
-fn validate_description_opt(desc: Option<&str>) -> Result<()> {
-    if let Some(d) = desc {
-        validate_description_body(d)?;
-    }
-    Ok(())
-}
-
-/// Validate task fields without network calls.
-/// Used by `prepare-create` (common/mod.rs) to give early field-level feedback.
+/// Legacy prepare seam. Creation itself consumes the confirmed fixed-price
+/// strings and does not repeat these business checks.
 pub(crate) fn validate_draft_fields(
     description: Option<&str>,
     title: Option<&str>,
@@ -410,202 +458,135 @@ pub(crate) fn validate_draft_fields(
     max_budget: Option<f64>,
     currency: Option<&str>,
 ) -> serde_json::Value {
-    let mut checks = Vec::<serde_json::Value>::new();
-    let mut errors = Vec::<String>::new();
-
-    if let Some(d) = description {
-        match validate_description_opt(Some(d)) {
-            Ok(()) => checks.push(
-                serde_json::json!({"field": "description", "ok": true, "chars": d.chars().count()}),
+    let mut checks = Vec::new();
+    let mut errors = Vec::new();
+    macro_rules! check {
+        ($field:expr, $result:expr) => {
+            match $result {
+                Ok(()) => checks.push(serde_json::json!({"field": $field, "ok": true})),
+                Err(error) => {
+                    let message = error.to_string();
+                    checks.push(serde_json::json!({"field": $field, "ok": false, "error": message}));
+                    errors.push(message);
+                }
+            }
+        };
+    }
+    if let Some(value) = description {
+        check!("description", validate_description_body(value));
+    }
+    if let Some(value) = title {
+        check!("title", validate_title(value));
+    }
+    if let Some(value) = currency {
+        match normalize_currency(value) {
+            Ok(normalized) => checks.push(
+                serde_json::json!({"field": "currency", "ok": true, "normalized": normalized}),
             ),
-            Err(e) => {
-                let msg = e.to_string();
-                checks.push(serde_json::json!({"field": "description", "ok": false, "error": msg}));
-                errors.push(msg);
+            Err(error) => {
+                let message = error.to_string();
+                checks
+                    .push(serde_json::json!({"field": "currency", "ok": false, "error": message}));
+                errors.push(message);
             }
         }
     }
-
-    if let Some(t) = title {
-        match validate_title(t) {
-            Ok(()) => checks.push(
-                serde_json::json!({"field": "title", "ok": true, "chars": t.chars().count()}),
-            ),
-            Err(e) => {
-                let msg = e.to_string();
-                checks.push(serde_json::json!({"field": "title", "ok": false, "error": msg}));
-                errors.push(msg);
-            }
+    if let Some(value) = budget {
+        check!(
+            "budget",
+            validate_budget(value).and_then(|_| validate_budget_decimals(value))
+        );
+    }
+    if let Some(value) = max_budget {
+        check!(
+            "max_budget",
+            validate_budget(value).and_then(|_| validate_budget_decimals(value))
+        );
+    }
+    if let (Some(budget), Some(max_budget)) = (budget, max_budget) {
+        if max_budget < budget {
+            errors.push(format!(
+                "max_budget ({max_budget}) must be >= budget ({budget})"
+            ));
         }
     }
-
-    if let Some(c) = currency {
-        match normalize_currency(c) {
-            Ok(norm) => checks
-                .push(serde_json::json!({"field": "currency", "ok": true, "normalized": norm})),
-            Err(e) => {
-                let msg = e.to_string();
-                checks.push(serde_json::json!({"field": "currency", "ok": false, "error": msg}));
-                errors.push(msg);
-            }
-        }
-    }
-
-    if let Some(b) = budget {
-        match validate_budget(b).and_then(|()| validate_budget_decimals(b)) {
-            Ok(()) => checks.push(serde_json::json!({"field": "budget", "ok": true, "value": b})),
-            Err(e) => {
-                let msg = e.to_string();
-                checks.push(serde_json::json!({"field": "budget", "ok": false, "error": msg}));
-                errors.push(msg);
-            }
-        }
-    }
-
-    if let Some(mb) = max_budget {
-        match validate_budget(mb).and_then(|()| validate_budget_decimals(mb)) {
-            Ok(()) => {
-                checks.push(serde_json::json!({"field": "max_budget", "ok": true, "value": mb}))
-            }
-            Err(e) => {
-                let msg = e.to_string();
-                checks.push(serde_json::json!({"field": "max_budget", "ok": false, "error": msg}));
-                errors.push(msg);
-            }
-        }
-    }
-
-    if let (Some(b), Some(mb)) = (budget, max_budget) {
-        if mb < b {
-            let msg = format!("max_budget ({mb}) must be >= budget ({b})");
-            checks.push(
-                serde_json::json!({"field": "max_budget_vs_budget", "ok": false, "error": msg}),
-            );
-            errors.push(msg);
-        } else {
-            checks.push(serde_json::json!({"field": "max_budget_vs_budget", "ok": true}));
-        }
-    }
-
-    if errors.is_empty() {
-        serde_json::json!({"ok": true, "checks": checks})
-    } else {
-        serde_json::json!({"ok": false, "checks": checks, "errors": errors})
-    }
+    serde_json::json!({"ok": errors.is_empty(), "checks": checks, "errors": errors})
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn params_with_provider(provider: String) -> CreateTaskParams {
+    fn params() -> CreateTaskParams {
         CreateTaskParams {
-            description: "a long enough description text for the task".to_string(),
-            budget: 10.0,
-            max_budget: 20.0,
-            currency: "USDT".to_string(),
-            title: Some("t".to_string()),
-            provider,
+            title: "Market report".to_string(),
+            description: "Summarize the confirmed market inputs".to_string(),
+            description_summary: Some("Market summary".to_string()),
+            provider_agent_id: "6508".to_string(),
+            payment_token_symbol: "USDT".to_string(),
+            payment_token_amount: "10.25".to_string(),
             attachments: None,
-            endpoint: None,
-            payment_mode: "escrow".to_string(),
             service_id: "svc-1".to_string(),
-            service_params: None,
-            service_token_address: None,
-            service_token_amount: None,
+            service_params: "{}".to_string(),
+            service_token_address: "0xtoken".to_string(),
+            service_token_amount: "10.25".to_string(),
+            category_code: Some("FINANCE".to_string()),
+            min_credit_score: Some(0.5),
+            visibility: "private".to_string(),
+            chain_id: 196,
+            service_guide: None,
+            service_guide_hash: None,
+            guide_consent_json: None,
         }
     }
 
     #[test]
-    fn validate_requires_designated_provider() {
-        let err = params_with_provider(String::new())
-            .validate()
-            .err()
-            .unwrap()
-            .to_string();
-        assert!(
-            err.contains("A designated provider is required"),
-            "unexpected error: {err}"
+    fn fixed_price_params_validate_without_budget_or_payment_mode() {
+        let validated = params().validate().unwrap();
+        assert_eq!(validated.token_symbol, "USDT");
+        assert_eq!(validated.visibility, 1);
+    }
+
+    #[test]
+    fn exact_decimal_validation_rejects_float_ambiguity() {
+        assert!(validate_decimal_amount("0.000001", "amount").is_ok());
+        assert!(validate_decimal_amount("0.0000001", "amount").is_err());
+        assert!(validate_decimal_amount("1e3", "amount").is_err());
+        assert!(validate_decimal_amount("-1", "amount").is_err());
+    }
+
+    #[test]
+    fn unicode_limits_use_character_count() {
+        let mut value = params();
+        value.title = "任".repeat(MAX_TITLE_CHARS + 1);
+        assert!(value.validate().is_err());
+        value.title = "任".repeat(MAX_TITLE_CHARS);
+        assert!(value.validate().is_ok());
+    }
+
+    #[test]
+    fn task_create_funding_block_uses_common_funding_contract() {
+        let insufficient = common::deposit_qr::InsufficientBalanceError::new(
+            "insufficient".to_string(),
+            "USDT",
+            0.01,
+            0.0,
         );
-    }
-
-    #[test]
-    fn validate_accepts_with_provider() {
-        assert!(params_with_provider("agent-1".to_string())
-            .validate()
-            .is_ok());
-    }
-
-    #[test]
-    fn create_body_has_no_description_summary() {
-        // AC-3: the built request body must not carry a descriptionSummary key,
-        // and create-task must still build a valid body when no summary was ever
-        // supplied (the flag has been removed from the CLI surface entirely).
-        let params = params_with_provider("agent-1".to_string());
-        let validated = params.validate().unwrap();
-        let body = build_create_body(&params, &validated).unwrap();
-        assert!(
-            body.get("descriptionSummary").is_none(),
-            "request body must not contain descriptionSummary: {body}"
+        let deposit = common::deposit_qr::deposit_info_for_address(
+            "0x1234567890abcdef1234567890abcdef12345678",
         );
-        assert_eq!(body["title"], "t");
-        assert_eq!(body["description"], "a long enough description text for the task");
-        assert_eq!(body["providerAgentId"], "agent-1");
-    }
-
-    #[test]
-    fn task_create_funding_block_uses_shared_envelope() {
-        let warning = serde_json::json!({
-            "chain": "XLayer",
-            "currency": "USDT",
-            "shortfall": "0.01",
-            "available": "0",
-            "required": "0.01",
-            "depositAddress": "0x1234567890abcdef1234567890abcdef12345678",
-            "depositChain": "XLayer"
-        });
-        let envelope = common::funding_notice::funding_blocked_envelope(
-            &warning,
-            "task-payment",
-            "Task creation",
-        );
-        assert_eq!(envelope["blocked"], serde_json::json!(true));
-        assert_eq!(envelope["submitted"], serde_json::json!(false));
-        assert_eq!(envelope["mustRepeatInFinalResponse"], serde_json::json!(true));
-        assert_eq!(envelope["forbidFundingSummary"], serde_json::json!(true));
-        assert_eq!(
-            envelope["fundingNoticeCommand"],
-            "onchainos agent funding-notice --chain XLayer --currency USDT --shortfall 0.01 --deposit-address 0x1234567890abcdef1234567890abcdef12345678 --available 0 --required 0.01 --deposit-chain XLayer --reason task-payment --format json"
-        );
-        assert!(envelope["finalResponsePolicy"]
-            .as_str()
-            .expect("finalResponsePolicy")
-            .contains("never summarize"));
-    }
-
-    #[test]
-    fn validate_budget_accepts_zero_and_positive_rejects_negative() {
-        assert!(validate_budget(0.0).is_ok());
-        assert!(validate_budget(-1.0).is_err());
-        assert!(validate_budget(1.0).is_ok());
-    }
-
-    #[test]
-    fn validate_budget_precision_accepts_six_decimals() {
-        assert!(validate_budget_decimals(0.000001).is_ok());
-        assert!(validate_budget_decimals(0.0000001).is_err());
-    }
-
-    #[test]
-    fn create_accepts_zero_budget_and_serializes_zero_amounts() {
-        let mut params = params_with_provider("agent-1".to_string());
-        params.budget = 0.0;
-        params.max_budget = 0.0;
-
-        let validated = params.validate().unwrap();
-        let body = build_create_body(&params, &validated).unwrap();
-
-        assert_eq!(body["paymentTokenAmount"], "0");
-        assert_eq!(body["paymentMostTokenAmount"], "0");
+        let result = build_task_creation_funding_result(
+            &insufficient,
+            &deposit,
+            "0x779ded0c9e1022225f8e0630b35a9b54be713736",
+        )
+        .expect("common Funding result");
+        assert_eq!(result["phase"], "funding_required");
+        assert_eq!(result["decision"], "blocked");
+        assert_eq!(result["reason"], "insufficient_balance");
+        assert_eq!(result["nextAction"], serde_json::json!([]));
+        assert_eq!(result["payload"]["operation"], "task_creation");
+        assert_eq!(result["payload"]["fundingNeed"]["required"], "0.01");
+        assert!(result["payload"]["qr"].is_object());
     }
 }

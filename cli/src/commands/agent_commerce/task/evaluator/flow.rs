@@ -3,7 +3,12 @@ use crate::commands::agent_commerce::task::evaluator::staking_types::{self, MySt
 use chrono::TimeZone;
 use serde_json::Value;
 
-pub async fn generate_next_action(job_id: &str, event: &str, agent_id: &str, message: Option<&Value>) -> String {
+pub async fn generate_next_action(
+    job_id: &str,
+    event: &str,
+    agent_id: &str,
+    message: Option<&Value>,
+) -> String {
     if let Some(s) = staking_next_action(job_id, event, agent_id).await {
         return s;
     }
@@ -30,7 +35,9 @@ fn fmt_local_time(ts: i64) -> Option<String> {
 
 async fn fetch_my_stake(agent_id: &str) -> Option<MyStake> {
     let mut client = TaskApiClient::new();
-    staking_types::get_my_stake(&mut client, agent_id).await.ok()
+    staking_types::get_my_stake(&mut client, agent_id)
+        .await
+        .ok()
 }
 
 fn notify_block(content: &str) -> String {
@@ -165,7 +172,10 @@ async fn staking_next_action(_job_id: &str, event: &str, agent_id: &str) -> Opti
                 },
                 None => "The unstake request has been recorded on-chain. You can cancel the unstake before the cooldown ends.".to_string(),
             };
-            format!("[Current Event] unstake_requested\n\n{}", notify_block(&content))
+            format!(
+                "[Current Event] unstake_requested\n\n{}",
+                notify_block(&content)
+            )
         }
 
         "unstake_claimed" => format!(
@@ -175,12 +185,16 @@ async fn staking_next_action(_job_id: &str, event: &str, agent_id: &str) -> Opti
 
         "unstake_cancelled" => format!(
             "[Current Status] unstake_cancelled\n\n{}",
-            notify_block("Your unstake has been cancelled; the pending OKB is back in staked state.")
+            notify_block(
+                "Your unstake has been cancelled; the pending OKB is back in staked state."
+            )
         ),
 
         "stake_stopped" => format!(
             "[Current Status] stake_stopped\n\n{}",
-            notify_block("You have exited the voter pool and will no longer be selected as a juror.")
+            notify_block(
+                "You have exited the voter pool and will no longer be selected as a juror."
+            )
         ),
 
         _ => return None,
@@ -188,7 +202,12 @@ async fn staking_next_action(_job_id: &str, event: &str, agent_id: &str) -> Opti
     Some(body)
 }
 
-async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message: Option<&Value>) -> Option<String> {
+async fn dispute_next_action(
+    job_id: &str,
+    event: &str,
+    agent_id: &str,
+    message: Option<&Value>,
+) -> Option<String> {
     let body = match event {
         "evaluator_selected" => {
             let job_title = message.and_then(|m| str_field(m, "jobTitle")).unwrap_or_default();
@@ -350,7 +369,7 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
         "vote_revealed" => format!(
             "[Current Status] vote_revealed\n\n{}",
             notify_block(&format!(
-                "Your agent has revealed its vote on-chain for Job jobId={job_id}. Waiting for the dispute resolution result — no action needed from you."
+                "Your agent has revealed its vote on-chain for Job jobId={job_id}. Waiting for the evaluation result — no action needed from you."
             ))
         ),
 
@@ -561,14 +580,14 @@ async fn dispute_next_action(job_id: &str, event: &str, agent_id: &str, message:
 pub fn evaluator_selected_post_evidence_steps(job_id: &str, agent_id: &str) -> String {
     format!(
         "→ **Continue with Step 3 in this same turn — it is NOT event-driven.**\n\n\
-         **Step 3 — Render the verdict per `references/evaluator-decision-rubric.md`:**\n\
-         - **Prerequisite — file readability check**: read `references/evaluator-decision-rubric.md`.\n\
+         **Step 3 — Read `skills/okx-ai/references/a2a/evaluator/rubric.md` directly and render the verdict:**\n\
+         - **Prerequisite — file readability check**: read `skills/okx-ai/references/a2a/evaluator/rubric.md`.\n\
          \x20\x20Read failure / file missing / empty content → **stop this turn immediately** (no commit, no fallback default rules, no search for replacement file). Run `onchainos agent user-notify` (🌐 localize first), then end the turn:\n\n\
          ```bash\n\
          onchainos agent user-notify --content \"<localized content>\"\n\
          ```\n\n\
          Canonical English content (substitute placeholders first):\n\
-         \x20\x20\x20\x20Evaluation aborted for task jobId={job_id}: the decision rubric `references/evaluator-decision-rubric.md` is missing or unreadable; this round's vote is skipped.\n\
+         \x20\x20\x20\x20Evaluation aborted for task jobId={job_id}: the decision rubric `skills/okx-ai/references/a2a/evaluator/rubric.md` is missing or unreadable; this round's vote is skipped.\n\
          \x20\x20\x20\x20⚠️ commit window timeout will slash your stake — please restore the file as soon as possible.\n\n\
          - Read success and evidence already output → produce the final `vote` and the verdict text per the rubric's Verdict section (whichever heading defines the verdict template).\n\n\
          → **Once Step 3's verdict text is produced, continue with Step 4 in this same turn.**\n\n\
@@ -579,7 +598,7 @@ pub fn evaluator_selected_post_evidence_steps(job_id: &str, agent_id: &str) -> S
          onchainos agent vote-commit {job_id} --vote <0|1> --reason \"<flattened verdict text from Step 3, with every real newline replaced by the two-character escape \\n>\" --reason-summary \"<≤30-char one-sentence summary>\" --agent-id {agent_id}\n\
          ```\n\
          ⚠️ **Only 0 (Approve / Client wins) or 1 (Reject / Provider wins) — skip is forbidden**.\n\
-         ⚠️ **The `<0|1>` value MUST come from Step 3** — it is the binary vote that Step 3 derived by applying `references/evaluator-decision-rubric.md` (whatever decision procedure that document defines) to the evidence. Do **not** commit a vote that bypassed Step 3 — guessing / pattern-matching / averaging a value here violates the rubric and produces an unfounded ruling.\n\
+         ⚠️ **The `<0|1>` value MUST come from Step 3** — it is the binary vote that Step 3 derived by applying `skills/okx-ai/references/a2a/evaluator/rubric.md` (whatever decision procedure that document defines) to the evidence. Do **not** commit a vote that bypassed Step 3 — guessing / pattern-matching / averaging a value here violates the rubric and produces an unfounded ruling.\n\
          ⚠️ **`--reason` is the full verdict produced by Step 3**. Empty / whitespace-only values are rejected by the CLI. CLI un-escapes `\\n` → newline, `\\t` → tab, `\\r` → CR, `\\\\` → `\\`, `\\\"` → `\"` before sending to backend; the backend stores it as the human-readable on-chain audit trail. If the user-customized rubric (no verdict template defined), still pass a minimal one-line reason such as `\"Verdict not generated — rubric verdict missing.\"` \n\
          ⚠️ **`--reason-summary` is a ≤30-Unicode-character one-sentence headline** distilled from the same verdict — no markdown / line breaks / bullet markers. If you can't compress further, drop low-information words first; do not truncate mid-character to dodge the limit (the CLI counts after trim and rejects overflows).\n\
          - **Character taboos inside both `--reason` and `--reason-summary` values** (otherwise the shell will corrupt the argument before the CLI even sees it):\n\

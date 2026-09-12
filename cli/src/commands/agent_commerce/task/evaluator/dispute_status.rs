@@ -10,7 +10,8 @@
 //! without downloading.
 //!
 //! API: `GET /priapi/v1/aieco/task/{jobId}/dispute/status` returns
-//! `{ jobId, currentRound, selectedVoter, taskStatus, disputeStatus }`. The
+//! `{ jobId, jobType, currentRound, selectedVoter, taskStatus,
+//! disputeRoundStatus, prepareEndTime, roundEndTime, tokenAmount, tokenSymbol }`. The
 //! backend personalizes by caller `agenticId` (when not selected as juror,
 //! `selectedVoter=null`).
 //!
@@ -31,11 +32,18 @@ use serde::Deserialize;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
 use crate::commands::agent_commerce::task::common::state_machine::{DisputeRoundStatus, Status};
 
+fn evaluator_task_is_terminal(status: &Status) -> bool {
+    matches!(
+        status,
+        Status::Completed | Status::Close | Status::Expired | Status::Failed
+    )
+}
+
 /// Raw response payload for the `dispute/status` endpoint.
 ///
 /// The `Response` suffix intentionally distinguishes this from
 /// [`crate::commands::agent_commerce::task::common::state_machine::DisputeRoundStatus`]
-/// — one is an HTTP DTO, the other is the arbitration sub-state-machine phase enum
+/// — one is an HTTP DTO, the other is the dispute-round state enum
 /// (the `dispute_round_status: i32` field in the response maps to that enum).
 ///
 /// **Nullable fields**: in terminal task state / when there is no active dispute,
@@ -49,12 +57,12 @@ use crate::commands::agent_commerce::task::common::state_machine::{DisputeRoundS
 pub struct DisputeStatusResponse {
     pub job_id: String,
     #[serde(default)]
+    pub job_type: Option<i32>,
+    #[serde(default)]
     pub current_round: Option<i64>,
     /// Backend personalizes by caller agentId: non-null = selected, null = not selected
-    /// (including stale notification / no active dispute). The inner fields
-    /// (voterAddress / voterAgentId) are guaranteed to be the caller itself when
-    /// selected — zero incremental info — so we `IgnoredAny`-consume them instead
-    /// of deserializing; the hard gate only needs `is_none()`.
+    /// (including stale notification / no active dispute). The evaluator hard
+    /// gate needs only presence, so discard the inner object.
     #[serde(default)]
     pub selected_voter: Option<IgnoredAny>,
     /// Current state of the task main state machine. The sample always carries an
@@ -62,13 +70,21 @@ pub struct DisputeStatusResponse {
     /// so a bare `i32` + `default` is fine.
     #[serde(default)]
     pub task_status: i32,
-    /// Current phase of the arbitration sub-state-machine
-    /// (`state_machine::DisputeStatus`). Null when the task is in a terminal state
-    /// or when there is no dispute.
+    /// Current phase of the persisted dispute round (`DisputeRoundStatus`, 0..=5),
+    /// not the contract-level `DisputeStatus` enum (0..=8). Null when the task is
+    /// in a terminal state or when there is no dispute.
     /// `rename` + `alias` accept both backend JSON keys: `disputeStatus` /
     /// `disputeRoundStatus`, so a mismatch on either side does not break parsing.
-    #[serde(default)]
+    #[serde(default, alias = "disputeStatus")]
     pub dispute_round_status: Option<i32>,
+    #[serde(default)]
+    pub prepare_end_time: Option<i64>,
+    #[serde(default)]
+    pub round_end_time: Option<i64>,
+    #[serde(default)]
+    pub token_amount: Option<String>,
+    #[serde(default)]
+    pub token_symbol: Option<String>,
 }
 
 pub async fn get_dispute_status(
@@ -106,19 +122,40 @@ pub async fn precheck_round_gate(
     let fmt_opt = |n: Option<i64>| n.map(|v| v.to_string()).unwrap_or_else(|| "null".into());
     let fmt_opt_i32 = |n: Option<i32>| n.map(|v| v.to_string()).unwrap_or_else(|| "null".into());
 
-    println!("dispute status (jobId={})", s.job_id);
+    println!("evaluation status (jobId={})", s.job_id);
     println!("  currentRound : {}", fmt_opt(s.current_round));
-    println!("  taskStatus   : {} ({})", s.task_status, task_status.as_str());
     println!(
-        "  dispute_round_status: {} ({})",
-        fmt_opt_i32(s.dispute_round_status),
-        dispute_round_status.as_ref().map(DisputeRoundStatus::as_str).unwrap_or("null"),
+        "  Task status: {}",
+        crate::commands::agent_commerce::task::common::query::task_status_label(i64::from(
+            s.task_status
+        ))
+    );
+    println!(
+        "  Status description: {}",
+        crate::commands::agent_commerce::task::common::query::task_status_description(i64::from(
+            s.task_status
+        ))
+    );
+    println!(
+        "  Evaluation round status: {}",
+        dispute_round_status
+            .as_ref()
+            .map(DisputeRoundStatus::display_label)
+            .unwrap_or("Round status unavailable"),
+    );
+    println!(
+        "  Evaluation round description: {}",
+        dispute_round_status
+            .as_ref()
+            .map(DisputeRoundStatus::display_description)
+            .unwrap_or("The evaluation round status is currently unavailable."),
     );
     println!(
         "  selectedVoter: {}",
         match &s.selected_voter {
             Some(_) => "present (this account is selected as juror for current round)",
-            None => "null (not selected for current round / notification expired / no active dispute)",
+            None =>
+                "null (not selected for current round / notification expired / no active evaluation)",
         },
     );
 
@@ -130,23 +167,29 @@ pub async fn precheck_round_gate(
     // on-chain currentRound is non-null → then verify req_round == currentRound
     // → then verify disputeStatus is non-null → then verify
     // disputeStatus == CommitPhase → finally verify this account was selected.
-    let reason: Option<String> = if task_status.is_terminal() {
+    // Evaluator finality is stricter than buyer refund-settlement finality:
+    // Expired(8) still ends the dispute/juror window even though the buyer may
+    // need a later refund reconciliation action. Keep this role-specific gate
+    // explicit instead of reusing Status::is_terminal().
+    let evaluator_terminal = evaluator_task_is_terminal(&task_status);
+    let reason: Option<String> = if evaluator_terminal {
         Some(format!(
-            "taskStatus={} ({}) is terminal — task finished, dispute window closed",
-            s.task_status, task_status.as_str(),
+            "taskStatus={} ({}) is terminal — task finished, evaluation window closed",
+            s.task_status,
+            task_status.as_str(),
         ))
     } else {
         match round_num.parse::<i64>() {
             Err(e) => Some(format!("--round-num cannot be parsed as integer: {round_num:?} ({e})")),
             Ok(req_round) => match (s.current_round, dispute_round_status.as_ref()) {
                 (None, _) => Some(
-                    "currentRound=null — no active dispute (task not in dispute / already ended / backend has not advanced round)".into(),
+                    "currentRound=null — no active evaluation (task is not under evaluation / already ended / backend has not advanced round)".into(),
                 ),
                 (Some(cur), _) if req_round != cur => Some(format!(
                     "round mismatch: envelope round_num={req_round} != on-chain currentRound={cur} (stale envelope)",
                 )),
                 (Some(_), None) => Some(
-                    "disputeStatus=null — dispute sub-state-machine not started / already settled (commit window guaranteed closed)".into(),
+                    "disputeStatus=null — evaluation sub-state-machine not started / already settled (commit window guaranteed closed)".into(),
                 ),
                 (Some(_), Some(ds)) if *ds != DisputeRoundStatus::CommitPhase => Some(format!(
                     "disputeStatus={} ({}) is not {} — commit window not open / already closed",
@@ -174,6 +217,32 @@ pub async fn precheck_round_gate(
             println!("\nreason: {r}");
             println!("selected: no");
             Ok(false)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn evaluator_keeps_expired_as_a_terminal_dispute_state() {
+        for status in [
+            Status::Completed,
+            Status::Close,
+            Status::Expired,
+            Status::Failed,
+        ] {
+            assert!(evaluator_task_is_terminal(&status));
+        }
+        for status in [
+            Status::Created,
+            Status::Accepted,
+            Status::Submitted,
+            Status::Rejected,
+            Status::Disputed,
+        ] {
+            assert!(!evaluator_task_is_terminal(&status));
         }
     }
 }

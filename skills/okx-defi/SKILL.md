@@ -1,22 +1,24 @@
 ---
 name: okx-defi
-description: "For discovering and managing OKX-aggregated DeFi products and positions across protocols and chains. Use it for yield, APY, or TVL discovery and history; DeFi deposits, staking, liquidity, withdrawals, rewards, lending, CLMM analysis, and positions or holdings. Trigger phrases: earn yield, best APY, DeFi product, APY/TVL history, deposit or stake for yield, provide/remove liquidity, withdraw/redeem a DeFi position, claim DeFi rewards, borrow/repay a lending position, CLMM, DeFi portfolio, DeFi 持仓. Requests targeting a named third-party DApp—Aave, Lido, PancakeSwap, Uniswap, Curve, Compound, Morpho, Pendle, Kamino, Raydium, Hyperliquid, or Polymarket—route to okx-dapp-discovery; generic swaps, wallet balances, and transaction broadcast route to okx-agentic-wallet; token search, market prices, K-lines, and token charts route to okx-dex-market. DeFi APY/TVL and V3 liquidity charts stay here."
+description: "Discover and manage OKX-aggregated DeFi products and positions across protocols and chains. Use for generic or venue-agnostic yield, APY, or TVL discovery and history; DeFi deposits, staking, liquidity, withdrawals, rewards, lending, CLMM analysis; and DeFi portfolio or position views. Requests targeting a named protocol belong to DApp discovery. Triggers include earn yield, best APY, DeFi product, APY/TVL history, deposit, stake, withdraw, redeem, provide or remove liquidity, claim rewards, borrow or repay, CLMM, V3 liquidity charts, DeFi portfolio, and DeFi holdings."
 license: MIT
 metadata:
   author: okx
-  version: "4.5.3"
+  version: "4.9.3-beta"
   homepage: "https://web3.okx.com"
 ---
 
-# OKX DeFi (experimental merge of okx-defi-invest + okx-defi-portfolio)
+# OKX DeFi
 
-Multi-chain, OKX-aggregated DeFi in two capabilities behind one skill. Both wrap the same `onchainos defi` CLI command group.
+Discover and manage multi-chain, OKX-aggregated DeFi products and positions through the `onchainos defi` CLI group.
 
-## Pre-flight Checks
+## Preflight
 
-At the start of each thread, complete the checks in `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
+Preflight checks: At the start of each thread, complete the checks in `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
 
 ## Intent Routing
+
+Load only the reference files required by the selected route.
 
 | User Intent | Reference |
 |---|---|
@@ -26,29 +28,29 @@ At the start of each thread, complete the checks in `../okx-agentic-wallet/_shar
 | Withdraw / redeem a position (full or partial) | [invest.md](references/invest.md) |
 | Claim rewards (platform / investment / V3 fee / bonus / unlocked principal) | [invest.md](references/invest.md) |
 | APY history, TVL history, V3 depth / price charts | [invest.md](references/invest.md) |
-| View DeFi positions / holdings overview (持仓) | [portfolio.md](references/portfolio.md) |
-| Per-protocol position detail (持仓详情) | [portfolio.md](references/portfolio.md) |
-| Exact parameters / return schemas — invest & charts commands | [invest-cli-reference.md](references/invest-cli-reference.md) |
+| View DeFi positions / holdings overview | [portfolio.md](references/portfolio.md) |
+| Per-protocol position detail | [portfolio.md](references/portfolio.md) |
+| Exact parameters / return schemas — invest, shared support, and charts commands | [invest-cli-reference.md](references/invest-cli-reference.md) |
 | Exact parameters / return schemas — positions commands | [portfolio-cli-reference.md](references/portfolio-cli-reference.md) |
 | Errors / failed deposits / expired calldata | [invest-troubleshooting.md](references/invest-troubleshooting.md) |
 | Errors / empty positions / address-format issues | [portfolio-troubleshooting.md](references/portfolio-troubleshooting.md) |
 
 Typical flow spans both: view positions (Portfolio) → redeem or claim (Invest). Read both reference files when the request chains them.
 
-## Skill Routing
+Route a named third-party DApp request—including protocol-specific APY, TVL,
+volume, history, or timeframe analysis—to `okx-dapp-discovery`. Generic
+cross-protocol yield/APY/TVL and V3-liquidity analysis stays here. Route token
+search/price/chart requests to `okx-dex-market`, and spot swaps, wallet
+balances, login, contract calls, or transaction broadcasts to
+`okx-agentic-wallet`.
 
-- For DApp-named investing/lending/staking/positions ("on Aave", "my Hyperliquid balance") → use `okx-dapp-discovery`
-- For token price/chart or token search by name/contract → use `okx-dex-market`
-- For DEX spot swap execution → use `okx-agentic-wallet`
-- For wallet token balances → use `okx-agentic-wallet`
-- For broadcasting signed transactions → use `okx-agentic-wallet`
-- For Agentic Wallet login, balance, contract-call → use `okx-agentic-wallet`
+## Chain Name Support
 
-## Chain Support
+The CLI resolves chain names automatically (for example, `ethereum` → `1`, `bsc` → `56`, `solana` → `501`). Use the Chain Support table in [portfolio.md](references/portfolio.md) for the DeFi-specific aliases.
 
-CLI resolves chain names automatically (e.g. `ethereum` → `1`, `bsc` → `56`, `solana` → `501`). Full alias table: `references/portfolio.md` §Chain Support.
+## Security
 
-## Step 0: Address Resolution (shared by both capabilities)
+### Address Resolution
 
 When the user does NOT provide a wallet address, resolve it automatically from the Agentic Wallet **before** running any defi command:
 
@@ -70,7 +72,7 @@ Rules:
 - If the user says "check all accounts" or "all wallets", use `wallet balance --all` to get all account IDs, then `wallet switch <id>` + `wallet addresses` for each account
 - Always confirm the resolved address with the user before proceeding if the account has multiple addresses of the same type
 
-## Address-Chain Compatibility (shared — CRITICAL)
+### Address-Chain Compatibility
 
 The `--address` and chain parameters must be compatible. EVM addresses (`0x…`) can only query EVM chains; Solana addresses (base58) can only query `solana`. Never mix them — the API will return error 84019 (Address format error).
 
@@ -83,4 +85,4 @@ The `--address` and chain parameters must be compatible. EVM addresses (`0x…`)
 
 - The wallet address parameter for ALL defi commands is `--address`
 - `defi positions` uses `--chains` (plural, comma-separated); `defi position-detail` uses `--chain` (singular)
-- For CLI parameter details, see `references/invest-cli-reference.md` (invest & charts) and `references/portfolio-cli-reference.md` (positions)
+- Before reporting completion, verify the selected command succeeded, apply the output format and safety checks from its routed reference, and report any partial or failed on-chain step explicitly.

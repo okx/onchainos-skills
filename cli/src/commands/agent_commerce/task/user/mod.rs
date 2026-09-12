@@ -5,8 +5,8 @@
 //! - `asp_ops.rs`      — ASP match + set-asp (scene 1)
 //! - `negotiate.rs`    — negotiation (scene 2, agent sub session)
 //! - `accept.rs`       — confirm accept + fund (scene 3)
-//! - `complete.rs`     — confirm completion (scene 5)
-//! - `reject.rs`       — reject deliverable (scene 6)
+//! - `v2/complete.rs`  — confirm completion (scene 5)
+//! - `v2/reject.rs`    — reject deliverable (scene 6)
 //! - `close.rs`        — close task (scene 7) + claim arbitration reward
 //!
 //! Shared:
@@ -17,7 +17,6 @@ mod asp_ops;
 pub(crate) mod attachments;
 mod claim_auto_refund;
 mod close;
-mod complete;
 mod content;
 mod create;
 mod create_subscribe;
@@ -26,23 +25,30 @@ mod offline_receive;
 pub(crate) use create::validate_draft_fields;
 pub mod flow;
 mod flow_lifecycle;
-pub(crate) use flow_lifecycle::{try_recover_from_temp_file, route_subscription_delivery_to_skill};
+pub(crate) use flow_lifecycle::try_recover_from_temp_file;
 mod flow_negotiate;
+pub(crate) mod my_tasks;
 pub(crate) mod negotiate;
 mod query;
-mod reject;
+pub(crate) mod refund;
+// Keep internal callers compiled while the upstream module rename from
+// `refund_v2` to `refund` is adopted incrementally across A2A flows.
+pub(crate) use refund as refund_v2;
 mod reject_apply;
+mod service_detail;
+pub(crate) mod service_param_update;
+pub(crate) mod subscription_list;
 pub(crate) mod subscription_ops;
-mod x402_flow;
+mod task_create_prepare;
+mod v2;
+pub(crate) mod visibility;
 
 use anyhow::Result;
 use clap::{Args, Subcommand};
 
 use crate::commands::agent_commerce::identity::ServiceMatchArgs;
 use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
-use crate::commands::agent_commerce::task::common::subscription_identity::{
-    select_subscription_agent_id,
-};
+use crate::commands::agent_commerce::task::common::subscription_identity::select_subscription_agent_id;
 use crate::commands::Context;
 
 // ─── task subcommands ──────────────────────────────────────────────────────
@@ -52,9 +58,31 @@ use crate::commands::Context;
 pub struct TaskServiceSelectArgs {
     #[command(flatten)]
     pub service_match: ServiceMatchArgs,
+    /// Buyer Agent ID used by the task flow to check existing subscriptions.
+    #[arg(long = "agentic-id")]
+    pub agentic_id: Option<String>,
     /// Output format: json
     #[arg(long, default_value = "json")]
     pub format: String,
+}
+
+/// Deterministic task-creation checks for a selected Service ID.
+#[derive(Args, Clone, Debug)]
+pub struct TaskCreatePrepareArgs {
+    /// Selected numeric Service `sid` from service search or matching context.
+    #[arg(long = "sid", value_name = "SID")]
+    pub sid: String,
+}
+
+/// Fetch one current marketplace Service for task creation.
+#[derive(Args, Clone, Debug)]
+pub struct ServiceDetailArgs {
+    /// Marketplace Service sid selected from service discovery.
+    #[arg(long = "sid", value_name = "SID")]
+    pub sid: String,
+    /// Current User Agent ID sent as the `agenticId` request header.
+    #[arg(long = "agentic-id", value_name = "AGENT_ID")]
+    pub agentic_id: String,
 }
 
 #[derive(Subcommand)]
@@ -62,41 +90,47 @@ pub enum TaskCommand {
     /// Create a new task (Client only)
     Create {
         #[arg(long)]
+        title: String,
+        #[arg(long)]
         description: String,
-        #[arg(long)]
-        budget: f64,
-        #[arg(long = "max-budget")]
-        max_budget: f64,
-        #[arg(long)]
-        currency: String,
-        #[arg(long)]
-        title: Option<String>,
-        /// Designated provider agentId (required; skip asp-match; negotiate or x402-accept with this provider directly).
-        #[arg(long)]
-        provider: String,
+        #[arg(long = "description-summary")]
+        description_summary: Option<String>,
+        #[arg(long = "provider-agent-id")]
+        provider_agent_id: String,
+        #[arg(long = "payment-token-symbol")]
+        payment_token_symbol: String,
+        #[arg(long = "payment-token-amount")]
+        payment_token_amount: String,
         /// Local file paths to attach to the task after creation.
         #[arg(long = "file")]
         attachments: Option<Vec<String>>,
-        /// Designated service endpoint (persisted for multi-service providers)
-        #[arg(long)]
-        endpoint: Option<String>,
-        /// Payment mode to set at creation time (required; escrow / x402).
-        #[arg(long = "payment-mode")]
-        payment_mode: String,
-        /// Service ID from asp/match response (required)
         #[arg(long = "service-id")]
         service_id: String,
-        /// Service input parameters (natural language string)
-        #[arg(long = "service-params")]
-        service_params: Option<String>,
-        /// Service token contract address
+        #[arg(long = "service-params", default_value = "{}")]
+        service_params: String,
         #[arg(long = "service-token-address")]
-        service_token_address: Option<String>,
-        /// Service price (from asp/match feeAmount)
+        service_token_address: String,
         #[arg(long = "service-token-amount")]
-        service_token_amount: Option<String>,
+        service_token_amount: String,
+        #[arg(long = "category-code")]
+        category_code: Option<String>,
+        #[arg(long = "min-credit-score")]
+        min_credit_score: Option<f64>,
+        #[arg(long, default_value = "private", value_parser = ["private", "public"])]
+        visibility: String,
+        #[arg(long = "chain-id", default_value_t = 196)]
+        chain_id: u64,
+        /// Exact provider service Guide. Stored locally before broadcast.
+        #[arg(long = "service-guide")]
+        service_guide: Option<String>,
+        /// SHA-256 of the exact service Guide when supplied by the provider.
+        #[arg(long = "service-guide-hash")]
+        service_guide_hash: Option<String>,
+        /// User-confirmed values for the matching Guide.
+        #[arg(long = "guide-consent-json")]
+        guide_consent_json: Option<String>,
     },
-    /// Create a subscription task (providerConfirmStatus → EIP-712 sign → create → broadcast)
+    /// Create a subscription task (providerConfirmStatus → sign → createSubscription → broadcast)
     CreateSubscribe {
         #[arg(long = "service-id")]
         service_id: String,
@@ -115,49 +149,33 @@ pub enum TaskCommand {
         /// Auto-renew: 0/false=off, 1/true=on
         #[arg(long = "auto-renew")]
         auto_renew: String,
-        /// Subscription title (max 64 chars)
+        /// Subscription title (max 30 Unicode characters)
         #[arg(long)]
         title: String,
         /// Subscription description (max 4096 chars)
         #[arg(long)]
         description: String,
-        /// Designated provider agent ID
+        /// Local file paths to attach to the subscription after creation.
+        #[arg(long = "file")]
+        attachments: Option<Vec<String>>,
+        /// Designated provider agent ID from the confirmed Service result
         #[arg(long = "provider-agent-id")]
-        provider_agent_id: Option<String>,
-        /// Exact service description returned by asp-match. Used only to persist
-        /// bounded asset/tool hints; the raw prose is never executed.
-        #[arg(long = "service-description", default_value = "")]
-        service_description: String,
+        provider_agent_id: String,
+        /// Exact provider service Guide. Stored locally before broadcast.
+        #[arg(long = "service-guide")]
+        service_guide: Option<String>,
+        /// SHA-256 of the exact service Guide when supplied by the provider.
+        #[arg(long = "service-guide-hash")]
+        service_guide_hash: Option<String>,
+        /// User-confirmed values for the matching Guide.
+        #[arg(long = "guide-consent-json")]
+        guide_consent_json: Option<String>,
         /// Service billing interval (from asp-match subscription.interval, e.g. "month")
         #[arg(long = "service-interval", default_value = "month")]
         service_interval: String,
-        /// Signal execution mode (`auto` by default; `manual` after explicit opt-out).
-        #[arg(long = "autotrade-mode")]
-        autotrade_mode: Option<String>,
-        /// Fixed quote-currency amount used for every delivered signal.
-        #[arg(long = "autotrade-amount")]
-        autotrade_amount: Option<String>,
-        /// Optional per-delivery cap metadata (not enforced).
-        #[arg(long = "autotrade-cap")]
-        autotrade_cap: Option<String>,
-        /// Quote currency for amount/cap (`usdt` or `usdc`).
-        #[arg(long = "autotrade-quote")]
-        autotrade_quote: Option<String>,
-        /// User-authorized Trade Kit environment (`live` or `demo`).
-        #[arg(long = "autotrade-environment")]
-        autotrade_environment: Option<String>,
-        /// User-authorized Trade Kit derivative margin mode.
-        #[arg(long = "autotrade-margin-mode")]
-        autotrade_margin_mode: Option<String>,
-        /// User-authorized signal-entry order policy.
-        #[arg(long = "autotrade-order-policy")]
-        autotrade_order_policy: Option<String>,
-        /// Output format: "json" for raw JSON
+        /// Output format (the v2 success envelope is always structured JSON)
         #[arg(long, default_value = "")]
         format: String,
-        /// Legacy compatibility input. Create-time device selection is rejected.
-        #[arg(long = "exclude-device", hide = true)]
-        exclude_device: Option<Vec<String>>,
     },
     /// Search matching ASPs for an existing task
     AspMatch {
@@ -183,6 +201,12 @@ pub enum TaskCommand {
     /// Select task-creation candidate services via service-match
     #[command(name = "task-service-select")]
     TaskServiceSelect(TaskServiceSelectArgs),
+    /// Fetch one current marketplace Service by sid.
+    #[command(name = "service-detail")]
+    ServiceDetail(ServiceDetailArgs),
+    /// Prepare task creation from a selected Service ID
+    #[command(name = "task-create-prepare")]
+    TaskCreatePrepare(TaskCreatePrepareArgs),
     /// Set/replace ASP + service on existing task (off-chain, triggers job_asp_selected)
     SetAsp {
         job_id: String,
@@ -225,33 +249,49 @@ pub enum TaskCommand {
     /// Set payment mode on-chain (standalone, before confirm-accept)
     SetPaymentMode {
         job_id: String,
-        /// escrow / x402
+        /// escrow only
         #[arg(long = "payment-mode")]
         payment_mode: Option<String>,
         #[arg(long = "token-symbol")]
         token_symbol: Option<String>,
         #[arg(long = "token-amount")]
         token_amount: Option<String>,
-        /// x402 service endpoint URL (when omitted, fetched from the negotiate cache or service-list API).
-        #[arg(long)]
-        endpoint: Option<String>,
     },
     /// Client confirms ASP and executes payment (setPaymentMode must be done first).
     /// ASP, token symbol, and amount are read from the task detail API.
-    ConfirmAccept {
-        job_id: String,
-    },
+    ConfirmAccept { job_id: String },
     /// Client confirms task complete and releases payment
-    Complete {
-        job_id: String,
-    },
-    /// Client rejects deliverable
+    Complete { job_id: String },
+    /// Disabled direct rejection; use Refund preparation and confirmation.
     Reject {
         job_id: String,
         #[arg(long)]
         reason: String,
     },
-    /// Client closes task (only valid while Open)
+    /// Read-only Refund eligibility and next-action preparation.
+    #[command(name = "refund-prepare")]
+    RefundPrepare {
+        job_id: String,
+        /// User-authored refund reason. Required only for an active refundable task.
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// Execute an explicitly confirmed operation returned by refund-prepare.
+    #[command(name = "refund-execute")]
+    RefundExecute {
+        job_id: String,
+        #[arg(long, value_enum)]
+        operation: refund::RefundOperation,
+        #[arg(long = "refund-context-id")]
+        refund_context_id: String,
+        /// Exact user-authored reason returned through the prepare action params.
+        #[arg(long)]
+        reason: Option<String>,
+        /// Explicitly confirms the current prepared refund operation.
+        #[arg(long, default_value_t = false)]
+        confirm: bool,
+    },
+    /// Disabled legacy close. Use Refund preparation.
     Close {
         job_id: String,
         #[arg(long = "agent-id")]
@@ -263,49 +303,9 @@ pub enum TaskCommand {
         #[arg(long = "agent-id")]
         agent_id: Option<String>,
     },
-    /// Client claims auto-refund after seller timeout (submit_expired / reject_expired)
-    ClaimAutoRefund {
-        job_id: String,
-    },
-    /// x402 Phase 2: x402_pay signing + direct/accept + endpoint replay.
-    /// Returns replay result (deliverable) and Payment Credential.
-    Task402Pay {
-        job_id: String,
-        #[arg(long = "provider-agent-id")]
-        provider_agent_id: String,
-        /// JSON accepts array from the HTTP 402 response
-        #[arg(long)]
-        accepts: String,
-        /// x402 provider endpoint URL (for replay after signing)
-        #[arg(long)]
-        endpoint: String,
-        #[arg(long = "token-symbol")]
-        token_symbol: String,
-        #[arg(long = "token-amount")]
-        token_amount: String,
-        /// Payer address (optional, defaults to selected account)
-        #[arg(long)]
-        from: Option<String>,
-        /// JSON business body to POST during replay (for endpoints that require business parameters)
-        #[arg(long)]
-        body: Option<String>,
-        /// Bypass the confirming gate and broadcast the on-chain accept immediately (FR-7.3).
-        /// Automated playbooks pass this.
-        #[arg(long, default_value_t = false)]
-        force: bool,
-    },
-    /// Validate an x402 endpoint and extract pricing info
-    X402Check {
-        /// x402 provider endpoint URL
-        #[arg(long)]
-        endpoint: String,
-        /// User agent ID (used to authenticate token-detail lookups).
-        #[arg(long = "agent-id")]
-        agent_id: Option<String>,
-        /// JSON business body to POST (for endpoints that require business parameters)
-        #[arg(long)]
-        body: Option<String>,
-    },
+    /// Disabled legacy write command. Use `refund-prepare`; a cause-specific
+    /// timeout claim requires a backend Refund contract.
+    ClaimAutoRefund { job_id: String },
     /// Reject a provider's apply (on-chain pass-through; status stays `created`)
     RejectApply {
         job_id: String,
@@ -320,20 +320,14 @@ pub enum TaskCommand {
         file_paths: Vec<String>,
     },
     /// List attachments for a task
-    ListAttachments {
-        job_id: String,
-    },
+    ListAttachments { job_id: String },
     /// Cancel a subscription (unified: trial cancel + close auto-renew)
     #[command(name = "subscribe-cancel")]
-    SubscribeCancel {
-        sub_id: String,
-    },
+    SubscribeCancel { sub_id: String },
     /// Enable auto-renew on a subscription (needs EIP-712 terms signing)
     #[command(name = "start-autorenew")]
-    StartAutorenew {
-        sub_id: String,
-    },
-    /// Reject a subscription delivery
+    StartAutorenew { sub_id: String },
+    /// Disabled direct subscription rejection; use Refund preparation.
     #[command(name = "subscribe-reject")]
     SubscribeReject {
         sub_id: String,
@@ -351,6 +345,25 @@ pub enum TaskCommand {
     MySubscriptions {
         role: subscription_ops::SubscriptionRole,
         status: Option<i32>,
+    },
+    /// List subscription and one-time tasks for the current User identity.
+    MyTasks {
+        task_type: my_tasks::MyTaskType,
+        status_type: u8,
+        page: u32,
+        page_size: u32,
+    },
+    SubscriptionList {
+        cursor: Option<String>,
+        page_size: u32,
+    },
+    /// Change a task's visibility through the marketplace task API.
+    #[command(name = "task-visibility-update")]
+    TaskVisibilityUpdate {
+        #[arg(long = "job-id")]
+        job_id: String,
+        #[arg(long, value_enum)]
+        visibility: visibility::TaskVisibility,
     },
     /// Show total monthly cost of active subscriptions.
     #[command(name = "subscribe-cost")]
@@ -373,12 +386,20 @@ pub enum TaskCommand {
         #[arg(long)]
         flag: String,
     },
+    /// Persist this device's explicitly user-confirmed subscription copy-trading preference.
+    #[command(name = "subscription-execution-config-set")]
+    SubscriptionExecutionConfigSet {
+        #[arg(long = "service-id")]
+        service_id: String,
+        #[arg(long = "execution-mode")]
+        execution_mode: String,
+        /// Replace an existing preference only after a fresh, explicit user confirmation.
+        #[arg(long)]
+        replace: bool,
+    },
     /// List the devices this agent is logged in on (paginated to completion).
     #[command(name = "device-list")]
-    DeviceList {
-        page: i64,
-        page_size: i64,
-    },
+    DeviceList { page: i64, page_size: i64 },
 }
 
 // ─── Routing dispatch ──────────────────────────────────────────────────────
@@ -391,21 +412,59 @@ fn parse_bool_or_int(s: &str, flag: &str) -> Result<i32> {
     }
 }
 
-/// Build the optional post-login subscription block. An empty subscription
-/// list deliberately produces no block (the product's zero-disturb contract),
-/// while a missing device snapshot is kept as JSON null so the renderer uses
-/// the documented this-device-only degraded view.
-fn compose_post_login_subscriptions(
-    subscriptions: serde_json::Value,
-    subscriptions_empty: bool,
-    devices: Option<serde_json::Value>,
-) -> Option<serde_json::Value> {
-    if subscriptions_empty {
+async fn handle_subscription_execution_config_set(
+    service_id: String,
+    execution_mode: String,
+    replace: bool,
+) -> Result<()> {
+    use crate::commands::agent_commerce::task::common::autotrade::subscription_config;
+
+    let (agent_id, _) = create::resolve_user_agent().await?;
+    let agent_id = select_subscription_agent_id(&agent_id, "")?;
+    let execution_mode = execution_mode.parse::<subscription_config::ExecutionMode>()?;
+    let outcome = subscription_config::save_execution_mode(
+        &agent_id,
+        &service_id,
+        execution_mode,
+        replace,
+    )?;
+    crate::output::success(serde_json::json!({
+        "agentId": agent_id,
+        "serviceId": service_id,
+        "executionMode": execution_mode.as_str(),
+        "outcome": outcome.as_str(),
+        "storage": "local",
+    }));
+    Ok(())
+}
+
+/// Build the optional post-login subscription hint. Only active subscriptions
+/// are surfaced, keeping wallet login quiet for ended-only histories.
+fn active_subscription_count(subscriptions: &serde_json::Value) -> u64 {
+    subscriptions
+        .get("list")
+        .and_then(serde_json::Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter(|item| {
+                    item.get("status").and_then(serde_json::Value::as_i64) == Some(1)
+                        || item
+                            .get("statusName")
+                            .and_then(serde_json::Value::as_str)
+                            .is_some_and(|status| status.eq_ignore_ascii_case("ACTIVE"))
+                })
+                .count() as u64
+        })
+        .unwrap_or(0)
+}
+
+fn compose_post_login_subscriptions(subscriptions: serde_json::Value) -> Option<serde_json::Value> {
+    let active_count = active_subscription_count(&subscriptions);
+    if active_count == 0 {
         return None;
     }
     Some(serde_json::json!({
-        "subscriptions": subscriptions,
-        "devices": devices,
+        "activeSubscriptionCount": active_count,
     }))
 }
 
@@ -416,6 +475,13 @@ struct PostLoginExecutableService {
     description: String,
     description_source: &'static str,
     asset_classes: Vec<crate::asset_class::AssetClass>,
+    explicit_tools:
+        Vec<crate::commands::agent_commerce::task::common::autotrade::tooling::ExecutionTool>,
+    service_guide: Option<String>,
+    service_guide_hash: Option<String>,
+    /// True only when the current provider catalog resolved this exact service.
+    /// An unavailable catalog must never be mistaken for an empty guide.
+    service_guide_hash_resolved: bool,
 }
 
 fn executable_service_from_description(
@@ -437,7 +503,233 @@ fn executable_service_from_description(
         description: description.to_string(),
         description_source,
         asset_classes: classified.classes,
+        explicit_tools: classified.explicit,
+        service_guide: None,
+        service_guide_hash: None,
+        service_guide_hash_resolved: false,
     })
+}
+
+fn valid_service_guide_hash(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|digest| {
+        digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+    })
+}
+
+fn service_guide_metadata(service: &serde_json::Value) -> (Option<String>, Option<String>) {
+    let guide = service
+        .get("serviceGuide")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string);
+    let Some(guide) = guide else {
+        return (None, None);
+    };
+    let supplied_hash = service
+        .get("serviceGuideHash")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| valid_service_guide_hash(value))
+        .map(|value| value.to_ascii_lowercase());
+    let hash = supplied_hash.unwrap_or_else(|| {
+        use sha2::Digest;
+        format!(
+            "sha256:{}",
+            hex::encode(sha2::Sha256::digest(guide.as_bytes()))
+        )
+    });
+    (Some(guide), Some(hash))
+}
+
+fn attach_service_guide(
+    executable: &mut PostLoginExecutableService,
+    service: &serde_json::Value,
+    resolved_from_current_catalog: bool,
+) {
+    let (guide, hash) = service_guide_metadata(service);
+    executable.service_guide = guide;
+    executable.service_guide_hash = hash;
+    executable.service_guide_hash_resolved = resolved_from_current_catalog;
+}
+
+fn requires_trade_kit(executable: &PostLoginExecutableService) -> bool {
+    use crate::commands::agent_commerce::task::common::autotrade::tooling::ExecutionTool;
+
+    executable.explicit_tools.contains(&ExecutionTool::TradeKit)
+        || executable
+            .asset_classes
+            .contains(&crate::asset_class::AssetClass::Option)
+}
+
+fn trade_kit_required_fields(executable: &PostLoginExecutableService) -> Vec<String> {
+    if !requires_trade_kit(executable) {
+        return Vec::new();
+    }
+    let mut fields = vec!["environment".to_string(), "orderPolicy".to_string()];
+    if executable
+        .asset_classes
+        .contains(&crate::asset_class::AssetClass::Perp)
+    {
+        fields.push("marginMode".to_string());
+    }
+    fields
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ServiceGuideStatus {
+    Unknown,
+    Absent,
+    Current,
+    Unchanged,
+    Baseline,
+    Changed,
+}
+
+impl ServiceGuideStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::Absent => "absent",
+            Self::Current => "current",
+            Self::Unchanged => "unchanged",
+            Self::Baseline => "baseline",
+            Self::Changed => "changed",
+        }
+    }
+
+    fn requires_refresh(self) -> bool {
+        matches!(self, Self::Baseline | Self::Changed)
+    }
+}
+
+fn stored_service_guide_hash(
+    snapshot: &crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshot,
+) -> Option<&str> {
+    snapshot.guide_hash.as_deref()
+}
+
+fn service_guide_status(
+    executable: &PostLoginExecutableService,
+    snapshot: &crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshot,
+) -> ServiceGuideStatus {
+    if !executable.service_guide_hash_resolved {
+        return ServiceGuideStatus::Unknown;
+    }
+    if snapshot.status
+        != crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus::Active
+    {
+        return if executable.service_guide_hash.is_some() {
+            ServiceGuideStatus::Current
+        } else {
+            ServiceGuideStatus::Absent
+        };
+    }
+    match (
+        stored_service_guide_hash(snapshot),
+        executable.service_guide_hash.as_deref(),
+    ) {
+        (None, None) => ServiceGuideStatus::Absent,
+        (Some(stored), Some(current)) if stored.eq_ignore_ascii_case(current) => {
+            ServiceGuideStatus::Unchanged
+        }
+        (None, Some(_)) => ServiceGuideStatus::Baseline,
+        _ => ServiceGuideStatus::Changed,
+    }
+}
+
+fn persisted_required_fields(
+    snapshot: &crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshot,
+) -> Vec<String> {
+    snapshot
+        .dynamic_settings
+        .get("requiredFields")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(str::to_string)
+        .collect()
+}
+
+fn required_fields_for_precheck(
+    executable: &PostLoginExecutableService,
+    snapshot: &crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshot,
+    guide_status: ServiceGuideStatus,
+) -> Vec<String> {
+    let mut fields = trade_kit_required_fields(executable);
+    if !guide_status.requires_refresh() {
+        for field in persisted_required_fields(snapshot) {
+            if !fields.contains(&field) {
+                fields.push(field);
+            }
+        }
+    }
+    fields
+}
+
+fn missing_snapshot_fields(
+    snapshot: &crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshot,
+    required_fields: &[String],
+) -> Vec<String> {
+    required_fields
+        .iter()
+        .filter(|field| match field.as_str() {
+            "mode" => false,
+            "tradeAmount" => snapshot.trade_amount_u.is_none(),
+            "tradeAmountU" => snapshot.trade_amount_u.is_none(),
+            "cap" => snapshot.cap_u.is_none(),
+            "quote" => snapshot.quote_token.is_none(),
+            "environment" => snapshot.trade_environment.is_none(),
+            "marginMode" => snapshot.margin_mode.is_none(),
+            "orderPolicy" => snapshot.order_policy.is_none(),
+            "authMode" => snapshot.auth_mode.is_none(),
+            other => !crate::commands::agent_commerce::task::common::autotrade::consent::dynamic_setting_present(
+                &snapshot.dynamic_settings,
+                other,
+            ),
+        })
+        .cloned()
+        .collect()
+}
+
+fn add_service_guide_precheck_context(
+    result: &mut serde_json::Value,
+    executable: &PostLoginExecutableService,
+    snapshot: &crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshot,
+    status: ServiceGuideStatus,
+) {
+    let Some(object) = result.as_object_mut() else {
+        return;
+    };
+    object.insert(
+        "guideStatus".to_string(),
+        serde_json::Value::String(status.as_str().to_string()),
+    );
+    object.insert(
+        "guideHashResolved".to_string(),
+        serde_json::Value::Bool(executable.service_guide_hash_resolved),
+    );
+    object.insert(
+        "guideRefreshRequired".to_string(),
+        serde_json::Value::Bool(status.requires_refresh()),
+    );
+    if let Some(guide) = executable.service_guide.as_ref() {
+        object.insert(
+            "serviceGuide".to_string(),
+            serde_json::Value::String(guide.chars().take(8192).collect()),
+        );
+    }
+    if let Some(hash) = executable.service_guide_hash.as_ref() {
+        object.insert(
+            "currentServiceGuideHash".to_string(),
+            serde_json::Value::String(hash.clone()),
+        );
+    }
+    if let Some(hash) = stored_service_guide_hash(snapshot) {
+        object.insert(
+            "storedServiceGuideHash".to_string(),
+            serde_json::Value::String(hash.to_string()),
+        );
+    }
 }
 
 fn post_login_executable_service(
@@ -448,55 +740,70 @@ fn post_login_executable_service(
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())?;
-    executable_service_from_description(description, "service_description")
+    let mut executable = executable_service_from_description(description, "service_description")?;
+    attach_service_guide(&mut executable, subscription, false);
+    Some(executable)
 }
 
-/// Resolve the ASP service description for a compact subscription row without
-/// ever treating that prose as authorization. The listing field is canonical
-/// when present. Older rows are enriched from subscription detail, with the
-/// provider's current service catalog as a final read-only fallback.
+/// Resolve the executable description and the provider's current service guide
+/// without ever treating either prose field as authorization. Description
+/// resolution remains backward compatible, while guide freshness is known only
+/// when the current provider catalog resolves the exact service.
 async fn resolve_subscription_executable_service(
     client: &mut TaskApiClient,
     agent_id: &str,
     subscription: &serde_json::Value,
+    resolve_current_guide: bool,
 ) -> Result<Option<PostLoginExecutableService>> {
     let inline_description = subscription
         .get("serviceDescription")
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    if let Some(description) = inline_description {
-        return Ok(executable_service_from_description(
-            description,
-            "service_description",
-        ));
+    if !resolve_current_guide {
+        if let Some(description) = inline_description {
+            let Some(mut executable) =
+                executable_service_from_description(description, "service_description")
+            else {
+                return Ok(None);
+            };
+            attach_service_guide(&mut executable, subscription, false);
+            return Ok(Some(executable));
+        }
     }
 
     let job_id = subscription
         .get("jobId")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
-    if !job_id.is_empty() {
+    let mut detail = None;
+    if inline_description.is_none() && !job_id.is_empty() {
         match subscription_ops::fetch_subscribe_detail_for_agent(client, job_id, agent_id).await {
-            Ok(detail) => {
-                if let Some(description) = detail
-                    .get("serviceDescription")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                {
-                    return Ok(executable_service_from_description(
-                        description,
-                        "subscription_detail",
-                    ));
-                }
-            }
+            Ok(value) => detail = Some(value),
             Err(error) if cfg!(feature = "debug-log") => {
                 eprintln!(
                     "[DEBUG][watch-precheck] subscription detail unavailable for {job_id}: {error:#}"
                 );
             }
             Err(_) => {}
+        }
+    }
+    if !resolve_current_guide {
+        if let Some(detail) = detail.as_ref() {
+            if let Some(description) = detail
+                .get("serviceDescription")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                let Some(mut executable) =
+                    executable_service_from_description(description, "subscription_detail")
+                else {
+                    return Ok(None);
+                };
+                attach_service_guide(&mut executable, detail, false);
+                return Ok(Some(executable));
+            }
         }
     }
 
@@ -508,21 +815,59 @@ async fn resolve_subscription_executable_service(
         .get("serviceId")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
-    if provider_agent_id.is_empty() || service_id.is_empty() {
-        return Ok(None);
-    }
-    let service = crate::commands::agent_commerce::task::common::find_service(
-        provider_agent_id,
-        service_id,
-    )
-    .await?;
-    Ok(service
+    let mut catalog_error = None;
+    let catalog_service = if provider_agent_id.is_empty() || service_id.is_empty() {
+        None
+    } else {
+        match crate::commands::agent_commerce::task::common::find_service(
+            provider_agent_id,
+            service_id,
+        )
+        .await
+        {
+            Ok(service) => service,
+            Err(error) => {
+                catalog_error = Some(error);
+                None
+            }
+        }
+    };
+
+    let detail_description = detail
         .as_ref()
         .and_then(|value| value.get("serviceDescription"))
         .and_then(serde_json::Value::as_str)
-        .and_then(|description| {
-            executable_service_from_description(description, "provider_service_catalog")
-        }))
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let catalog_description = catalog_service
+        .as_ref()
+        .and_then(|value| value.get("serviceDescription"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let (description, source) = if let Some(description) = inline_description {
+        (description, "service_description")
+    } else if let Some(description) = detail_description {
+        (description, "subscription_detail")
+    } else if let Some(description) = catalog_description {
+        (description, "provider_service_catalog")
+    } else if let Some(error) = catalog_error {
+        return Err(error);
+    } else {
+        return Ok(None);
+    };
+
+    let Some(mut executable) = executable_service_from_description(description, source) else {
+        return Ok(None);
+    };
+    if let Some(service) = catalog_service.as_ref() {
+        attach_service_guide(&mut executable, service, resolve_current_guide);
+    } else if let Some(detail) = detail.as_ref() {
+        attach_service_guide(&mut executable, detail, false);
+    } else {
+        attach_service_guide(&mut executable, subscription, false);
+    }
+    Ok(Some(executable))
 }
 
 /// Restore bounded execution-profile hints for active executable subscriptions
@@ -575,6 +920,7 @@ async fn add_post_login_autotrade_prechecks(
             client,
             agent_id,
             subscription,
+            false,
         )
         .await
         {
@@ -609,7 +955,8 @@ fn compose_scoped_watch_autotrade_precheck(
     job_id: &str,
     agent_id: &str,
     subscription: Option<&serde_json::Value>,
-    consent_status: crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus,
+    consent_snapshot: &crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshot,
+    grant_refresh_required: bool,
 ) -> serde_json::Value {
     let executable = subscription.and_then(post_login_executable_service);
     compose_scoped_watch_autotrade_precheck_with_executable(
@@ -617,7 +964,8 @@ fn compose_scoped_watch_autotrade_precheck(
         agent_id,
         subscription,
         executable.as_ref(),
-        consent_status,
+        consent_snapshot,
+        grant_refresh_required,
     )
 }
 
@@ -626,7 +974,8 @@ fn compose_scoped_watch_autotrade_precheck_with_executable(
     agent_id: &str,
     subscription: Option<&serde_json::Value>,
     executable: Option<&PostLoginExecutableService>,
-    consent_status: crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus,
+    consent_snapshot: &crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshot,
+    grant_refresh_required: bool,
 ) -> serde_json::Value {
     use crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus;
     use crate::commands::agent_commerce::task::common::state_machine::SubStatus;
@@ -680,33 +1029,113 @@ fn compose_scoped_watch_autotrade_precheck_with_executable(
         });
     };
 
-    match consent_status {
-        ConsentSnapshotStatus::Active => serde_json::json!({
-            "jobId": job_id,
-            "agentId": agent_id,
-            "applicable": true,
-            "watchAllowed": true,
-            "shouldPromptAuthorization": false,
-            "reason": "consent_active",
-            "consentStatus": consent_status,
-        }),
-        ConsentSnapshotStatus::NotSet => serde_json::json!({
-            "jobId": job_id,
-            "agentId": agent_id,
-            "applicable": true,
-            "watchAllowed": false,
-            "shouldPromptAuthorization": false,
-            "shouldPromptConfiguration": true,
-            "reason": "configuration_required",
-            "consentStatus": consent_status,
-            "title": subscription
-                .get("title")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default(),
-            "serviceDescription": executable.description.chars().take(4096).collect::<String>(),
-            "descriptionSource": executable.description_source,
-            "assetClasses": executable.asset_classes,
-        }),
+    match consent_snapshot.status {
+        ConsentSnapshotStatus::Active => {
+            let guide_status = service_guide_status(executable, consent_snapshot);
+            let required_fields =
+                required_fields_for_precheck(executable, consent_snapshot, guide_status);
+            let missing_fields = missing_snapshot_fields(consent_snapshot, &required_fields);
+            let legacy_consent = consent_snapshot
+                .version
+                .map(|version| {
+                    version
+                        < crate::commands::agent_commerce::task::common::autotrade::consent::CONSENT_VERSION
+                })
+                .unwrap_or(true);
+            let refresh_required = consent_snapshot.mode
+                == Some(crate::commands::agent_commerce::task::common::autotrade::consent::ConsentMode::Auto)
+                && (legacy_consent
+                    || !missing_fields.is_empty()
+                    || grant_refresh_required
+                    || guide_status.requires_refresh());
+            if refresh_required {
+                let authorization_refresh_required =
+                    legacy_consent || !missing_fields.is_empty() || grant_refresh_required;
+                let mut refresh_reasons = Vec::new();
+                if legacy_consent {
+                    refresh_reasons.push("legacy_consent");
+                }
+                if !missing_fields.is_empty() {
+                    refresh_reasons.push("missing_required_fields");
+                }
+                if grant_refresh_required {
+                    refresh_reasons.push("stale_trade_kit_grant");
+                }
+                if guide_status.requires_refresh() {
+                    refresh_reasons.push("service_guide_changed");
+                }
+                let guide_refresh_only = guide_status.requires_refresh()
+                    && !legacy_consent
+                    && missing_fields.is_empty()
+                    && !grant_refresh_required;
+                let mut result = serde_json::json!({
+                    "jobId": job_id,
+                    "agentId": agent_id,
+                    "applicable": true,
+                    "watchAllowed": false,
+                    "shouldPromptAuthorization": false,
+                    "shouldPromptConfiguration": true,
+                    "authorizationRefreshRequired": authorization_refresh_required,
+                    "reason": "configuration_required",
+                    "consentStatus": consent_snapshot.status,
+                    "title": subscription
+                        .get("title")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default(),
+                    "serviceDescription": executable.description.chars().take(4096).collect::<String>(),
+                    "descriptionSource": executable.description_source,
+                    "assetClasses": executable.asset_classes,
+                    "requiredFields": required_fields,
+                    "missingFields": missing_fields,
+                    "existingConsent": consent_snapshot,
+                    "refreshReasons": refresh_reasons,
+                    "modeConfirmationRequired": !guide_refresh_only,
+                });
+                add_service_guide_precheck_context(
+                    &mut result,
+                    executable,
+                    consent_snapshot,
+                    guide_status,
+                );
+                result
+            } else {
+                let mut result = serde_json::json!({
+                    "jobId": job_id,
+                    "agentId": agent_id,
+                    "applicable": true,
+                    "watchAllowed": true,
+                    "shouldPromptAuthorization": false,
+                    "reason": "consent_active",
+                    "consentStatus": consent_snapshot.status,
+                });
+                add_service_guide_precheck_context(
+                    &mut result,
+                    executable,
+                    consent_snapshot,
+                    guide_status,
+                );
+                result
+            }
+        }
+        ConsentSnapshotStatus::NotSet => {
+            let mut result = serde_json::json!({
+                "jobId": job_id,
+                "agentId": agent_id,
+                "applicable": true,
+                "watchAllowed": true,
+                "shouldPromptAuthorization": false,
+                "shouldPromptConfiguration": false,
+                "reason": crate::commands::agent_commerce::task::common::autotrade::EXECUTION_POLICY_NOT_CONFIGURED_REASON,
+                "consentStatus": consent_snapshot.status,
+            });
+            add_service_guide_precheck_context(
+                &mut result,
+                executable,
+                consent_snapshot,
+                service_guide_status(executable, consent_snapshot),
+            );
+            result
+        }
         ConsentSnapshotStatus::Unreadable => serde_json::json!({
             "jobId": job_id,
             "agentId": agent_id,
@@ -714,7 +1143,7 @@ fn compose_scoped_watch_autotrade_precheck_with_executable(
             "watchAllowed": false,
             "shouldPromptAuthorization": false,
             "reason": "consent_unreadable",
-            "consentStatus": consent_status,
+            "consentStatus": consent_snapshot.status,
             "repairCommand": format!(
                 "onchainos agent autotrade-consent-set --job-id {job_id} --mode pause"
             ),
@@ -722,11 +1151,102 @@ fn compose_scoped_watch_autotrade_precheck_with_executable(
     }
 }
 
+fn compose_missing_consent_review(
+    job_id: &str,
+    agent_id: &str,
+    subscription: &serde_json::Value,
+    executable: &PostLoginExecutableService,
+    consent_snapshot: &crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshot,
+) -> serde_json::Value {
+    let guide_status = service_guide_status(executable, consent_snapshot);
+    let required_fields = required_fields_for_precheck(executable, consent_snapshot, guide_status);
+    let missing_fields = required_fields.clone();
+    let mut result = serde_json::json!({
+        "jobId": job_id,
+        "agentId": agent_id,
+        "applicable": true,
+        "watchAllowed": false,
+        "shouldPromptAuthorization": false,
+        "shouldPromptConfiguration": true,
+        "configurationRequested": true,
+        "reason": "configuration_required",
+        "consentStatus": consent_snapshot.status,
+        "title": subscription
+            .get("title")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default(),
+        "serviceDescription": executable.description.chars().take(4096).collect::<String>(),
+        "descriptionSource": executable.description_source,
+        "assetClasses": executable.asset_classes,
+        "requiredFields": required_fields,
+        "missingFields": missing_fields,
+        "modeConfirmationRequired": true,
+    });
+    add_service_guide_precheck_context(&mut result, executable, consent_snapshot, guide_status);
+    result
+}
+
+fn normalized_existing_consent(
+    consent_snapshot: &crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshot,
+) -> serde_json::Value {
+    use crate::commands::agent_commerce::task::common::autotrade::consent::ConsentMode;
+
+    let mut value =
+        serde_json::to_value(consent_snapshot).expect("validated consent snapshot must serialize");
+    if matches!(
+        consent_snapshot.mode,
+        Some(ConsentMode::Manual | ConsentMode::Decline)
+    ) {
+        value["mode"] = serde_json::Value::String("notify_only".to_string());
+    }
+    value
+}
+
+fn compose_existing_consent_review(
+    job_id: &str,
+    agent_id: &str,
+    subscription: &serde_json::Value,
+    executable: &PostLoginExecutableService,
+    consent_snapshot: &crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshot,
+) -> serde_json::Value {
+    let guide_status = service_guide_status(executable, consent_snapshot);
+    let required_fields = required_fields_for_precheck(executable, consent_snapshot, guide_status);
+    let mut result = serde_json::json!({
+        "jobId": job_id,
+        "agentId": agent_id,
+        "applicable": true,
+        "watchAllowed": false,
+        "shouldPromptAuthorization": false,
+        "shouldPromptConfiguration": true,
+        "configurationReviewRequired": true,
+        "reason": "configuration_required",
+        "consentStatus": consent_snapshot.status,
+        "title": subscription
+            .get("title")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default(),
+        "serviceDescription": executable.description.chars().take(4096).collect::<String>(),
+        "descriptionSource": executable.description_source,
+        "assetClasses": executable.asset_classes,
+        "requiredFields": required_fields,
+        "missingFields": [],
+        "existingConsent": normalized_existing_consent(consent_snapshot),
+        "modeConfirmationRequired": true,
+    });
+    add_service_guide_precheck_context(&mut result, executable, consent_snapshot, guide_status);
+    result
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PreDeliveryConsentContext {
     pub agent_id: String,
     pub asset_class: crate::asset_class::AssetClass,
     pub title: String,
+    pub required_fields: Vec<String>,
+    pub service_guide_hash: Option<String>,
+    pub service_guide_hash_resolved: bool,
+    pub preserve_existing_mode: bool,
+    pub existing_mode: Option<String>,
 }
 
 /// Bind a restore-configuration continuation to the canonical authenticated
@@ -742,6 +1262,25 @@ pub(crate) fn bind_subscription_restore_consent_context(
         .get("reason")
         .and_then(serde_json::Value::as_str)
         .unwrap_or("missing_reason");
+    let consent_status = precheck
+        .get("consentStatus")
+        .and_then(serde_json::Value::as_str);
+    let valid_restore_state = consent_status == Some("not_set")
+        || (consent_status == Some("active")
+            && precheck
+                .get("authorizationRefreshRequired")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true))
+        || (consent_status == Some("active")
+            && precheck
+                .get("configurationReviewRequired")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true))
+        || (consent_status == Some("active")
+            && precheck
+                .get("guideRefreshRequired")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true));
     if precheck
         .get("watchAllowed")
         .and_then(serde_json::Value::as_bool)
@@ -751,10 +1290,7 @@ pub(crate) fn bind_subscription_restore_consent_context(
             .and_then(serde_json::Value::as_bool)
             != Some(true)
         || reason != "configuration_required"
-        || precheck
-            .get("consentStatus")
-            .and_then(serde_json::Value::as_str)
-            != Some("not_set")
+        || !valid_restore_state
     {
         anyhow::bail!(
             "subscription restore configuration is not allowed for this subscription (reason: {reason})"
@@ -800,6 +1336,30 @@ pub(crate) fn bind_subscription_restore_consent_context(
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default()
             .to_string(),
+        required_fields: precheck
+            .get("requiredFields")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(serde_json::Value::as_str)
+            .map(str::to_string)
+            .collect(),
+        service_guide_hash: precheck
+            .get("currentServiceGuideHash")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
+        service_guide_hash_resolved: precheck
+            .get("guideHashResolved")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+        preserve_existing_mode: precheck
+            .get("modeConfirmationRequired")
+            .and_then(serde_json::Value::as_bool)
+            == Some(false),
+        existing_mode: precheck
+            .pointer("/existingConsent/mode")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
     })
 }
 
@@ -875,14 +1435,32 @@ pub(crate) fn bind_pre_delivery_consent_context(
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default()
             .to_string(),
+        required_fields: Vec::new(),
+        service_guide_hash: None,
+        service_guide_hash_resolved: false,
+        preserve_existing_mode: false,
+        existing_mode: None,
     })
 }
 
 /// First-entry gate for an explicitly scoped watch. Non-subscription jobs and
-/// subscriptions that do not need execution authorization pass through; an
-/// executable Active subscription with no local consent returns the ASP
-/// description and any live bounded configuration continuation before watch.
+/// subscriptions without an active automatic policy pass through as notify-only.
+/// An explicit execution-policy review returns the ASP description and any live
+/// bounded configuration continuation before watch.
 pub(crate) async fn scoped_watch_autotrade_precheck(job_id: &str) -> Result<serde_json::Value> {
+    scoped_watch_autotrade_precheck_inner(job_id, false).await
+}
+
+pub(crate) async fn scoped_watch_autotrade_precheck_for_review(
+    job_id: &str,
+) -> Result<serde_json::Value> {
+    scoped_watch_autotrade_precheck_inner(job_id, true).await
+}
+
+async fn scoped_watch_autotrade_precheck_inner(
+    job_id: &str,
+    review_existing: bool,
+) -> Result<serde_json::Value> {
     use crate::commands::agent_commerce::task::common::autotrade::{
         self, consent, grants, profile,
     };
@@ -905,9 +1483,9 @@ pub(crate) async fn scoped_watch_autotrade_precheck(job_id: &str) -> Result<serd
         .get("list")
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| anyhow::anyhow!("subscription list is malformed"))?;
-    let subscription = list.iter().find(|item| {
-        item.get("jobId").and_then(serde_json::Value::as_str) == Some(job_id)
-    });
+    let subscription = list
+        .iter()
+        .find(|item| item.get("jobId").and_then(serde_json::Value::as_str) == Some(job_id));
     let mut resolved_executable = None;
 
     if let Some(subscription) = subscription {
@@ -927,6 +1505,7 @@ pub(crate) async fn scoped_watch_autotrade_precheck(job_id: &str) -> Result<serd
                 &mut client,
                 &snapshot.agent_id,
                 subscription,
+                true,
             )
             .await?;
             if let Some(executable) = resolved_executable.as_ref() {
@@ -956,16 +1535,25 @@ pub(crate) async fn scoped_watch_autotrade_precheck(job_id: &str) -> Result<serd
         }
     }
 
-    let consent_status = consent::consent_snapshot(job_id).status;
+    let consent_snapshot = consent::consent_snapshot(job_id);
+    let grant_refresh_required = resolved_executable.as_ref().is_some_and(requires_trade_kit)
+        && consent_snapshot.mode == Some(consent::ConsentMode::Auto)
+        && (grants::check_grant(job_id, "trade_kit", "buy", "1").is_err()
+            || grants::check_grant(job_id, "trade_kit", "sell", "1").is_err());
 
     // A scoped watch must not surface authorization cards left pending by the
-    // retired delivery-time flow after an executable policy is already active.
+    // retired delivery-time flow, regardless of whether a replacement policy
+    // has already been configured.
     // This changes only those exact control decisions to handled; notification
     // history and unrelated decisions remain untouched.
     if resolved_executable.is_some()
-        && consent_status == consent::ConsentSnapshotStatus::Active
+        && consent_snapshot.status == consent::ConsentSnapshotStatus::Active
     {
         crate::commands::agent_commerce::task::common::okx_a2a::mark_retired_autotrade_decisions_handled(
+            job_id,
+        )?;
+    } else if resolved_executable.is_some() {
+        crate::commands::agent_commerce::task::common::okx_a2a::mark_retired_autotrade_mode_decisions_handled(
             job_id,
         )?;
     }
@@ -975,38 +1563,84 @@ pub(crate) async fn scoped_watch_autotrade_precheck(job_id: &str) -> Result<serd
         &snapshot.agent_id,
         subscription,
         resolved_executable.as_ref(),
-        consent_status,
+        &consent_snapshot,
+        grant_refresh_required,
     );
-    if result.get("reason").and_then(serde_json::Value::as_str)
-        == Some("configuration_required")
-    {
-        if let Some(file) = autotrade::continuation::load_live_for_job(
-            job_id,
-            &snapshot.agent_id,
-        )? {
+    if review_existing {
+        if let (Some(subscription), Some(executable)) = (subscription, resolved_executable.as_ref())
+        {
+            if consent_snapshot.status == consent::ConsentSnapshotStatus::NotSet
+                && result.get("reason").and_then(serde_json::Value::as_str)
+                    == Some(autotrade::EXECUTION_POLICY_NOT_CONFIGURED_REASON)
+            {
+                result = compose_missing_consent_review(
+                    job_id,
+                    &snapshot.agent_id,
+                    subscription,
+                    executable,
+                    &consent_snapshot,
+                );
+            } else if result.get("reason").and_then(serde_json::Value::as_str)
+                == Some("consent_active")
+                && matches!(
+                    consent_snapshot.mode,
+                    Some(
+                        consent::ConsentMode::Auto
+                            | consent::ConsentMode::Manual
+                            | consent::ConsentMode::Decline
+                    )
+                )
+            {
+                result = compose_existing_consent_review(
+                    job_id,
+                    &snapshot.agent_id,
+                    subscription,
+                    executable,
+                    &consent_snapshot,
+                );
+            }
+        }
+    }
+    if result.get("reason").and_then(serde_json::Value::as_str) == Some("configuration_required") {
+        if let Some(file) = autotrade::continuation::load_live_for_job(job_id, &snapshot.agent_id)?
+        {
             if file.origin == autotrade::continuation::Origin::SubscriptionRestore {
-                let missing_fields = file.missing_fields();
-                if let Some(object) = result.as_object_mut() {
-                    object.insert(
-                        "continuationId".to_string(),
-                        serde_json::Value::String(file.continuation_id),
-                    );
-                    object.insert(
-                        "selectedMode".to_string(),
-                        serde_json::to_value(file.selected_mode)?,
-                    );
-                    object.insert(
-                        "modeConfirmed".to_string(),
-                        serde_json::Value::Bool(file.mode_confirmed),
-                    );
-                    object.insert(
-                        "requiredFields".to_string(),
-                        serde_json::to_value(file.required_fields)?,
-                    );
-                    object.insert(
-                        "missingFields".to_string(),
-                        serde_json::to_value(missing_fields)?,
-                    );
+                let guide_hash_resolved = result
+                    .get("guideHashResolved")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+                let current_guide_hash = result
+                    .get("currentServiceGuideHash")
+                    .and_then(serde_json::Value::as_str);
+                let continuation_matches_guide = !guide_hash_resolved
+                    || (file.service_guide_hash_resolved
+                        && file.service_guide_hash.as_deref() == current_guide_hash);
+                if continuation_matches_guide {
+                    let missing_fields = file.missing_fields();
+                    if let Some(object) = result.as_object_mut() {
+                        object.insert(
+                            "continuationId".to_string(),
+                            serde_json::Value::String(file.continuation_id),
+                        );
+                        object.insert(
+                            "selectedMode".to_string(),
+                            serde_json::to_value(file.selected_mode)?,
+                        );
+                        object.insert(
+                            "modeConfirmed".to_string(),
+                            serde_json::Value::Bool(file.mode_confirmed),
+                        );
+                        object.insert(
+                            "requiredFields".to_string(),
+                            serde_json::to_value(file.required_fields)?,
+                        );
+                        object.insert(
+                            "missingFields".to_string(),
+                            serde_json::to_value(missing_fields)?,
+                        );
+                    }
+                } else {
+                    autotrade::continuation::clear(job_id);
                 }
             } else {
                 anyhow::bail!(
@@ -1018,10 +1652,15 @@ pub(crate) async fn scoped_watch_autotrade_precheck(job_id: &str) -> Result<serd
     Ok(result)
 }
 
-/// State captured before the login heartbeat registers this machine. Comparing
-/// against the pre-heartbeat device table is what lets login distinguish a
-/// genuinely new device from an existing device whose receipt was deliberately
-/// disabled by the user.
+pub(crate) async fn resolve_post_login_agentic_id() -> Result<String> {
+    create::resolve_user_agent()
+        .await
+        .map(|(agent_id, _)| agent_id)
+}
+
+/// State captured before the login heartbeat registers this machine. It keeps
+/// existing device routing intact while allowing a newly registered device to
+/// receive the active subscription routes after the heartbeat succeeds.
 pub(crate) struct PostLoginSubscriptionsPreparation {
     agent_id: String,
     current_device_id: String,
@@ -1033,111 +1672,50 @@ pub(crate) struct PostLoginSubscriptionsPreparation {
 
 fn device_snapshot_contains(devices: &serde_json::Value, device_id: &str) -> Option<bool> {
     let list = devices.get("list")?.as_array()?;
-    Some(list.iter().any(|row| {
-        row.get("deviceId").and_then(serde_json::Value::as_str) == Some(device_id)
-    }))
+    Some(
+        list.iter()
+            .any(|row| row.get("deviceId").and_then(serde_json::Value::as_str) == Some(device_id)),
+    )
 }
 
 fn device_needs_default_routing(was_registered: bool, already_pending: bool) -> bool {
     already_pending || !was_registered
 }
 
-pub(crate) async fn resolve_post_login_agentic_id() -> Result<String> {
-    create::resolve_user_agent()
-        .await
-        .map(|(agent_id, _)| agent_id)
-}
-
-/// Fetch the device table before the registration heartbeat. Device-query
-/// failure deliberately suppresses only automatic routing/the login table; the
-/// login orchestrator still sends the heartbeat so device registration is never
-/// coupled to this optional classification step.
+/// Capture device routing state before the login heartbeat. Failure here is
+/// optional: wallet login still completes and the next login can retry setup.
 pub(crate) async fn prepare_post_login_subscriptions(
     agentic_id: &str,
 ) -> Option<PostLoginSubscriptionsPreparation> {
-    let agent_id = match select_subscription_agent_id(agentic_id, "") {
-        Ok(agent_id) => agent_id,
-        Err(e) => {
-            if cfg!(feature = "debug-log") {
-                eprintln!("[DEBUG][post-login] buyer identity unavailable: {e:#}");
-            }
-            return None;
-        }
-    };
+    let agent_id = select_subscription_agent_id(agentic_id, "").ok()?;
     let mut client = TaskApiClient::new();
-
-    let Some(current_device_id) = crate::device::id::get_cached_device_id().map(str::to_string)
-    else {
-        if cfg!(feature = "debug-log") {
-            eprintln!("[DEBUG][post-login] current device id unavailable");
-        }
-        return None;
-    };
-    let devices = match device_routing::fetch_device_list_snapshot(
-        &mut client,
-        &agent_id,
-        1,
-        20,
-    )
-    .await
-    {
-        Ok(snapshot) => snapshot,
-        Err(e) => {
-            if cfg!(feature = "debug-log") {
-                eprintln!(
-                    "[DEBUG][post-login] pre-registration device snapshot unavailable: {e:#}"
-                );
-            }
-            return None;
-        }
-    };
-    let Some(current_device_was_registered) =
-        device_snapshot_contains(&devices, &current_device_id)
-    else {
-        if cfg!(feature = "debug-log") {
-            eprintln!("[DEBUG][post-login] malformed pre-registration device snapshot");
-        }
-        return None;
-    };
-
-    let already_pending = match device_routing::new_device_routing_is_pending(
+    let current_device_id = crate::device::id::get_cached_device_id()?.to_string();
+    let devices = device_routing::fetch_device_list_snapshot(&mut client, &agent_id, 1, 20)
+        .await
+        .ok()?;
+    let current_device_was_registered = device_snapshot_contains(&devices, &current_device_id)?;
+    let already_pending = device_routing::new_device_routing_is_pending(
         &client.base_url,
         &agent_id,
         &current_device_id,
-    ) {
-        Ok(pending) => pending,
-        Err(e) => {
-            if cfg!(feature = "debug-log") {
-                eprintln!("[DEBUG][post-login] pending routing marker unavailable: {e:#}");
-            }
-            return None;
-        }
-    };
+    )
+    .ok()?;
     let current_device_needs_default_routing =
         device_needs_default_routing(current_device_was_registered, already_pending);
     if !current_device_was_registered && !already_pending {
-        if let Err(e) = device_routing::mark_new_device_routing_pending(
+        device_routing::mark_new_device_routing_pending(
             &client.base_url,
             &agent_id,
             &current_device_id,
-        ) {
-            if cfg!(feature = "debug-log") {
-                eprintln!("[DEBUG][post-login] cannot persist pending routing marker: {e:#}");
-            }
-            // Automatic routing cannot safely start without durable state. The
-            // login orchestrator still reports the device heartbeat.
-            return None;
-        }
+        )
+        .ok()?;
     } else if current_device_was_registered && !already_pending {
-        // A completed marker is not needed once this device is visible. Deletion
-        // is merely garbage collection: Completed never counts as pending.
         let _ = device_routing::clear_new_device_routing_state(
             &client.base_url,
             &agent_id,
             &current_device_id,
         );
     }
-
     Some(PostLoginSubscriptionsPreparation {
         agent_id,
         current_device_id,
@@ -1148,46 +1726,31 @@ pub(crate) async fn prepare_post_login_subscriptions(
     })
 }
 
-/// Complete new-device routing after the heartbeat. Existing devices are never
-/// rewritten, preserving any manual opt-out. A new device is merged into every
-/// explicit subscription list and only then is the login snapshot returned.
+/// Finish the optional new-device subscription routing after the login
+/// heartbeat, then return the same compact login subscription summary.
 pub(crate) async fn finalize_post_login_subscriptions(
     prepared: PostLoginSubscriptionsPreparation,
     device_registration_succeeded: bool,
 ) -> Option<serde_json::Value> {
     let mut client = TaskApiClient::new();
-    let snapshot = match subscription_ops::fetch_my_subscriptions_snapshot_for_agent(
+    let snapshot = subscription_ops::fetch_my_subscriptions_snapshot_for_agent(
         &mut client,
         subscription_ops::SubscriptionRole::Buyer,
         None,
         prepared.agent_id.clone(),
     )
     .await
-    {
-        Ok(snapshot) => snapshot,
-        Err(e) => {
-            if cfg!(feature = "debug-log") {
-                eprintln!("[DEBUG][post-login] subscription snapshot unavailable: {e:#}");
-            }
-            // Keep a new device's pending marker. The next login retries from a
-            // fresh subscription list; wallet login itself still succeeds.
-            return None;
-        }
-    };
+    .ok()?;
     if snapshot.is_empty {
         if prepared.current_device_needs_default_routing
             && (prepared.current_device_was_registered || device_registration_succeeded)
         {
-            if let Err(e) = device_routing::mark_new_device_routing_completed(
+            device_routing::mark_new_device_routing_completed(
                 &prepared.routing_api_base_url,
                 &prepared.agent_id,
                 &prepared.current_device_id,
-            ) {
-                if cfg!(feature = "debug-log") {
-                    eprintln!("[DEBUG][post-login] empty-list routing completion failed: {e:#}");
-                }
-                return None;
-            }
+            )
+            .ok()?;
             let _ = device_routing::clear_new_device_routing_state(
                 &prepared.routing_api_base_url,
                 &prepared.agent_id,
@@ -1196,22 +1759,15 @@ pub(crate) async fn finalize_post_login_subscriptions(
         }
         return None;
     }
-    let mut subscriptions = snapshot.data;
-
     if prepared.current_device_needs_default_routing
         && !prepared.current_device_was_registered
         && !device_registration_succeeded
     {
-        if cfg!(feature = "debug-log") {
-            eprintln!(
-                "[DEBUG][post-login] new device registration failed; suppressing subscription table"
-            );
-        }
         return None;
     }
-
-    let devices = if prepared.current_device_needs_default_routing {
-        match device_routing::add_new_device_to_all_subscriptions(
+    let mut subscriptions = snapshot.data;
+    if prepared.current_device_needs_default_routing {
+        device_routing::add_new_device_to_all_subscriptions(
             &mut client,
             &prepared.routing_api_base_url,
             &prepared.agent_id,
@@ -1219,132 +1775,279 @@ pub(crate) async fn finalize_post_login_subscriptions(
             &prepared.current_device_id,
         )
         .await
-        {
-            Ok(updated) => {
-                if cfg!(feature = "debug-log") {
-                    eprintln!(
-                        "[DEBUG][post-login] added new device to {updated} explicit subscription routes"
-                    );
-                }
-            }
-            Err(e) => {
-                if cfg!(feature = "debug-log") {
-                    eprintln!(
-                        "[DEBUG][post-login] new-device subscription routing unavailable: {e:#}"
-                    );
-                }
-                // The durable marker remains, so the next login retries only
-                // subscriptions whose fresh lists still lack this device.
-                return None;
-            }
-        }
-
-        if let Err(e) = device_routing::clear_new_device_routing_state(
+        .ok()?;
+        let _ = device_routing::clear_new_device_routing_state(
             &prepared.routing_api_base_url,
             &prepared.agent_id,
             &prepared.current_device_id,
-        ) {
-            if cfg!(feature = "debug-log") {
-                eprintln!("[DEBUG][post-login] routing completed; state cleanup deferred: {e:#}");
-            }
-        }
-
-        if prepared.current_device_was_registered {
-            Some(prepared.pre_registration_devices)
-        } else {
-            match device_routing::fetch_device_list_snapshot(
-                &mut client,
-                &prepared.agent_id,
-                1,
-                20,
-            )
-            .await
-            {
-                Ok(snapshot)
-                    if device_snapshot_contains(&snapshot, &prepared.current_device_id)
-                        == Some(true) =>
-                {
-                    Some(snapshot)
-                }
-                Ok(_) => {
-                    if cfg!(feature = "debug-log") {
-                        eprintln!(
-                            "[DEBUG][post-login] registered device not visible yet; using degraded render"
-                        );
-                    }
-                    None
-                }
-                Err(e) => {
-                    if cfg!(feature = "debug-log") {
-                        eprintln!(
-                            "[DEBUG][post-login] post-registration device snapshot unavailable; degrading: {e:#}"
-                        );
-                    }
-                    None
-                }
-            }
-        }
-    } else {
-        // Existing device with no pending onboarding marker: never rewrite its
-        // subscriptions, preserving every manual per-task opt-out.
-        Some(prepared.pre_registration_devices)
-    };
-
+        );
+        // Re-read is not needed for the compact count-only summary; retaining
+        // this snapshot does preserve the pre-registration distinction above.
+        let _ = prepared.pre_registration_devices;
+    }
     add_post_login_autotrade_prechecks(&mut client, &mut subscriptions, &prepared.agent_id).await;
-    compose_post_login_subscriptions(subscriptions, false, devices)
+    compose_post_login_subscriptions(subscriptions)
+}
+
+/// Fetch the active-subscription count shown after login. This path is
+/// independent from device discovery and subscription receive routing.
+pub(crate) async fn fetch_post_login_subscriptions(agentic_id: &str) -> Option<serde_json::Value> {
+    let agent_id = match select_subscription_agent_id(agentic_id, "") {
+        Ok(agent_id) => agent_id,
+        Err(e) => {
+            if cfg!(feature = "debug-log") {
+                eprintln!("[DEBUG][post-login] buyer identity unavailable: {e:#}");
+            }
+            return None;
+        }
+    };
+    let mut client = TaskApiClient::new();
+    let snapshot = match subscription_ops::fetch_my_subscriptions_snapshot_for_agent(
+        &mut client,
+        subscription_ops::SubscriptionRole::Buyer,
+        None,
+        agent_id.clone(),
+    )
+    .await
+    {
+        Ok(snapshot) => snapshot,
+        Err(e) => {
+            if cfg!(feature = "debug-log") {
+                eprintln!("[DEBUG][post-login] subscription snapshot unavailable: {e:#}");
+            }
+            return None;
+        }
+    };
+    let mut subscriptions = snapshot.data;
+    add_post_login_autotrade_prechecks(&mut client, &mut subscriptions, &agent_id).await;
+    compose_post_login_subscriptions(subscriptions)
 }
 
 pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
+    // Resolve the logged-in User Agent before saving its device-local preference.
+    let cmd = match cmd {
+        TaskCommand::SubscriptionExecutionConfigSet {
+            service_id,
+            execution_mode,
+            replace,
+        } => return handle_subscription_execution_config_set(service_id, execution_mode, replace).await,
+        cmd => cmd,
+    };
     let mut client = TaskApiClient::new();
 
     match cmd {
         // ── User actions ─────────────────────────────────────────
-        TaskCommand::Create { description, budget, max_budget, currency, title, provider, attachments, endpoint, payment_mode, service_id, service_params, service_token_address, service_token_amount } =>
-            create::handle_create(&mut client, create::CreateTaskParams {
-                description, budget, max_budget, currency,
-                title, provider, attachments, endpoint, payment_mode,
-                service_id, service_params, service_token_address, service_token_amount,
-            }).await,
-        TaskCommand::CreateSubscribe { service_id, use_trial, service_params, service_token_amount, service_token_address, auto_renew, title, description, provider_agent_id, service_description, service_interval, autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, autotrade_environment, autotrade_margin_mode, autotrade_order_policy, format, exclude_device } => {
+        TaskCommand::Create {
+            title,
+            description,
+            description_summary,
+            provider_agent_id,
+            payment_token_symbol,
+            payment_token_amount,
+            attachments,
+            service_id,
+            service_params,
+            service_token_address,
+            service_token_amount,
+            category_code,
+            min_credit_score,
+            visibility,
+            chain_id,
+            service_guide,
+            service_guide_hash,
+            guide_consent_json,
+        } => {
+            create::handle_create(
+                &mut client,
+                create::CreateTaskParams {
+                    title,
+                    description,
+                    description_summary,
+                    provider_agent_id,
+                    payment_token_symbol,
+                    payment_token_amount,
+                    attachments,
+                    service_id,
+                    service_params,
+                    service_token_address,
+                    service_token_amount,
+                    category_code,
+                    min_credit_score,
+                    visibility,
+                    chain_id,
+                    service_guide,
+                    service_guide_hash,
+                    guide_consent_json,
+                },
+            )
+            .await
+        }
+        TaskCommand::CreateSubscribe {
+            service_id,
+            use_trial,
+            service_params,
+            service_token_amount,
+            service_token_address,
+            auto_renew,
+            title,
+            description,
+            attachments,
+            provider_agent_id,
+            service_guide,
+            service_guide_hash,
+            guide_consent_json,
+            service_interval,
+            format,
+        } => {
             let auto_renew = parse_bool_or_int(&auto_renew, "auto-renew")?;
-            create_subscribe::handle_create_subscribe(&mut client, create_subscribe::CreateSubscribeParams {
-                service_id, use_trial, service_params, service_token_amount, service_token_address,
-                auto_renew, title, description, provider_agent_id, service_description, service_interval,
-                autotrade_mode, autotrade_amount, autotrade_cap, autotrade_quote, autotrade_environment,
-                autotrade_margin_mode, autotrade_order_policy, format, exclude_device,
-            }).await
+            create_subscribe::handle_create_subscribe(
+                &mut client,
+                create_subscribe::CreateSubscribeParams {
+                    service_id,
+                    use_trial,
+                    service_params,
+                    service_token_amount,
+                    service_token_address,
+                    auto_renew,
+                    title,
+                    description,
+                    attachments,
+                    provider_agent_id,
+                    service_guide,
+                    service_guide_hash,
+                    guide_consent_json,
+                    service_interval,
+                    format,
+                },
+            )
+            .await
         }
-        TaskCommand::AspMatch { job_id, provider_agent_id, payment_token_amount, page, agent_id, format } =>
-            asp_ops::handle_asp_match(&mut client, &job_id, provider_agent_id.as_deref(), payment_token_amount, page, agent_id.as_deref(), &format).await,
-        TaskCommand::TaskServiceSelect(args) =>
-            asp_ops::handle_task_service_select(&args.service_match, &args.format).await,
-        TaskCommand::SetAsp { job_id, provider_agent_id, service_id, service_type, service_params, service_token_address, service_token_amount, payment_token_symbol, agent_id } =>
-            asp_ops::handle_set_asp(&mut client, &job_id, &provider_agent_id, &service_id, &service_type, &service_params, &service_token_address, &service_token_amount, payment_token_symbol.as_deref(), agent_id.as_deref()).await,
-        TaskCommand::ResetAsp { job_id, agent_id } =>
-            asp_ops::handle_reset_asp(&mut client, &job_id, agent_id.as_deref()).await,
-        TaskCommand::UserReject { job_id, agent_id } =>
-            asp_ops::handle_user_reject(&mut client, &job_id, agent_id.as_deref()).await,
-        TaskCommand::MarkFailed { job_id, provider_agent_id } => {
-            negotiate::mark_failed(&job_id, &provider_agent_id)
+        TaskCommand::AspMatch {
+            job_id,
+            provider_agent_id,
+            payment_token_amount,
+            page,
+            agent_id,
+            format,
+        } => {
+            asp_ops::handle_asp_match(
+                &mut client,
+                &job_id,
+                provider_agent_id.as_deref(),
+                payment_token_amount,
+                page,
+                agent_id.as_deref(),
+                &format,
+            )
+            .await
         }
-        TaskCommand::SetPaymentMode { job_id, payment_mode, token_symbol, token_amount, endpoint } =>
-            accept::handle_set_payment_mode(&mut client, &job_id, payment_mode.as_deref(), token_symbol.as_deref(), token_amount.as_deref(), endpoint.as_deref()).await,
-        TaskCommand::ConfirmAccept { job_id } =>
-            accept::handle_confirm_accept(&mut client, &job_id, None).await,
-        TaskCommand::Task402Pay { job_id, provider_agent_id, accepts, endpoint, token_symbol, token_amount, from, body, force } =>
-            accept::handle_task_402_pay(&mut client, &job_id, &provider_agent_id, &accepts, &endpoint, &token_symbol, &token_amount, from.as_deref(), body.as_deref(), force).await,
-        TaskCommand::X402Check { endpoint, agent_id, body } =>
-            accept::handle_x402_check(&mut client, &endpoint, agent_id.as_deref(), body.as_deref()).await,
-        TaskCommand::Complete { job_id } =>
-            complete::handle_complete(&mut client, &job_id).await,
-        TaskCommand::Reject { job_id, reason } =>
-            reject::handle_reject(&mut client, &job_id, &reason).await,
-        TaskCommand::Close { job_id, agent_id } =>
-            close::handle_close(&mut client, &job_id, agent_id.as_deref()).await,
-        TaskCommand::ClaimAutoRefund { job_id } =>
-            claim_auto_refund::handle_claim_auto_refund(&mut client, &job_id).await,
-        TaskCommand::RejectApply { job_id, agent_id } =>
-            reject_apply::handle_reject_apply(&mut client, &job_id, agent_id.as_deref()).await,
+        TaskCommand::TaskServiceSelect(args) => {
+            asp_ops::handle_task_service_select(
+                &mut client,
+                &args.service_match,
+                args.agentic_id.as_deref(),
+                &args.format,
+            )
+            .await
+        }
+        TaskCommand::ServiceDetail(args) => {
+            service_detail::handle_service_detail(&mut client, &args.sid, &args.agentic_id).await
+        }
+        TaskCommand::TaskCreatePrepare(args) => {
+            task_create_prepare::handle_task_create_prepare(&mut client, &args.sid).await
+        }
+        TaskCommand::SetAsp {
+            job_id,
+            provider_agent_id,
+            service_id,
+            service_type,
+            service_params,
+            service_token_address,
+            service_token_amount,
+            payment_token_symbol,
+            agent_id,
+        } => {
+            asp_ops::handle_set_asp(
+                &mut client,
+                &job_id,
+                &provider_agent_id,
+                &service_id,
+                &service_type,
+                &service_params,
+                &service_token_address,
+                &service_token_amount,
+                payment_token_symbol.as_deref(),
+                agent_id.as_deref(),
+            )
+            .await
+        }
+        TaskCommand::ResetAsp { job_id, agent_id } => {
+            asp_ops::handle_reset_asp(&mut client, &job_id, agent_id.as_deref()).await
+        }
+        TaskCommand::UserReject { job_id, agent_id } => {
+            asp_ops::handle_user_reject(&mut client, &job_id, agent_id.as_deref()).await
+        }
+        TaskCommand::MarkFailed {
+            job_id,
+            provider_agent_id,
+        } => negotiate::mark_failed(&job_id, &provider_agent_id),
+        TaskCommand::SetPaymentMode {
+            job_id,
+            payment_mode,
+            token_symbol,
+            token_amount,
+        } => {
+            accept::handle_set_payment_mode(
+                &mut client,
+                &job_id,
+                payment_mode.as_deref(),
+                token_symbol.as_deref(),
+                token_amount.as_deref(),
+            )
+            .await
+        }
+        TaskCommand::ConfirmAccept { job_id } => {
+            accept::handle_confirm_accept(&mut client, &job_id, None).await
+        }
+        TaskCommand::Complete { job_id } => {
+            let result = v2::complete::handle(&mut client, &job_id).await?;
+            crate::output::success(result);
+            Ok(())
+        }
+        TaskCommand::Reject { job_id, reason: _ } => {
+            anyhow::bail!(
+                "direct reject is disabled by Refund; run `onchainos agent refund-prepare {job_id} --reason <user-authored-reason>` and execute only the returned confirmed action"
+            )
+        }
+        TaskCommand::RefundPrepare { job_id, reason } => {
+            refund::handle_prepare(&mut client, &job_id, reason.as_deref()).await
+        }
+        TaskCommand::RefundExecute {
+            job_id,
+            operation,
+            refund_context_id,
+            reason,
+            confirm,
+        } => {
+            refund::handle_execute(
+                &mut client,
+                &job_id,
+                operation,
+                &refund_context_id,
+                reason.as_deref(),
+                confirm,
+            )
+            .await
+        }
+        TaskCommand::Close { job_id, agent_id } => {
+            close::handle_close(&mut client, &job_id, agent_id.as_deref()).await
+        }
+        TaskCommand::ClaimAutoRefund { job_id } => {
+            claim_auto_refund::handle_claim_auto_refund(&mut client, &job_id).await
+        }
+        TaskCommand::RejectApply { job_id, agent_id } => {
+            reject_apply::handle_reject_apply(&mut client, &job_id, agent_id.as_deref()).await
+        }
         TaskCommand::TaskAttach { job_id, file_paths } => {
             if file_paths.is_empty() {
                 anyhow::bail!("at least one --file <path> is required");
@@ -1354,35 +2057,66 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             }
             Ok(())
         }
-        TaskCommand::ListAttachments { job_id } => {
-            attachments::handle_task_attachments(&job_id)
-        }
+        TaskCommand::ListAttachments { job_id } => attachments::handle_task_attachments(&job_id),
 
         // ── Subscription management ─────────────────────────────
-        TaskCommand::SubscribeCancel { sub_id } =>
-            subscription_ops::handle_subscribe_cancel(&mut client, &sub_id).await,
-        TaskCommand::StartAutorenew { sub_id } =>
-            subscription_ops::handle_start_autorenew(&mut client, &sub_id).await,
-        TaskCommand::SubscribeReject { sub_id, reason } =>
-            reject::handle_reject(&mut client, &sub_id, &reason).await,
-        TaskCommand::SubscribeDetail { sub_id, format } =>
-            subscription_ops::handle_subscribe_detail(&mut client, &sub_id, &format).await,
-        TaskCommand::SubscribeDeviceUpdate { job_id, device_list, items } =>
-            device_routing::handle_subscribe_device_update(&mut client, job_id.as_deref(), device_list.as_deref(), items.as_deref()).await,
-        TaskCommand::SubscribeOfflineUpdate { job_id, flag } =>
-            offline_receive::handle_subscribe_offline_update(&mut client, &job_id, &flag).await,
-        TaskCommand::DeviceList { page, page_size } =>
-            device_routing::handle_device_list(&mut client, page, page_size).await,
+        TaskCommand::SubscribeCancel { sub_id } => {
+            subscription_ops::handle_subscribe_cancel(&mut client, &sub_id).await
+        }
+        TaskCommand::StartAutorenew { sub_id } => {
+            subscription_ops::handle_start_autorenew(&mut client, &sub_id).await
+        }
+        TaskCommand::SubscribeReject { sub_id, reason: _ } => {
+            subscription_ops::handle_subscribe_reject(&mut client, &sub_id, "").await
+        }
+        TaskCommand::SubscribeDetail { sub_id, format } => {
+            subscription_ops::handle_subscribe_detail(&mut client, &sub_id, &format).await
+        }
+        TaskCommand::SubscribeDeviceUpdate {
+            job_id,
+            device_list,
+            items,
+        } => {
+            device_routing::handle_subscribe_device_update(
+                &mut client,
+                job_id.as_deref(),
+                device_list.as_deref(),
+                items.as_deref(),
+            )
+            .await
+        }
+        TaskCommand::SubscribeOfflineUpdate { job_id, flag } => {
+            offline_receive::handle_subscribe_offline_update(&mut client, &job_id, &flag).await
+        }
+        TaskCommand::SubscriptionExecutionConfigSet {
+            service_id,
+            execution_mode,
+            replace,
+        } => handle_subscription_execution_config_set(service_id, execution_mode, replace).await,
+        TaskCommand::DeviceList { page, page_size } => {
+            device_routing::handle_device_list(&mut client, page, page_size).await
+        }
 
         // ── Read-only queries ────────────────────────────────────
-        TaskCommand::Payment { job_id, agent_id } =>
-            query::handle_payment(&mut client, &job_id, agent_id.as_deref().unwrap_or("")).await,
+        TaskCommand::Payment { job_id, agent_id } => {
+            query::handle_payment(&mut client, &job_id, agent_id.as_deref().unwrap_or("")).await
+        }
         TaskCommand::MySubscriptions { role, status } => {
             subscription_ops::handle_my_subscriptions(&mut client, role, status).await
         }
-        TaskCommand::SubscribeCost {} =>
-            subscription_ops::handle_subscribe_cost(&mut client).await,
-
+        TaskCommand::MyTasks {
+            task_type,
+            status_type,
+            page,
+            page_size,
+        } => my_tasks::handle_my_tasks(&mut client, task_type, status_type, page, page_size).await,
+        TaskCommand::SubscriptionList { cursor, page_size } => {
+            subscription_list::handle_subscription_list(cursor.as_deref(), page_size).await
+        }
+        TaskCommand::TaskVisibilityUpdate { job_id, visibility } => {
+            visibility::handle_task_visibility_update(&mut client, &job_id, visibility).await
+        }
+        TaskCommand::SubscribeCost {} => subscription_ops::handle_subscribe_cost(&mut client).await,
     }
 }
 
@@ -1390,61 +2124,63 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
 mod post_login_tests {
     use super::*;
     use crate::asset_class::AssetClass;
-    use crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus;
+    use crate::commands::agent_commerce::task::common::autotrade::consent::{
+        ConsentMode, ConsentSnapshot, ConsentSnapshotStatus, MarginMode, OrderPolicy,
+        TradeKitAuthMode, CONSENT_VERSION,
+    };
+    use crate::commands::agent_commerce::task::common::autotrade::trade_kit::TradeEnvironment;
     use serde_json::json;
+
+    fn consent_snapshot(status: ConsentSnapshotStatus) -> ConsentSnapshot {
+        let active = status == ConsentSnapshotStatus::Active;
+        ConsentSnapshot {
+            status,
+            version: active.then_some(CONSENT_VERSION),
+            mode: active.then_some(ConsentMode::Auto),
+            cap_u: active.then(|| "100".to_string()),
+            trade_amount_u: active.then(|| "10".to_string()),
+            quote_token: active.then(|| "usdt".to_string()),
+            trade_environment: active.then_some(TradeEnvironment::Live),
+            margin_mode: active.then_some(MarginMode::Cross),
+            order_policy: active.then_some(OrderPolicy::Market),
+            auth_mode: active.then_some(TradeKitAuthMode::OAuth),
+            guide_hash: None,
+            dynamic_settings: Default::default(),
+            created_at: active.then_some(1),
+            expires_at: active.then_some(u64::MAX),
+        }
+    }
 
     #[test]
     fn empty_subscriptions_produce_no_post_login_block() {
-        let block = compose_post_login_subscriptions(
-            json!({ "list": [] }),
-            true,
-            Some(json!({ "list": [{ "deviceId": "d1" }] })),
-        );
+        let block = compose_post_login_subscriptions(json!({ "list": [] }));
         assert!(block.is_none());
     }
 
     #[test]
-    fn non_empty_subscriptions_include_complete_device_snapshot() {
-        let subscriptions = json!({ "list": [{ "jobId": "j1" }] });
-        let devices = json!({ "list": [{ "deviceId": "d1" }], "total": 1 });
-        let block =
-            compose_post_login_subscriptions(subscriptions.clone(), false, Some(devices.clone()))
-                .expect("non-empty subscriptions must produce a block");
-        assert_eq!(block["subscriptions"], subscriptions);
-        assert_eq!(block["devices"], devices);
+    fn active_subscriptions_produce_a_count_only_hint() {
+        let block = compose_post_login_subscriptions(json!({
+            "list": [{ "jobId": "j1", "status": 1 }]
+        }))
+        .expect("active subscriptions must produce a hint");
+        assert_eq!(block, json!({ "activeSubscriptionCount": 1 }));
     }
 
     #[test]
-    fn device_failure_keeps_subscriptions_and_selects_degraded_render() {
-        let subscriptions = json!({ "list": [{ "jobId": "j1" }] });
-        let block = compose_post_login_subscriptions(subscriptions.clone(), false, None)
-            .expect("subscription data must survive a device-list failure");
-        assert_eq!(block["subscriptions"], subscriptions);
-        assert!(block["devices"].is_null());
+    fn ended_only_subscriptions_produce_no_post_login_hint() {
+        let block = compose_post_login_subscriptions(json!({
+            "list": [{ "jobId": "j1", "status": 6 }]
+        }));
+        assert!(block.is_none());
     }
 
     #[test]
-    fn pre_heartbeat_device_snapshot_distinguishes_new_and_existing_devices() {
-        let devices = json!({
-            "list": [
-                { "deviceId": "d1", "deviceName": "Mac 1" },
-                { "deviceId": "d2", "deviceName": "Mac 2" }
-            ]
-        });
-        assert_eq!(device_snapshot_contains(&devices, "d1"), Some(true));
-        assert_eq!(device_snapshot_contains(&devices, "d-new"), Some(false));
-        assert_eq!(device_snapshot_contains(&json!({}), "d1"), None);
-    }
-
-    #[test]
-    fn only_new_or_interrupted_devices_need_default_routing() {
-        assert!(device_needs_default_routing(false, false));
-        assert!(device_needs_default_routing(false, true));
-        assert!(device_needs_default_routing(true, true));
-        assert!(
-            !device_needs_default_routing(true, false),
-            "ordinary re-login must preserve this device's manual opt-outs"
-        );
+    fn active_subscription_hint_does_not_need_device_data() {
+        let block = compose_post_login_subscriptions(json!({
+            "list": [{ "jobId": "j1", "statusName": "ACTIVE" }]
+        }))
+        .expect("active subscription hint must not need device data");
+        assert_eq!(block, json!({ "activeSubscriptionCount": 1 }));
     }
 
     #[test]
@@ -1490,9 +2226,7 @@ mod post_login_tests {
     }
 
     #[test]
-    fn scoped_watch_precheck_uses_a_recovered_service_description() {
-        use crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus;
-
+    fn scoped_watch_precheck_allows_missing_policy_with_recovered_service_description() {
         let mut subscription = active_executable_subscription();
         subscription
             .as_object_mut()
@@ -1508,13 +2242,14 @@ mod post_login_tests {
             "user-1",
             Some(&subscription),
             Some(&executable),
-            ConsentSnapshotStatus::NotSet,
+            &consent_snapshot(ConsentSnapshotStatus::NotSet),
+            false,
         );
-        assert_eq!(result["watchAllowed"], false);
+        assert_eq!(result["watchAllowed"], true);
         assert_eq!(result["shouldPromptAuthorization"], false);
-        assert_eq!(result["shouldPromptConfiguration"], true);
-        assert_eq!(result["reason"], "configuration_required");
-        assert_eq!(result["descriptionSource"], "subscription_detail");
+        assert_eq!(result["shouldPromptConfiguration"], false);
+        assert_eq!(result["reason"], "execution_policy_not_configured");
+        assert!(result.get("descriptionSource").is_none());
     }
 
     fn active_executable_subscription() -> serde_json::Value {
@@ -1529,36 +2264,67 @@ mod post_login_tests {
         })
     }
 
-    #[test]
-    fn scoped_watch_precheck_returns_bounded_restore_configuration() {
-        use crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus;
+    fn executable_with_current_guide(guide: Option<&str>) -> PostLoginExecutableService {
+        let mut executable = executable_service_from_description(
+            "Spot trading signals with BUY entries",
+            "service_description",
+        )
+        .unwrap();
+        let service = match guide {
+            Some(guide) => json!({"serviceGuide": guide}),
+            None => json!({}),
+        };
+        attach_service_guide(&mut executable, &service, true);
+        executable
+    }
 
+    #[test]
+    fn scoped_watch_precheck_allows_notify_only_when_policy_is_missing() {
         let subscription = active_executable_subscription();
         let result = compose_scoped_watch_autotrade_precheck(
             "job-watch",
             "user-1",
             Some(&subscription),
-            ConsentSnapshotStatus::NotSet,
+            &consent_snapshot(ConsentSnapshotStatus::NotSet),
+            false,
         );
         assert_eq!(result["applicable"], true);
-        assert_eq!(result["watchAllowed"], false);
+        assert_eq!(result["watchAllowed"], true);
         assert_eq!(result["shouldPromptAuthorization"], false);
+        assert_eq!(result["shouldPromptConfiguration"], false);
+        assert_eq!(result["reason"], "execution_policy_not_configured");
+    }
+
+    #[test]
+    fn explicit_configuration_request_returns_bounded_restore_configuration() {
+        let subscription = active_executable_subscription();
+        let executable = post_login_executable_service(&subscription).unwrap();
+        let snapshot = consent_snapshot(ConsentSnapshotStatus::NotSet);
+        let result = compose_missing_consent_review(
+            "job-watch",
+            "user-1",
+            &subscription,
+            &executable,
+            &snapshot,
+        );
+        assert_eq!(result["watchAllowed"], false);
         assert_eq!(result["shouldPromptConfiguration"], true);
+        assert_eq!(result["configurationRequested"], true);
         assert_eq!(result["reason"], "configuration_required");
         assert_eq!(result["assetClasses"], json!(["spot"]));
-        assert_eq!(
-            result["serviceDescription"],
-            active_executable_subscription()["serviceDescription"]
-        );
     }
 
     #[test]
     fn restore_binding_accepts_only_the_canonical_configuration_precheck() {
-        let precheck = compose_scoped_watch_autotrade_precheck(
+        let subscription = active_executable_subscription();
+        let executable = post_login_executable_service(&subscription).unwrap();
+        let snapshot = consent_snapshot(ConsentSnapshotStatus::NotSet);
+        let precheck = compose_missing_consent_review(
             "job-watch",
             "user-1",
-            Some(&active_executable_subscription()),
-            ConsentSnapshotStatus::NotSet,
+            &subscription,
+            &executable,
+            &snapshot,
         );
         let bound = bind_subscription_restore_consent_context(
             &precheck,
@@ -1593,17 +2359,16 @@ mod post_login_tests {
             "job-watch",
             "user-1",
             Some(&active_executable_subscription()),
-            ConsentSnapshotStatus::NotSet,
+            &consent_snapshot(ConsentSnapshotStatus::NotSet),
+            false,
         );
-        assert!(
-            bind_pre_delivery_consent_context(
-                &precheck,
-                "job-watch",
-                "user-1",
-                AssetClass::Spot
-            )
-            .is_err()
-        );
+        assert!(bind_pre_delivery_consent_context(
+            &precheck,
+            "job-watch",
+            "user-1",
+            AssetClass::Spot
+        )
+        .is_err());
     }
 
     #[test]
@@ -1612,7 +2377,8 @@ mod post_login_tests {
             "job-watch",
             "user-1",
             Some(&active_executable_subscription()),
-            ConsentSnapshotStatus::NotSet,
+            &consent_snapshot(ConsentSnapshotStatus::NotSet),
+            false,
         );
         for result in [
             bind_pre_delivery_consent_context(&precheck, "job-other", "user-1", AssetClass::Spot),
@@ -1629,7 +2395,8 @@ mod post_login_tests {
             "job-watch",
             "user-1",
             Some(&active_executable_subscription()),
-            ConsentSnapshotStatus::Active,
+            &consent_snapshot(ConsentSnapshotStatus::Active),
+            false,
         );
         let error =
             bind_pre_delivery_consent_context(&precheck, "job-watch", "user-1", AssetClass::Spot)
@@ -1639,14 +2406,13 @@ mod post_login_tests {
 
     #[test]
     fn scoped_watch_precheck_allows_existing_live_consent() {
-        use crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus;
-
         let subscription = active_executable_subscription();
         let result = compose_scoped_watch_autotrade_precheck(
             "job-watch",
             "user-1",
             Some(&subscription),
-            ConsentSnapshotStatus::Active,
+            &consent_snapshot(ConsentSnapshotStatus::Active),
+            false,
         );
         assert_eq!(result["watchAllowed"], true);
         assert_eq!(result["shouldPromptAuthorization"], false);
@@ -1655,31 +2421,250 @@ mod post_login_tests {
     }
 
     #[test]
-    fn scoped_watch_precheck_blocks_unreadable_consent() {
-        use crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus;
+    fn legacy_manual_notify_only_policy_never_blocks_normal_watch() {
+        let subscription = active_executable_subscription();
+        let mut snapshot = consent_snapshot(ConsentSnapshotStatus::Active);
+        snapshot.mode = Some(ConsentMode::Manual);
+        snapshot.version = Some(CONSENT_VERSION - 1);
+        snapshot.trade_environment = None;
+        snapshot.margin_mode = None;
+        snapshot.order_policy = None;
 
+        let result = compose_scoped_watch_autotrade_precheck(
+            "job-watch",
+            "user-1",
+            Some(&subscription),
+            &snapshot,
+            false,
+        );
+
+        assert_eq!(result["watchAllowed"], true);
+        assert_eq!(result["reason"], "consent_active");
+    }
+
+    #[test]
+    fn unchanged_service_guide_does_not_interrupt_existing_consent() {
+        let subscription = active_executable_subscription();
+        let executable = executable_with_current_guide(Some("Choose a fixed amount."));
+        let mut snapshot = consent_snapshot(ConsentSnapshotStatus::Active);
+        snapshot.guide_hash = executable.service_guide_hash.clone();
+        let result = compose_scoped_watch_autotrade_precheck_with_executable(
+            "job-watch",
+            "user-1",
+            Some(&subscription),
+            Some(&executable),
+            &snapshot,
+            false,
+        );
+        assert_eq!(result["watchAllowed"], true);
+        assert_eq!(result["guideStatus"], "unchanged");
+        assert_eq!(result["guideRefreshRequired"], false);
+    }
+
+    #[test]
+    fn changed_service_guide_enters_incremental_refresh_without_reconfirming_mode() {
+        let subscription = active_executable_subscription();
+        let executable = executable_with_current_guide(Some("Choose a risk bucket."));
+        let mut snapshot = consent_snapshot(ConsentSnapshotStatus::Active);
+        snapshot.guide_hash = Some(format!("sha256:{}", "a".repeat(64)));
+        snapshot.dynamic_settings.insert(
+            "requiredFields".to_string(),
+            json!(["extra.legacyRiskBucket"]),
+        );
+        snapshot.dynamic_settings.insert(
+            "extra".to_string(),
+            json!({
+                "legacyRiskBucket": {
+                    "label": "Legacy risk bucket",
+                    "type": "string",
+                    "value": "medium"
+                }
+            }),
+        );
+        let result = compose_scoped_watch_autotrade_precheck_with_executable(
+            "job-watch",
+            "user-1",
+            Some(&subscription),
+            Some(&executable),
+            &snapshot,
+            false,
+        );
+        assert_eq!(result["watchAllowed"], false);
+        assert_eq!(result["guideStatus"], "changed");
+        assert_eq!(result["guideRefreshRequired"], true);
+        assert_eq!(result["authorizationRefreshRequired"], false);
+        assert_eq!(result["modeConfirmationRequired"], false);
+        assert_eq!(result["requiredFields"], json!([]));
+        assert_eq!(result["missingFields"], json!([]));
+        assert_eq!(result["refreshReasons"], json!(["service_guide_changed"]));
+        assert_eq!(
+            result["currentServiceGuideHash"],
+            executable.service_guide_hash.unwrap()
+        );
+    }
+
+    #[test]
+    fn removed_service_guide_is_a_resolved_change_not_a_fetch_failure() {
+        let subscription = active_executable_subscription();
+        let executable = executable_with_current_guide(None);
+        let mut snapshot = consent_snapshot(ConsentSnapshotStatus::Active);
+        snapshot.guide_hash = Some(format!("sha256:{}", "b".repeat(64)));
+        let result = compose_scoped_watch_autotrade_precheck_with_executable(
+            "job-watch",
+            "user-1",
+            Some(&subscription),
+            Some(&executable),
+            &snapshot,
+            false,
+        );
+        assert_eq!(result["guideStatus"], "changed");
+        assert_eq!(result["guideHashResolved"], true);
+        assert!(result.get("currentServiceGuideHash").is_none());
+    }
+
+    #[test]
+    fn explicit_restore_can_review_and_modify_existing_live_consent() {
+        let subscription = active_executable_subscription();
+        let executable = post_login_executable_service(&subscription).unwrap();
+        let snapshot = consent_snapshot(ConsentSnapshotStatus::Active);
+        let result = compose_existing_consent_review(
+            "job-watch",
+            "user-1",
+            &subscription,
+            &executable,
+            &snapshot,
+        );
+
+        assert_eq!(result["watchAllowed"], false);
+        assert_eq!(result["shouldPromptConfiguration"], true);
+        assert_eq!(result["configurationReviewRequired"], true);
+        assert_eq!(result["reason"], "configuration_required");
+        assert_eq!(result["missingFields"], json!([]));
+        assert_eq!(result["existingConsent"]["mode"], "auto");
+        assert_eq!(result["existingConsent"]["tradeAmountU"], "10");
+
+        bind_subscription_restore_consent_context(&result, "job-watch", "user-1", AssetClass::Spot)
+            .expect("review must remain bound to the canonical subscription");
+    }
+
+    #[test]
+    fn explicit_review_normalizes_decline_as_notify_only_and_keeps_saved_settings() {
+        let subscription = active_executable_subscription();
+        let executable = post_login_executable_service(&subscription).unwrap();
+        let mut snapshot = consent_snapshot(ConsentSnapshotStatus::Active);
+        snapshot.mode = Some(ConsentMode::Decline);
+        snapshot.trade_amount_u = Some("100".to_string());
+        snapshot.quote_token = Some("usdt".to_string());
+
+        let result = compose_existing_consent_review(
+            "job-watch",
+            "user-1",
+            &subscription,
+            &executable,
+            &snapshot,
+        );
+
+        assert_eq!(result["watchAllowed"], false);
+        assert_eq!(result["configurationReviewRequired"], true);
+        assert_eq!(result["existingConsent"]["mode"], "notify_only");
+        assert_eq!(result["existingConsent"]["tradeAmountU"], "100");
+        assert_eq!(result["existingConsent"]["quoteToken"], "usdt");
+    }
+
+    #[test]
+    fn scoped_watch_precheck_requires_confirmation_for_legacy_consent() {
+        let subscription = active_executable_subscription();
+        let mut snapshot = consent_snapshot(ConsentSnapshotStatus::Active);
+        snapshot.version = Some(CONSENT_VERSION - 1);
+        let result = compose_scoped_watch_autotrade_precheck(
+            "job-watch",
+            "user-1",
+            Some(&subscription),
+            &snapshot,
+            false,
+        );
+        assert_eq!(result["watchAllowed"], false);
+        assert_eq!(result["reason"], "configuration_required");
+        assert_eq!(result["authorizationRefreshRequired"], true);
+        assert_eq!(result["existingConsent"]["version"], CONSENT_VERSION - 1);
+        assert_eq!(result["refreshReasons"], json!(["legacy_consent"]));
+        let bound = bind_subscription_restore_consent_context(
+            &result,
+            "job-watch",
+            "user-1",
+            AssetClass::Spot,
+        )
+        .expect("legacy active consent must enter bounded restore");
+        assert!(bound.required_fields.is_empty());
+    }
+
+    #[test]
+    fn scoped_watch_precheck_requires_missing_trade_kit_settings_and_grant_refresh() {
+        let mut subscription = active_executable_subscription();
+        subscription["serviceDescription"] =
+            json!("Trade Kit perp trading signals with LONG and SHORT entries");
+        let mut snapshot = consent_snapshot(ConsentSnapshotStatus::Active);
+        snapshot.trade_environment = None;
+        snapshot.margin_mode = None;
+        snapshot.order_policy = None;
+        let result = compose_scoped_watch_autotrade_precheck(
+            "job-watch",
+            "user-1",
+            Some(&subscription),
+            &snapshot,
+            true,
+        );
+        assert_eq!(result["watchAllowed"], false);
+        assert_eq!(result["authorizationRefreshRequired"], true);
+        assert_eq!(
+            result["requiredFields"],
+            json!(["environment", "orderPolicy", "marginMode"])
+        );
+        assert_eq!(result["missingFields"], result["requiredFields"]);
+        assert_eq!(
+            result["refreshReasons"],
+            json!(["missing_required_fields", "stale_trade_kit_grant"])
+        );
+        let bound = bind_subscription_restore_consent_context(
+            &result,
+            "job-watch",
+            "user-1",
+            AssetClass::Perp,
+        )
+        .expect("incomplete active consent must enter bounded restore");
+        assert_eq!(
+            bound.required_fields,
+            ["environment", "orderPolicy", "marginMode"]
+        );
+    }
+
+    #[test]
+    fn scoped_watch_precheck_blocks_unreadable_consent() {
         let subscription = active_executable_subscription();
         let result = compose_scoped_watch_autotrade_precheck(
             "job-watch",
             "user-1",
             Some(&subscription),
-            ConsentSnapshotStatus::Unreadable,
+            &consent_snapshot(ConsentSnapshotStatus::Unreadable),
+            false,
         );
         assert_eq!(result["watchAllowed"], false);
         assert_eq!(result["shouldPromptAuthorization"], false);
         assert_eq!(result["reason"], "consent_unreadable");
-        assert!(result["repairCommand"].as_str().unwrap().contains("--mode pause"));
+        assert!(result["repairCommand"]
+            .as_str()
+            .unwrap()
+            .contains("--mode pause"));
     }
 
     #[test]
     fn scoped_watch_precheck_does_not_gate_non_subscription_or_read_only_jobs() {
-        use crate::commands::agent_commerce::task::common::autotrade::consent::ConsentSnapshotStatus;
-
         let non_subscription = compose_scoped_watch_autotrade_precheck(
             "job-regular",
             "user-1",
             None,
-            ConsentSnapshotStatus::NotSet,
+            &consent_snapshot(ConsentSnapshotStatus::NotSet),
+            false,
         );
         assert_eq!(non_subscription["watchAllowed"], true);
         assert_eq!(non_subscription["reason"], "not_subscription");
@@ -1694,14 +2679,15 @@ mod post_login_tests {
             "job-news",
             "user-1",
             Some(&read_only),
-            ConsentSnapshotStatus::NotSet,
+            &consent_snapshot(ConsentSnapshotStatus::NotSet),
+            false,
         );
         assert_eq!(read_only_result["watchAllowed"], true);
         assert_eq!(read_only_result["reason"], "non_executable_service");
     }
 
     #[tokio::test]
-    async fn post_login_preparation_rejects_blank_agentic_id_before_network() {
-        assert!(prepare_post_login_subscriptions("   ").await.is_none());
+    async fn post_login_subscription_lookup_rejects_blank_agentic_id_before_network() {
+        assert!(fetch_post_login_subscriptions("   ").await.is_none());
     }
 }

@@ -1,16 +1,16 @@
 ---
 name: okx-agentic-wallet
-description: "Use this skill whenever the user wants to use OKX Onchain OS / onchainos CLI / agentic wallet for wallet state or on-chain actions. Triggers: onchainos, Onchain OS wallet, agentic wallet; wallet login/status/account/address/balance/holdings/deposit/receive/send/transfer; on-chain swap/DEX trade/buy/sell/convert; bridge; Gas Station; contract calls; transaction history/status; Bitcoin UTXOs, BRC-20, inscriptions; signing; approvals; wallet export/policy; token or DApp security checks; or audit log."
+description: "Operate OKX Onchain OS wallets and execute or inspect on-chain transactions. Use for wallet login/status/accounts/addresses/balances/holdings; receive/send/transfer; swaps, bridges, limit orders, contract calls, gas estimation, simulation, broadcast, and tracking; Bitcoin UTXO/BRC-20/inscriptions; signing, approvals, wallet policy/export, public-address portfolios, security checks, and audit logs."
 license: MIT
 metadata:
   author: okx
-  version: "4.5.3"
+  version: "4.9.3-beta"
   homepage: "https://web3.okx.com"
 ---
 
-# Onchain OS Wallet
+# OKX Agentic Wallet
 
-Unified wallet skill driving the `onchainos` CLI: wallet lifecycle, Gas Station, DEX swap, cross-chain bridge, limit-order strategy, transaction gateway, public-address portfolio, security scanning, and audit log.
+Wallet and on-chain execution skill using the `onchainos` CLI. It covers wallet lifecycle, Gas Station, DEX swaps, cross-chain bridges, limit-order strategies, transaction gateway operations, public-address portfolios, security checks, and audit logs.
 
 ## Intent Routing
 
@@ -19,7 +19,8 @@ Match the user intent to a row, then **read that row's linked file first** — i
 | User Intent | Reference |
 | --- | --- |
 | Sign in / connect / social login (Google / Apple / Email) / logout; add / switch account; login status | [wallet](references/wallet.md) |
-| My wallet address / QR code; check my (logged-in) balance / holdings, including BTC or a BRC-20 ticker | [wallet](references/wallet.md) |
+| Deposit / top up / receive a token; my receive address or QR code | [funding](references/funding.md) |
+| Check my (logged-in) balance / holdings, including BTC or a BRC-20 ticker | [wallet](references/wallet.md) |
 | Bitcoin UTXO-specific queries, management, or FAQ / definitions | [utxo-cli-reference](references/utxo-cli-reference.md) |
 | Send / transfer native, ERC-20, SPL, BTC, BRC-20, or SUI tokens | [wallet](references/wallet.md) |
 | Call a contract (approve / deposit / withdraw / custom function), including a SUI PTB | [wallet](references/wallet.md) |
@@ -37,14 +38,14 @@ Match the user intent to a row, then **read that row's linked file first** — i
 
 ---
 
-## Pre-flight Checks
+## Preflight
 
-At the start of each thread, complete the checks in [_shared/preflight.md](_shared/preflight.md).
+Preflight checks: At the start of each thread, complete the checks in [_shared/preflight.md](_shared/preflight.md).
 
 ## Build the Command
 
 1. **Read the matched row's linked file first** (per the Intent Routing table) — it carries the flow and the commands you need. Never guess subcommand, flag, or file names.
-2. **Learn exact syntax from the CLI, not from memory.** Run `onchainos --help` for command groups and `onchainos <group> <subcommand> --help` for exact flags and defaults. Load the matched domain's `-cli-reference.md` only when its return-field schema or examples are needed.
+2. **Use the matched reference as the command contract.** Run CLI `--help` only when the matched reference does not provide the required syntax, the installed CLI rejects the documented command or flag, or version drift is suspected. Do not run `--help` routinely before a command whose syntax is already explicit and verified in the current thread. Load the matched domain's `-cli-reference.md` only when its return-field schema or examples are needed.
 3. **Confirm before any state-changing command.** Display the prompt, get an explicit affirmative, and follow the Confirming Response rule below. For native BTC, direct BRC-20, and SUI transfers, follow the chain-specific confirmation flow; a BRC-20 transfer inscription confirms before signing and broadcast.
 
 ## Chain Name Support
@@ -56,7 +57,7 @@ At the start of each thread, complete the checks in [_shared/preflight.md](_shar
 Some state-changing commands return **confirming** (exit code **2**) when the backend needs user confirmation. The response carries `message` (prompt to show) and `next` (what to do after they confirm).
 
 1. **Display** `message` and ask for confirmation.
-2. **Confirms** → immediately follow `next` (usually: re-run the same command with `--force` appended).
+2. **Confirms** → immediately follow `next` (usually: re-run the same command with `--force` appended). For `wallet send`, do not query `wallet balance` between confirmation and the re-run; the server validates balances and gas.
 3. **Declines** → do NOT proceed; tell the user it was cancelled.
 
 Never pass `--force` on the FIRST invocation of a state-changing command. Add `--force` only after all of: (1) you ran the command once without it, (2) the CLI returned a Confirming response (exit code 2, `"confirming": true`), (3) you displayed `message` and the user explicitly confirmed.
