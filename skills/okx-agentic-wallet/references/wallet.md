@@ -36,7 +36,11 @@ Run `wallet balance`, `wallet send`, `wallet contract-call`, `wallet history`, a
    > You have {activeSubscriptionCount} active subscription tasks.
    > Reply `1` to view your subscription list.
 
-   **NEVER**: run a separate `my-subscriptions` or `device-list` command after a successful poll — the poll response already carries what the display needs, and an extra call adds a model round on the normal path. **NEVER**: include Wallet Export in this post-login display — export is a user-triggered action only (§Policy & Wallet Export), never advertised in the login snapshot.
+   If the user replies `1` or otherwise asks to view or refresh the subscription
+   list, switch to the [`okx-ai` skill](../../okx-ai/SKILL.md) and follow
+   [subscription.md](../../okx-ai/references/a2a/user/subscription.md).
+
+   **NEVER**: run a separate `subscription-list` or `device-list` command after a successful poll — the poll response already carries what the display needs, and an extra call adds a model round on the normal path. **NEVER**: include Wallet Export in this post-login display — export is a user-triggered action only (§Policy & Wallet Export), never advertised in the login snapshot.
 
    Behind the scenes the CLI always sends the best-effort device-registration heartbeat before returning. When it resolves a non-empty User `agenticId`, it independently queries subscriptions and includes `activeSubscriptionCount` only when the count is positive. Login does not query or update device routing.
 
