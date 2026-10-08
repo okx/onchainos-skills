@@ -1,8 +1,9 @@
 use serde_json::{json, Map, Value};
 
 use super::a2mcp::{
-    create_a2mcp_payment_intent, inspect_payment_source, A2mcpExecutionState, A2mcpFrozenRequestV1,
-    A2mcpIntentCreateInput, A2mcpPaymentSource, A2mcpPreparedCandidate, A2mcpSelectedAcceptV1,
+    create_a2mcp_payment_intent, create_a2mcp_payment_intent_for_quote, inspect_payment_source,
+    A2mcpExecutionState, A2mcpFrozenRequestV1, A2mcpIntentCreateInput, A2mcpPaymentSource,
+    A2mcpPreparedCandidate, A2mcpSelectedAcceptV1,
 };
 use crate::home;
 
@@ -130,6 +131,39 @@ fn intent_creation_requires_explicit_confirmation_and_sufficient_balance() {
             .unwrap_err()
             .to_string()
             .starts_with("a2mcp_insufficient_balance"));
+    });
+}
+
+#[test]
+fn marketplace_quote_preserves_insufficient_candidate_until_payment() {
+    with_home("a2mcp_marketplace_insufficient", || {
+        let insufficient =
+            A2mcpSelectedAcceptV1::from_prepared_candidate(A2mcpPreparedCandidate::new_for_test(
+                "candidate_0".into(),
+                json!({
+                    "scheme":"exact", "network":"eip155:196",
+                    "asset":"0x1111111111111111111111111111111111111111",
+                    "amount":"1000000", "payTo":"0x2222222222222222222222222222222222222222",
+                    "extra":{"name":"USDC","version":"2"}
+                }),
+                "USDC".into(),
+                6,
+                "eip3009".into(),
+                "insufficient".into(),
+            ));
+        let intent = create_a2mcp_payment_intent_for_quote(A2mcpIntentCreateInput {
+            probe_id: "direct_quote".into(),
+            owner_account_id: "account_1".into(),
+            payer_address: "0x3333333333333333333333333333333333333333".into(),
+            frozen_request: frozen_request(),
+            selected_accept: insufficient,
+            created_at: 1_000,
+            expires_at: 1_200,
+            user_confirmed: false,
+        })
+        .unwrap();
+        assert_eq!(intent.execution_state(), A2mcpExecutionState::Prepared);
+        assert_eq!(intent.selected_accept().balance_status(), "insufficient");
     });
 }
 

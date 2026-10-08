@@ -28,6 +28,10 @@ const FEEDBACK: &str = include_str!("../../skills/okx-ai/references/a2a/feedback
 const NOTIFY: &str = include_str!("../../skills/okx-ai/references/a2a/notify.md");
 const INTAKE: &str = include_str!("../../skills/okx-ai/references/a2a/user/intake.md");
 const RECOVERY: &str = include_str!("../../skills/okx-ai/references/runtime/recovery.md");
+const A2MCP_HANDOFF: &str = include_str!("../../skills/okx-ai/references/a2mcp/handoff.md");
+const A2MCP_INVOKE: &str = include_str!("../../skills/okx-ai/references/a2mcp/invoke.md");
+const A2MCP_OUTPUT_TEMPLATES: &str =
+    include_str!("../../skills/okx-ai/references/a2mcp/output-templates.md");
 
 #[test]
 fn v2_uses_role_scoped_lazy_routing() {
@@ -57,6 +61,10 @@ fn v2_uses_role_scoped_lazy_routing() {
 #[test]
 fn prepare_is_read_only_and_create_uses_service_uuid() {
     assert!(PREPARE.contains("task-create-prepare --sid <selected-sid>"));
+    assert!(!PREPARE.contains("--asp-agent-id"));
+    assert!(!PREPARE.contains("service_routing / a2mcp_service_confirmed"));
+    assert!(!PREPARE.contains("invoke_a2mcp"));
+    assert!(PREPARE.contains("A2MCP services are rejected here"));
     assert!(PREPARE.contains("exactly once for the selected `sid` in one turn"));
     assert!(PREPARE.contains("never start a duplicate"));
     assert!(PREPARE.contains("is not authorization to create"));
@@ -67,6 +75,84 @@ fn prepare_is_read_only_and_create_uses_service_uuid() {
     assert!(CREATE.contains("communication-check"));
     assert!(CREATE.contains("--guide-consent-json"));
     assert!(GUIDE.contains("Consent"));
+}
+
+#[test]
+fn a2mcp_uses_unified_immutable_invoke_contract() {
+    let invoke = A2MCP_INVOKE.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(A2MCP_HANDOFF.contains("data.payload.serviceSnapshot"));
+    assert!(A2MCP_HANDOFF.contains("--service-type A2MCP --asp-agent-id <selected-asp-agent-id>"));
+    assert!(IDENTITY_SEARCH.contains("[`../a2mcp/handoff.md`](../a2mcp/handoff.md)"));
+    assert!(A2MCP_INVOKE.contains("onchainos agent a2mcp invoke"));
+    assert!(A2MCP_INVOKE.contains("--service-base64"));
+    assert!(A2MCP_INVOKE.contains("--params-base64"));
+    assert!(A2MCP_INVOKE.contains("payment pay --payment-id <paymentId> --yes"));
+    assert!(A2MCP_INVOKE.contains("Never add `--param` or `--selected-index`"));
+    assert!(!A2MCP_INVOKE.contains("a2mcp-probe"));
+    assert!(invoke.contains("5 minutes after creation"));
+    assert!(invoke.contains("Funding is not payment authorization"));
+    assert!(invoke.contains("Never automatically pay or retry"));
+    assert!(invoke.contains("An insufficient or unavailable balance stops the continuation"));
+    let funding = invoke.split_once("## Funding continuation").unwrap().1;
+    let (continuation, confirmation) = funding.split_once("## Confirm and pay").unwrap();
+    assert!(continuation.contains("Once sufficient, continue to Confirm and pay with the original `paymentId`"));
+    assert!(!continuation.contains("validity from trusted CLI data"));
+    assert!(!continuation.contains("validity is unknown"));
+    assert!(confirmation.contains("ask for explicit confirmation before paying"));
+    assert!(confirmation.contains("On confirmation run:"));
+    assert!(confirmation.contains("The CLI checks expiry before signing"));
+    assert!(confirmation.contains("Never use `pay` to probe Intent validity"));
+    assert!(confirmation.contains("expired/missing Intent"));
+    assert!(confirmation.contains("A user-requested new attempt requires a fresh invocation and confirmation"));
+    assert!(confirmation.contains("If the Service snapshot, typed parameters, or payment selection changed"));
+    assert!(A2MCP_INVOKE.contains("[`output-templates.md`](output-templates.md)"));
+}
+
+#[test]
+fn a2mcp_preserves_the_five_row_card_with_current_invocation_fields() {
+    let (card, candidates) = A2MCP_OUTPUT_TEMPLATES
+        .split_once("## Payment candidates")
+        .unwrap();
+    let rows = card
+        .lines()
+        .filter(|line| line.starts_with("| "))
+        .skip(1)
+        .map(|line| line.split('|').nth(1).unwrap().trim())
+        .collect::<Vec<_>>();
+    assert_eq!(rows, ["Service Provider", "Service Name", "Endpoint", "Fee", "Service Parameters"]);
+    assert!(card.contains("serviceSnapshot.asp.aspAgentId"));
+    assert!(card.contains("serviceSnapshot.serviceName"));
+    assert!(card.contains("serviceSnapshot.endpoint"));
+    assert!(card.contains("--params-base64"));
+    assert!(card.contains("`Free` only for `data.needsConfirm=false` with `data.result`"));
+    assert!(card.contains("`amountHuman` and `tokenSymbol`"));
+    assert!(card.contains("`scheme=upto`"));
+    assert!(candidates.contains("`data.candidates`"));
+    assert!(candidates.contains("`data.alternatives`"));
+    assert!(candidates.contains("Omit this section for free results"));
+    for retired in ["payload.presentation", "nextAction", "select_a2mcp_token"] {
+        assert!(!A2MCP_OUTPUT_TEMPLATES.contains(retired));
+    }
+}
+
+#[test]
+fn a2mcp_routes_by_selected_balance_before_confirmation() {
+    let invoke = A2MCP_INVOKE.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(invoke.contains("Check the result in this order"));
+    assert!(invoke.contains("exactly one selected candidate in `data.candidates`"));
+
+    let route = |status: &str| {
+        A2MCP_INVOKE
+            .lines()
+            .find(|line| line.starts_with(&format!("| `{status}`")))
+            .unwrap()
+    };
+    assert!(route("unavailable").contains("Do not infer zero balance"));
+    assert!(route("unavailable").contains("or request funding"));
+    assert!(route("insufficient").contains("Do not ask for payment confirmation"));
+    assert!(route("sufficient").contains("Continue to Confirm and pay"));
+    assert!(invoke.contains("use the selected candidate's `balanceStatus`; errors on alternatives do not override it"));
+    assert!(invoke.contains("`data.alternatives` are informational only"));
 }
 
 #[test]

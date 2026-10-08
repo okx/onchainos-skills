@@ -4,7 +4,7 @@ description: "Operate OKX.AI agents and marketplace workflows. Use when the user
 license: MIT
 metadata:
   author: okx
-  version: "4.6.3"
+  version: "4.6.4"
   homepage: "https://web3.okx.com"
 ---
 
@@ -103,28 +103,17 @@ missing mapping is a coverage failure—report it and stop.
 
 Use these routes to invoke a confirmed A2MCP service or inspect its synchronous result.
 
-For every active invocation, route only from the latest CLI `nextAction`;
-never infer an action or opaque ID from prose.
-
 | Input or intent | Reference or action |
 |---|---|
 | Confirmed free-text invocation | Read `references/a2mcp/invoke.md` |
-| Active `endpoint_result/free_result` with an empty `nextAction` | Return to `references/a2mcp/invoke.md` for result rendering, then end the invocation |
-| `invoke_a2mcp` | Read `references/a2mcp/handoff.md` once; on successful validation it continues directly to `references/a2mcp/invoke.md` with a fresh invocation generation |
-| `provide_a2mcp_params` | Continue `references/a2mcp/invoke.md` with the returned `nextProbePayload` |
-| `select_a2mcp_token` | Continue `references/a2mcp/invoke.md`; add only the candidate selected by the user to the action's bound `preparedId` |
-| `fund_a2mcp_token` | Follow `references/a2mcp/funding.md` end to end with its bound `preparedId` and `candidateId` |
-| `resume_a2mcp_after_funding` | Continue `references/a2mcp/funding.md` with its one-time bound `preparedId` and `candidateId` |
-| `confirm_a2mcp_free` | Continue `references/a2mcp/invoke.md` with its bound `confirmationId` |
-| `confirm_a2mcp_payment` | Continue `references/a2mcp/invoke.md` with its bound `preparedId` and `candidateId` |
-| `execute_a2mcp_payment` | Hand its bound `paymentId` to `okx-agent-payments-protocol` |
-| `cancel_a2mcp` | End the invocation without another CLI call |
+| User-selected A2MCP Service awaiting snapshot preparation | Read `references/a2mcp/handoff.md`; use its explicit `--service-type A2MCP` branch |
+| `invoke_a2mcp` | Read `references/a2mcp/handoff.md`, then `references/a2mcp/invoke.md` |
+| `a2mcp invoke` returns `needsConfirm=false` | Render the synchronous result and end the invocation |
+| `a2mcp invoke` returns `needsConfirm=true` with `paymentId` | Follow the confirmation and Payment Protocol handoff in `references/a2mcp/invoke.md` |
 
-Read `references/a2mcp/recovery.md` only for `phase=invocation_recovery` or when
-`references/a2mcp/invoke.md` routes an error there.
 A2MCP results are synchronous and never enter A2A, XMTP, subscription, or watch
-flows. Keep raw HTTP 402 responses in `references/a2mcp/invoke.md`; only
-`execute_a2mcp_payment.params.paymentId` enters the Payment Protocol.
+flows. Only the CLI-returned `paymentId` enters the Payment Protocol; raw 402
+payloads, endpoint metadata, and business parameters never do.
 
 ### Identity routes
 
@@ -153,6 +142,7 @@ Use this envelope when a CLI result requires continuation:
 
 - `phase`: current business stage.
 - `decision`: `ready`, `blocked`, or `requires_user_input`.
+- `reason`: machine-readable reason.
 - `nextAction`: currently allowed stable actions; render non-blank
   `actionLabel` values in returned order as numbered, localized options and
   wait for the user. Do not expose Action IDs, `recommend`, or `params`.
@@ -161,20 +151,17 @@ Use this envelope when a CLI result requires continuation:
 For every structured CLI result, apply this contract before applying any
 domain-specific rendering or routing rules.
 
-`invoke_a2mcp` starts an active A2MCP invocation. Its confirmed
-`a2a/user/create-prepare.md` result enters
+`invoke_a2mcp` starts an active A2MCP invocation. Its explicit MCP preparation
+result enters
 [`references/a2mcp/handoff.md`](references/a2mcp/handoff.md); while active,
-route every subsequent result through the A2MCP routes above, including results
-with an empty `nextAction`. Outside that context, use those routes only when the
-latest `nextAction[].id` is A2MCP-namespaced; never classify from prose. Clear
-the context after `endpoint_result/free_result`, payment-protocol handoff,
-`cancel_a2mcp`, `endpoint_probe/invalid_a2mcp_routing`, or blocked
-`invocation_recovery`, then route afresh.
+route the direct CLI result through `references/a2mcp/invoke.md`. Clear the
+context after a free result, payment-protocol handoff, cancellation, or error,
+then route afresh.
 
 For a System envelope, `a2a/router.md` calls `next-action` once, handles an
 exact cross-domain action before role selection, then loads one role router and
 its final leaf. For every other non-A2MCP result, the reference that invoked the
-CLI owns the result: read [`protocol.md`](references/shared/protocol.md), then
+CLI owns the result: apply the Global Progression Contract above, then
 follow its exact result matrix or the exact leaf named by the CLI. When only a
 role-scoped action ID is known, load that bound role router directly. Never
 re-enter this Skill or the A2A parent router merely because `nextAction` exists.

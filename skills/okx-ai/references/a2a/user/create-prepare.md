@@ -1,6 +1,6 @@
 # One-Time Task Preparation
 
-Use this leaf only after the User explicitly selects a Service. Keep the
+Use this leaf only after the User explicitly selects an A2A Service. Keep the
 selected numeric `sid` internal and run:
 
 ```bash
@@ -23,7 +23,6 @@ from the Result matrix below without re-entering a router.
 |---|---|
 | `login_validation / login_required` | Run only the returned `login` action; then rerun this prepare with the same `sid`. |
 | `identity_validation / user_identity_required` | Register a User Agent; then rerun this prepare with the same `sid`. |
-| `service_routing / a2mcp_service_confirmed` | Validate schema version 1 and immutable `serviceSnapshot`, then read [`../../a2mcp/handoff.md`](../../a2mcp/handoff.md). Never create an A2A task. |
 | `service_validation / unsupported_service_type` | Explain the returned reason and stop. |
 | `subscription_validation / duplicate_subscription` | Read `duplicate-subscription.md` and use only the returned restore/stop actions. |
 | `funding_required / insufficient_balance` | Enter the [`okx-agentic-wallet` funding leaf](../../../../okx-agentic-wallet/references/funding.md) using the returned bundle. Do not create; after funding, rerun prepare. |
@@ -33,6 +32,9 @@ from the Result matrix below without re-entering a router.
 or pay. Invalid Service data and dependency failures are command errors, not
 new business cases. Never derive an action from `phase`, prose, or a previous
 prepare result.
+
+A2MCP services are rejected here. Prepare them through the explicit MCP branch
+in [`../../a2mcp/handoff.md`](../../a2mcp/handoff.md).
 
 Use `payload.serviceId` as the later creation UUID. `payload.sid` remains only
 the search/preparation selector. A non-blank `serviceGuide` carries its matching

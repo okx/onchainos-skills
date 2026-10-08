@@ -1,3 +1,4 @@
+pub mod a2mcp;
 pub mod a2mcp_probe;
 pub mod chat;
 pub mod identity;
@@ -14,6 +15,12 @@ use task::common::DEBUG_LOG;
 /// Shared `agent` namespace for identity + task-system commands.
 #[derive(Subcommand)]
 pub enum AgentCommand {
+    /// Invoke an A2MCP Service using marketplace-provided routing metadata.
+    #[command(name = "a2mcp")]
+    A2mcp {
+        #[command(subcommand)]
+        command: a2mcp::A2mcpCommand,
+    },
     /// Stateless OKX.AI A2MCP direct invocation (probe / balance refresh / prepare).
     #[command(name = "a2mcp-probe")]
     A2mcpProbe {
@@ -1418,6 +1425,7 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
     );
 
     match cmd {
+        AgentCommand::A2mcp { command } => a2mcp::run(command).await,
         AgentCommand::A2mcpProbe { command } => a2mcp_probe::run(command, ctx).await,
         AgentCommand::Asp { command } => task::asp::run_provider(command.into(), ctx).await,
         // ── Identity ────────────────────────────────────────────────

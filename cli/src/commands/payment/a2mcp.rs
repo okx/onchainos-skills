@@ -42,6 +42,8 @@ pub enum A2mcpPaymentSource {
 pub struct A2mcpFrozenRequestV1 {
     endpoint: String,
     method: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mcp_tool: Option<String>,
     typed_params: Map<String, Value>,
     param_plan: Vec<ParamSpec>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -100,10 +102,25 @@ impl A2mcpFrozenRequestV1 {
         Ok(Self {
             endpoint,
             method,
+            mcp_tool: None,
             typed_params,
             param_plan,
             resource,
         })
+    }
+
+    pub fn new_mcp(
+        endpoint: String,
+        tool_name: String,
+        typed_params: Map<String, Value>,
+        resource: Option<Value>,
+    ) -> Result<Self> {
+        if tool_name.trim().is_empty() {
+            bail!("{ERR_INVALID_PARAMS}: MCP toolName is required");
+        }
+        let mut request = Self::new(endpoint, "POST".into(), typed_params, vec![], resource)?;
+        request.mcp_tool = Some(tool_name);
+        Ok(request)
     }
 
     pub fn endpoint(&self) -> &str {
@@ -111,6 +128,9 @@ impl A2mcpFrozenRequestV1 {
     }
     pub fn method(&self) -> &str {
         &self.method
+    }
+    pub fn mcp_tool(&self) -> Option<&str> {
+        self.mcp_tool.as_deref()
     }
     pub fn typed_params(&self) -> &Map<String, Value> {
         &self.typed_params
@@ -120,6 +140,29 @@ impl A2mcpFrozenRequestV1 {
     }
     pub fn resource(&self) -> Option<&Value> {
         self.resource.as_ref()
+    }
+
+    fn validate_consistency(&self) -> Result<()> {
+        let rebuilt = if let Some(tool) = &self.mcp_tool {
+            Self::new_mcp(
+                self.endpoint.clone(),
+                tool.clone(),
+                self.typed_params.clone(),
+                self.resource.clone(),
+            )?
+        } else {
+            Self::new(
+                self.endpoint.clone(),
+                self.method.clone(),
+                self.typed_params.clone(),
+                self.param_plan.clone(),
+                self.resource.clone(),
+            )?
+        };
+        if rebuilt != *self {
+            bail!("{ERR_INVALID_INTENT}: frozen request is inconsistent");
+        }
+        Ok(())
     }
 }
 
@@ -321,6 +364,15 @@ impl A2mcpSelectedAcceptV1 {
     pub fn symbol(&self) -> &str {
         &self.symbol
     }
+    pub fn network(&self) -> &str {
+        &self.network
+    }
+    pub fn amount(&self) -> &str {
+        &self.amount
+    }
+    pub fn pay_to(&self) -> &str {
+        &self.pay_to
+    }
     pub fn balance_status(&self) -> &str {
         &self.balance_status
     }
@@ -472,16 +524,7 @@ impl A2mcpPaymentIntentV1 {
         if self.created_at >= self.expires_at || self.execution.signature_attempts > 3 {
             bail!("{ERR_INVALID_INTENT}: invalid lifetime or signature attempts");
         }
-        let rebuilt_request = A2mcpFrozenRequestV1::new(
-            self.frozen_request.endpoint.clone(),
-            self.frozen_request.method.clone(),
-            self.frozen_request.typed_params.clone(),
-            self.frozen_request.param_plan.clone(),
-            self.frozen_request.resource.clone(),
-        )?;
-        if rebuilt_request != self.frozen_request {
-            bail!("{ERR_INVALID_INTENT}: frozen request is inconsistent");
-        }
+        self.frozen_request.validate_consistency()?;
         // Re-run allowlist validation over the frozen wire entry on every load.
         let candidate = A2mcpPreparedCandidate {
             candidate_id: "persisted".into(),
@@ -537,6 +580,22 @@ pub fn create_a2mcp_payment_intent(input: A2mcpIntentCreateInput) -> Result<A2mc
     if input.selected_accept.balance_status != "sufficient" {
         bail!("{ERR_INSUFFICIENT_BALANCE}: selected token balance is not sufficient");
     }
+    create_a2mcp_payment_intent_inner(input)
+}
+
+/// Persist a frozen marketplace quote before user confirmation. Unlike the
+/// legacy prepared-payment confirmation path, the final fund-moving gate is
+/// `payment pay --payment-id ... --yes`; insufficient balance is allowed so
+/// the existing funding-first UI can top up and then use the same paymentId.
+pub fn create_a2mcp_payment_intent_for_quote(
+    input: A2mcpIntentCreateInput,
+) -> Result<A2mcpPaymentIntentV1> {
+    create_a2mcp_payment_intent_inner(input)
+}
+
+fn create_a2mcp_payment_intent_inner(
+    input: A2mcpIntentCreateInput,
+) -> Result<A2mcpPaymentIntentV1> {
     let expires_at = compute_expires_at(input.expires_at, input.created_at)?;
     let payment_id = payment_id_for_probe(&input.probe_id, &input.owner_account_id);
     let path = state::state_path(&payment_id)?;
@@ -703,16 +762,7 @@ impl A2mcpPreparedPayment {
         if self.version != A2MCP_INTENT_VERSION || self.source != A2MCP_SOURCE {
             bail!("{ERR_INVALID_INTENT}: invalid prepared payload source or version");
         }
-        let rebuilt = A2mcpFrozenRequestV1::new(
-            self.frozen_request.endpoint.clone(),
-            self.frozen_request.method.clone(),
-            self.frozen_request.typed_params.clone(),
-            self.frozen_request.param_plan.clone(),
-            self.frozen_request.resource.clone(),
-        )?;
-        if rebuilt != self.frozen_request {
-            bail!("{ERR_INVALID_INTENT}: frozen request is inconsistent");
-        }
+        self.frozen_request.validate_consistency()?;
         if self.candidates.is_empty() {
             bail!("{ERR_INVALID_INTENT}: prepared payload has no candidates");
         }
@@ -1388,6 +1438,30 @@ mod tests {
                     & 0o777;
                 assert_eq!(payments_mode, 0o700);
             }
+        });
+    }
+
+    #[test]
+    fn prepared_mcp_request_preserves_tool_during_validation() {
+        with_home("a2mcp_prepared_mcp_round_trip", || {
+            let mut prepared = prepared_payment();
+            prepared.frozen_request = A2mcpFrozenRequestV1::new_mcp(
+                "https://example.com/mcp".into(),
+                "wallet_insights_report".into(),
+                Map::from_iter([("address".into(), json!("0x1234"))]),
+                Some(json!({"url":"https://example.com/mcp"})),
+            )
+            .unwrap();
+
+            let prepared_id =
+                store_a2mcp_prepared_payment(prepared, "account_1", 1_000).unwrap();
+            let loaded =
+                load_a2mcp_prepared_payment(&prepared_id, "account_1", 1_100).unwrap();
+            assert_eq!(
+                loaded.frozen_request().mcp_tool(),
+                Some("wallet_insights_report")
+            );
+            assert!(loaded.select("candidate_0").is_ok());
         });
     }
 

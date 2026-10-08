@@ -464,6 +464,12 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
 fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
     use crate::commands::agent_commerce::AgentCommand;
     match cmd {
+        AgentCommand::A2mcp { command } => {
+            use crate::commands::agent_commerce::a2mcp::A2mcpCommand;
+            match command {
+                A2mcpCommand::Invoke(_) => "a2mcp invoke".into(),
+            }
+        }
         // Keep opaque routing/prepared JSON out of the audit command label.
         AgentCommand::A2mcpProbe { command } => {
             use crate::commands::agent_commerce::a2mcp_probe::A2mcpProbeCommand;

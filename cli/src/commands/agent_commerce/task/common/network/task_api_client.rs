@@ -147,6 +147,13 @@ impl TaskApiClient {
 
     // ─── Request methods (take a path, not a full URL) ───────────────────
 
+    /// GET + JWT with explicit query parameters and no task identity header.
+    /// Used by wallet/agentic read APIs whose identity is carried by the JWT.
+    pub async fn get_authed_query(&mut self, path: &str, query: &[(&str, &str)]) -> Result<Value> {
+        let token = get_access_token().await?;
+        self.wallet.get_authed(path, &token, query).await
+    }
+
     /// GET + JWT + agenticId header (no sessionCert injection) -> returns data.
     /// Used by query endpoints (e.g. providerConfirmStatus) that need JWT + agenticId but not sessionCert.
     pub async fn get_with_agent_id(&mut self, path: &str, agent_id: &str) -> Result<Value> {
