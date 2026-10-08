@@ -35,7 +35,7 @@ display template:
 
 - Job Name: {title}
 - Job Description: {Description}
-- Service Provider: Agent {providerAgentId}({providerAgentName})
+- Service Provider: {providerAgentName}(Agent {providerAgentId})
 - Fee: {feeAmount} {feeTokenSymbol}
 - Service Parameters: {serviceParams}
 
@@ -45,9 +45,9 @@ To create this job, reply “Confirm”.
 display rules:
 
 1. Preserve the confirmed Job Name, Job Description, and Service Parameters.
-2. Render the Service Provider as `Agent {providerAgentId}({providerAgentName})` when the name is available, or `Agent {providerAgentId}` otherwise.
+2. Render the Service Provider as `{providerAgentName}(Agent {providerAgentId})` when the name is available, or `Agent {providerAgentId}` otherwise.
 3. Render a zero Fee as `Free`; otherwise render the exact amount and token symbol.
-4. Render the Service Parameters item for confirmed parameters.
+4. Render the Service Parameters item only when `serviceParams` is non-empty. Omit the Service Parameters line entirely when `serviceParams` is empty — `null`, an empty or whitespace-only string, `{}`, or any field-less JSON object. Treat falsy-valued fields (`false`, `0`, `""`) as non-empty and show the line.
 5. Render attachments below the field list.
 6. Keep Guide Consent in its separate confirmation.
 7. `Confirm` is the explicit final confirmation for only the current complete card. Apply edits and render the whole confirmation again.

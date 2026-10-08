@@ -141,9 +141,14 @@ Do not modify, decode, encode, truncate, or regenerate it. Apply the same rules 
 
 ## Select a service
 
-Use the selected Service's numeric `sid` internally. **NEVER** show `sid`.
+Use the selected Service's numeric `sid` and its owning `asp.aspAgentId`
+internally. **NEVER** show `sid`.
 
 **MUST** stop. Only after explicit confirmation or selection in a subsequent
-User message, hand the exact selected numeric `sid` to
-[`../a2a/user/create-prepare.md`](../a2a/user/create-prepare.md). That leaf owns the one
-`task-create-prepare` call and every resulting branch.
+User message, route by the selected Service's `serviceType`:
+
+- `A2A`: pass its numeric `sid` to
+  [`../a2a/user/create-prepare.md`](../a2a/user/create-prepare.md).
+- `A2MCP`: pass its numeric `sid` and `asp.aspAgentId` to
+  [`../a2mcp/handoff.md`](../a2mcp/handoff.md) for explicit MCP preparation.
+- Missing or unsupported type: stop; do not guess a preparation path.

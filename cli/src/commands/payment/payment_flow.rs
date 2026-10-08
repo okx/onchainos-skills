@@ -1666,15 +1666,58 @@ async fn replay_a2mcp(
     header_value: &str,
 ) -> (String, Option<String>, Value, Option<String>, Option<Value>) {
     let frozen = intent.frozen_request();
-    replay_a2mcp_merchant(
-        frozen.endpoint(),
-        frozen.method(),
-        frozen.param_plan(),
-        frozen.typed_params(),
-        header_name,
-        header_value,
-    )
-    .await
+    if let Some(tool) = frozen.mcp_tool() {
+        replay_a2mcp_mcp(
+            frozen.endpoint(),
+            tool,
+            frozen.typed_params(),
+            header_name,
+            header_value,
+        )
+        .await
+    } else {
+        replay_a2mcp_merchant(
+            frozen.endpoint(),
+            frozen.method(),
+            frozen.param_plan(),
+            frozen.typed_params(),
+            header_name,
+            header_value,
+        )
+        .await
+    }
+}
+
+#[allow(clippy::type_complexity)]
+async fn replay_a2mcp_mcp(
+    url: &str,
+    tool: &str,
+    arguments: &serde_json::Map<String, Value>,
+    header_name: &str,
+    header_value: &str,
+) -> (String, Option<String>, Value, Option<String>, Option<Value>) {
+    use crate::mcp_client::{McpClient, McpReplay};
+
+    let mut client = match McpClient::new(url) {
+        Ok(client) => client,
+        Err(error) => return failed_replay(error.to_string()),
+    };
+    if let Err(error) = client.initialize().await {
+        return failed_replay(error.to_string());
+    }
+    let replay = McpReplay {
+        session_id: None,
+        tool: tool.to_string(),
+        arguments: Value::Object(arguments.clone()),
+    };
+    let (status_code, payment_response, result) = match client
+        .call_tool_signed(&replay, header_name, header_value)
+        .await
+    {
+        Ok(replay) => replay,
+        Err(error) => return failed_replay(error.to_string()),
+    };
+    map_replay_parts(status_code, payment_response, result)
 }
 
 /// Sign (TEE) → assemble header → replay to the merchant → decode receipt.
@@ -1817,13 +1860,17 @@ fn map_replay_parts(
     if (200..300).contains(&status_code) {
         ("success".into(), tx_hash, result, None, decoded_receipt)
     } else if status_code == 402 {
-        (
-            "pending".into(),
-            tx_hash,
-            result,
-            Some("facilitator non-terminal: HTTP 402".into()),
-            decoded_receipt,
-        )
+        if let Some(error) = explicit_payment_failure(&result) {
+            ("failed".into(), tx_hash, result, Some(error), decoded_receipt)
+        } else {
+            (
+                "pending".into(),
+                tx_hash,
+                result,
+                Some("merchant still requires payment: HTTP 402".into()),
+                decoded_receipt,
+            )
+        }
     } else {
         (
             "failed".into(),
@@ -1833,6 +1880,32 @@ fn map_replay_parts(
             decoded_receipt,
         )
     }
+}
+
+fn explicit_payment_failure(result: &Value) -> Option<String> {
+    let error = result
+        .get("error")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let detail = result.get("detail");
+    let code = detail
+        .and_then(|value| value.get("code"))
+        .and_then(|value| match value {
+            Value::String(value) => Some(value.clone()),
+            Value::Number(value) => Some(value.to_string()),
+            _ => None,
+        });
+    let message = detail
+        .and_then(|value| value.get("msg"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    Some(match (code, message) {
+        (Some(code), Some(message)) => format!("{error}: {code}: {message}"),
+        (None, Some(message)) => format!("{error}: {message}"),
+        _ => error.to_string(),
+    })
 }
 
 /// Replay the paid request to the merchant. Never returns `Err` — a transport /
@@ -3690,6 +3763,31 @@ mod tests {
         assert_eq!(result["status"].as_str(), Some("settling"));
     }
 
+    #[test]
+    fn replay_402_with_explicit_payment_error_is_failed() {
+        let result = json!({
+            "detail": {
+                "code": "50125",
+                "msg": "Your API key or regions have no access to current services"
+            },
+            "error": "payment verification failed",
+            "status": 401
+        });
+        let (status, tx_hash, returned, error, receipt) =
+            map_replay_parts(402, None, result.clone());
+
+        assert_eq!(status, "failed");
+        assert_eq!(tx_hash, None);
+        assert_eq!(returned, result);
+        assert_eq!(
+            error.as_deref(),
+            Some(
+                "payment verification failed: 50125: Your API key or regions have no access to current services"
+            )
+        );
+        assert_eq!(receipt, None);
+    }
+
     #[tokio::test]
     async fn replay_merchant_maps_200_to_success() {
         let (url, handle) = spawn_mock_merchant("200 OK", r#"{"ok":true}"#);
@@ -3709,6 +3807,42 @@ mod tests {
         let _ = handle.join();
         assert_eq!(status, "success", "200 must map to success");
         assert!(error.is_none(), "success must carry no error: {error:?}");
+    }
+
+    #[tokio::test]
+    async fn immutable_http_replay_preserves_typed_quote_params() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::mpsc;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock merchant");
+        let url = format!("http://{}/pay", listener.local_addr().unwrap());
+        let (tx, rx) = mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0u8; 4096];
+            let read = stream.read(&mut chunk).unwrap();
+            request.extend_from_slice(&chunk[..read]);
+            tx.send(String::from_utf8_lossy(&request).to_string())
+                .unwrap();
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+                .unwrap();
+        });
+        let typed = serde_json::json!({"symbol":"BTC","narrative":true})
+            .as_object()
+            .unwrap()
+            .clone();
+        let (status, _, _, error, _) =
+            replay_a2mcp_merchant(&url, "POST", &[], &typed, "PAYMENT-SIGNATURE", "signed").await;
+        handle.join().unwrap();
+        let request = rx.recv().unwrap();
+        assert_eq!(status, "success", "{error:?}");
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("payment-signature: signed"));
+        assert!(request.contains(r#"{"narrative":true,"symbol":"BTC"}"#));
     }
 
     #[tokio::test]

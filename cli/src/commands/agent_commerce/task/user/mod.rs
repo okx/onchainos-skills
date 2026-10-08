@@ -66,12 +66,31 @@ pub struct TaskServiceSelectArgs {
     pub format: String,
 }
 
+/// Explicit selection of the independent preparation paths.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrepareServiceType {
+    #[value(name = "A2A")]
+    A2a,
+    #[value(name = "A2MCP")]
+    A2mcp,
+}
+
 /// Deterministic task-creation checks for a selected Service ID.
 #[derive(Args, Clone, Debug)]
 pub struct TaskCreatePrepareArgs {
     /// Selected numeric Service `sid` from service search or matching context.
     #[arg(long = "sid", value_name = "SID")]
     pub sid: String,
+    /// Service preparation path; A2A preserves the task-service API contract.
+    #[arg(long = "service-type", value_enum, default_value = "A2A")]
+    pub service_type: PrepareServiceType,
+    /// Owning ASP Agent ID, required only for A2MCP preparation.
+    #[arg(
+        long = "asp-agent-id",
+        value_name = "ASP_AGENT_ID",
+        required_if_eq("service_type", "A2MCP")
+    )]
+    pub asp_agent_id: Option<String>,
 }
 
 /// Fetch one current marketplace Service for task creation.
@@ -83,6 +102,76 @@ pub struct ServiceDetailArgs {
     /// Current User Agent ID sent as the `agenticId` request header.
     #[arg(long = "agentic-id", value_name = "AGENT_ID")]
     pub agentic_id: String,
+}
+
+#[cfg(test)]
+mod preparation_cli_tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct PrepareCli {
+        #[command(flatten)]
+        args: TaskCreatePrepareArgs,
+    }
+
+    #[derive(Parser)]
+    struct DetailCli {
+        #[command(flatten)]
+        args: ServiceDetailArgs,
+    }
+
+    #[test]
+    fn a2a_is_default_and_does_not_require_an_asp_selector() {
+        let cli = PrepareCli::try_parse_from(["prepare", "--sid", "39218"]).unwrap();
+        assert_eq!(cli.args.service_type, PrepareServiceType::A2a);
+        assert!(cli.args.asp_agent_id.is_none());
+        let cli =
+            PrepareCli::try_parse_from(["prepare", "--sid", "39218", "--asp-agent-id", "9967"])
+                .unwrap();
+        assert_eq!(cli.args.service_type, PrepareServiceType::A2a);
+    }
+
+    #[test]
+    fn mcp_requires_explicit_type_and_asp_selector() {
+        assert!(PrepareCli::try_parse_from([
+            "prepare",
+            "--sid",
+            "38241",
+            "--service-type",
+            "A2MCP",
+        ])
+        .is_err());
+        let cli = PrepareCli::try_parse_from([
+            "prepare",
+            "--sid",
+            "38241",
+            "--service-type",
+            "A2MCP",
+            "--asp-agent-id",
+            "10191",
+        ])
+        .unwrap();
+        assert_eq!(cli.args.service_type, PrepareServiceType::A2mcp);
+        assert_eq!(cli.args.asp_agent_id.as_deref(), Some("10191"));
+        assert!(PrepareCli::try_parse_from([
+            "prepare",
+            "--sid",
+            "38241",
+            "--service-type",
+            "unknown",
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn service_detail_preserves_main_buyer_identity_argument() {
+        let cli =
+            DetailCli::try_parse_from(["detail", "--sid", "39218", "--agentic-id", "buyer-42"])
+                .unwrap();
+        assert_eq!(cli.args.agentic_id, "buyer-42");
+        assert!(DetailCli::try_parse_from(["detail", "--sid", "39218"]).is_err());
+    }
 }
 
 #[derive(Subcommand)]
@@ -1954,7 +2043,18 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
             service_detail::handle_service_detail(&mut client, &args.sid, &args.agentic_id).await
         }
         TaskCommand::TaskCreatePrepare(args) => {
-            task_create_prepare::handle_task_create_prepare(&mut client, &args.sid).await
+            match args.service_type {
+                PrepareServiceType::A2a => {
+                    task_create_prepare::handle_task_create_prepare(&mut client, &args.sid).await
+                }
+                PrepareServiceType::A2mcp => {
+                    let asp_agent_id = args.asp_agent_id.as_deref()
+                        .ok_or_else(|| anyhow::anyhow!("--asp-agent-id is required for A2MCP"))?;
+                    crate::commands::agent_commerce::a2mcp::prepare_service(
+                        &mut client, &args.sid, asp_agent_id,
+                    ).await
+                }
+            }
         }
         TaskCommand::SetAsp {
             job_id,
