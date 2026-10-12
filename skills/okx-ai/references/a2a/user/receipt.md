@@ -1,8 +1,12 @@
 # Subscription Device Delivery
 
+## Module Description
+
 Manage which logged-in devices receive messages for each subscription task.
 
-## View devices and delivery
+
+## Flow
+### View devices and delivery
 
 1. List the user's logged-in devices:
 
@@ -29,7 +33,7 @@ Manage which logged-in devices receive messages for each subscription task.
    Render `thisDeviceReceives` as the current device's Yes/No status. Do not
    infer device names for IDs that are absent from the fresh device list.
 
-## Set receiving devices
+### Set receiving devices
 
 Use this flow when the user asks to enable or disable a device for one task,
 receive on all devices, receive only on selected devices, or stop delivery to
@@ -69,7 +73,7 @@ all devices.
 6. Reread `subscribe-detail --format json` and report the resulting delivery
    mode and `thisDeviceReceives` status.
 
-## Constraints
+### Constraints
 
 - `subscribe-device-update` replaces the entire stored list. Never write a
   partial list from conversation memory; always fresh-read, merge or subtract,

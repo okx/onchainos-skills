@@ -1,5 +1,7 @@
 # Provider Delivery
 
+## Module Description
+
 Use this leaf only after fresh detail proves a one-time task is Accepted, or a
 subscription is Active within its delivery period. Execute the registered
 Service workflow first; do not replace it with an ad-hoc implementation.
@@ -17,8 +19,7 @@ The CLI owns the complete delivery sequence:
 4. submit and broadcast a one-time task only after that send succeeds;
 5. persist the local deliverable.
 
-Do not separately upload, send, submit, or save the same deliverable. Do not
-use retired `--message` or `--autotrade` flags. An uncertain write result is
+Do not separately upload, send, submit, or save the same deliverable. An uncertain write result is
 reconciled from fresh task state and is never blindly retried.
 
 After success, wait for `job_completed` or `job_rejected`. A provider-side

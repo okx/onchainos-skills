@@ -1,9 +1,9 @@
 # Funding and Receive
 
+## Module Description
+
 Business Reference for active wallet funding and for the shared insufficient-
 balance flow entered automatically from another business.
-
-## Applies when
 
 - The user asks to deposit, top up, receive a token, show a receive address, or
   show its QR code.
@@ -20,7 +20,7 @@ result has priority over a new active-funding intent. Enter Insufficient-balance
 flow below; do not discard its `fundingNeed` by running a new generic
 `wallet receive` query.
 
-## Action routing
+## Action Routing
 
 Begin a route only from an action ID present in the latest Funding result's
 `nextAction` array. A route may show its own read-only choice list before it
@@ -30,7 +30,7 @@ An upstream business may attach its own bound continuation action to a shared
 insufficient-balance result. Preserve it, but do not route it through this
 table; the caller owns its execution after Funding presentation.
 
-| Action ID | Route |
+| Action ID | Reference |
 | --- | --- |
 | `specify_funding_chain` | If the user supplied a chain, run `wallet receive --chain <chain>`. Otherwise run `wallet chains` and show only the returned network choices. |
 | `search_receive_token` | Use the user's token query with `wallet receive --token <query>`. |
@@ -48,7 +48,9 @@ A structured `phase=funding_required`, `decision=blocked`,
 `reason=insufficient_balance` result enters the Insufficient-balance flow
 directly. It is not an action and authorizes no interrupted operation or write.
 
-## Active funding flow
+## Flow
+
+### Active funding flow
 
 1. Determine whether the current user input supplies a chain, a token, or
    neither.
@@ -68,18 +70,20 @@ When both chain and token are explicit, the chain determines the receive
 address. Use the chain call and do not add token metadata that the CLI result
 did not return.
 
-## Token selection constraints
+### Collect Parameters
+
+#### Token selection constraints
 
 - Preserve the CLI order and the full `chainIndex + tokenContractAddress`
   identity from the latest result.
 - A numeric reply can select only the corresponding `select_receive_token`
   action from that result.
-- A “More” reply can use only the current `more_receive_tokens.params.query`
+- A "More" reply can use only the current `more_receive_tokens.params.query`
   and `params.cursor` through Action routing above.
 - If the result is stale, missing, or incomplete, restart Token Search. Never
   reconstruct a candidate from symbol, name, an abbreviated address, or prose.
 
-## Insufficient-balance entry
+### Insufficient-balance entry
 
 Match the common result by `phase=funding_required`, `decision=blocked`, and
 `reason=insufficient_balance`. The payload contains only shared Funding fields;
@@ -133,7 +137,9 @@ verification is blocked and wait. On a later explicit request to check again,
 rerun the same read-only `funding-check` from the latest Funding payload; do not
 infer success, reuse an old address, or resume the interrupted business.
 
-## Address and QR output
+## Output Rules
+
+### Address and QR output
 
 1. Read the complete `receiveAddress` from the latest CLI result.
 2. Render the localized receive-address label and the original address on one
@@ -146,31 +152,31 @@ infer success, reuse an old address, or resume the interrupted business.
 `gasFree: true` means on-chain gas is free after the funds arrive; it does not
 cover exchange withdrawal fees — the exchange may charge one.
 
-## Output templates
+### Output templates
 
-### Choose a network
+#### Choose a network
 
 ```text
 Choose a network:
 {sequence}. {showName}
 ```
 
-### Choose a token
+#### Choose a token
 
 ```text
-Choose a token for “{query}”:
+Choose a token for "{query}":
 {sequence}. {tokenName} ({tokenSymbol}) · {networkName} · {tokenContractAddress or Native}
 
-Reply with a sequence number.{optional “More results”}
+Reply with a sequence number.{optional "More results"}
 ```
 
 No result:
 
 ```text
-No token was found for “{query}”. Try another name, symbol, or contract address.
+No token was found for "{query}". Try another name, symbol, or contract address.
 ```
 
-### Show receive information
+#### Show receive information
 
 Repeat the address block when multiple networks are returned.
 
@@ -183,7 +189,7 @@ Receive address: {receiveAddress}
 {network notices}
 ```
 
-### Fund an insufficient balance
+#### Fund an insufficient balance
 
 ```text
 The {asset} balance is insufficient.
@@ -199,7 +205,7 @@ Receive address: {fundingTarget.receiveAddress}
 Tell me when funding is complete. I will verify the balance before continuing.
 ```
 
-### Verify funding
+#### Verify funding
 
 ```text
 Sufficient: Latest balance: {currentBalance} {asset.symbol}. Continue {interrupted operation}?

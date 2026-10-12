@@ -1,16 +1,22 @@
 # Transaction Gateway — CLI Reference
 
-Syntax, parameters, and key return fields for the 6 `onchainos gateway` subcommands. Verify with `onchainos gateway <subcommand> --help` when unsure.
+## Commands
 
-## `gateway chains`
+### `gateway chains`
 
 Supported chains (no params). Returns `chainIndex`, `name`, `shortName`, `logoUrl`.
 
-## `gateway gas --chain <chain>`
+### `gateway gas`
 
 Current gas prices. Returns `normal` / `min` / `max` (legacy), `supporteip1559`, and `eip1559Protocol.{suggestBaseFee, baseFee, proposePriorityFee, safePriorityFee, fastPriorityFee}`. Solana: `proposePriorityFee`, `safePriorityFee`, `fastPriorityFee`, `extremePriorityFee`.
 
-## `gateway gas-limit`
+#### Syntax
+
+```bash
+onchainos gateway gas --chain <chain>
+```
+
+### `gateway gas-limit`
 
 ```bash
 onchainos gateway gas-limit --from <address> --to <address> --chain <chain> [--amount <minimal_units>] [--data <hex>]
@@ -18,7 +24,7 @@ onchainos gateway gas-limit --from <address> --to <address> --chain <chain> [--a
 
 `--amount` default `"0"`; `--data` for contract interactions. Returns `gasLimit`.
 
-## `gateway simulate`
+### `gateway simulate`
 
 ```bash
 onchainos gateway simulate --from <address> --to <address> --data <hex> --chain <chain> [--amount <minimal_units>]
@@ -26,7 +32,7 @@ onchainos gateway simulate --from <address> --to <address> --data <hex> --chain 
 
 Returns `intention`, `assetChange[]` (`symbol`, `rawValue`), `gasUsed`, `failReason` (empty = success), `risks[]`.
 
-## `gateway broadcast`
+### `gateway broadcast`
 
 Broadcast a fully signed transaction (this CLI does not sign).
 
@@ -43,7 +49,7 @@ onchainos gateway broadcast --signed-tx <tx> --address <address> --chain <chain>
 
 Returns `orderId` (for status queries) and `txHash`.
 
-## `gateway orders`
+### `gateway orders`
 
 ```bash
 onchainos gateway orders --address <address> --chain <chain> [--order-id <id>]

@@ -1,8 +1,8 @@
 # Capability: Trenches — Troubleshooting
 
-Error handling, edge cases, and region restrictions for the Trenches capability. Load operational flow and parameter schemas separately through the top-level conditional-reference table.
+## Recovery
 
-## Edge Cases
+Error handling, edge cases, and region restrictions for the Trenches capability. For normal flow, return to [trenches.md](trenches.md); read [trenches-cli-reference.md](trenches-cli-reference.md) only when command facts are needed.
 
 - **Unsupported chain for meme pump**: only Solana (501), BSC (56), X Layer (196), TRON (195) are supported — verify with `onchainos memepump chains` first
 - **Invalid stage**: must be exactly `NEW`, `MIGRATING`, or `MIGRATED`
@@ -11,7 +11,7 @@ Error handling, edge cases, and region restrictions for the Trenches capability.
 - **Empty similar tokens**: `memepump-similar-tokens` may return empty array if no similar tokens are found
 - **Empty aped wallets**: `memepump-aped-wallet` returns empty array if no co-holders found
 
-## Region Restrictions (IP Blocking)
+## Failure Diagnostics
 
 When a command fails with error code `50125` or `80001`, display:
 
@@ -19,7 +19,7 @@ When a command fails with error code `50125` or `80001`, display:
 
 Do not expose raw error codes or internal error messages to the user.
 
-## Protocol ID Fallback
+### Protocol ID Fallback
 
 Use this table only when `onchainos memepump chains` is unavailable. Prefer the command because the supported list can change.
 

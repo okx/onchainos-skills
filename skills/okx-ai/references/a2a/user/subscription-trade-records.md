@@ -1,15 +1,21 @@
 # Subscription Trade Records
 
+## Module Description
+
 Use this leaf only for a User asking about the local follow-trade result of an
 A2A subscription Signal. It reads `okx-a2a`'s local SQLite trade-record store;
 it does not fetch the marketplace task, execute a trade, or delete a record.
 
-## Intent examples
+
+## Intent Routing
+### Intent examples
 
 - "What is the copy-trade status for this jobId?"
 - "Did Signal deliveryId `msg:1` copy successfully?"
 
-## Query
+
+## Flow
+### Query
 
 For all recorded Signal results in a subscription, run:
 

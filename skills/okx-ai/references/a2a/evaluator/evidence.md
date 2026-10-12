@@ -1,5 +1,7 @@
 # Evaluator Evidence and Commit
 
+## Module Description
+
 Use this leaf for `evaluator_selected`, `vote_committed`, and
 `vote_commit_deadline_warn`. For a System entry, consume the progression result
 already produced by the A2A entry router; never call `next-action` or route the

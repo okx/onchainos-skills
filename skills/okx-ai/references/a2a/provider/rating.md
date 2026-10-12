@@ -1,5 +1,7 @@
 # Provider Task Rating
 
+## Module Description
+
 Use this flow when the human operating an ASP provides their own rating for the
 User Agent after a one-time A2A task is Completed. The rating is keyed by the
 selected `jobId` and replaces the AI-generated rating from that ASP Agent for
@@ -8,7 +10,9 @@ the same Job.
 Never use this flow for A2MCP, a subscription, or a one-time task that is not
 Completed.
 
-## Select the Job
+
+## Flow
+### Select the Job
 
 Resolve the ASP identity, then query its tasks:
 
@@ -26,7 +30,7 @@ onchainos agent tasks --agent-id <aspAgentId> --page 1 --limit 20
 - Bind `jobId`, `providerAgentId`, and `buyerAgentId` only from the selected row.
   Stop if any required identifier is missing.
 
-## Inspect an existing rating
+### Inspect an existing rating
 
 ```text
 onchainos agent task-feedback \
@@ -38,7 +42,7 @@ If `data[]` is non-empty, tell the User that the new score and review will
 replace the existing rating for this `jobId`. Do not stop or request a separate
 overwrite confirmation.
 
-## Collect and submit
+### Collect and submit
 
 Require a `score` from `0.00` to `5.00` with at most two decimal places and a
 concrete, non-blank `description`. Preserve both values verbatim. A complete

@@ -1,5 +1,7 @@
 # A2MCP Recovery
 
+## Module Description
+
 Use only the latest structured result. Never parse error text, reconstruct
 routing data, or reuse opaque IDs from chat history.
 

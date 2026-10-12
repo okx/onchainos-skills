@@ -1,14 +1,20 @@
 # Onchain OS DEX Token — CLI Command Reference
 
+## Commands
+
 Detailed parameter tables, return field schemas, and usage examples for all 13 token commands.
 
-## 1. onchainos token search
+### `onchainos token search`
 
 Search for tokens by name, symbol, or contract address.
+
+#### Syntax
 
 ```bash
 onchainos token search --query <query> [--chains <chains>] [--limit <n>] [--cursor <cursor>] [--max-results <n>]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
@@ -20,7 +26,9 @@ onchainos token search --query <query> [--chains <chains>] [--limit <n>] [--curs
 
 > When `--max-results` is supplied, the top-level `data` is `{ items, nextCursor, fetchedCount }`: `items` is the aggregated array of result objects (fields below), `nextCursor` is the cursor to resume from (`null` when exhausted), and `fetchedCount` is the number of items returned.
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -39,20 +47,38 @@ onchainos token search --query <query> [--chains <chains>] [--limit <n>] [--curs
 | `tagList.communityRecognized` | Boolean | `true` = listed on Top 10 CEX or community verified |
 | `cursor` | String | Per-item pagination cursor — pass the `cursor` of the **last item** as the next request's `--cursor` to fetch the next page |
 
-## 2. onchainos token info
+#### Examples
+
+**User says:** "Search for xETH token on XLayer"
+
+```bash
+onchainos token search --query xETH --chains xlayer
+# -> Display:
+#   xETH (0xe7b0...) - XLayer
+#   Price: $X,XXX.XX | 24h: +X% | Market Cap: $XXM | Liquidity: $XXM
+#   Community Recognized: Yes
+```
+
+### `onchainos token info`
 
 Get token basic info (name, symbol, decimals, logo).
+
+#### Syntax
 
 ```bash
 onchainos token info --address <address> [--chain <chain>]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--address` | Yes | - | Token contract address |
 | `--chain` | No | `ethereum` | Chain name |
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -63,20 +89,26 @@ onchainos token info --address <address> [--chain <chain>]
 | `tokenContractAddress` | String | Token contract address |
 | `tagList.communityRecognized` | Boolean | `true` = listed on Top 10 CEX or community verified |
 
-## 3. onchainos token price-info
+### `onchainos token price-info`
 
 Get detailed price info including market cap, liquidity, volume, and multi-timeframe price changes.
+
+#### Syntax
 
 ```bash
 onchainos token price-info --address <address> [--chain <chain>]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--address` | Yes | - | Token contract address |
 | `--chain` | No | `ethereum` | Chain name |
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -102,13 +134,17 @@ onchainos token price-info --address <address> [--chain <chain>]
 | `maxPrice` | String | 24-hour highest price |
 | `minPrice` | String | 24-hour lowest price |
 
-## 4. onchainos token holders
+### `onchainos token holders`
 
 Get token holder distribution (top 100), with optional tag filter.
+
+#### Syntax
 
 ```bash
 onchainos token holders --address <address> [--chain <chain>] [--tag-filter <n>] [--limit <n>] [--cursor <cursor>] [--max-results <n>]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
@@ -121,7 +157,9 @@ onchainos token holders --address <address> [--chain <chain>] [--tag-filter <n>]
 
 > When `--max-results` is supplied, the top-level `data` is `{ items, nextCursor, fetchedCount }`: `items` is the aggregated array of holder objects (fields below), `nextCursor` is the cursor to resume from (`null` when exhausted), and `fetchedCount` is the number of items returned.
 
-**Return fields** (top 100 holders):
+#### Return Fields
+
+top 100 holders.
 
 | Field | Type | Description |
 |---|---|---|
@@ -138,20 +176,35 @@ onchainos token holders --address <address> [--chain <chain>] [--tag-filter <n>]
 | `unrealizedPnlUsd` | String | Unrealized PnL (USD) |
 | `fundingSource` | String | Source of funding for the wallet |
 
-## 5. onchainos token liquidity
+#### Examples
+
+**User says:** "Who are the top holders of this token?"
+
+```bash
+onchainos token holders --address 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer
+# -> Display top 100 holders with amounts and addresses
+```
+
+### `onchainos token liquidity`
 
 Get top 5 liquidity pools for a token.
+
+#### Syntax
 
 ```bash
 onchainos token liquidity --address <address> [--chain <chain>]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--address` | Yes | - | Token contract address |
 | `--chain` | No | `ethereum` | Chain name (e.g., `ethereum`, `base`, `bsc`) |
 
-**Return fields** (array of pool objects):
+#### Return Fields
+
+array of pool objects.
 
 | Field | Type | Description |
 |---|---|---|
@@ -165,15 +218,19 @@ onchainos token liquidity --address <address> [--chain <chain>]
 | `poolAddress` | String | Pool contract address |
 | `poolCreator` | String | Pool creator address |
 
-## 6. onchainos token hot-tokens
+### `onchainos token hot-tokens`
 
 Get hot token list ranked by trending score or X/Twitter mentions (max 100 results).
+
+#### Syntax
 
 ```bash
 onchainos token hot-tokens [--ranking-type <type>] [--chain <chain>] [--rank-by <field>] [--time-frame <frame>] [--limit <n>] [--cursor <cursor>] [--max-results <n>] [options]
 ```
 
 **Core parameters**:
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
@@ -188,6 +245,8 @@ onchainos token hot-tokens [--ranking-type <type>] [--chain <chain>] [--rank-by 
 > When `--max-results` is supplied, the top-level `data` is `{ items, nextCursor, fetchedCount }`: `items` is the aggregated array of token objects (fields below), `nextCursor` is the cursor to resume from (`null` when exhausted), and `fetchedCount` is the number of items returned.
 
 **Filter parameters** (all optional):
+
+##### Filter Parameters
 
 | Param | Description |
 |---|---|
@@ -214,7 +273,9 @@ onchainos token hot-tokens [--ranking-type <type>] [--chain <chain>] [--rank-by 
 | `--is-mint` | Mintable filter (`true`/`false`) |
 | `--is-freeze` | Freeze filter (`true`/`false`) |
 
-**Return fields** (array of token objects):
+#### Return Fields
+
+array of token objects.
 
 | Field | Type | Description |
 |---|---|---|
@@ -242,20 +303,38 @@ onchainos token hot-tokens [--ranking-type <type>] [--chain <chain>] [--rank-by 
 | `vibeScore` | String | Vibe score |
 | `mentionsCount` | String | X/Twitter mention count |
 
-## 7. onchainos token advanced-info
+#### Examples
+
+**User says:** "What's trending on Solana by volume?"
+
+```bash
+onchainos token hot-tokens --chain solana --rank-by 5 --time-frame 4
+# -> Display top tokens sorted by 24h volume:
+#   #1 SOL  - Vol: $1.2B | Change: +3.5% | MC: $80B
+#   #2 BONK - Vol: $450M | Change: +12.8% | MC: $1.5B
+#   ...
+```
+
+### `onchainos token advanced-info`
 
 Get advanced token info including risk level, creator details, dev stats, and holder concentration.
+
+#### Syntax
 
 ```bash
 onchainos token advanced-info --address <address> [--chain <chain>]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--address` | Yes | - | Token contract address |
 | `--chain` | No | `ethereum` | Chain name |
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -279,13 +358,17 @@ onchainos token advanced-info --address <address> [--chain <chain>]
 | `snipersClearAddressCount` | String | Number of sniper addresses that cleared |
 | `snipersTotal` | String | Total sniper count |
 
-## 8. onchainos token top-trader
+### `onchainos token top-trader`
 
 Get top traders (profit addresses) for a token.
+
+#### Syntax
 
 ```bash
 onchainos token top-trader --address <address> [--chain <chain>] [--tag-filter <n>] [--limit <n>] [--cursor <cursor>] [--max-results <n>]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
@@ -298,7 +381,9 @@ onchainos token top-trader --address <address> [--chain <chain>] [--tag-filter <
 
 > When `--max-results` is supplied, the top-level `data` is `{ items, nextCursor, fetchedCount }`: `items` is the aggregated array of trader objects (fields below), `nextCursor` is the cursor to resume from (`null` when exhausted), and `fetchedCount` is the number of items returned.
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -315,13 +400,17 @@ onchainos token top-trader --address <address> [--chain <chain>] [--tag-filter <
 | `unrealizedPnlUsd` | String | Unrealized PnL (USD) |
 | `fundingSource` | String | Funding source of the wallet |
 
-## 9. onchainos token trades
+### `onchainos token trades`
 
 Get token DEX trade history with optional tag and wallet address filters.
+
+#### Syntax
 
 ```bash
 onchainos token trades --address <address> [--chain <chain>] [--limit <n>] [--tag-filter <n>] [--wallet-filter <addrs>]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
@@ -331,7 +420,9 @@ onchainos token trades --address <address> [--chain <chain>] [--limit <n>] [--ta
 | `--tag-filter` | No | - | Filter by trader tag: `1`=KOL, `2`=Developer, `3`=Smart Money, `4`=Whale, `5`=Fresh Wallet, `6`=Insider, `7`=Sniper, `8`=Suspicious Phishing, `9`=Bundler |
 | `--wallet-filter` | No | - | Wallet address filter, comma-separated (max 10 addresses) |
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -351,51 +442,28 @@ onchainos token trades --address <address> [--chain <chain>] [--limit <n>] [--ta
 | `changedTokenInfo[].tokenLogoUrl` | String | Token logo URL |
 | `changedTokenInfo[].amount` | String | Token amount changed |
 
-## Input / Output Examples
-
-**User says:** "Search for xETH token on XLayer"
-
-```bash
-onchainos token search --query xETH --chains xlayer
-# -> Display:
-#   xETH (0xe7b0...) - XLayer
-#   Price: $X,XXX.XX | 24h: +X% | Market Cap: $XXM | Liquidity: $XXM
-#   Community Recognized: Yes
-```
-
-**User says:** "What's trending on Solana by volume?"
-
-```bash
-onchainos token hot-tokens --chain solana --rank-by 5 --time-frame 4
-# -> Display top tokens sorted by 24h volume:
-#   #1 SOL  - Vol: $1.2B | Change: +3.5% | MC: $80B
-#   #2 BONK - Vol: $450M | Change: +12.8% | MC: $1.5B
-#   ...
-```
-
-**User says:** "Who are the top holders of this token?"
-
-```bash
-onchainos token holders --address 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer
-# -> Display top 100 holders with amounts and addresses
-```
-
 ---
 
-## 10. onchainos token cluster-overview
+### `onchainos token cluster-overview`
 
 Get token holder cluster concentration overview — cluster level, rug pull probability, new address ratio, same-fund-source ratio, and same-creation-time ratio.
+
+#### Syntax
 
 ```bash
 onchainos token cluster-overview --address <address> [--chain <chain>]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--address` | Yes | - | Token contract address |
 | `--chain` | No | `ethereum` | Chain name (e.g., `solana`, `ethereum`) |
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -406,7 +474,7 @@ onchainos token cluster-overview --address <address> [--chain <chain>]
 | `holderSameFundSourcePercent` | String | % of top 1,000 holders with mutual mainstream token transfer activity |
 | `holderSameCreationTimePercent` | String | % of top 1,000 holders created at around the same time |
 
-**Examples**:
+#### Examples
 
 ```bash
 # Cluster concentration overview for a Solana token
@@ -418,13 +486,17 @@ onchainos token cluster-overview --address 0xa0b86991c6218b36c1d19d4a2e9eb0ce360
 
 ---
 
-## 11. onchainos token cluster-top-holders
+### `onchainos token cluster-top-holders`
 
 Get overview statistics for the top 10, 50, or 100 holders of a token — including average holding period, average PnL, average cost price, and trend direction.
+
+#### Syntax
 
 ```bash
 onchainos token cluster-top-holders --address <address> --range-filter <1|2|3> [--chain <chain>]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
@@ -432,7 +504,9 @@ onchainos token cluster-top-holders --address <address> --range-filter <1|2|3> [
 | `--range-filter` | Yes | - | Holder rank tier: `1` = top 10, `2` = top 50, `3` = top 100 |
 | `--chain` | No | `ethereum` | Chain name |
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -446,7 +520,7 @@ onchainos token cluster-top-holders --address <address> --range-filter <1|2|3> [
 | `averageSellPriceUsd` | String | Weighted average selling price for the top N holders (USD) |
 | `averageSellPricePercent` | String | % difference between avg selling price and current token price |
 
-**Examples**:
+#### Examples
 
 ```bash
 # Top 100 holder behavior on Solana
@@ -458,20 +532,26 @@ onchainos token cluster-top-holders --address 0xa0b86991c6218b36c1d19d4a2e9eb0ce
 
 ---
 
-## 12. onchainos token cluster-list
+### `onchainos token cluster-list`
 
 Get holder cluster list — groups of top 300 holders organized into clusters, with per-cluster holding stats and individual address details.
+
+#### Syntax
 
 ```bash
 onchainos token cluster-list --address <address> [--chain <chain>]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--address` | Yes | - | Token contract address |
 | `--chain` | No | `ethereum` | Chain name |
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -500,7 +580,7 @@ onchainos token cluster-list --address <address> [--chain <chain>]
 | `clusterList[].clusterAddressList[].isKol` | Boolean | Whether it is a KOL address |
 | `clusterList[].clusterAddressList[].addressRank` | String | Address ranking among all holders |
 
-**Examples**:
+#### Examples
 
 ```bash
 # Holder cluster list for a Solana token
@@ -512,9 +592,11 @@ onchainos token cluster-list --address 0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb4
 
 ---
 
-## 13. onchainos token cluster-supported-chains
+### `onchainos token cluster-supported-chains`
 
 **Description**: Get the list of chains that support holder cluster analysis.
+
+#### Syntax
 
 ```bash
 onchainos token cluster-supported-chains
@@ -522,7 +604,9 @@ onchainos token cluster-supported-chains
 
 **Parameters**: None
 
-**Return fields** (array of chain objects):
+#### Return Fields
+
+array of chain objects.
 
 | Field | Type | Description |
 |---|---|---|
@@ -530,7 +614,7 @@ onchainos token cluster-supported-chains
 | `chainName` | String | Chain display name (e.g. `"Ethereum"`, `"Solana"`) |
 | `chainLogo` | String | Chain logo URL |
 
-**Examples**:
+#### Examples
 
 ```bash
 # Get all chains that support holder cluster analysis

@@ -1,33 +1,37 @@
 # Identity service contract
 
+## Module Description
+
 Use this contract for ASP service fields, payloads, and collection.
 
-## Service fields
 
-### Shared rules
+## Flow
+### Service fields
+
+#### Shared rules
 
 The case-sensitive `--service` element is shared across create, update, and `validate-listing`.
 Trim text values and use exact camelCase keys.
 
-### serviceType
+#### serviceType
 
 - Require the exact value `A2MCP` or `A2A`.
 
-#### Service Information Collection Guide
+##### Service Information Collection Guide
 
 Immediately below the service type choices, show:
 
 > Not sure how to proceed? See the [Developer Documentation](https://web3.okx.com/onchainos/dev-docs/okxai/asp) for detailed instructions.
 
-### serviceName
+#### serviceName
 
 - Require a 5–30 character noun phrase.
 - Require it to differ from the agent name.
 - Do not include a price.
 
-### serviceDescription
+#### serviceDescription
 
-#### Value requirements
+##### Value requirements
 
 - Required. It describes the service inside `--service`; never use the Agent profile's top-level `--description` as its value.
 - Require total width <2000. Measure display width as CJK=2 and ASCII=1.
@@ -46,7 +50,7 @@ A2MCP differences:
   3. `[Request Method]` — HTTP request method only, such as `GET`, `POST`, `PUT`, or `DELETE`. Remove URL/path text; map an unambiguous path-only value to `POST`.
   4. `[Request Example]` — runnable `curl` with the real `endpoint` and realistic inputs; reject placeholders and mismatched hosts.
 
-#### Collection behavior
+##### Collection behavior
 
 - For A2MCP, provide the following concise field guide:
 
@@ -58,14 +62,14 @@ A2MCP differences:
 
   Normalize malformed parameter specs and non-curl examples before storing. The endpoint must match the curl example.
 
-### serviceGuide
+#### serviceGuide
 
-#### Value requirements
+##### Value requirements
 
 - A2A create accepts optional non-blank text as supplied; CLI validates length.
 - Omit on A2MCP create.
 
-#### Collection behavior
+##### Collection behavior
 
 If `serviceGuide` is absent for A2A create, show the following prompt:
 
@@ -74,9 +78,9 @@ If `serviceGuide` is absent for A2A create, show the following prompt:
 >
 > Send the guide body, or reply 2 to skip.
 
-### fee
+#### fee
 
-#### Value requirements
+##### Value requirements
 
 - `fee` is required.
 - Prices are quoted numeric strings (including `"0"`) with no units, symbols, or approximations.
@@ -84,7 +88,7 @@ If `serviceGuide` is absent for A2A create, show the following prompt:
 - Never combine per-call and monthly billing or use a non-monthly interval.
 - Store the per-call price in `fee`; for A2A monthly billing, use `""`.
 
-#### Collection behavior
+##### Collection behavior
 
 - For A2A, ask the user to choose a billing model and provide its price:
 
@@ -95,36 +99,36 @@ If `serviceGuide` is absent for A2A create, show the following prompt:
 - Derive `fee`, `subscription`, and `freeTrial` from the selected model and price; do not ask the user for raw encoded values.
 - If the user requests another trial length, explain the restriction above and re-ask options 2/3.
 
-### subscription
+#### subscription
 
 - Required for A2A; omit for A2MCP.
 - For A2A per-call billing, use `[]`.
 - For A2A monthly billing, use `[{"interval":"month","fee":"N"}]`, where `N` is greater than 0, and set `fee` to `""`.
 
-### freeTrial
+#### freeTrial
 
 - Only a 3-day monthly trial is supported.
 - For A2A monthly billing with a trial, use `"72"`.
 - Otherwise omit `freeTrial`.
 
-### endpoint
+#### endpoint
 
-#### Value requirements
+##### Value requirements
 
 - For A2MCP, require a deployed public HTTPS URL of ≤512 characters.
 - Reject HTTP, localhost, loopback, RFC-1918, `*.local`, `*.internal`, mocks, and placeholders.
 
-#### Collection behavior
+##### Collection behavior
 
 - If no endpoint is available, require deployment first or let the user choose A2A.
 - Explain that an on-chain endpoint change requires update.
 - Confirm that the request example uses the endpoint.
 
-### operation
+#### operation
 
 - Use `operation` only during update, with the exact value `create`, `update`, or `delete`; omit it during register.
 
-### id
+#### id
 
 - For update and delete, use the matched record's `id`.
 - For delete, send only `operation` and `id`.

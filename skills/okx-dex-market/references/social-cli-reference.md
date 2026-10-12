@@ -1,18 +1,24 @@
 # Onchain OS DEX Social — CLI Command Reference
 
+## Commands
+
 Detailed parameter tables, return field schemas, and usage examples for all 9 social commands.
 
 All endpoints in this skill are REST (no WebSocket channels). Upstream API: `https://web3.okx.com/api/v6/dex/market/social/...`.
 
 ---
 
-## 1. onchainos social news-latest
+### `onchainos social news-latest`
 
 Latest crypto news feed across upstream news platforms (e.g. blockbeats, odaily, theblock). Optional filters by coin symbol, time range, importance, source platform, language. `sortBy` is fixed to "latest" for this endpoint.
+
+#### Syntax
 
 ```bash
 onchainos social news-latest [options]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
@@ -28,7 +34,9 @@ onchainos social news-latest [options]
 | `--detail-level` | No | `1` | `1`=summary only, `2`=include full `content` |
 | `--language` | No | `en_US` | Locale (e.g. `en_US`, `zh_CN`, `ja_JP`) |
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -47,7 +55,7 @@ onchainos social news-latest [options]
 | `articles[].tokenSymbolSentiments[].tokenSymbol` | String | Token symbol |
 | `articles[].tokenSymbolSentiments[].sentiment` | String | `bullish` / `bearish` / `neutral` |
 
-**Examples**:
+#### Examples
 
 ```bash
 # Latest 10 articles, English summary
@@ -66,13 +74,17 @@ onchainos social news-latest --platform blockbeats --language zh_CN
 
 ---
 
-## 2. onchainos social news-by-symbol
+### `onchainos social news-by-symbol`
 
 News filtered by one or more coin symbols. Supports sort (`1`=latest, `2`=hot), sentiment / importance / platform / time-range filters, and pagination.
+
+#### Syntax
 
 ```bash
 onchainos social news-by-symbol --token-symbols <symbols> [options]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
@@ -90,9 +102,11 @@ onchainos social news-by-symbol --token-symbols <symbols> [options]
 | `--end` | No | now | End timestamp (Unix ms). Absolute alternative to `--since`. |
 | `--language` | No | `en_US` | Locale (e.g. `en_US`, `zh_CN`) |
 
-**Return fields**: same shape as `news-latest`.
+#### Return Fields
 
-**Examples**:
+Same shape as `news-latest`.
+
+#### Examples
 
 ```bash
 # Hot ETH news this week
@@ -102,15 +116,36 @@ onchainos social news-by-symbol --token-symbols ETH --sort-by 2
 onchainos social news-by-symbol --token-symbols BTC --sentiment 1 --importance 1
 ```
 
+**User says:** "What's the latest BTC news?"
+
+```bash
+onchainos social news-by-symbol --token-symbols BTC --sort-by 1 --limit 10
+# -> Latest 10 BTC articles with title, source, importance, sentiment
+```
+
+**User says:** "Show me only the high-importance ETH news from blockbeats this week"
+
+```bash
+onchainos social news-by-symbol \
+  --token-symbols ETH \
+  --importance 1 \
+  --platform blockbeats \
+  --begin 1773131386000 --end 1773736186000
+```
+
 ---
 
-## 3. onchainos social news-search
+### `onchainos social news-search`
 
 Full-text search across crypto news. Supports sentiment / importance / platform / coin / time-range filters, sort, language, and pagination.
+
+#### Syntax
 
 ```bash
 onchainos social news-search --keyword <keyword> [options]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
@@ -129,9 +164,11 @@ onchainos social news-search --keyword <keyword> [options]
 | `--max-results` | No | - | Auto-paginate across pages until N items are collected (1–500). The CLI aggregates pages and returns `data.items` + `data.nextCursor` + `data.fetchedCount`. News uses page-level cursors, so a whole final page is kept and the result may slightly exceed N. Mutually exclusive intent with manual `--limit`/`--cursor` paging. |
 | `--language` | No | `en_US` | Locale (e.g. `en_US`, `zh_CN`) |
 
-**Return fields**: same shape as `news-latest`.
+#### Return Fields
 
-**Examples**:
+Same shape as `news-latest`.
+
+#### Examples
 
 ```bash
 # Search "pectra upgrade" in latest order
@@ -147,20 +184,26 @@ onchainos social news-search \
 
 ---
 
-## 4. onchainos social news-detail
+### `onchainos social news-detail`
 
 Get the full body of a single article by id. The response always returns at most one article in `articles`. Use this when a list endpoint returned only a summary (`detail-level=1`) and you need the full body.
+
+#### Syntax
 
 ```bash
 onchainos social news-detail --article-id <id> [options]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--article-id` | Yes | - | Article id (from a previous list response) |
 | `--language` | No | `en_US` | Locale (e.g. `en_US`, `zh_CN`) |
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -176,30 +219,41 @@ onchainos social news-detail --article-id <id> [options]
 | `articles[].importance` | String | `high` / `medium` / `low` |
 | `articles[].tokenSymbolSentiments[]` | Array | Per-coin sentiment |
 
-**Examples**:
+#### Examples
 
 ```bash
 onchainos social news-detail --article-id abc123
 onchainos social news-detail --article-id abc123 --language zh_CN
 ```
 
+**User says:** "Open article abc123"
+
+```bash
+onchainos social news-detail --article-id abc123
+# -> Full article body
+```
+
 ---
 
-## 5. onchainos social news-platforms
+### `onchainos social news-platforms`
 
 Live list of news source platforms (domains) that can be passed to the news commands as `--platform`. No parameters.
+
+#### Syntax
 
 ```bash
 onchainos social news-platforms
 ```
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
 | `platforms[]` | Array&lt;String&gt; | Platform identifiers (e.g. `blockbeats`, `odaily`, `theblock`) |
 
-**Example**:
+#### Examples
 
 ```bash
 onchainos social news-platforms
@@ -208,13 +262,17 @@ onchainos social news-platforms
 
 ---
 
-## 6. onchainos social sentiment-ranking
+### `onchainos social sentiment-ranking`
 
 Top coins ranked by social activity (mention count) over a configurable window. Currently only `--sort-by 1` (hot) is supported by upstream.
+
+#### Syntax
 
 ```bash
 onchainos social sentiment-ranking [options]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
@@ -222,7 +280,9 @@ onchainos social sentiment-ranking [options]
 | `--sort-by` | No | `1` | `1`=hot (only value currently supported) |
 | `--limit` | No | `10` | Page size, range `[1, 50]` |
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -240,7 +300,7 @@ onchainos social sentiment-ranking [options]
 | `details[].sentiment.bearishRatio` | String | Bearish share, `0.0`–`1.0` |
 | `details[].sentiment.label` | String | Aggregate label: `bullish` / `bearish` / `neutral` / `mixed` |
 
-**Examples**:
+#### Examples
 
 ```bash
 # Top 10 coins by 1h chatter (default window)
@@ -250,15 +310,26 @@ onchainos social sentiment-ranking
 onchainos social sentiment-ranking --time-frame 3 --limit 20
 ```
 
+**User says:** "What are the top 10 hottest coins right now?"
+
+```bash
+onchainos social sentiment-ranking --time-frame 1 --limit 10
+# -> Ranked list with mention counts and bullish/bearish ratios
+```
+
 ---
 
-## 7. onchainos social sentiment-symbol
+### `onchainos social sentiment-symbol`
 
 Sentiment metrics for one or more coins over a window, with optional time-bucketed `trend` array.
+
+#### Syntax
 
 ```bash
 onchainos social sentiment-symbol --token-symbols <symbols> [options]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
@@ -266,7 +337,9 @@ onchainos social sentiment-symbol --token-symbols <symbols> [options]
 | `--time-frame` | No | `1` | Statistical period: `1`=1h, `2`=4h, `3`=24h |
 | `--trend-points` | No | - | If `> 0`, include the `trend` array with this many equally-spaced buckets per coin. Max `50`. |
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -284,7 +357,7 @@ onchainos social sentiment-symbol --token-symbols <symbols> [options]
 | `details[].trend[].bullishRatio` | String | Bullish share in bucket |
 | `details[].trend[].bearishRatio` | String | Bearish share in bucket |
 
-**Examples**:
+#### Examples
 
 ```bash
 # Current sentiment for BTC and ETH (1h window, default)
@@ -294,15 +367,26 @@ onchainos social sentiment-symbol --token-symbols BTC,ETH
 onchainos social sentiment-symbol --token-symbols BTC --time-frame 3 --trend-points 24
 ```
 
+**User says:** "How bullish is BTC over the last 24h with hourly trend?"
+
+```bash
+onchainos social sentiment-symbol --token-symbols BTC --time-frame 1 --trend-points 24
+# -> BTC sentiment summary + 24-bucket trend array
+```
+
 ---
 
-## 8. onchainos social vibe-timeline
+### `onchainos social vibe-timeline`
 
 Token "vibe" (hotness) summary plus a time-bucketed timeline. Includes overall scores with change rates, mention / engagement / impression counts, and sample KOLs per bucket. Keyed by **chain + contract address**.
+
+#### Syntax
 
 ```bash
 onchainos social vibe-timeline --chain <chain> --token-address <address> [options]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
@@ -310,7 +394,9 @@ onchainos social vibe-timeline --chain <chain> --token-address <address> [option
 | `--token-address` | Yes | - | Token contract address (EVM addresses lowercase) |
 | `--time-frame` | No | `1` | `1`=24h, `2`=72h, `3`=7d, `4`=30d |
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -335,7 +421,7 @@ onchainos social vibe-timeline --chain <chain> --token-address <address> [option
 | `timeline[].kols[].avatar` | String | Avatar URL |
 | `timeline[].kols[].followers` | String | Follower count |
 
-**Examples**:
+#### Examples
 
 ```bash
 # 24h vibe for an ETH token
@@ -350,15 +436,29 @@ onchainos social vibe-timeline \
   --time-frame 3
 ```
 
+**User says:** "Show me the vibe trend for this ETH token over a week"
+
+```bash
+onchainos social vibe-timeline \
+  --chain ethereum \
+  --token-address <address> \
+  --time-frame 3
+# -> Vibe summary with change rates + 7d timeline with sample KOLs per bucket
+```
+
 ---
 
-## 9. onchainos social vibe-top-kols
+### `onchainos social vibe-top-kols`
 
 Top KOLs discussing a token over a window, sorted by engagement / mentions / impressions. Capped at upstream `TOP50`.
+
+#### Syntax
 
 ```bash
 onchainos social vibe-top-kols --chain <chain> --token-address <address> [options]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
@@ -368,7 +468,9 @@ onchainos social vibe-top-kols --chain <chain> --token-address <address> [option
 | `--time-frame` | No | `1` | `1`=24h, `2`=72h, `3`=7d, `4`=30d |
 | `--limit` | No | `20` | Page size; capped at upstream `TOP50` |
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -385,7 +487,7 @@ onchainos social vibe-top-kols --chain <chain> --token-address <address> [option
 | `kols[].firstMention.contentId` | String | Tweet id |
 | `kols[].firstMention.tweetUrl` | String | `https://x.com/{handle}/status/{contentId}` |
 
-**Examples**:
+#### Examples
 
 ```bash
 # Top 20 KOLs by engagement (24h)
@@ -400,48 +502,6 @@ onchainos social vibe-top-kols \
   --sort-by 2 --time-frame 3 --limit 50
 ```
 
----
-
-## Input / Output Examples
-
-**User says:** "What's the latest BTC news?"
-
-```bash
-onchainos social news-by-symbol --token-symbols BTC --sort-by 1 --limit 10
-# -> Latest 10 BTC articles with title, source, importance, sentiment
-```
-
-**User says:** "Show me only the high-importance ETH news from blockbeats this week"
-
-```bash
-onchainos social news-by-symbol \
-  --token-symbols ETH \
-  --importance 1 \
-  --platform blockbeats \
-  --begin 1773131386000 --end 1773736186000
-```
-
-**User says:** "Open article abc123"
-
-```bash
-onchainos social news-detail --article-id abc123
-# -> Full article body
-```
-
-**User says:** "What are the top 10 hottest coins right now?"
-
-```bash
-onchainos social sentiment-ranking --time-frame 1 --limit 10
-# -> Ranked list with mention counts and bullish/bearish ratios
-```
-
-**User says:** "How bullish is BTC over the last 24h with hourly trend?"
-
-```bash
-onchainos social sentiment-symbol --token-symbols BTC --time-frame 1 --trend-points 24
-# -> BTC sentiment summary + 24-bucket trend array
-```
-
 **User says:** "Who's tweeting about this Solana token?" (with contract address resolved)
 
 ```bash
@@ -452,12 +512,4 @@ onchainos social vibe-top-kols \
 # -> TOP20 KOLs by 24h engagement, with first-mention links
 ```
 
-**User says:** "Show me the vibe trend for this ETH token over a week"
-
-```bash
-onchainos social vibe-timeline \
-  --chain ethereum \
-  --token-address <address> \
-  --time-frame 3
-# -> Vibe summary with change rates + 7d timeline with sample KOLs per bucket
-```
+---

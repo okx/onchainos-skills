@@ -1,5 +1,7 @@
 # Durable User Decision Request
 
+## Module Description
+
 Use this leaf when a task sub-session must request a User decision. Construct
 one request from authoritative action parameters:
 

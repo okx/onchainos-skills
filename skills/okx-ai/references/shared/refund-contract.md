@@ -1,9 +1,13 @@
 # Refund Contract
 
+## Eligibility Boundary
+
 This shared helper defines Refund eligibility, settlement proof, and safety.
 It never routes an intent and never authorizes a command by itself.
 
-## Action allowlist
+
+## Flow
+### Action allowlist
 
 Only fresh authoritative combinations below may offer a write:
 
@@ -22,7 +26,7 @@ read-only contract gap. Expired tasks never offer a Buyer claim/finalize write.
 status is Created(0); it closes the task before ASP acceptance and returns the
 exact original payment when one exists. It never calculates a partial refund.
 
-## Finality matrix
+### Finality matrix
 
 Always use a fresh read. History or caller events cannot prove settlement.
 
@@ -53,7 +57,9 @@ A Tx Hash is optional audit metadata after proof passes. Missing optional
 display facts do not undo finality; when recorded and fresh values both exist,
 a mismatch vetoes it.
 
-## Safety invariants
+
+## Security
+### Safety invariants
 
 - Never substitute legacy writes `close`, `reject`, `subscribe-reject`, or
   `claim-auto-refund`. Standalone `subscribe-cancel` remains cancellation-only;

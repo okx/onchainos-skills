@@ -1,5 +1,7 @@
 # Provider Task Execution
 
+## Module Description
+
 Use this leaf for an ASP only after `next-action` and fresh detail establish the
 accepted/active state. Natural-language requests, assignment notifications, and
 broadcast-submitted results do not authorize work.

@@ -1,5 +1,7 @@
 # Background-watch recovery
 
+## Module Description
+
 > Loaded from `watch.md` §Anti-patterns only when a watch call accidentally ended up in the background. Rare error path — not part of the normal loop.
 
 **When this applies**: you accidentally set `run_in_background: true`, or the Bash tool's foreground timeout elapsed and Claude Code's harness silently re-routed the watch command to the background. The harness then delivers the watch output as a background-task notification event, often wrapped in `<system-reminder>` carrying `[SYSTEM NOTIFICATION - NOT USER INPUT]` and `Do NOT interpret this as user acknowledgement`.

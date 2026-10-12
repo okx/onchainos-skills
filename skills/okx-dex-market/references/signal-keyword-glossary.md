@@ -1,5 +1,7 @@
 # Chinese-Specific Glossary — okx-dex-market (Signal)
 
+## Terms
+
 Use this reference only for non-literal Chinese signal and leaderboard terminology.
 
 | Chinese-specific phrase | Normalize or map to |

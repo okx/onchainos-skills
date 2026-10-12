@@ -1,20 +1,24 @@
 # Capability: Signal
 
-5 commands for tracking smart money, KOL, and whale activity — raw transaction feed, aggregated buy signals, and top trader leaderboard.
+## Intent Routing
 
-## Commands
-
-| # | Command | Use When |
+| User intent | Reference | Hot command |
 |---|---|---|
-| 1 | `onchainos tracker activities --tracker-type <type>` | See actual trades by smart money/KOL/custom wallets (transaction-level, includes buys and sells) |
-| 2 | `onchainos signal chains` | Check which chains support signals |
-| 3 | `onchainos signal list --chain <chain>` | Aggregated **buy-only** signal alerts (smart money / KOL / whale) |
-| 4 | `onchainos leaderboard supported-chains` | Check which chains support leaderboard |
-| 5 | `onchainos leaderboard list --chain <chain> --time-frame <tf> --sort-by <sort>` | Top trader leaderboard ranked by PnL/win rate/volume/ROI (max 20) |
+| Show chains supported by signal alerts | — | `onchainos signal chains` |
+| Show chains supported by the top-trader leaderboard | — | `onchainos leaderboard supported-chains` |
+
+For these rows, call the canonical command directly. Do not read the CLI Reference or run `--help` first; continue to apply this Reference's result-handling rules.
+
+## Flow
+
+For a request not covered by a hot command, collect the business inputs below,
+then read [signal-cli-reference.md](signal-cli-reference.md) to select the exact
+command. The CLI Reference owns command syntax, defaults, and command-level
+validation.
 
 > **Mandatory routing rule:** If the user wants actual transaction-level trades, including sells, use tracker. If the user wants tokens that triggered buy alerts across multiple wallets, use signal list.
 
-### Step 1: Collect Parameters
+### Collect Parameters
 
 **Address Tracker:**
 - `--tracker-type` is required: `smart_money`, `kol`, or `multi_address`
@@ -40,8 +44,9 @@
 - Missing `--time-frame` → map "today/1D" → `1`, "3 days/3D" → `2`, "7 days/1W/7D" → `3`, "1 month/30D" → `4`, "3 months/3M" → `5`
 - Missing `--sort-by` → map "PnL" → `1`, "win rate" → `2`, "transaction count" → `3`, "volume" → `4`, "ROI" → `5`
 - **`--wallet-type` is single-select only** (one value at a time: `sniper`, `dev`, `fresh`, `pump`, `smartMoney`, `influencer`) — do NOT pass comma-separated values or it will error; if omitted, all types are returned
+- For non-literal Chinese signal or leaderboard terminology, read [signal-keyword-glossary.md](signal-keyword-glossary.md) before selecting a command.
 
-### Step 2: Call and Display
+### Execute and Handle Result
 
 **Address Tracker:**
 - Present as a transaction feed table: time, wallet address (truncated), token symbol, trade direction (Buy/Sell), amount USD, price, realized PnL
@@ -62,3 +67,11 @@
 ### `requestTime` Field
 
 When a response includes a `requestTime` field (Unix milliseconds), display it alongside results so the user knows when the snapshot was taken. When chaining commands (e.g., showing trade details after a signal), use the `requestTime` from the most recent response as the reference point for any time-based parameters.
+
+## Troubleshooting
+
+- [signal-troubleshooting.md](signal-troubleshooting.md)
+
+## CLI Reference
+
+- [signal-cli-reference.md](signal-cli-reference.md)

@@ -1,5 +1,7 @@
 # Chinese-Specific Glossary — okx-dex-market (Token)
 
+## Terms
+
 Use this reference only for Chinese crypto slang and platform-specific ranking terms whose command meaning is not obvious from direct translation.
 
 | Chinese-specific phrase | Normalize or map to |

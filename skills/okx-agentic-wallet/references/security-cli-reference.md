@@ -1,8 +1,8 @@
 # Security Scanning — CLI Reference
 
-Syntax, parameters, return fields, and risk catalogs for the 5 `onchainos security` subcommands. Follow the already-loaded security flow for behavior and policy. Verify flags with `onchainos security <subcommand> --help` when unsure.
+## Commands
 
-## `security token-scan`
+### `security token-scan`
 
 Batch token risk / honeypot detection (all chains).
 
@@ -37,7 +37,7 @@ CLI riskLevel×direction matrix (returned in `action`; do NOT recompute — kept
 | MEDIUM | warn | warn |
 | LOW | safe | safe |
 
-### Token risk label catalog
+#### Token risk label catalog
 
 **Critical (block buy):** `isHoneypot` (cannot sell after buying), `isRubbishAirdrop` (spam/scam airdrop), `isAirdropScam` (gas-mint scam).
 
@@ -49,7 +49,7 @@ Tax thresholds feed `riskLevel` server-side (do NOT recompute): ≥50% → contr
 
 Interpretation: read `riskLevel` (authoritative); collect `true` boolean labels for display (include `isHasAssetEditAuth` only on Solana); if `riskLevel` is non-LOW but no label is true, display "flagged by composite analysis, no specific label identified". With `--trade-direction` the CLI already resolves the verdict — read the returned `action` / `combinedAction`; do not apply the matrix by hand.
 
-## `security dapp-scan`
+### `security dapp-scan`
 
 DApp / URL phishing detection (chain-agnostic).
 
@@ -59,7 +59,7 @@ onchainos security dapp-scan --domain "https://some-dapp.xyz"
 
 Returns `isMalicious` (boolean). `true` → do NOT access.
 
-## `security tx-scan`
+### `security tx-scan`
 
 Transaction pre-execution scan (EVM + Solana).
 
@@ -73,7 +73,7 @@ onchainos security tx-scan --chain solana --from <base58_addr> --encoding <base5
 
 EVM `--value` accepts decimal or hex wei (decimal auto-converted). Solana requires `--encoding` and `--transactions` (comma-separated payloads).
 
-## `security sig-scan`
+### `security sig-scan`
 
 Message signature scan (EVM only).
 
@@ -82,6 +82,18 @@ onchainos security sig-scan --chain <chain> --from <0x_addr> \
   --sig-method <personal_sign|eth_sign|eth_signTypedData|eth_signTypedData_v3|eth_signTypedData_v4> \
   --message <message_or_typed_data_json>
 ```
+
+### `security approvals`
+
+Token approval / Permit2 authorization query (EVM only).
+
+```bash
+onchainos security approvals --address <0x_addr> [--chain <names_or_ids>] [--limit <n>] [--cursor <string>]
+```
+
+`--chain` comma-separated (omit → all supported EVM chains); `--limit` default 20; `--cursor` from the previous response. Returns `approvalList[]` (`tokenSymbol`, `tokenAddress`, `chainIndex`, `spenderAddress`, `allowance` — raw, `"unlimited"` for max uint256, `riskLevel`) and `cursor`.
+
+## Command Constraints
 
 ### tx-scan / sig-scan shared return
 
@@ -110,13 +122,3 @@ Risk items:
 | `approve_eoa` | Approval to an EOA | MEDIUM | warn |
 | `increase_allowance` | Increasing approval allowance | LOW | warn |
 | `ACCOUNT_INSUFFICIENT_PERMISSIONS` | Tron account insufficient permissions | LOW | warn |
-
-## `security approvals`
-
-Token approval / Permit2 authorization query (EVM only).
-
-```bash
-onchainos security approvals --address <0x_addr> [--chain <names_or_ids>] [--limit <n>] [--cursor <string>]
-```
-
-`--chain` comma-separated (omit → all supported EVM chains); `--limit` default 20; `--cursor` from the previous response. Returns `approvalList[]` (`tokenSymbol`, `tokenAddress`, `chainIndex`, `spenderAddress`, `allowance` — raw, `"unlimited"` for max uint256, `riskLevel`) and `cursor`.

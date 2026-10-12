@@ -1,33 +1,19 @@
 # Onchain OS DEX Market — WebSocket Protocol Reference
 
+## Module Description
+
 This document is for **developers and agents** who want to connect directly to the Onchain OS DEX WebSocket
 and subscribe to real-time market data (prices, candlesticks).
 
----
+## Connection Protocol
 
-## Endpoint
+### Endpoint
 
 ```
 wss://wsdex.okx.com/ws/v6/dex
 ```
 
 Uses TLS. Connect with any standard WebSocket client that supports TLS.
-
----
-
-## Authentication
-
-The Onchain OS DEX WebSocket uses HMAC-SHA256 API key authentication, which is the same scheme
-as the OKX REST API. Full documentation:
-👉 https://web3.okx.com/onchainos/dev-docs/market/websocket-login
-
-### Credentials
-
-Obtain your API Key, Secret Key, and Passphrase from the
-[OKX Developer Portal](https://web3.okx.com/onchain-os/dev-portal).
-
-> **Security**: Never hardcode credentials in source code. Use environment variables or a `.env` file.
-> Ensure `.env` is listed in `.gitignore` — never commit it to version control.
 
 ### Login Message
 
@@ -104,7 +90,7 @@ Wait for this ACK before sending subscribe messages. Recommended timeout: 10 sec
 
 ---
 
-## Push Message Envelope
+### Push Message Envelope
 
 Every push message from the server uses the same envelope structure:
 
@@ -119,9 +105,9 @@ The "Push Data Fields" tables below describe the contents of each object inside 
 
 ---
 
-## Channels
+### Channels
 
-### `price` — Token Price
+#### `price` — Token Price
 
 Retrieve the latest price of a token. Data is pushed whenever there is an update.
 
@@ -130,7 +116,7 @@ Subscribe arg:
 { "channel": "price", "chainIndex": "1", "tokenContractAddress": "0x382bb..." }
 ```
 
-#### Subscribe Parameters
+##### Subscribe Parameters
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -138,14 +124,14 @@ Subscribe arg:
 | `chainIndex` | String | Yes | Chain ID (e.g. `"1"` = Ethereum, `"501"` = Solana) |
 | `tokenContractAddress` | String | Yes | Token contract address (EVM: all lowercase) |
 
-#### Push Data Fields
+##### Push Data Fields
 
 | Field | Type | Description |
 |---|---|---|
 | `time` | String | Unix timestamp in milliseconds |
 | `price` | String | Latest token price (USD) |
 
-#### Push Example
+##### Push Example
 
 ```json
 {
@@ -163,11 +149,11 @@ Subscribe arg:
 
 ---
 
-### `dex-token-candle{period}` — Candlestick
+#### `dex-token-candle{period}` — Candlestick
 
 Retrieve candlestick (K-line) data for a token. Maximum push frequency: once per second.
 
-#### Available Channel Names
+##### Available Channel Names
 
 | Channel | Period |
 |---|---|
@@ -204,7 +190,7 @@ Subscribe arg:
 { "channel": "dex-token-candle1m", "chainIndex": "1", "tokenContractAddress": "0x382bb..." }
 ```
 
-#### Subscribe Parameters
+##### Subscribe Parameters
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -212,7 +198,7 @@ Subscribe arg:
 | `chainIndex` | String | Yes | Chain ID (e.g. `"1"` = Ethereum, `"501"` = Solana) |
 | `tokenContractAddress` | String | Yes | Token contract address (EVM: all lowercase) |
 
-#### Push Data Fields
+##### Push Data Fields
 
 | Field | Type | Description |
 |---|---|---|
@@ -225,7 +211,7 @@ Subscribe arg:
 | `volUsd` | String | Volume in USD |
 | `confirm` | String | `"0"` = incomplete (still forming), `"1"` = completed |
 
-#### Push Example
+##### Push Example
 
 ```json
 {
@@ -249,7 +235,7 @@ Subscribe arg:
 
 ---
 
-## Subscribe Message
+### Subscribe Message
 
 Send a single subscribe message containing all channel args:
 
@@ -280,7 +266,7 @@ If any arg fails, you receive:
 
 ---
 
-## Unsubscribe Message
+### Unsubscribe Message
 
 To cancel one or more channel subscriptions without disconnecting:
 
@@ -313,7 +299,7 @@ On failure:
 
 ---
 
-## Heartbeat
+### Heartbeat
 
 Send `"ping"` as a plain text frame every **25 seconds**.
 The server responds with `"pong"`. If no pong is received within 25 seconds, reconnect.
@@ -325,7 +311,7 @@ server → "pong"
 
 ---
 
-## Connection Lifecycle
+### Connection Lifecycle
 
 ```
 1. connect (TLS WebSocket)
@@ -340,7 +326,7 @@ server → "pong"
 
 ---
 
-## Reconnection Strategy
+### Reconnection Strategy
 
 The server may disconnect clients during maintenance or network issues.
 Recommended reconnect policy:

@@ -1,5 +1,7 @@
 # Chinese-Specific Glossary — okx-dex-market (Trenches)
 
+## Terms
+
 Use this reference only for non-literal Chinese meme-trading slang. Apply each mapping only when a pump.fun-style token or Trenches context is already present.
 
 | Chinese-specific phrase | Normalize or map to |

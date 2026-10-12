@@ -1,5 +1,7 @@
 # Exception Escalation Rules (shared by user / asp)
 
+## Module Description
+
 Each agent turn is stateless, with **no built-in loop protection**. The four
 rules below cover all A2A/CLI scenarios. Selected leaves such as
 [`peer.md`](../a2a/peer.md) and
@@ -8,7 +10,9 @@ their role-specific constraints.
 
 > All rules share one principle: on entering an exception, **immediately push to the user session**, and **do not auto-retry inside the sub**.
 
-## 1. Protocol misalignment (the counterpart insists on a wrong flow)
+
+## Failure Diagnostics
+### 1. Protocol misalignment (the counterpart insists on a wrong flow)
 
 **Trigger conditions**:
 - You have already clarified the same flow ≥ 1 time (check your previously sent messages in the XMTP group history)
@@ -26,7 +30,7 @@ their role-specific constraints.
    ```
 3. **End the current turn** and wait for the user's reply
 
-## 2. CLI errors are never retried — enqueue an error decision via pending-decisions-v2
+### 2. CLI errors are never retried — enqueue an error decision via pending-decisions-v2
 
 An insufficient-balance intent is not a generic CLI-failure escalation; route
 it to [funding.md](../../../okx-agentic-wallet/references/funding.md).
@@ -75,7 +79,7 @@ open; see [`evidence.md`](../a2a/evaluator/evidence.md),
 [`result.md`](../a2a/evaluator/result.md). Other evaluator commands
 still follow the standard flow. User Agent and ASP have no such exception.
 
-## 3. ❌ Absolute prohibition: broadcasting technical errors to the counterpart
+### 3. ❌ Absolute prohibition: broadcasting technical errors to the counterpart
 
 CLI errors / protocol misalignment / any internal exception → **do NOT `okx-a2a session send` the error details to the counterpart**.
 
@@ -94,7 +98,7 @@ CLI errors / protocol misalignment / any internal exception → **do NOT `okx-a2
 
 **Strict rule**: within the turn that pushes to the user session, send **at most one** generic "please wait" line to the counterpart; **never send a second**. Even if the counterpart pings you again afterward, still handle it via the §1 rule.
 
-## 4. ❌ Absolute prohibition: calling `okx-a2a session send` repeatedly to the same counterpart within a single turn
+### 4. ❌ Absolute prohibition: calling `okx-a2a session send` repeatedly to the same counterpart within a single turn
 
 Each agent turn has **no memory** and **no send-receipt feedback** — the command exiting `0` **counts as success**. LLMs often second-guess after the tool returns ("Did they receive that one? Should I send it again?"), causing 3-5 nearly identical `okx-a2a session send` calls to the same counterpart within a single turn.
 

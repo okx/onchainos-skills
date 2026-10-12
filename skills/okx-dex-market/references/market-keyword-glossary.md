@@ -1,5 +1,7 @@
 # Chinese-Specific Glossary — okx-dex-market (Market)
 
+## Terms
+
 Use this reference only for non-literal Chinese market terminology. Apply the Market capability's routing rules after normalization.
 
 | Chinese-specific phrase | Normalize or map to |

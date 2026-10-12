@@ -1,5 +1,7 @@
 # Buyer Refund Preparation
 
+## Module Description
+
 Use this leaf to resolve one Buyer-owned refund target and obtain a fresh,
 read-only Refund result. Cancellation changes future renewal; a refund
 returns the applicable original payment.

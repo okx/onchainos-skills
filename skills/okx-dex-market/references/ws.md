@@ -1,10 +1,9 @@
 # Capability: WS (Real-time WebSocket)
 
-Two ways to consume real-time DEX data:
-1. **CLI** (`onchainos ws`) — start a background session, poll events incrementally. Best for monitoring and agent-driven workflows.
-2. **Script** — write a custom WebSocket client in Python/Node/Rust. Best for bots and custom logic.
+## Flow
 
-## Approach 1: CLI (`onchainos ws`)
+Use the CLI (`onchainos ws`) for a background session and incremental polling.
+Use a custom WebSocket client only for bot or application-specific logic.
 
 ### Discover Channels
 
@@ -81,9 +80,16 @@ When polling `kol_smartmoney-tracker-activity` or `address-tracker-activity`, th
 - `--trade-type` (buy or sell)
 - `--since` (ms timestamp)
 
-## Approach 2: Custom Script
+### Custom Script
 
-When the user wants to build a custom WebSocket client with their own logic, load the matching protocol reference from the top-level conditional-reference table.
+When the user wants to build a custom WebSocket client with their own logic, load only the protocol reference for the selected channel group.
+
+| Channel group | Protocol reference |
+|---|---|
+| Market prices and candlesticks | [market-ws-protocol.md](market-ws-protocol.md) |
+| Token price and trades | [token-ws-protocol.md](token-ws-protocol.md) |
+| Signals and wallet tracking | [signal-ws-protocol.md](signal-ws-protocol.md) |
+| Meme/Trenches | [trenches-ws-protocol.md](trenches-ws-protocol.md) |
 
 ### Market Data (price & candlestick streams)
 
@@ -101,10 +107,6 @@ Channels: `dex-market-new-signal-openapi`, `kol_smartmoney-tracker-activity`, `a
 
 Channels: `dex-market-memepump-new-token-openapi`, `dex-market-memepump-update-metrics-openapi`
 
-## Common Protocol (all channels share)
+## Troubleshooting
 
-- **Endpoint**: `wss://wsdex.okx.com/ws/v6/dex`
-- **Auth**: HMAC-SHA256 login required before subscribing
-- **Heartbeat**: send `"ping"` every 25s, expect `"pong"`
-- **Subscribe**: `{"op": "subscribe", "args": [...]}`
-- **Unsubscribe**: `{"op": "unsubscribe", "args": [...]}`
+- [ws-troubleshooting.md](ws-troubleshooting.md)

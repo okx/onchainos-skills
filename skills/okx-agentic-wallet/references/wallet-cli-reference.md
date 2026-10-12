@@ -1,18 +1,18 @@
 # Wallet — CLI Reference
 
-Exact syntax, parameters, and key return fields for `onchainos wallet` subcommands. Verify flags with `onchainos wallet <subcommand> --help` when unsure. Gas Station flags on `send` / `contract-call` are documented here; the Gas Station flow lives in [gas-station.md](gas-station.md).
-
----
-
-## Account
+## Commands
 
 ### `wallet login`
 
 Social login (Google / Apple / Email via browser), orchestrated in phases via `--phase` (default `init`).
 
+#### Syntax
+
 ```bash
 onchainos wallet login [--phase init|open|poll] [--url <url>] [--session-id <id>]
 ```
+
+#### Parameters
 
 | Param | Required | Description |
 |---|---|---|
@@ -35,9 +35,15 @@ onchainos wallet login [--phase init|open|poll] [--url <url>] [--session-id <id>
 
 Add a new account under the logged-in user; auto-switches to it (no manual `switch` needed). Returns `accountId`, `accountName`.
 
-### `wallet switch <account_id>`
+### `wallet switch`
 
 Switch the active account.
+
+#### Syntax
+
+```bash
+onchainos wallet switch <account_id>
+```
 
 ### `wallet status`
 
@@ -46,6 +52,8 @@ Show login status and active account. Returns `email`, `loggedIn`, `currentAccou
 ### `wallet addresses`
 
 Show wallet addresses grouped by chain category (XLayer / EVM / Solana / Bitcoin / SUI).
+
+#### Syntax
 
 ```bash
 onchainos wallet addresses [--chain <chain>]
@@ -57,6 +65,8 @@ Re-invoke this to copy any address verbatim — never reproduce an address from 
 
 Read-only active funding/receive entry. It refreshes the current account address
 facts before returning them.
+
+#### Syntax
 
 ```bash
 onchainos wallet receive
@@ -90,13 +100,15 @@ List supported chains. Use `showName` for display, `realChainIndex` for the `--c
 
 ---
 
-## Balance
-
 ### `wallet balance`
+
+#### Syntax
 
 ```bash
 onchainos wallet balance [--all] [--chain <chain>] [--token-address <addr>] [--force]
 ```
+
+#### Parameters
 
 | Param | Default | Description |
 |---|---|---|
@@ -107,26 +119,7 @@ onchainos wallet balance [--all] [--chain <chain>] [--token-address <addr>] [--f
 
 Each token in `data[].tokenAssets[]` (or `data[].assets[]`) carries: `symbol`, `tokenName`, `chainIndex`, `tokenAddress` (`""` for native), `balance` (readable-decimal string), `rawBalance` (minimal units), `decimal`, `tokenPrice`, `usdValue`. **Recovery consumer**: identify the refreshed asset by **`(tokenAddress, chainIndex)`** — never by `symbol` alone (symbols repeat across chains) — and treat the returned balance fields as facts only. See [wallet.md](wallet.md) → Insufficient-Balance Top-up Recovery.
 
-### `wallet funding-check`
-
-```bash
-onchainos wallet funding-check --chain <chain> [--token-address <contract>] \
-  --required <readable-amount> --asset <symbol>
-```
-
-This is a read-only post-funding query. It returns
-`phase=funding_verification`, the freshly queried `currentBalance`, the exact
-CLI-calculated readable `shortfall`, and `sufficient`. A sufficient result
-returns no action; the Funding Reference uses conversation context only to ask
-whether to continue. An insufficient result includes `fundingTarget` and Common
-QR in `payload` and also returns no continuation action.
-A failed balance query returns the same phase with `reason=balance_unavailable`,
-`currentBalance=null`, and no action; the Skill must stop rather than guess.
-If the balance is still insufficient but the current receive target cannot be
-refreshed, the command returns `reason=funding_target_unavailable`, retains the
-confirmed balance and shortfall, omits address/QR, and returns no action.
-
-### User-facing Reply Templates
+#### Output Template
 
 For one account, reply with:
 
@@ -148,13 +141,32 @@ Total assets across all accounts: $${totalValueUsd}
 
 Repeat the asset line for every returned asset across all accounts. Do not display `accountId` or `accountName`.
 
----
+### `wallet funding-check`
 
-## Send
+#### Syntax
+
+```bash
+onchainos wallet funding-check --chain <chain> [--token-address <contract>] \
+  --required <readable-amount> --asset <symbol>
+```
+
+This is a read-only post-funding query. It returns
+`phase=funding_verification`, the freshly queried `currentBalance`, the exact
+CLI-calculated readable `shortfall`, and `sufficient`. A sufficient result
+returns no action; the Funding Reference uses conversation context only to ask
+whether to continue. An insufficient result includes `fundingTarget` and Common
+QR in `payload` and also returns no continuation action.
+A failed balance query returns the same phase with `reason=balance_unavailable`,
+`currentBalance=null`, and no action; the Skill must stop rather than guess.
+If the balance is still insufficient but the current receive target cannot be
+refreshed, the command returns `reason=funding_target_unavailable`, retains the
+confirmed balance and shortfall, omits address/QR, and returns no action.
 
 ### `wallet send`
 
 Send native or contract tokens.
+
+#### Syntax
 
 ```bash
 onchainos wallet send --readable-amount <amount> --recipient <address> --chain <chain> \
@@ -162,6 +174,8 @@ onchainos wallet send --readable-amount <amount> --recipient <address> --chain <
   [--brc20-outpoint <txHash:voutIndex>]... [--force] \
   [--gas-token-address <address>] [--relayer-id <id>] [--enable-gas-station]
 ```
+
+#### Parameters
 
 | Param | Required | Description |
 |---|---|---|
@@ -176,9 +190,11 @@ onchainos wallet send --readable-amount <amount> --recipient <address> --chain <
 | `--force` | No | Re-run after a confirmed Confirming response. |
 | `--gas-token-address`, `--relayer-id`, `--enable-gas-station` | No | Gas Station (Solana). Second-phase values from a Confirming response — never on the first call. See [gas-station.md](gas-station.md). |
 
+#### Return Fields
+
 Returns `txHash` (normal). Gas Station responses (`gasStationUsed`, `orderId`, Confirming scenes) → [gas-station.md](gas-station.md). On simulation failure, the CLI never broadcasts. If a fresh balance query independently confirms that the requested transfer asset is insufficient, it returns the common structured Funding result below; otherwise it surfaces `executeErrorMsg`.
 
-#### Common insufficient-balance result
+##### Common insufficient-balance result
 
 Emitted on a real backend `code=10004`, or after `executeResult=false` when a fresh chain-and-token balance query proves `requested > balance`. The CLI never infers this state from simulation text alone. It uses the standard `{ok:false,data:{phase,decision,reason,nextAction,payload}}` envelope. Business recovery: [wallet.md](wallet.md) → Insufficient-Balance Top-up Recovery. Presentation: [funding.md](funding.md) → Output templates.
 
@@ -192,7 +208,7 @@ Emitted on a real backend `code=10004`, or after `executeResult=false` when a fr
 | `data.payload.fundingNeed` | object | `{asset,tokenAddress,required,balance,shortfall}` in readable units. A successful exact query with no holding returns balance `"0"`; a query failure returns `null`. |
 | `data.payload.qr` | object | QR for `fundingTarget.receiveAddress`; see [Common `qr` object](#common-qr-object). |
 
-#### Common `qr` object
+##### Common `qr` object
 
 Every recovery scene (`wallet send`, `swap quote`, `payment a2a-pay pay`, and
 task creation) embeds the same `qr` object, populated per `displayMode`
@@ -217,11 +233,13 @@ creates a new preview; `retryable` never authorizes automatic retry.
 
 ---
 
-## History
+### `wallet history`
 
 Providing any of `--order-id` / `--tx-hash` / `--uop-hash` → **detail mode** (single record); otherwise **list mode** (paged).
 
 For BRC-20, this shared query handles direct-transfer history. Transfer-inscription status uses `wallet inscription status`.
+
+#### Syntax
 
 ```bash
 # List
@@ -242,11 +260,11 @@ Transaction status is normalized by the CLI: `PENDING` (service `1` or `2`) · `
 
 ---
 
-## Contract Call
-
 ### `wallet contract-call`
 
 Call an EVM contract (`--input-data`), Solana program (`--unsigned-tx`), or SUI PTB (`--sui-tx-bytes`) with TEE signing + auto-broadcast.
+
+#### Syntax
 
 ```bash
 onchainos wallet contract-call --chain <chain> [--to <contract>] \
@@ -255,6 +273,8 @@ onchainos wallet contract-call --chain <chain> [--to <contract>] \
   [--biz-type <type>] [--strategy <name>] [--aa-dex-token-addr <addr>] [--aa-dex-token-amount <amt>] \
   [--gas-token-address <addr>] [--relayer-id <id>] [--enable-gas-station] [--force]
 ```
+
+#### Parameters
 
 | Param | Required | Description |
 |---|---|---|
@@ -275,15 +295,17 @@ Use exactly one chain-native payload: `--input-data` (EVM), `--unsigned-tx` (Sol
 
 ---
 
-## Sign Message
-
 ### `wallet sign-message`
 
 personalSign (EIP-191, EVM + Solana) or EIP-712 typed data (EVM only).
 
+#### Syntax
+
 ```bash
 onchainos wallet sign-message --chain <chain> --from <address> --message <message> [--type <type>] [--force]
 ```
+
+#### Parameters
 
 | Param | Required | Description |
 |---|---|---|

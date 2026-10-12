@@ -1,9 +1,13 @@
 # ASP Task and Deliverable Queries
 
-This leaf performs read-only queries for the selected ASP identity. The User
+## Module Description
+
+This Reference performs read-only queries for the selected ASP identity. The User
 router never loads this file.
 
-## Task list and details
+
+## Flow
+### Task list and details
 
 Resolve the explicit or bound ASP identity. If multiple identities remain,
 show them and wait for a selection.
@@ -17,14 +21,50 @@ task sources. `payload.pageSize` applies independently to each source
 (`payload.paginationScope=per_task_type`), so a page can contain up to twice
 that many rows. Subscription rows appear first, followed by one-time rows.
 Render only `payload.items`, in CLI order, and number the rows from 1.
+Render [Task List](#task-list).
 
 `payload.total` is the sum of `payload.subscriptionTotal` and
 `payload.oneTimeTotal`. `payload.hasMore` is true while either
 `payload.subscriptionHasMore` or `payload.oneTimeHasMore` is true.
 
-scene: ASP task list
+For a selected row, use its `taskType` only as a routing key and run:
 
-display template:
+```text
+onchainos agent asp status <jobId> --agent-id <aspAgentId>
+```
+
+Render the returned `payload.task` with [Task Details](#task-details).
+
+Pending refund requests and filed evaluations are different datasets. Route
+both through [`arbitration-query.md`](arbitration-query.md).
+
+For the refund status or result of a known provided Job ID, run:
+
+```text
+onchainos agent refund-detail <jobId> --role provider --agent-id <aspAgentId>
+```
+
+The same command returns the pending decision for `Rejected(3)`, the current
+Evaluation result for `Disputed(4)`, and a read-only refund result for terminal
+states. Render [Refund Request Details](#refund-request-details) from its
+`payload.display` fields.
+
+### Saved deliverables
+
+```text
+onchainos agent task-deliverable-list --job-id <jobId> --role asp
+onchainos agent task-deliverable-list --role asp [--search <keyword>]
+```
+
+For one task, show the original name, type, human-readable size, absolute path,
+and saved time. For multiple tasks, group by title and full Job ID. An empty
+result means no saved deliverables were found.
+
+
+## Output Rules
+### Task List
+
+scene: ASP task list
 
 ```markdown
 ### Tasks for {aspName} (Agent ID: {agentId})
@@ -37,8 +77,6 @@ You currently have {jobCount} tasks:
 
 Reply with a number or Job ID to view the task details. {morePrompt}
 ```
-
-display rules:
 
 1. Set `jobCount` from `payload.total`. Preserve every Job Name exactly. Display every Job ID in full and allow a
    reply by row number or Job ID only for an ID in
@@ -64,17 +102,11 @@ display rules:
 8. Do not display device names, receiving-device state, or any other
    subscription delivery-routing data in an ASP task list.
 9. When `payload.hasMore=true`, set `morePrompt` to the localized equivalent of
-   `Reply “More” to see more tasks.` When false, set it to an empty string. A
+   `Reply "More" to see more tasks.` When false, set it to an empty string. A
    More reply increments `--page` and keeps the same `--limit`, ASP Agent ID,
    and optional `--status` filter.
 
-For a selected row, use its `taskType` only as a routing key and run:
-
-```text
-onchainos agent asp status <jobId> --agent-id <aspAgentId>
-```
-
-Render the returned `payload.task` with this template:
+### Task Details
 
 ```markdown
 ### Task Details
@@ -85,8 +117,6 @@ Render the returned `payload.task` with this template:
 
 {recommendedActions}
 ```
-
-detail rules:
 
 1. Apply the list's Job Name, full Job ID, User, platform-review tag, Task Type,
    and Status rules unchanged. Render `detailFeeLabel`: subscription fees retain
@@ -103,32 +133,7 @@ detail rules:
 6. Render only returned next actions after the table as `recommendedActions`.
    Never infer an action from status prose.
 
-Pending refund requests and filed evaluations are different datasets. Route
-both through [`arbitration-query.md`](arbitration-query.md).
-
-For the refund status or result of a known provided Job ID, run:
-
-```text
-onchainos agent refund-detail <jobId> --role provider --agent-id <aspAgentId>
-```
-
-The same command returns the pending decision for `Rejected(3)`, the current
-Evaluation result for `Disputed(4)`, and a read-only refund result for terminal
-states. Render [Refund Request Details](#refund-request-details) from its
-`payload.display` fields.
-
-## Saved deliverables
-
-```text
-onchainos agent task-deliverable-list --job-id <jobId> --role asp
-onchainos agent task-deliverable-list --role asp [--search <keyword>]
-```
-
-For one task, show the original name, type, human-readable size, absolute path,
-and saved time. For multiple tasks, group by title and full Job ID. An empty
-result means no saved deliverables were found.
-
-## Refund Request Details
+### Refund Request Details
 
 ```markdown
 ### Refund Request Details

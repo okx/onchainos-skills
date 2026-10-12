@@ -1,8 +1,10 @@
 # Gas Station — Troubleshooting (Solana)
 
+## Recovery
+
 Edge cases, FAQ answers, and failure diagnosis for Gas Station. Render every user-facing template per the already-loaded Gas Station output-discipline rule (verbatim, translate at output time, no extras). Never expose internal mechanism terms or error codes.
 
-## Edge Cases
+### Edge Cases
 
 Handle these explicitly — do not fall through to generic error handling.
 
@@ -169,7 +171,7 @@ Markers present → render verbatim:
 ```
 Markers absent → do NOT render. Explain from actual tx data: a real swap (e.g. `USDC → SOL` in the asset change) → describe as a normal swap; dusting (1 lamport from unknown address, `txHash` often null) → Solana network noise, ignorable. Do not invent a Gas Station explanation when markers don't match.
 
-## Failure & Backend-Bug Handling
+## Failure Diagnostics
 
 Diagnosis content (not user-facing). Read the CLI `scene` and dispatch via the gas-station.md Outcome → render map; do not re-derive from raw booleans.
 

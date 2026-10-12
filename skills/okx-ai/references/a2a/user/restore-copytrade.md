@@ -1,5 +1,7 @@
 # Restore automatic copy-trading on this device
 
+## Module Description
+
 Use this leaf only when the User explicitly asks to resume automatic
 copy-trading for one existing Active subscription. This commonly follows a
 device change. It is not entered by receipt restoration alone, a Signal, or a

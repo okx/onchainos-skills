@@ -1,5 +1,7 @@
 # Decision Claim and Relay
 
+## Module Description
+
 Use this leaf only after a User replies to a concrete `decision_request`.
 Remember whether it came from an active global/scoped watch or a one-shot list;
 never infer origin or scope from reply text.

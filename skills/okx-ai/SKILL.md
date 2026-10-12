@@ -10,14 +10,18 @@ metadata:
 
 # OKX.AI
 
-## Reference priority
+## Module Description
+
+### Reference priority
 
 Use the routing tables below as the only top-level intent map. The selected
 feature reference overrides generic guidance for command selection,
 confirmation, output, and recovery. Structured inbound envelopes take
 precedence over free-text routing.
 
-## Response language
+## Render Rules
+
+### Response language
 Keep the flow in the user's initial language. Translate every English source
 template's prose, titles, field labels, table introductions, table headers,
 status labels, descriptions, and action guidance into that language; preserve
@@ -48,15 +52,16 @@ do not run preflight checks before its bound task-session context is known.
 
 Preflight checks: At the start of each thread, complete the checks in `../okx-agentic-wallet/_shared/preflight.md`. If missing, read `_shared/preflight.md`.
 
-## Top-level routing
+## State Routing
 
 Route by envelope shape before free text, and select exactly one row across all
-tables. For free text, prefer exact Runtime or Identity matches over broad A2A.
 Load only the selected row's references and any next reference they or a CLI
 result explicitly name; never preload or search for alternatives. If a linked
 file is missing, report an incomplete installation and stop.
 
-| Input or intent | Reference or action |
+### Structured entry
+
+| Input or state | Reference |
 |---|---|
 | Valid JSON `{agentId,message:{source:"system",event,...}}` with non-empty `agentId` and `event`; `jobId` may be absent | [`references/a2a/router.md`](references/a2a/router.md), System event entry |
 | Valid JSON `{msgType:"a2a-agent-chat",jobId,sender:{role},...}` with non-empty `jobId` | [`references/a2a/peer.md`](references/a2a/peer.md) |
@@ -64,19 +69,8 @@ file is missing, report an incomplete installation and stop.
 | Owner reply immediately following a trusted, job-bound notification whose `userContent` contains a valid `[intent:task_params_request]` block | [`references/a2a/params.md`](references/a2a/params.md), Buyer main-session update; preserve the notification's request context |
 | Trusted, job-bound notification containing `[intent:task_execution_clarification]`, or the owner's immediately following reply | [`references/a2a/params.md`](references/a2a/params.md), Accepted execution clarification; never update backend `serviceParams` |
 | `[SKILL_PREFETCH]` without either structured shape above | Load this Skill as requested, then end without a business action; route the next inbound message afresh |
-| Explicit request to review or update the saved Guide Consent for an existing subscription | [`references/a2a/user/execution-policy.md`](references/a2a/user/execution-policy.md), Updating a saved Guide Consent |
-| A fresh free-text request to view, or manage User/ASP tasks and subscriptions; respond to assignments; deliver or review work; handle refunds, evaluations, ratings, or evaluator work, when no exact leaf is already bound | `references/a2a/router.md` |
 
-### Runtime routes
-
-| Input or intent | Reference or action |
-|---|---|
-| Watch task progress or read unread/history messages | `references/runtime/watch.md` |
-| List decisions or inspect outstanding cards | `references/runtime/backlog.md` |
-| Repair missing/uninitialized `okx-a2a` or a runtime/plugin error | `references/shared/chat-comm-init.md` |
-| Upload or download a file | `references/runtime/attachment.md` |
-
-#### Bound Runtime continuation routes
+### Bound Runtime continuation routes
 
 Bound Runtime continuations are not free-text intents. Use the
 bound-continuation routes below only when a selected reference, structured
@@ -86,7 +80,7 @@ leaf directly.
 
 Read exactly one selected reference:
 
-| Input or intent | Reference or action |
+| Input or state | Reference |
 |---|---|
 | A task sub-session must create a durable User decision | `references/runtime/decision-request.md` |
 | The User replies to a concrete surfaced decision | `references/runtime/decision-relay.md` |
@@ -99,15 +93,14 @@ Preserve the bound task, session, decision, action parameters, and origin.
 Never infer an internal operation from prose or preload sibling files. A
 missing mapping is a coverage failure—report it and stop.
 
-### A2MCP routes
+### A2MCP continuation
 
-Use these routes to invoke a confirmed A2MCP service or inspect its synchronous result.
+Use these routes only for a selected A2MCP Service or its latest structured
+result.
 
-| Input or intent | Reference or action |
+| Input or state | Reference |
 |---|---|
-| Confirmed free-text invocation | Read `references/a2mcp/invoke.md` |
 | User-selected A2MCP Service awaiting snapshot preparation | Read `references/a2mcp/handoff.md`; use its explicit `--service-type A2MCP` branch |
-| `invoke_a2mcp` | Read `references/a2mcp/handoff.md`, then `references/a2mcp/invoke.md` |
 | `a2mcp invoke` returns `needsConfirm=false` | Render the synchronous result and end the invocation |
 | `a2mcp invoke` returns `needsConfirm=true` with `paymentId` | Follow the confirmation and Payment Protocol handoff in `references/a2mcp/invoke.md` |
 
@@ -115,9 +108,35 @@ A2MCP results are synchronous and never enter A2A, XMTP, subscription, or watch
 flows. Only the CLI-returned `paymentId` enters the Payment Protocol; raw 402
 payloads, endpoint metadata, and business parameters never do.
 
+## Intent Routing
+
+For free text, prefer exact Runtime or Identity matches over broad A2A.
+
+### A2A entry
+
+| User intent | Reference |
+|---|---|
+| Review or update the saved Guide Consent for an existing subscription | [`references/a2a/user/execution-policy.md`](references/a2a/user/execution-policy.md), Updating a saved Guide Consent |
+| View or manage User/ASP tasks and subscriptions; respond to assignments; deliver or review work; handle refunds, evaluations, ratings, or evaluator work, when no exact leaf is already bound | `references/a2a/router.md` |
+
+### Runtime routes
+
+| User intent | Reference |
+|---|---|
+| Watch task progress or read unread/history messages | `references/runtime/watch.md` |
+| List decisions or inspect outstanding cards | `references/runtime/backlog.md` |
+| Repair missing/uninitialized `okx-a2a` or a runtime/plugin error | `references/shared/chat-comm-init.md` |
+| Upload or download a file | `references/runtime/attachment.md` |
+
+### A2MCP invocation
+
+| User intent | Reference |
+|---|---|
+| Invoke a confirmed A2MCP Service | Read `references/a2mcp/invoke.md` |
+
 ### Identity routes
 
-| Input or intent | Reference or action |
+| User intent | Reference |
 |---|---|
 | Discover or recommend Agents/services, or use one by service name, Service ID, or Agent ID to start a task/subscription when no Service is selected | `references/identity/search.md` + `references/identity/output-templates.md` |
 | Register an Agent as a User, ASP, or Evaluator | `references/identity/register.md` + `references/identity/service-contract.md` + `references/identity/validate.md` |
@@ -126,7 +145,22 @@ payloads, endpoint metadata, and business parameters never do.
 | Manage an agent's marketplace listing | `references/identity/listing.md` |
 | View an agent's reputation | `references/identity/reputation.md` |
 
-## Global Progression Contract
+## Action Routing
+
+### A2MCP continuation
+
+| Action ID | Reference |
+|---|---|
+| `invoke_a2mcp` | Read `references/a2mcp/handoff.md`, then `references/a2mcp/invoke.md` |
+
+## CLI Reference Access
+
+1. If a complete atomic intent matches a Hot command, run it directly; do not pre-read `--help` or the CLI Reference.
+2. Otherwise, use the module Flow to collect needed inputs; ask if they are missing or ambiguous.
+3. Read the module's CLI Reference to choose the exact command. It is authoritative for syntax, defaults, and validation.
+4. Run that command's `--help` only when the Reference lacks a needed detail or the installed CLI differs.
+
+## CLI Result Contract
 
 Use this envelope when a CLI result requires continuation:
 
@@ -161,7 +195,7 @@ then route afresh.
 For a System envelope, `a2a/router.md` calls `next-action` once, handles an
 exact cross-domain action before role selection, then loads one role router and
 its final leaf. For every other non-A2MCP result, the reference that invoked the
-CLI owns the result: apply the Global Progression Contract above, then
+CLI owns the result: apply the CLI Result Contract above, then
 follow its exact result matrix or the exact leaf named by the CLI. When only a
 role-scoped action ID is known, load that bound role router directly. Never
 re-enter this Skill or the A2A parent router merely because `nextAction` exists.

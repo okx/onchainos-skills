@@ -1,9 +1,13 @@
 # Deliverable Review Decision
 
+## Module Description
+
 Use this leaf only after the main conversation has claimed a real pending
 decision and relayed the User's wording unchanged to the task session.
 
-## Approve
+
+## Flow
+### Approve
 
 For the returned `approve_review` action, execute its exact command once. A
 successful result is `phase=deliverable_review`,
@@ -13,7 +17,7 @@ Stop the current event route after broadcast and wait for the authoritative
 terminal event. The returned `approve_review` action is the completion action
 for this route.
 
-## Reject
+### Reject
 
 For a submitted zero-price one-time task, resolve the reply into one of two
 pre-positioned branches before any endpoint call:

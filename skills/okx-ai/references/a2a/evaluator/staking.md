@@ -1,11 +1,14 @@
 # Evaluator Staking
 
+## Module Description
+
 Use this entry for first stake, stake increases, unstake requests, unstake
 claims and cancellations, stake-state queries, and staking lifecycle receipts.
 
-## Intent routing
 
-| Intent | Flow |
+## Intent Routing
+
+| User intent | Reference |
 |---|---|
 | Stake to become eligible for evaluation work | [First stake](#first-stake) |
 | Increase or replenish stake | [Increase stake](#increase-stake) |
@@ -15,14 +18,8 @@ claims and cancellations, stake-state queries, and staking lifecycle receipts.
 | Query current stake or cooldown | [Query stake](#query-stake) |
 | Process a staking system event | [Lifecycle events](#lifecycle-events) |
 
-Contents: [identity and configuration](#identity-and-configuration);
-[economic contract](#economic-contract); [first stake](#first-stake);
-[increase stake](#increase-stake); [request unstake](#request-unstake);
-[claim unstake](#claim-unstake); [cancel unstake](#cancel-unstake);
-[query stake](#query-stake); [lifecycle events](#lifecycle-events);
-[output templates](#output-templates).
-
-## Identity and configuration
+## Flow
+### Identity and configuration
 
 Use an explicitly supplied evaluator Agent ID. In an active system envelope,
 use its bound `agentId`. Otherwise run `onchainos agent my-agents`, use the sole
@@ -40,7 +37,7 @@ Relevant fields include `minCumulativeStakeOkb`,
 `partialUnstakeMinRetainOkb`, `arbitrationFeeBps`, `slashMinorityBps`,
 `slashTimeoutBps`, `slashedCooldownHours`, and `unstakeCooldownDays`.
 
-## Economic contract
+### Economic contract
 
 Every staking and evaluation transaction uses the platform-sponsored
 channel. Calculate required wallet balance from the requested OKB stake
@@ -53,7 +50,7 @@ unstake.
 For ordinary command and event results, clearly state the outcome, relevant
 amount, transaction hash or deadline, and the next available action.
 
-## First stake
+### First stake
 
 Enter after evaluator identity registration or an explicit staking request.
 
@@ -77,7 +74,7 @@ Enter after evaluator identity registration or an explicit staking request.
    on-chain activation. The `staked` system event supplies the authoritative
    active-state receipt.
 
-## Increase stake
+### Increase stake
 
 1. Collect an explicit numeric OKB amount.
 2. Render [Confirm increase](#confirm-increase) with that amount.
@@ -91,7 +88,7 @@ Enter after evaluator identity registration or an explicit staking request.
 
 Use this flow for voluntary increases and post-slash replenishment.
 
-## Request unstake
+### Request unstake
 
 1. Read configuration and current stake state through
    [Identity and configuration](#identity-and-configuration).
@@ -111,7 +108,7 @@ Use this flow for voluntary increases and post-slash replenishment.
 7. State the submitted amount, cooldown, transaction hash, and next available
    claim or cancellation action.
 
-## Claim unstake
+### Claim unstake
 
 An explicit claim intent authorizes this no-amount command. The CLI validates
 the pending amount and unlock time:
@@ -123,19 +120,7 @@ onchainos agent claim-unstake --agent-id <evaluatorAgentId>
 State the submission result, transaction hash, and pending wallet credit. For a
 blocked result, state the returned reason and available time when present.
 
-## Cancel unstake
-
-An explicit cancellation intent authorizes this no-amount command. The CLI
-validates the pending request and cooldown state:
-
-```text
-onchainos agent cancel-unstake --agent-id <evaluatorAgentId>
-```
-
-State the submission result, transaction hash, and pending active-stake
-restoration. For a blocked result, state the returned reason.
-
-## Query stake
+### Query stake
 
 Run this read-only query immediately:
 
@@ -154,7 +139,7 @@ Render [Stake state](#stake-state) with:
 | `unstakeAvailableAt` | Unix seconds for claim availability; `0` means no pending unstake. |
 | `cooldownEndsAt` | Unix seconds for slash cooldown completion; `0` means no active slash cooldown. |
 
-## Lifecycle events
+### Lifecycle events
 
 For each `source:"system"` envelope, pass its complete message through the
 progression entry:
@@ -186,13 +171,27 @@ Review selection, Commit/Reveal, ruling, reward, and penalty events enter
 [`router.md`](router.md). Evidence scoring and verdict writing use
 [`rubric.md`](rubric.md).
 
-## Output Templates
+### Cancel unstake
+
+An explicit cancellation intent authorizes this no-amount command. The CLI
+validates the pending request and cooldown state:
+
+```text
+onchainos agent cancel-unstake --agent-id <evaluatorAgentId>
+```
+
+State the submission result, transaction hash, and pending active-stake
+restoration. For a blocked result, state the returned reason.
+
+
+## Output Rules
+### Output Templates
 
 Use fixed templates for first-stake amount authorization, increase/unstake
 confirmations, and the structured stake-state query. Render them in the current
 conversation language and keep returned values exact.
 
-### Choose first stake amount
+#### Choose first stake amount
 
 ```text
 Current active stake: {activeStake} OKB
@@ -213,13 +212,13 @@ Unstake window: {unstakeCooldownDays} days
 Provide the exact OKB amount to stake, or reply cancel.
 ```
 
-### Confirm increase
+#### Confirm increase
 
 ```text
 Increase the stake by {amount} OKB?
 ```
 
-### Confirm unstake
+#### Confirm unstake
 
 ```text
 Request to unstake {amount} OKB?
@@ -229,7 +228,7 @@ Cooldown: {unstakeCooldownDays} days
 The request can be cancelled during cooldown and claimed after it ends.
 ```
 
-### Stake state
+#### Stake state
 
 ```text
 Current stake state:

@@ -1,28 +1,24 @@
 # Capability: Token
 
-13 commands for token search, metadata, detailed pricing, liquidity pools, hot token lists, holder distribution, advanced token info, top trader analysis, filtered trade history, holder cluster analysis, and supported chain lookup.
+## Intent Routing
 
-## Commands
-
-| # | Command | Use When |
+| User intent | Reference | Hot command |
 |---|---|---|
-| 1 | `onchainos token search --query <query> [--chains <chains>]` | Search tokens by name, symbol, or address |
-| 2 | `onchainos token info --address <address>` | Token metadata (name, symbol, decimals, logo) |
-| 3 | `onchainos token price-info --address <address>` | Price + market cap + liquidity + volume + 24h change |
-| 4 | `onchainos token holders --address <address>` | Holder distribution (top 100, optional tag filter: KOL/whale/smart money) |
-| 5 | `onchainos token liquidity --address <address>` | Top 5 liquidity pools |
-| 6 | `onchainos token hot-tokens` | Hot/trending token list (by trending score or X mentions, max 100) |
-| 7 | `onchainos token advanced-info --address <address>` | Risk level, creator, dev stats, holder concentration |
-| 8 | `onchainos token top-trader --address <address>` | Top traders / profit addresses for a token |
-| 9 | `onchainos token trades --address <address>` | DEX trade history with optional tag/wallet filters |
-| 10 | `onchainos token cluster-overview --address <address>` | Holder cluster concentration (cluster level, rug pull %, new address %) |
-| 11 | `onchainos token cluster-top-holders --address <address> --range-filter <1\|2\|3>` | Top 10/50/100 holder overview (avg PnL, cost, trend); 1=top10, 2=top50, 3=top100 |
-| 12 | `onchainos token cluster-list --address <address>` | Holder cluster list (clusters of top 300 holders with address details) |
-| 13 | `onchainos token cluster-supported-chains` | Chains supported by holder cluster analysis |
+| Show trending tokens | — | `onchainos token hot-tokens` |
+| Show chains supported by holder-cluster analysis | — | `onchainos token cluster-supported-chains` |
+
+For these rows, call the canonical command directly. Do not read the CLI Reference or run `--help` first; continue to apply this Reference's Security, Render Rules, and result-handling rules.
+
+## Flow
+
+For a request not covered by a hot command, collect the business inputs below,
+then read [token-cli-reference.md](token-cli-reference.md) to select the exact
+command. The CLI Reference owns command syntax, defaults, return-field semantics,
+and command-level validation.
 
 > **Mandatory routing rule:** Any token-safety or honeypot request redirects to `okx-agentic-wallet` (`onchainos security token-scan`). Do not answer safety questions from token data alone.
 
-### Step 1: Collect Parameters
+### Collect Parameters
 
 - Missing chain → ask the user which chain they want to use before proceeding; do not assume a default chain
 - Only have token name, no address → use `onchainos token search` first
@@ -31,8 +27,9 @@
 - For search, `--chains` defaults to `"1,501"` (Ethereum + Solana)
 - **Chain uncertainty for cluster commands**: If the user doesn't know whether their chain supports cluster analysis, suggest running `onchainos token cluster-supported-chains` first before calling cluster-overview / cluster-top-holders / cluster-list.
 - **Pagination** (`token search`, `token hot-tokens`, `token holders`, `token top-trader`): pass `--max-results <N>` (1–500) to auto-paginate in one call — the CLI aggregates pages and returns top-level `data.items`, `data.nextCursor`, and `data.fetchedCount`. Do NOT chase per-item cursors yourself. `--limit`/`--cursor` still work for manual single-page control.
+- For Chinese crypto slang or platform-specific ranking terms whose command meaning is not obvious from direct translation, read [token-keyword-glossary.md](token-keyword-glossary.md) before selecting a command.
 
-### Step 2: Call and Display
+### Execute and Handle Result
 
 - Search results: show name, symbol, chain, price, 24h change
 - Indicate `communityRecognized` status for trust signaling
@@ -42,7 +39,7 @@
 
 Render `requestTime` (Unix ms) as-is — it is the upstream data snapshot time. Do NOT chain off a previous response's `requestTime`; for a relative window use `--since` where the command supports it.
 
-## Security Rules
+## Security
 
 > **These rules are mandatory. Do NOT skip or bypass them.**
 
@@ -53,8 +50,16 @@ Render `requestTime` (Unix ms) as-is — it is the upstream data snapshot time. 
    - < $10K: warn about high slippage risk and ask the user to confirm before proceeding to swap.
    - < $1K: strongly warn that trading may result in significant losses. Proceed only if the user explicitly confirms.
 
-## Amount Display Rules
+## Render Rules
 
 - Use appropriate precision: 2 decimals for high-value, significant digits for low-value
 - Market cap / liquidity in shorthand ($1.2B, $45M)
 - 24h change with sign and color hint (+X% / -X%)
+
+## Troubleshooting
+
+- [token-troubleshooting.md](token-troubleshooting.md)
+
+## CLI Reference
+
+- [token-cli-reference.md](token-cli-reference.md)

@@ -1,5 +1,7 @@
 # Task State Machine (Shared Blueprint)
 
+## State Semantics
+
 > **The single source of truth** — aligned with `cli/src/commands/agent_commerce/task/common/state_machine.rs`. All role skill files reference this diagram.
 >
 > The state machine itself is payment-mode-agnostic. Payment and entry
@@ -9,7 +11,9 @@
 
 ---
 
-## Task Status (11 real enums)
+
+## Supported Capabilities
+### Task Status (11 real enums)
 
 Backend `status` int field → local `Status` enum mapping (`state_machine.rs::Status::from_int`):
 

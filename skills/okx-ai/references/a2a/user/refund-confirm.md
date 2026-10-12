@@ -1,8 +1,12 @@
 # Buyer Refund Confirmation
 
+## Module Description
+
 Use this leaf only for a fresh Refund V2 confirmation flow.
 
-## Delivered-task rejection
+
+## Flow
+### Delivered-task rejection
 
 After the user rejects a delivered result, run:
 
@@ -40,7 +44,7 @@ Continue only when the fresh result has `payload.schemaVersion=2`,
 `nextAction[id=submit_refund_request]`. Execute that action immediately through
 [`refund-execute.md`](refund-execute.md).
 
-## Other refund confirmations
+### Other refund confirmations
 
 For `zero_amount_close_confirmation_required` or
 `direct_refund_confirmation_required`, render the fresh CLI values with
@@ -59,13 +63,15 @@ Bind each write to an explicit action selected from the latest preparation
 result. Render the returned recovery guidance for a blocked, stale, or malformed
 result.
 
-## Output Templates
+
+## Output Rules
+### Output Templates
 
 The templates below are English sources. Reply in the language of the current
 conversation while preserving Job IDs, Agent IDs, amounts, token symbols,
 timestamps, and user-authored reasons exactly.
 
-### Confirm Refund Request
+#### Confirm Refund Request
 
 Use `payload.display` from the latest `refund-prepare` result.
 
@@ -80,7 +86,7 @@ Use `payload.display` from the latest `refund-prepare` result.
 - Refund Amount: {refundAmount}
 - Reason for Refund: {reasonForRefund}
 
-If everything is correct, reply “Submit refund request” and include your refund reason. To make changes, describe what you want to update.
+If everything is correct, reply "Submit refund request" and include your refund reason. To make changes, describe what you want to update.
 ```
 
 Display rules:
@@ -91,7 +97,7 @@ Display rules:
 4. Preserve the original reason verbatim.
 5. Use the CLI-provided service-name fallback, task type, amount, and formatted timestamps directly.
 
-### Confirm Subscription Closure
+#### Confirm Subscription Closure
 
 Use `payload.display` from the latest `refund-prepare` result and render one
 field per bullet line; do not use a horizontal table.
@@ -105,7 +111,7 @@ field per bullet line; do not use a horizontal table.
 - Task Type: {taskType}
 - Refund Amount: {refundAmount}
 
-The ASP has not accepted this subscription. Reply “Confirm close” to close it now. Any displayed paid amount will be returned automatically after on-chain confirmation; when no refund is required, only the task will be closed.
+The ASP has not accepted this subscription. Reply "Confirm close" to close it now. Any displayed paid amount will be returned automatically after on-chain confirmation; when no refund is required, only the task will be closed.
 ```
 
 Preserve the full Job ID, amount, and token symbol exactly. Do not request a

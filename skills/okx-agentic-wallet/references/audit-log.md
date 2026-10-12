@@ -1,5 +1,7 @@
 # Audit Log
 
+## Flow
+
 Provide the audit log file path so developers can troubleshoot offline. This is a local file, not a CLI subcommand. Do NOT read or display the file contents in the conversation.
 
 Tell the user:

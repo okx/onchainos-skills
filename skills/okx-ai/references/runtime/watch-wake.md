@@ -1,10 +1,14 @@
 # Auto-timeout wake scheduling (platform-specific payloads)
 
+## Module Description
+
 > Loaded from `watch.md` when a fresh `decision_request` comes from an active global or scoped
 > watch. A decision opened independently through `outdated-list` / a decision list has no active-watch
 > origin: do not schedule a wake for it.
 
-## Entry routing and scope
+
+## Flow
+### Entry routing and scope
 
 Remember the exact command that produced the decision:
 
@@ -14,7 +18,7 @@ Remember the exact command that produced the decision:
 The wake must carry that exact scope. Never infer a jobId from the decision body, the user's later
 reply, or history; never drop a remembered `--job-id` and fall back to global watch.
 
-## Scheduling the wake
+### Scheduling the wake
 
 After rendering `userContent`, but before ending the turn, schedule a 2-minute **one-shot** wake.
 The prompt is one of these exact English strings:
@@ -55,7 +59,7 @@ The handle returned by either platform tool is the **wake id**.
 If the scheduling tool is unavailable or errors, skip silently. Do not replace it with a recurring
 cron, sleep loop, or a different prompt.
 
-## When the wake fires
+### When the wake fires
 
 First apply a chronology guard. The wake is stale and must do nothing if, after it was scheduled, any
 of these occurred in the conversation:
@@ -71,7 +75,9 @@ versus scoped origin exactly. The consumed decision itself will not reappear in 
 remains available through `okx-a2a user outdated-list` (see
 [`backlog.md`](backlog.md)).
 
-## Cancelling the wake
+
+## Troubleshooting
+### Cancelling the wake
 
 Reply handling and scope replacement best-effort cancel the remembered wake before continuing:
 
