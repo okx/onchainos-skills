@@ -1,9 +1,14 @@
 # Subscription Creation
 
+## Module Description
+
 Enter from `create-prepare.md` only when the authoritative payload supports a
 subscription. Complete `create-guide.md` when a non-blank Guide is present.
 Retain any collected Guide Consent for the final card below without asking for
 a separate confirmation. One-time tasks never configure automatic copy-trading.
+
+## Flow
+### Automatic copy-trading preference
 
 Do not narrate internal preparation, classification, or local persistence steps
 to the User. In particular, do not say that `task-create-prepare` is running,
@@ -28,8 +33,6 @@ Subscription execution classification has three cases:
    Guide asks no non-sensitive Consent fields. Do not explain this internal
    signal-only classification to the User, especially for non-trading Guides.
 
-## Automatic copy-trading preference
-
 1. For a subscription without a Guide, save `signal_only` before the final
    confirmation and do not load `create-guide.md`.
 2. For a subscription with a Guide, `create-guide.md` saves the User's explicit
@@ -39,7 +42,7 @@ Subscription execution classification has three cases:
 4. Do not infer `guide_direct` from signal wording, amounts, leverage, target
    assets, or `serviceDescription`.
 
-## Business data and confirmation
+### Business data and confirmation
 
 Derive `title` (≤30 characters) and Description (≤4096 characters) from the
 selected Service and the User's confirmed Guide answers. They are required
@@ -53,36 +56,11 @@ when `payload.subscriptionInfo.supportTrial=true`; otherwise set it to `false`.
 Never ask the User whether to use a free trial. Ask exactly one subscription
 preference question: whether to enable auto-renew, and retain the User's
 explicit answer as `autoRenew`. Render this single-subscription confirmation as
-a field list:
-
-```markdown
-### Subscription Creation Confirmation
-
-- Subscription Name: {title}
-- Subscription Description: {confirmedDescription}
-- Provider: {providerAgent}
-- Service Price: {feeAmount} {feeTokenSymbol} / {interval}
-- Trial: {trialDurationOrNo}
-- Auto-Renew: {OnOrOff}
-- Service Guide Consent: {guideConsent} *(only when the Guide is non-blank)*
-```
-
-Render attachments below the field list. Do not show Service Parameters or
-internal follow-trade parameters. Omit the Service Guide Consent item when the
-Guide is blank; otherwise preserve every collected Guide field and
-User-authored value without rewriting them. Do not show a standalone Guide or
-payment confirmation, and do not repeat the automatic copy-trading choice
-already collected from the Guide. When no automatic copy-trading answer was
-collected, do not mention copy-trading mode or internal signal-only defaults in
-the card or surrounding prose. This card owns the one explicit final
-confirmation for the subscription, displayed payment, and exact Guide Consent.
-Any edit to a displayed fact or Guide answer invalidates that confirmation and
-requires the complete updated card again.
-
+a field list. Render [Subscription Creation Confirmation](#subscription-creation-confirmation).
 Continue only after that final confirmation and the one-time communication
 check defined by `create.md`.
 
-## Create subscription
+### Create subscription
 
 ```bash
 onchainos agent create-subscribe \
@@ -116,3 +94,30 @@ The CLI owns Guide execution-profile persistence and broadcast activation.
 4. On successful creation, follow `watch_task`, then enter
    `subscription-manage.md` for the post-creation offline-delivery and watch
    questions. Do not add another creation confirmation.
+
+## Output Rules
+### Subscription Creation Confirmation
+
+```markdown
+### Subscription Creation Confirmation
+
+- Subscription Name: {title}
+- Subscription Description: {confirmedDescription}
+- Provider: {providerAgent}
+- Service Price: {feeAmount} {feeTokenSymbol} / {interval}
+- Trial: {trialDurationOrNo}
+- Auto-Renew: {OnOrOff}
+- Service Guide Consent: {guideConsent} *(only when the Guide is non-blank)*
+```
+
+Render attachments below the field list. Do not show Service Parameters or
+internal follow-trade parameters. Omit the Service Guide Consent item when the
+Guide is blank; otherwise preserve every collected Guide field and
+User-authored value without rewriting them. Do not show a standalone Guide or
+payment confirmation, and do not repeat the automatic copy-trading choice
+already collected from the Guide. When no automatic copy-trading answer was
+collected, do not mention copy-trading mode or internal signal-only defaults in
+the card or surrounding prose. This card owns the one explicit final
+confirmation for the subscription, displayed payment, and exact Guide Consent.
+Any edit to a displayed fact or Guide answer invalidates that confirmation and
+requires the complete updated card again.

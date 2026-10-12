@@ -1,8 +1,12 @@
 # Manage an Agent's Marketplace Listing
 
+## Module Description
+
 Use this reference only when the user explicitly asks to publish or unpublish an agent.
 
-## Commands
+
+## Flow
+### Commands
 
 Publish an ASP agent:
 
@@ -16,14 +20,14 @@ Unpublish an agent:
 onchainos agent deactivate --agent-id <agentId>
 ```
 
-## Constraints
+### Constraints
 
 1. **Agent ID.** Use an ID supplied by the user or returned in the current
    structured result; never infer it from an agent name.
 2. **Review language (publish only).** Pass the user's preferred language as
    a BCP-47 tag, such as `zh-CN`. It controls backend listing-review messages.
 
-## Result
+### Result
 
 - `blockType: 1`: explain that only ASP agents can be listed.
 - `submitApproval.success: true`: say the listing was submitted for review.

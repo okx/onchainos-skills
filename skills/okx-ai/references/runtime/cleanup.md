@@ -1,5 +1,7 @@
 # Scoped Session Cleanup
 
+## Module Description
+
 Use this leaf only when a returned terminal action or terminal workflow
 explicitly requires cleanup:
 

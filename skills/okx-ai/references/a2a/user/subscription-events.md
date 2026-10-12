@@ -1,5 +1,7 @@
 # User Subscription Events
 
+## Module Description
+
 Use this leaf for User-side `sub_*` system events after `next-action` has fetched
 fresh authoritative detail. Execute only the returned result; never invent a
 decision card or state transition.

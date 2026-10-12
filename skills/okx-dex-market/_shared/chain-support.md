@@ -1,10 +1,12 @@
 # Shared Chain Name Support
 
+## Supported Capabilities
+
 > This file is shared across all onchainos skills.
 
 The CLI accepts human-readable chain names and resolves them automatically.
 
-## Wallet address creation (9 chains)
+### Wallet address creation (9 chains)
 
 The following 9 chains support **wallet address creation** (i.e., you can generate a wallet address on these chains):
 
@@ -23,7 +25,7 @@ The following 9 chains support **wallet address creation** (i.e., you can genera
 > **Note**: The wallet supports interacting with 17+ chains beyond this list (e.g., Polygon, Avalanche, Optimism).
 > Run `onchainos wallet chains` for the full list of supported chains.
 
-## Gas Station supported chains and tokens (Solana only)
+### Gas Station supported chains and tokens (Solana only)
 
 Authoritative matrix for Gas Station. Use this when the Agent needs chain display name, native token symbol, or the set of stablecoins accepted.
 

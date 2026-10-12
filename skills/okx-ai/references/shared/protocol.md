@@ -1,4 +1,4 @@
-# Progression Contract
+# Progression Envelope
 
 Use this envelope when a CLI result requires continuation:
 

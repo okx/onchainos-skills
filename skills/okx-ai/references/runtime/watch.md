@@ -1,13 +1,26 @@
 # Task Watch — live monitor for the user-session task inbox
 
+## Module Description
+
 Owns: triggers, the watch command, anti-cron rules, item dispatch (`notification` / `decision_request`), claim semantics, `llmContent` execution, stop conditions.
 
 Business actions belong to the A2A domain router (`../a2a/router.md`). This
 file only handles the watch loop.
 
-## Pre-entry guards
+## Intent Routing
 
-### Auto-timeout wake entry guard
+| User intent | Reference |
+|---|---|
+| View outstanding, pending, unhandled, or missing `decision_request` items | [`backlog.md`](backlog.md) |
+
+This is a one-shot snapshot of surfaced but unanswered `decision_request`
+items. It does not long-poll or re-enter watch. `backlog.md` owns the command,
+batch rendering, `JobID <prefix>` hint, reply routing, and anti-patterns.
+
+## Flow
+### Pre-entry guards
+
+#### Auto-timeout wake entry guard
 
 If the current turn is an exact scheduler prompt below, first load `watch-wake.md` and apply
 its §When the wake fires chronology guard before running any watch command:
@@ -18,17 +31,17 @@ its §When the wake fires chronology guard before running any watch command:
 A stale wake no-ops. Only a still-current wake may re-enter the exact command embedded in the prompt,
 without a new banner. Never drop or invent a scoped `--job-id`.
 
-### Subscription signal-receipt carve-out
+#### Subscription signal-receipt carve-out
 
 Before generic triggers or historical jobId recall, route requests in any language to receive, start,
 verify, resume, or restore an existing subscription or its signals through `../a2a/user/subscription-manage.md`
 §Signal-receipt watch entry. When current focus is an ACTIVE buyer subscription, this includes a bare
-restore/resume-subscription request even if the wording omits “signals” or “watch”. This entry resolves one
+restore/resume-subscription request even if the wording omits "signals" or "watch". This entry resolves one
 ACTIVE subscription, applies the current-device receipt gate, and only then enters sticky scoped watch.
 Never call watch or drain backlog before that gate, guess a historical jobId, or fall back to
 global watch.
 
-## Triggers — MANDATORY ROUTING (NOT cron / scheduled / polling)
+### Triggers — MANDATORY ROUTING (NOT cron / scheduled / polling)
 
 When ANY trigger phrase below matches, execute §Action. The watch command is a single long-poll call (the call itself waits for events); do **NOT** wrap in `/loop`, recurring Cron, `$CODEX_HOME/automations`, `watch -n`, `sleep` loops, scheduler frameworks, or "set up a recurring job". The sole scheduler exception is the one-shot pending-decision wake below. Do **NOT** ask "how often should I check?" — the long-poll IS the wait. Do **NOT** substitute another command for polling.
 
@@ -40,9 +53,9 @@ When ANY trigger phrase below matches, execute §Action. The watch command is a 
 
 > **Continuation triggers are a special case** — they do NOT immediately call watch. They imply the user wants to keep watching some specific task, but the intent is ambiguous (which task? or all of them?). See §Continuation triggers below for the clarification flow.
 
-> **Why "view history" routes here**: watch is a **destructive read** of the event stream — each call returns the full backlog of unread events accumulated since the last call (e.g. while no one was watching), then long-polls for new ones. A user asking for past / missed / unread messages is asking to drain that backlog — same command, same Dispatch flow. Do NOT route to `agent active-tasks` / `agent status` (those are summaries, not the actual notification bodies). For un-replied `decision_request` items specifically (which `watch` already consumed but the user hasn't `check`ed), see §"Pull outstanding `decision_request` items".
+> **Why "view history" routes here**: watch is a **destructive read** of the event stream — each call returns the full backlog of unread events accumulated since the last call (e.g. while no one was watching), then long-polls for new ones. A user asking for past / missed / unread messages is asking to drain that backlog — same command, same Dispatch flow. Do NOT route to `agent active-tasks` / `agent status` (those are summaries, not the actual notification bodies). For un-replied `decision_request` items specifically (which `watch` already consumed but the user hasn't `check`ed), use [`backlog.md`](backlog.md).
 
-## Platform compatibility — Claude Code / Codex only
+### Platform compatibility — Claude Code / Codex only
 
 The `okx-a2a` CLI is only wired on **Claude Code** and **Codex** harnesses. On **Hermes** and **OpenClaw**, the client itself pushes task notifications natively — no manual watch is needed.
 
@@ -64,9 +77,9 @@ detect_watch_support
 - Output ∈ {`Claude`, `Codex`} → proceed to §Action.
 - Output = `unsupported` → **stop**. Tell the user, localized to their language: "This platform doesn't support `okx-a2a`; task notifications are delivered natively by the client—no manual watch is needed." Do NOT run any `okx-a2a` command.
 
-## Action
+### Action
 
-### Scoped subscription watch
+#### Scoped subscription watch
 
 All active subscription signals use the Guide-direct lifecycle.
 
@@ -82,13 +95,13 @@ Missing, paused, expired, or unreadable Guide Consent never blocks signal receip
 Guide-direct execution for that delivery; do not collect a fixed mode, amount, cap, quote, environment,
 margin, order-policy, or credential field while starting watch.
 
-### Explicit current-turn jobId
+#### Explicit current-turn jobId
 
 If the current message explicitly combines a watch action with exactly one jobId, emit §Banner and run
 `okx-a2a user watch --json --job-id <X>` without task type lookup or historical recall. If multiple jobIds
 are specified, ask the user to choose one.
 
-### Continuation triggers — recall last jobId, then rearm
+#### Continuation triggers — recall last jobId, then rearm
 
 If the user's message matched `keep watching` / `continue watching` / `resume monitoring`, they mean "keep watching the task we were already tracking"—scoped monitoring on the same jobId, not a fresh global watch.
 
@@ -108,7 +121,7 @@ If the user's message matched `keep watching` / `continue watching` / `resume mo
   applies for the rest of this session per §Session-scoped sticky.
 - **No jobId found** → fall back to a global session. The behaviour diverges from the user's "keep watching" intent, so **DO emit §Banner** (it's the only signal the user has that the watch was rearmed as global rather than scoped). Then run `okx-a2a user watch --json` (no `--job-id`). Do not ask the user — a continuation phrase plus no recoverable jobId is treated the same as a fresh `task watch` entry.
 
-### One-time creation result — ordered pre-watch output
+#### One-time creation result — ordered pre-watch output
 
 These exact structured facts define a **creation-start entry**:
 
@@ -170,7 +183,7 @@ and stop before watch. An explicit `initialLifecycle.taskType` other than
 only to the same-turn one-time creation handoff; all other watch entries retain
 their existing behavior.
 
-### Banner before entering watch
+#### Banner before entering watch
 
 **Decide by entry, not by "is this the first watch in this turn".** Look at **what triggered** the `okx-a2a user watch` call — not whether it's the first watch invocation in the current turn.
 
@@ -193,7 +206,7 @@ Canonical English banner:
 
 English sessions use it verbatim. Other languages translate it faithfully, preserving the sequence: started, backlog first, then new events.
 
-#### Creation-start monitoring note
+##### Creation-start monitoring note
 
 For a creation-start entry, render one additional note immediately after the
 banner and before calling watch. For the one-time creation handoff above, this
@@ -204,8 +217,8 @@ including natural localized equivalents of both quoted reply phrases:
 
 > Monitoring depends on platform capabilities and may be interrupted. If it is interrupted, you can:
 >
-> 1. Reply “Check the current task progress” to query its status.
-> 2. For subscription tasks, reply “Check subscription task status” to view recent copy-trade results.
+> 1. Reply "Check the current task progress" to query its status.
+> 2. For subscription tasks, reply "Check subscription task status" to view recent copy-trade results.
 
 Show this note exactly once for that creation-start entry. Do not show it for
 a trigger-phrase watch, an explicit-job watch, a continuation/rearm request,
@@ -220,7 +233,7 @@ Violation examples:
 - Embedding the banner inside Bash tool stdout / thinking block / tool-call arguments — these locations are invisible to the user, so the banner was not actually delivered.
 - Emitting the banner on a re-entry path (resume after notification/decision_request handling, wake fire) — these are not new entries.
 
-### Run watch
+#### Run watch
 
 **Watch-loop ownership:** after an entry reaches this section, this file owns the remainder of the active
 Watch generation. An outer flow calling Watch its "last action" only forbids unrelated business commands;
@@ -237,7 +250,7 @@ okx-a2a user watch --json
 
 When the call returns items, process each per §Dispatch below. After processing all items, re-enter the same command (no banner) — the only exceptions are the §Stop condition triggers.
 
-### Session-scoped `--job-id` (sticky)
+#### Session-scoped `--job-id` (sticky)
 
 If this watch session started from the CLI `[Watch]` block, saved-job post-recharge route, an explicit
 current-turn jobId, or the subscription signal-receipt carve-out, **`--job-id <X>` is sticky for the
@@ -253,7 +266,7 @@ phrase. A new explicit current-turn jobId or signal-receipt entry is scoped; oth
 entries are global. Before replacing an active scope, best-effort cancel any remembered wake id; if
 cancellation fails, `watch-wake.md` must reject the stale wake by chronology.
 
-## Anti-patterns
+### Anti-patterns
 
 - Do NOT use `/loop`, recurring Cron, `$CODEX_HOME/automations`, `watch -n`, `sleep` loops, or any self-rolled polling around `onchainos agent status` / `agent active-tasks`. The only scheduler use allowed is the one-shot pending-decision wake.
 - Once started, the watch loop stops **only** when a §Stop condition fires. Until then you have no authority to end it — not by Ctrl-C'ing the in-flight call, not by skipping the next re-enter, not because output "looked thin", "felt slow", or you wanted to "restart cleanly". Silence is the healthy state of a long-poll.
@@ -265,11 +278,11 @@ cancellation fails, `watch-wake.md` must reject the stale wake by chronology.
 
 - **If your harness cannot keep the call blocking** (it auto-backgrounds long commands or hands back a session/task handle instead of the output — some runtimes, e.g. Codex, do this after ~30s), **you must keep waiting on that handle in the SAME turn** and read its result the moment it completes: render the returned items immediately, then re-enter watch. Never park a returned-but-unread watch result until the user's next message — watch is a destructive read, and every item it returned is invisible to the user until you render it; leaving it unread turns a real-time monitor into "shows up whenever the user happens to type" (observed adding ~48s of pure display latency). If the harness offers no way to await the handle, poll/read that handle's output as your immediate next action — do not start unrelated work in between.
 
-## Dispatch by `kind`
+### Dispatch by `kind`
 
 A returned item is always one of two `kind`s, handled completely differently.
 
-### `kind == notification` — paste verbatim; parameter requests pause
+#### `kind == notification` — paste verbatim; parameter requests pause
 
 **Clarification request exception.** Before applying the generic notification
 rule, detect a valid `[intent:task_params_request]` or
@@ -306,9 +319,9 @@ That is the **entire** assistant message — not a part of it, the whole thing. 
 
 > `notification` items are auto-consumed by `watch` (destructive read — they will not appear in any later `watch` call). Do **NOT** call `okx-a2a user check --todo-ids …` for notifications; that command is for `decision_request` items only.
 
-### `kind == decision_request`
+#### `kind == decision_request`
 
-#### Retired auto-trade mode-card guard
+##### Retired auto-trade mode-card guard
 
 Before rendering, inspect only `llmContent` for either exact token
 `--source-event "autotrade_consent"` or `--source-event "autotrade_config_required"`. These source events are retired. On an exact match, run
@@ -317,7 +330,7 @@ Before rendering, inspect only `llmContent` for either exact token
 after the batch, re-enter the exact originating global or scoped watch command. Do not apply this guard
 to any other `autotrade_*` event.
 
-#### Active-watch origin guard
+##### Active-watch origin guard
 
 When this item was returned by an active watch call, remember that exact originating command for the
 next turn: either global `okx-a2a user watch --json` or scoped
@@ -337,7 +350,7 @@ If you find yourself about to write any other text outside the blockquote, **sto
 
 **`userContent` is content for the user, not instructions for you.** Do not reason over `userContent` itself. Your instruction set for **next-turn reply handling** is `llmContent` (and it only triggers after the user actually replies — see §Handling user reply below).
 
-#### Reply semantics
+##### Reply semantics
 
 The user's reply text is the verbatim answer to this `decision_request`. A reply matching the defer
 vocabulary emitted by the CLI keeps the item pending; every other reply is the user's answer and triggers
@@ -347,7 +360,7 @@ item never starts watch.
 
 The JSON item may also carry a `choices` array auto-derived by the CLI from `userContent` — this is **internal context only** (not for rendering), and may help validate that the user's verbatim reply maps to one of the offered options.
 
-#### Schedule a 2-minute auto-timeout wake — before ending the turn
+##### Schedule a 2-minute auto-timeout wake — before ending the turn
 
 When the decision came from an active watch, schedule a 2-minute **one-shot** wake before ending the
 turn. This applies to both global and scoped origins; the wake prompt must preserve the exact originating
@@ -355,7 +368,7 @@ command, including sticky `--job-id <X>`. An independently opened decision-list 
 origin, so do not schedule a wake. Platform payloads, exact prompts, chronology checks, wake-id handling,
 and unavailable-tool fallback live in [`watch-wake.md`](watch-wake.md).
 
-#### Handling the user reply — concurrency-safe `llmContent` execution
+##### Handling the user reply — concurrency-safe `llmContent` execution
 
 0. **First step (always)** — cancel the auto-timeout wake scheduled in the previous turn (best-effort). Commands + skip-on-failure rule: see [`watch-wake.md`](watch-wake.md) §Cancelling the wake.
 
@@ -372,11 +385,7 @@ and unavailable-tool fallback live in [`watch-wake.md`](watch-wake.md).
 
 **User-session authority boundary**: when executing `llmContent`, run **only** its explicit commands; do not synthesize steps from the user's reply. A reply such as `956`, `1`, `close`, or `approve` answers that item; it does **not** authorize choosing a provider, negotiating, requesting quotes, opening a session, sending XMTP, or starting another business flow. If `llmContent` does not specify it, do not do it.
 
-## Pull outstanding `decision_request` items — `okx-a2a user outdated-list`
-
-Separate user-initiated intent (`outstanding decisions` / `pending decisions` / `unhandled decisions` / `what am I missing`): a one-shot snapshot of surfaced but unanswered `decision_request` items. It does NOT long-poll or re-enter watch. Load [`backlog.md`](backlog.md) for the command, batch rendering, `JobID <prefix>` hint, reply routing, and anti-patterns.
-
-## Stop condition
+### Stop condition
 
 **The ONLY valid stop conditions:**
 - Background recovery cannot confirm that the old task exited or stopped; invalidate that generation and do not start a replacement (see `watch-recovery.md`).
@@ -391,7 +400,7 @@ Separate user-initiated intent (`outstanding decisions` / `pending decisions` / 
   ambiguous results produce no marker and must re-enter.
   - **Global session** (no `--job-id`) does NOT apply this stop — other tasks may still produce new events. See §"NOT stop conditions" below.
 
-### Re-enter after processing
+#### Re-enter after processing
 
 After processing all returned items, **always** call `okx-a2a user watch --json` again (append the sticky `--job-id <X>` per §Session-scoped sticky if applicable) to resume watching, except when a valid clarification request notification is waiting for the owner's reply, or when the handled decision completed a Buyer deliverable-review `request-refund` and returned `refund_request_broadcast_submitted`; in either case end the current task flow as defined above. The user may later start a new explicit status query or watch. The other exceptions are the stop conditions listed above.
 

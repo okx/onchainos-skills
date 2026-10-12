@@ -1,8 +1,8 @@
 # Capability: Token — Troubleshooting
 
-Error handling, edge cases, and region restrictions for the Token capability. Load operational flow and parameter schemas separately through the top-level conditional-reference table.
+## Recovery
 
-## Edge Cases
+Error handling, edge cases, and region restrictions for the Token capability. For normal flow, return to [token.md](token.md); read [token-cli-reference.md](token-cli-reference.md) only when command facts are needed.
 
 - **Token not found**: suggest verifying the contract address (symbols can collide)
 - **Same symbol on multiple chains**: show all matches with chain names

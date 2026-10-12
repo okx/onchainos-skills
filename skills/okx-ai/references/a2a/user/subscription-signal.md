@@ -1,5 +1,7 @@
 # Subscription Signal Intake
 
+## Module Description
+
 Use this leaf only after the CLI proves the exact subscription is Active and
 saves the current delivery. Missing, paused, expired, duplicate, or unreadable
 deliveries produce only the returned display/recovery action.

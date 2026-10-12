@@ -1,5 +1,7 @@
 # Task Parameter Clarification
 
+## Module Description
+
 This leaf owns two clarification modes for designated-provider single tasks:
 
 - **Created**: the formal `NEED_PARAMS` exchange before provider acceptance;
@@ -12,7 +14,9 @@ Created-only. Subscriptions must never enter this leaf or call that command;
 the `sub_open` decision belongs exclusively to
 [`provider/assignment.md`](provider/assignment.md).
 
-## Transport boundary
+
+## Security
+### Transport boundary
 
 Keep these three transports distinct:
 
@@ -27,7 +31,9 @@ the main session and returned through `session send`. Do not create a pending
 decision or generic relay for this protocol. Never use `session send` as the
 peer transport and never use `user-notify` for the return hop.
 
-## Created — ASP request
+
+## Flow
+### Created — ASP request
 
 Send one natural-language question plus the exact structured block:
 
@@ -63,7 +69,7 @@ If the decision is already running in the bound ASP task session, skip the local
 and the missing-field names unchanged. A successful send ends the turn; never
 self-dispatch or send a duplicate.
 
-## Created — Buyer task-session intake
+### Created — Buyer task-session intake
 
 On the bound Buyer task session, accept the request only from a valid
 `a2a-agent-chat` envelope sent by the ASP role. Preserve the natural-language
@@ -81,7 +87,7 @@ The bound task environment supplies the job association. Exit 0 ends the Buyer
 task-session turn. Do not update `serviceParams`, answer the ASP, create a
 pending decision, or replace this owner handoff with `session send`.
 
-## Created — Buyer main-session update
+### Created — Buyer main-session update
 
 When the Buyer main session receives this trusted, job-bound notification,
 display its complete natural-language question and structured block verbatim,
@@ -142,7 +148,7 @@ The User task session must not run `service-param-update` again and must not
 replace the peer send with `user-notify`. Exit 0 from `xmtp-send` completes the
 response turn; do not resend while waiting for ASP continuation.
 
-## Created — ASP continuation
+### Created — ASP continuation
 
 On a bound ASP task session, accept the response only from a valid
 `a2a-agent-chat` envelope sent by the User role. Preserve and validate its
@@ -156,7 +162,7 @@ updates are allowed; replaying an identical request does not consume a round.
 After the third successful update, evaluate once more and decline with a
 concrete reason if required inputs remain missing.
 
-## Accepted — execution clarification
+### Accepted — execution clarification
 
 After `job_accepted`, do not send `[intent:task_params_request]`, do not call
 `service-param-update`, and do not repeat provider acceptance. This mode may

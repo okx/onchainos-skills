@@ -1,33 +1,19 @@
 # Onchain OS DEX Trenches — WebSocket Protocol Reference
 
+## Module Description
+
 This document is for **developers and agents** who want to connect directly to the Onchain OS DEX WebSocket
 and subscribe to real-time meme token (trenches) data — new token launches and metric updates.
 
----
+## Connection Protocol
 
-## Endpoint
+### Endpoint
 
 ```
 wss://wsdex.okx.com/ws/v6/dex
 ```
 
 Uses TLS. Connect with any standard WebSocket client that supports TLS.
-
----
-
-## Authentication
-
-The Onchain OS DEX WebSocket uses HMAC-SHA256 API key authentication, which is the same scheme
-as the OKX REST API. Full documentation:
-👉 https://web3.okx.com/onchainos/dev-docs/market/websocket-login
-
-### Credentials
-
-Obtain your API Key, Secret Key, and Passphrase from the
-[OKX Developer Portal](https://web3.okx.com/onchain-os/dev-portal).
-
-> **Security**: Never hardcode credentials in source code. Use environment variables or a `.env` file.
-> Ensure `.env` is listed in `.gitignore` — never commit it to version control.
 
 ### Login Message
 
@@ -104,7 +90,7 @@ Wait for this ACK before sending subscribe messages. Recommended timeout: 10 sec
 
 ---
 
-## Push Message Envelope
+### Push Message Envelope
 
 Every push message from the server uses the same envelope structure:
 
@@ -119,9 +105,9 @@ The "Push Data Fields" tables below describe the contents of each object inside 
 
 ---
 
-## Channels
+### Channels
 
-### `dex-market-memepump-new-token-openapi` — New Token Listing
+#### `dex-market-memepump-new-token-openapi` — New Token Listing
 
 Real-time push of newly launched meme tokens on supported launchpads (Pump.fun, Bonk, Believe, etc.).
 Delivers the full token snapshot on first appearance.
@@ -131,14 +117,14 @@ Subscribe arg:
 { "channel": "dex-market-memepump-new-token-openapi", "chainIndex": "501" }
 ```
 
-#### Subscribe Parameters
+##### Subscribe Parameters
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `channel` | String | Yes | `"dex-market-memepump-new-token-openapi"` |
 | `chainIndex` | String | Yes | Chain ID — single chain only (e.g. `"501"` = Solana) |
 
-#### Push Data Fields
+##### Push Data Fields
 
 | Field | Type | Description |
 |---|---|---|
@@ -175,7 +161,7 @@ Subscribe arg:
 | `social.liveOnPumpFun` | Boolean | Live on Pump.fun |
 | `bagsFeeClaimed` | Boolean | Whether bag fee has been claimed |
 
-#### Push Example
+##### Push Example
 
 ```json
 {
@@ -225,7 +211,7 @@ Subscribe arg:
 
 ---
 
-### `dex-market-memepump-update-metrics-openapi` — Token Metrics Update
+#### `dex-market-memepump-update-metrics-openapi` — Token Metrics Update
 
 Real-time incremental updates for meme token metrics (market data, holder stats, social).
 Pushed when any metric changes for tracked tokens on the subscribed chain.
@@ -235,14 +221,14 @@ Subscribe arg:
 { "channel": "dex-market-memepump-update-metrics-openapi", "chainIndex": "501" }
 ```
 
-#### Subscribe Parameters
+##### Subscribe Parameters
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `channel` | String | Yes | `"dex-market-memepump-update-metrics-openapi"` |
 | `chainIndex` | String | Yes | Chain ID — single chain only (e.g. `"501"` = Solana) |
 
-#### Push Data Fields
+##### Push Data Fields
 
 Same fields as `dex-market-memepump-new-token-openapi`, plus:
 
@@ -252,7 +238,7 @@ Same fields as `dex-market-memepump-new-token-openapi`, plus:
 
 All other fields (`chainIndex`, `protocolId`, `tokenContractAddress`, `symbol`, `name`, `logoUrl`, `createdTimestamp`, `market`, `bondingPercent`, `tags`, `social`, `bagsFeeClaimed`) are identical to the new-token channel.
 
-#### Push Example
+##### Push Example
 
 ```json
 {
@@ -286,7 +272,7 @@ All other fields (`chainIndex`, `protocolId`, `tokenContractAddress`, `symbol`, 
 
 ---
 
-## Subscribe Message
+### Subscribe Message
 
 Send a single subscribe message containing all channel args:
 
@@ -317,7 +303,7 @@ If any arg fails, you receive:
 
 ---
 
-## Unsubscribe Message
+### Unsubscribe Message
 
 To cancel one or more channel subscriptions without disconnecting:
 
@@ -350,7 +336,7 @@ On failure:
 
 ---
 
-## Heartbeat
+### Heartbeat
 
 Send `"ping"` as a plain text frame every **25 seconds**.
 The server responds with `"pong"`. If no pong is received within 25 seconds, reconnect.
@@ -362,7 +348,7 @@ server → "pong"
 
 ---
 
-## Connection Lifecycle
+### Connection Lifecycle
 
 ```
 1. connect (TLS WebSocket)
@@ -377,7 +363,7 @@ server → "pong"
 
 ---
 
-## Reconnection Strategy
+### Reconnection Strategy
 
 The server may disconnect clients during maintenance or network issues.
 Recommended reconnect policy:

@@ -1,21 +1,29 @@
 # Onchain OS DEX Market — CLI Command Reference
 
+## Commands
+
 Detailed parameter tables, return field schemas, and usage examples for all 9 market commands.
 
-## 1. onchainos market price
+### `onchainos market price`
 
 Get single token price.
+
+#### Syntax
 
 ```bash
 onchainos market price --address <address> [--chain <chain>]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--address` | Yes | - | Token contract address |
 | `--chain` | No | `ethereum` | Chain name (e.g., `ethereum`, `solana`, `xlayer`) |
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -24,20 +32,35 @@ onchainos market price --address <address> [--chain <chain>]
 | `time` | String | Timestamp (Unix milliseconds) |
 | `price` | String | Current price in USD |
 
-## 2. onchainos market prices
+#### Examples
+
+**User says:** "Check the current price of OKB on XLayer"
+
+```bash
+onchainos market price --address 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer
+# -> Display: OKB current price $XX.XX
+```
+
+### `onchainos market prices`
 
 Batch price query for multiple tokens.
+
+#### Syntax
 
 ```bash
 onchainos market prices --tokens <tokens> [--chain <chain>]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--tokens` | Yes | - | Comma-separated tokens. Format: `chainIndex:address` pairs (e.g., `"1:0xeee...,501:So111..."`) or plain addresses with `--chain` |
 | `--chain` | No | `ethereum` | Default chain for tokens without explicit chainIndex prefix |
 
-**Return fields** (per token):
+#### Return Fields
+
+per token.
 
 | Field | Type | Description |
 |---|---|---|
@@ -46,13 +69,17 @@ onchainos market prices --tokens <tokens> [--chain <chain>]
 | `time` | String | Timestamp (Unix milliseconds) |
 | `price` | String | Current price in USD |
 
-## 3. onchainos market kline
+### `onchainos market kline`
 
 Get K-line / candlestick data.
+
+#### Syntax
 
 ```bash
 onchainos market kline --address <address> [--bar <bar>] [--limit <n>] [--chain <chain>]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
@@ -61,7 +88,9 @@ onchainos market kline --address <address> [--bar <bar>] [--limit <n>] [--chain 
 | `--limit` | No | `100` | Number of data points (max 299) |
 | `--chain` | No | `ethereum` | Chain name |
 
-**Return fields**: Each data point is now a named JSON object (transformed from the API's raw array `[ts,o,h,l,c,vol,volUsd,confirm]`):
+#### Return Fields
+
+Each data point is a named JSON object (transformed from the API's raw array `[ts,o,h,l,c,vol,volUsd,confirm]`):
 
 | Field | Type | Description |
 |---|---|---|
@@ -74,20 +103,35 @@ onchainos market kline --address <address> [--bar <bar>] [--limit <n>] [--chain 
 | `volUsd` | String | Trading volume (USD) |
 | `confirm` | String | `"0"` = uncompleted candle, `"1"` = completed candle |
 
-## 4. onchainos market index
+#### Examples
+
+**User says:** "Show me hourly candles for USDC on XLayer"
+
+```bash
+onchainos market kline --address 0x74b7f16337b8972027f6196a17a631ac6de26d22 --chain xlayer --bar 1H
+# -> Display candlestick data (open/high/low/close/volume)
+```
+
+### `onchainos market index`
 
 Get index price (aggregated from multiple sources).
+
+#### Syntax
 
 ```bash
 onchainos market index --address <address> [--chain <chain>]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--address` | Yes | - | Token contract address (empty string `""` for native token) |
 | `--chain` | No | `ethereum` | Chain name |
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -96,9 +140,11 @@ onchainos market index --address <address> [--chain <chain>]
 | `price` | String | Index price (aggregated from multiple sources) |
 | `time` | String | Timestamp (Unix milliseconds) |
 
-## 5. onchainos market portfolio-supported-chains
+### `onchainos market portfolio-supported-chains`
 
 Get the list of chains supported by the portfolio PnL endpoints.
+
+#### Syntax
 
 ```bash
 onchainos market portfolio-supported-chains
@@ -106,7 +152,9 @@ onchainos market portfolio-supported-chains
 
 No parameters required.
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -114,13 +162,17 @@ No parameters required.
 | `chainName` | String | Chain name |
 | `chainLogo` | String | Chain logo URL |
 
-## 6. onchainos market portfolio-overview
+### `onchainos market portfolio-overview`
 
 Get wallet portfolio PnL overview: realized/unrealized PnL, win rate, Top 3 tokens, buy/sell stats.
+
+#### Syntax
 
 ```bash
 onchainos market portfolio-overview --address <address> --chain <chain> --time-frame <n>
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
@@ -128,7 +180,9 @@ onchainos market portfolio-overview --address <address> --chain <chain> --time-f
 | `--chain` | Yes | - | Chain name or ID (e.g. `ethereum`, `solana`) |
 | `--time-frame` | No | `4` | Statistical range: `1`=1D, `2`=3D, `3`=7D, `4`=1M, `5`=3M |
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -156,15 +210,29 @@ onchainos market portfolio-overview --address <address> --chain <chain> --time-f
 | `buysByMarketCap[].marketCapRange` | String | Market cap range label |
 | `buysByMarketCap[].buyCount` | String | Buy count in that range |
 
-## 7. onchainos market portfolio-dex-history
+#### Examples
+
+**User says:** "How is my Ethereum wallet performing this week?"
+
+```bash
+onchainos market portfolio-supported-chains   # confirm Ethereum supported
+onchainos market portfolio-overview --address <wallet> --chain ethereum --time-frame 3
+# -> Display 7D PnL overview: realized PnL, win rate, top 3 tokens
+```
+
+### `onchainos market portfolio-dex-history`
 
 Get DEX transaction history for a wallet in reverse chronological order (up to 1000 records, 100 per request).
+
+#### Syntax
 
 ```bash
 onchainos market portfolio-dex-history --address <address> --chain <chain> (--since <window> | --begin <ms> --end <ms>) [options]
 ```
 
 This command needs a time window: supply **either** `--since` (relative) **or** `--begin` + `--end` (absolute). Supplying neither, or `--since` together with `--begin`/`--end`, returns a structured `invalid_input` error.
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
@@ -178,7 +246,9 @@ This command needs a time window: supply **either** `--since` (relative) **or** 
 | `--token` | No | - | Filter by token contract address |
 | `--tx-type` | No | - | Transaction type: `1`=BUY, `2`=SELL, `3`=Transfer In, `4`=Transfer Out (comma-separated) |
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -195,13 +265,30 @@ This command needs a time window: supply **either** `--since` (relative) **or** 
 | `transactionList[].time` | String | Transaction timestamp (milliseconds) |
 | `cursor` | String | Pagination cursor for next page |
 
-## 8. onchainos market portfolio-recent-pnl
+#### Examples
+
+**User says:** "Show my DEX trade history on Ethereum for the last 30 days"
+
+```bash
+# relative window (CLI computes begin/end and echoes data.resolvedWindow)
+onchainos market portfolio-dex-history --address <wallet> --chain ethereum --since 30d
+# or an absolute window
+onchainos market portfolio-dex-history --address <wallet> --chain ethereum \
+  --begin <start_ms> --end <end_ms>
+# -> Display paginated DEX transaction list
+```
+
+### `onchainos market portfolio-recent-pnl`
 
 Get recent PnL list for a wallet in reverse chronological order (up to 1000 records, 100 per request).
+
+#### Syntax
 
 ```bash
 onchainos market portfolio-recent-pnl --address <address> --chain <chain> [options]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
@@ -210,7 +297,9 @@ onchainos market portfolio-recent-pnl --address <address> --chain <chain> [optio
 | `--limit` | No | `20` | Records per page (max 100) |
 | `--cursor` | No | - | Pagination cursor from previous response |
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -237,13 +326,17 @@ onchainos market portfolio-recent-pnl --address <address> --chain <chain> [optio
 | `pnlList[].sellTxVolume` | String | Sell transaction volume |
 | `pnlList[].sellAvgPrice` | String | Average sell price |
 
-## 9. onchainos market portfolio-token-pnl
+### `onchainos market portfolio-token-pnl`
 
 Get the latest PnL snapshot for a specific token in a wallet.
+
+#### Syntax
 
 ```bash
 onchainos market portfolio-token-pnl --address <address> --chain <chain> --token <token>
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
@@ -251,7 +344,9 @@ onchainos market portfolio-token-pnl --address <address> --chain <chain> --token
 | `--chain` | Yes | - | Chain name or ID |
 | `--token` | Yes | - | Token contract address |
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -262,39 +357,3 @@ onchainos market portfolio-token-pnl --address <address> --chain <chain> --token
 | `realizedPnlUsd` | String | Realized PnL (USD) |
 | `realizedPnlPercent` | String | Realized PnL percentage |
 | `isPnlSupported` | Boolean | Whether PnL calculation is supported for this token |
-
-## Input / Output Examples
-
-**User says:** "Check the current price of OKB on XLayer"
-
-```bash
-onchainos market price --address 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --chain xlayer
-# -> Display: OKB current price $XX.XX
-```
-
-**User says:** "Show me hourly candles for USDC on XLayer"
-
-```bash
-onchainos market kline --address 0x74b7f16337b8972027f6196a17a631ac6de26d22 --chain xlayer --bar 1H
-# -> Display candlestick data (open/high/low/close/volume)
-```
-
-**User says:** "How is my Ethereum wallet performing this week?"
-
-```bash
-onchainos market portfolio-supported-chains   # confirm Ethereum supported
-onchainos market portfolio-overview --address <wallet> --chain ethereum --time-frame 3
-# -> Display 7D PnL overview: realized PnL, win rate, top 3 tokens
-```
-
-**User says:** "Show my DEX trade history on Ethereum for the last 30 days"
-
-```bash
-# relative window (CLI computes begin/end and echoes data.resolvedWindow)
-onchainos market portfolio-dex-history --address <wallet> --chain ethereum --since 30d
-# or an absolute window
-onchainos market portfolio-dex-history --address <wallet> --chain ethereum \
-  --begin <start_ms> --end <end_ms>
-# -> Display paginated DEX transaction list
-```
-

@@ -1,8 +1,10 @@
 # Result Follow-ups
 
+## Flow
+
 Use this reference only after a DEX command succeeds. Present next actions conversationally and never expose command paths to the user.
 
-## Workflow Hints
+### Workflow Hints
 
 When the completed command matches a row, show the workflow hint after displaying the result:
 
@@ -26,7 +28,7 @@ When the completed command matches a row, show the workflow hint after displayin
 | `memepump token-details`, `memepump token-dev-info`, `memepump token-bundle-info` | Token Research | `~/.onchainos/workflows/token-research.md` |
 | `ws start`, `ws poll`, `ws stop` | Wallet Monitor (WebSocket) | `~/.onchainos/workflows/wallet-monitor-ws.md` |
 
-## Next Actions
+## Output Rules
 
 | After | Suggest |
 |---|---|

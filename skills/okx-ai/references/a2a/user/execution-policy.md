@@ -1,5 +1,7 @@
 # Guide-driven direct execution
 
+## Module Description
+
 The execution flow below applies only to an Active subscription delivery on the
 `guide_direct` direct-claim candidate path. It is not authorization to trade and
 does not prove that the local Guide or active Guide Consent is available. Only a
@@ -8,7 +10,9 @@ call. `signal_only` deliveries are handled by their receive-and-display-only
 prompt and do not enter the execution flow. The saved-Consent update section is
 also used for an explicit owner request outside a delivery.
 
+
 ## Flow
+### Flow
 
 1. Check these exact local records:
 
@@ -103,7 +107,7 @@ Use `submitted` only with a documented order/transaction id;
 never put secrets, raw command output, or provider text in `--reason`.
 Never retry, replay, or switch execution paths after claim.
 
-## Updating a saved Guide Consent
+### Updating a saved Guide Consent
 
 This is an explicit user-requested boundary case, for example after a CLI
 upgrade. It is not a delivery-time recovery step and must not run merely

@@ -1,8 +1,12 @@
 # Completion Feedback
 
+## Module Description
+
 Use this helper only when a completion payload has `rating.required=true`.
 
-## User rates ASP
+
+## Flow
+### User rates ASP
 
 Read `rating.deliverables` and `rating.taskAttachments`, compare them with the
 task description and parameters, then generate a score from 0.00 to 5.00 and a
@@ -15,13 +19,13 @@ onchainos agent feedback-submit \
   --score <score> --task-id <jobId> --description "<comment>"
 ```
 
-## ASP rates User
+### ASP rates User
 
 Use requirements clarity, response timeliness, and collaboration: 5 excellent,
 4 good, 3 acceptable, 2 vague/slow, 1 problematic, 0 abusive or non-responsive.
 Submit with the same command and payload identifiers.
 
-## Subscription User rates ASP
+### Subscription User rates ASP
 
 Use `rating.providerAgentId` as the target and `rating.creatorAgentId` as the
 creator. Keep the same score and comment limits.

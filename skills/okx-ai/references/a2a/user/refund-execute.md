@@ -1,5 +1,7 @@
 # Buyer Refund Execution
 
+## Module Description
+
 Use this leaf only after confirmation governed by
 [`refund-confirm.md`](refund-confirm.md).
 

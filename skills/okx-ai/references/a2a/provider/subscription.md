@@ -1,5 +1,7 @@
 # A2A Provider Subscription
 
+## Module Description
+
 This file covers only ASP subscription behavior. Envelope routing, trust
 boundaries, and action selection live in [`router.md`](router.md).
 
@@ -16,7 +18,9 @@ The User-side checkout applies its separate durable request-provenance gate.
 
 ---
 
-## Deposit-address QR (insufficient-balance — MANDATORY)
+
+## Flow
+### Deposit-address QR (insufficient-balance — MANDATORY)
 
 🛑 **Rule:** when any ASP command (`dispute raise`, `subscribe-dispute`, etc.) returns a JSON error containing a non-empty `depositAddress` field:
 1. **Build notice**: run `onchainos agent funding-notice --chain <chain> --currency <symbol> --shortfall <amount> --deposit-address <addr> --format json` (add optional balance fields only if present).
@@ -24,7 +28,7 @@ The User-side checkout applies its separate durable request-provenance gate.
 
 ---
 
-## My Provided Subscriptions (provider view)
+### My Provided Subscriptions (provider view)
 
 Trigger: `my provided subscriptions` / `subscriptions I provide`. Command: `onchainos agent my-subscriptions --role provider` → JSON `{ "list": [ … ] }`. Render each item. **Never drop Subscriber, Current Period, or Billing Period.**
 
@@ -40,7 +44,7 @@ Trigger: `my provided subscriptions` / `subscriptions I provide`. Command: `onch
 - Empty list → "You have no provided subscriptions." Do NOT invent rows.
 - Read-only display; ASP takes no on-chain action here.
 
-## Subscription events (`sub_*`)
+### Subscription events (`sub_*`)
 
 For the ASP, most later subscription events are display-only notifications. Two
 events are action-required: `sub_open` owns the initial provider decision and
@@ -73,7 +77,7 @@ nonzero caller-supplied code, cannot override a fresh matching Expired(8).
 | `sub_cancel` / `sub_trial_into_active` | **Not handled on the ASP side in this slice — silently ignore. End turn.** Buyer-only. |
 | `sub_renew` | Renewal → the **previous period's income is now claimable**. Run `onchainos agent subscribe-asp-claim <jobId> --agent-id <yours>` (claims your own funds — no buyer action, do not send a peer message), then push a short localized note via `onchainos agent user-notify`; if the CLI reports nothing claimable, end the turn silently. |
 
-#### ASP `sub_*` language rule
+##### ASP `sub_*` language rule
 
 - **English ASP** → send the CLI `Content:` **verbatim**.
 - **Any other language** → translate the CLI English content faithfully, preserving every field and omitted-clause behavior.

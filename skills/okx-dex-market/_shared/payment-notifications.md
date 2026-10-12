@@ -1,5 +1,7 @@
 # Payment Notifications (Market API x402)
 
+## Notification Semantics
+
 Some Market API endpoints may require x402 payment after the free quota is
 exhausted. The CLI handles signing automatically once the user is logged in
 and surfaces the following events in the response `notifications[]` array.
@@ -9,8 +11,6 @@ copy, placeholder sources, and the agent handling procedure. It is consumed by
 the Market, Token, Signal, and Trenches capabilities of `okx-dex-market`.
 
 ---
-
-## Response Shapes
 
 Every CLI call may include a `notifications[]` field. Two response patterns:
 
@@ -82,7 +82,7 @@ second call.
 
 ---
 
-## Handling Procedure
+## Flow
 
 Before formatting the CLI result:
 
@@ -131,7 +131,7 @@ most once per account lifetime.
 
 ---
 
-## 1. `MARKET_API_NEW_USER_INTRO`
+### 1. `MARKET_API_NEW_USER_INTRO`
 
 **Trigger**: New user (UserType=1) first call, Basic=0 Premium=0. One-shot per account lifetime. Non-blocking.
 
@@ -149,7 +149,7 @@ Full rules → [Pricing documentation]({docUrl})
 
 ---
 
-## 2. `MARKET_API_OLD_USER_GRACE`
+### 2. `MARKET_API_OLD_USER_GRACE`
 
 **Trigger**: Old user (UserType=0) first call within the grace period. One-shot per account lifetime. Non-blocking.
 
@@ -163,7 +163,7 @@ Full rules → [Pricing documentation]({docUrl})
 
 ---
 
-## 3. `MARKET_API_OLD_USER_POST_GRACE_INTRO`
+### 3. `MARKET_API_OLD_USER_POST_GRACE_INTRO`
 
 **Trigger**: Old user's first call after grace ends (now ≥ graceExpiresAt, Basic=0 Premium=0). One-shot per account lifetime. Non-blocking.
 
@@ -181,7 +181,7 @@ Full rules → [Pricing documentation]({docUrl})
 
 ---
 
-## 4. `MARKET_API_NEW_USER_OVER_QUOTA`
+### 4. `MARKET_API_NEW_USER_OVER_QUOTA`
 
 **Trigger**: New user — a tier's charging flag flips 0→1. Per-tier; each flip fires once. **Blocking** (`confirming: true`).
 
@@ -200,7 +200,7 @@ Reply with the number (or asset name) to continue, or `0` to cancel. We recommen
 
 ---
 
-## 5. `MARKET_API_OLD_USER_POST_GRACE_OVER_QUOTA`
+### 5. `MARKET_API_OLD_USER_POST_GRACE_OVER_QUOTA`
 
 **Trigger**: Old user after grace — a tier's charging flag flips 0→1. Per-tier; each flip fires once. **Blocking** (`confirming: true`).
 
@@ -219,7 +219,7 @@ Reply with the number (or asset name) to continue, or `0` to cancel. We recommen
 
 ---
 
-## Placeholder Resolution
+### Placeholder Resolution
 
 ### Static (skill-side config; update this file when pricing changes)
 
@@ -243,7 +243,7 @@ Reply with the number (or asset name) to continue, or `0` to cancel. We recommen
 
 ---
 
-## Deduplication
+### Deduplication
 
 - **One-shot codes** (`NEW_USER_INTRO`, `OLD_USER_GRACE`, `OLD_USER_POST_GRACE_INTRO`) fire at most once per account lifetime. Running `onchainos wallet logout` clears the cache; next login re-fires them.
 - **OVER_QUOTA codes** (`NEW_USER_OVER_QUOTA`, `OLD_USER_POST_GRACE_OVER_QUOTA`) re-fire on each `charging 0→1` flip per tier. If a tier's charging flag drops back to 0 (server-side quota reset), the shown flag resets too.

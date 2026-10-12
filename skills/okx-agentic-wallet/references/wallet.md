@@ -1,8 +1,23 @@
 # Wallet
 
+## Module Description
+
 Wallet lifecycle: authentication, balance, addresses, token transfers, transaction history, contract calls, and message signing. Shared Confirming / display / security policy is in SKILL.md.
 
-## Authentication
+## Intent Routing
+
+| User intent | Reference | Hot command |
+| --- | --- | --- |
+| View my current wallet balance or total assets (excluding BTC, BRC-20, and explicitly specified token+chain holdings) | — | `onchainos wallet balance` |
+| View balance or total assets across all wallet accounts | — | `onchainos wallet balance --all` |
+| View my active account or login status | — | `onchainos wallet status` |
+| View my wallet or account addresses (not a receive/deposit request) | — | `onchainos wallet addresses` |
+| View my recent transaction history | — | `onchainos wallet history` |
+| List supported wallet chains | — | `onchainos wallet chains` |
+
+## Flow
+
+### Authentication
 
 Run `wallet balance`, `wallet send`, `wallet contract-call`, `wallet history`, and `wallet sign-message` directly. If a command reports that login is required, follow the login flow below.
 
@@ -67,7 +82,7 @@ Field rules:
 - Omit the "Total assets" line if `totalValueUsd` is empty; omit an address line if its corresponding value (`evmAddress`, `solAddress`, `btcAddress`, or `suiAddress`) is empty.
 - **NEVER**: issue a separate `wallet balance` / portfolio call to populate "Total assets" — render it only from the `poll` response's `totalValueUsd` and omit the line when that field is absent; a second call would add a model round on the normal login path.
 
-## Parameter Rules
+### Collect Parameters
 
 **`--chain`** accepts numeric IDs (`1`, `501`, `196`) and names (`ethereum`, `solana`, `xlayer`). If <100% confident, run `wallet chains`. On `"unsupported chain: ..."`, ask the user to confirm.
 
@@ -75,18 +90,18 @@ Field rules:
 
 **Native BTC fee rate** — After the initial transfer preview, ask the user to confirm the current fee rate. If they provide a new sat/vB value, rerun the initial command with `--fee-rate <value>`. Show the fresh preview, remind them that the custom fee rate applies only to that transaction, and wait for confirmation.
 
-**Bitcoin UTXOs and BRC-20** — For BTC UTXO management, load [utxo-cli-reference.md](utxo-cli-reference.md). For BRC-20 management, load [brc20-cli-reference.md](brc20-cli-reference.md). To query a BRC-20 ticker balance, run `onchainos wallet balance --chain bitcoin --token-address <btc-brc20-ticker>` and use that reference's reply template.
+**Bitcoin UTXOs and BRC-20** — See [utxo-cli-reference.md](utxo-cli-reference.md) for BTC UTXO management and [brc20-cli-reference.md](brc20-cli-reference.md) for BRC-20 management. To query a BRC-20 ticker balance, run `onchainos wallet balance --chain bitcoin --token-address <btc-brc20-ticker>` and use that reference's reply template.
 
-## Send vs Contract Call (funds-loss risk — determine intent first)
+### Send vs Contract Call (funds-loss risk — determine intent first)
 
-| Intent | Command |
+| Operation | Command family |
 |---|---|
 | Token transfer | `wallet send --chain <chain>` |
 | Contract call | `wallet contract-call --chain <chain>` |
 
 For a SUI contract call, provide the unsigned PTB from the maintained integration or SDK with `--sui-tx-bytes`.
 
-## Insufficient-Balance Top-up Recovery (Wallet Send)
+### Insufficient-Balance Top-up Recovery (Wallet Send)
 
 When `wallet send` returns `phase=funding_required`, `decision=blocked`,
 and `reason=insufficient_balance`, enter the shared Funding Reference
@@ -97,8 +112,8 @@ The CLI produces this common Funding result for a real backend `code=10004`, or 
 `executeResult=false` is followed by a fresh chain-and-token balance query that
 proves `requested > balance`. It must not classify from `executeErrorMsg` text
 alone. If that balance query cannot confirm a shortfall, keep the ordinary
-simulation-failure path and show `executeErrorMsg`. When `balance` is `null` the
-balance is unavailable — show "当前余额暂不可用".
+simulation-failure path and show `executeErrorMsg`. When `balance` is `null`,
+show "Balance is currently unavailable".
 
 **Recovery flow**:
 
@@ -114,20 +129,12 @@ balance is unavailable — show "当前余额暂不可用".
    transfer details are no longer clear, ask for them instead of reconstructing
    or guessing them.
 
-A “funded” event authorizes only the read-only refresh. A later explicit request
+A "funded" event authorizes only the read-only refresh. A later explicit request
 to continue authorizes only a new preview request.
 It never authorizes the transfer, and no previous confirmation survives the new
 CLI result.
 
-## Approvals (via contract-call)
-
-Never execute unlimited approvals. Do not set the approve amount to `type(uint256).max` / `2^256-1` / any "infinite" value, and do not call `setApprovalForAll(operator, true)`. If the user explicitly requests unlimited approval: warn it is irreversible and lets the spender drain all tokens, require a second explicit confirmation, and even then cap the amount to what is needed (e.g. swap amount + 10%). If the user still insists, refuse and suggest they execute manually via a block explorer.
-
-## MEV Protection
-
-`--mev-protection` is a `contract-call` flag only (`wallet send` does not support it). Load [mev-protection.md](wallet-mev-protection.md) when the user requests MEV protection, or before a high-value / DEX-swap `contract-call` — it holds the supported-chain table and the Solana `--jito-unsigned-tx` requirement.
-
-## Policy & Wallet Export
+### Policy & Wallet Export
 
 Policy config is completed by the user on the Web portal; wallet export is done by the user in the OKX Wallet extension or app. The Agent only detects the trigger, explains the consequences, gives the Policy jump link, and renders the verbatim export copy — it never performs the export itself. On any trigger below, load [portal-actions.md](wallet-portal-actions.md) and follow its Trigger flows exactly:
 - New user login (`isNew: true`) — also handled in Authentication step 2 (output the Policy Settings template)
@@ -137,21 +144,36 @@ Policy config is completed by the user on the Web portal; wallet export is done 
 
 Never display mnemonic phrases, seed phrases, or private keys in the conversation.
 
-## Third-Party Plugin Pre-flight (Solana)
+### Third-Party Plugin Pre-flight (Solana)
 
 Before dispatching a third-party Solana DeFi plugin (kamino-plugin, raydium-plugin, …) that internally calls `wallet contract-call --force`, run the Gas Station pre-flight in [plugin-preflight.md](wallet-plugin-preflight.md).
 
-## Notes
+## Security
+
+### Approvals (via contract-call)
+
+Never execute unlimited approvals. Do not set the approve amount to `type(uint256).max` / `2^256-1` / any "infinite" value, and do not call `setApprovalForAll(operator, true)`. If the user explicitly requests unlimited approval: warn it is irreversible and lets the spender drain all tokens, require a second explicit confirmation, and even then cap the amount to what is needed (e.g. swap amount + 10%). If the user still insists, refuse and suggest they execute manually via a block explorer.
+
+### MEV Protection
+
+`--mev-protection` is a `contract-call` flag only (`wallet send` does not support it). Load [mev-protection.md](wallet-mev-protection.md) when the user requests MEV protection, or before a high-value / DEX-swap `contract-call` — it holds the supported-chain table and the Solana `--jito-unsigned-tx` requirement.
+
+### TEE Signing
+
+The private key is generated and stored inside a server-side secure enclave and never leaves the TEE — the Agent cannot export or locally sign with it.
+
+## Render Rules
+
+### Wallet-specific Notes
 
 - **X Layer Testnet faucet**: when the user asks for testnet tokens, or `wallet balance --chain xlayer_test` shows OKB = 0, point them to https://web3.okx.com/xlayer/faucet.
 - **XKO address**: if a user-supplied address starts with `XKO` / `xko`, display verbatim:
   > "XKO address format is not supported yet. Please find the 0x address by switching to your commonly used address, then you can continue."
-- **TEE signing**: the private key is generated and stored inside a server-side secure enclave and never leaves the TEE — the Agent cannot export or locally sign with it.
 
-## Additional Resources
+## CLI Reference
 
-- Full parameter tables, return-field schemas, and worked examples → [wallet-cli-reference.md](wallet-cli-reference.md), or run `onchainos wallet <subcommand> --help`. Load only when you need exact syntax not covered above.
+- [wallet-cli-reference.md](wallet-cli-reference.md)
 
-## Edge Cases
+## Troubleshooting
 
 > Load on error: [wallet-troubleshooting.md](wallet-troubleshooting.md)

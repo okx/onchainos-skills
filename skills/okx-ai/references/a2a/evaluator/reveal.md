@@ -1,5 +1,7 @@
 # Evaluator Reveal
 
+## Module Description
+
 Use this leaf for `reveal_started`, `vote_reveal_deadline_warn`, and
 `vote_revealed`.
 
@@ -11,7 +13,7 @@ onchainos agent vote-reveal <jobId> --agent-id <evaluatorAgentId>
 
 - `canReveal=false`: state the returned reason and wait for another system
   event.
-- “voter has not committed”: state that the round has no valid Commit and end
+- "voter has not committed": state that the round has no valid Commit and end
   this event route.
 - Other failures: retry up to three times while the reveal window is open.
 - Submitted: state that Reveal was submitted and confirmation is pending.

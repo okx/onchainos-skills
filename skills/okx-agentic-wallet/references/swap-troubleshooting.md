@@ -1,8 +1,8 @@
 # DEX Swap — Troubleshooting
 
-Load on a swap failure or edge case. Items in the swap.md Risk Controls table (honeypot, price impact, tax, new tokens, insufficient liquidity, no quote) are not repeated here.
+## Recovery
 
-## Error Retry (after `swap execute` returns an error)
+### Error Retry (after `swap execute` returns an error)
 
 **Chain not support (`81104`) — evaluate FIRST, before every rule below.** On code `81104`: display the fixed reminder "⚠️ This chain does not currently support swap. Please try a different chain." and stop.
 
@@ -33,7 +33,7 @@ Diagnostic Summary:
   cliVersion:    <onchainos --version>
 ```
 
-## Edge Cases
+### Edge Cases
 
 - **Insufficient balance**: route the insufficient-balance intent to [funding.md](funding.md).
 - **Network error**: retry once, then produce the diagnostic summary and prompt the user.

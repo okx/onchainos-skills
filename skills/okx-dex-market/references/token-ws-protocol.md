@@ -1,32 +1,19 @@
 # Onchain OS DEX Token — WebSocket Protocol Reference
 
+## Module Description
+
 This document is for **developers and agents** who want to connect directly to the Onchain OS DEX WebSocket
 and subscribe to real-time token data (detailed price info, trades).
 
----
+## Connection Protocol
 
-## Endpoint
+### Endpoint
 
 ```
 wss://wsdex.okx.com/ws/v6/dex
 ```
 
 Uses TLS. Connect with any standard WebSocket client that supports TLS.
-
----
-
-## Authentication
-
-The Onchain OS DEX WebSocket uses HMAC-SHA256 API key authentication, which is the same scheme
-as the OKX REST API. Full documentation:
-👉 https://web3.okx.com/onchainos/dev-docs/market/websocket-login
-
-### Credentials
-
-Obtain your API Key, Secret Key, and Passphrase from the
-[OKX Developer Portal](https://web3.okx.com/onchain-os/dev-portal).
-
-> **Security**: Never hardcode credentials in source code. Use environment variables or a `.env` file.
 
 ### Login Message
 
@@ -103,9 +90,9 @@ Wait for this ACK before sending subscribe messages. Recommended timeout: 10 sec
 
 ---
 
-## Channels
+### Channels
 
-### `price-info` — Token Price Info (Detailed)
+#### `price-info` — Token Price Info (Detailed)
 
 Retrieve detailed price data including market cap, price changes, volume, liquidity, and holder count.
 Maximum push frequency: once per second.
@@ -115,7 +102,7 @@ Subscribe arg:
 { "channel": "price-info", "chainIndex": "1", "tokenContractAddress": "0x382bb..." }
 ```
 
-#### Subscribe Parameters
+##### Subscribe Parameters
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -123,7 +110,7 @@ Subscribe arg:
 | `chainIndex` | String | Yes | Chain ID (e.g. `"1"` = Ethereum, `"501"` = Solana) |
 | `tokenContractAddress` | String | Yes | Token contract address (EVM: all lowercase) |
 
-#### Push Data Fields
+##### Push Data Fields
 
 | Field | Type | Description |
 |---|---|---|
@@ -149,7 +136,7 @@ Subscribe arg:
 | `holders` | String | Token holder address count |
 | `tradeNum` | String | 24-hour trade quantity |
 
-#### Push Example
+##### Push Example
 
 ```json
 {
@@ -178,7 +165,7 @@ Subscribe arg:
 
 ---
 
-### `trades` — Recent Trades
+#### `trades` — Recent Trades
 
 Retrieve recent trade data. Data is pushed whenever there is a trade.
 
@@ -187,7 +174,7 @@ Subscribe arg:
 { "channel": "trades", "chainIndex": "501", "tokenContractAddress": "HeLp6N..." }
 ```
 
-#### Subscribe Parameters
+##### Subscribe Parameters
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -195,7 +182,7 @@ Subscribe arg:
 | `chainIndex` | String | Yes | Chain ID (e.g. `"1"` = Ethereum, `"501"` = Solana) |
 | `tokenContractAddress` | String | Yes | Token contract address (EVM: all lowercase) |
 
-#### Push Data Fields
+##### Push Data Fields
 
 | Field | Type | Description |
 |---|---|---|
@@ -214,7 +201,7 @@ Subscribe arg:
 | `time` | String | Unix timestamp in milliseconds |
 | `isFiltered` | String | `"0"` = not filtered, `"1"` = filtered for price/K-line calculation |
 
-#### Push Example
+##### Push Example
 
 ```json
 {
@@ -244,7 +231,7 @@ Subscribe arg:
 
 ---
 
-## Subscribe Message
+### Subscribe Message
 
 Send a single subscribe message containing all channel args:
 
@@ -275,7 +262,7 @@ If any arg fails, you receive:
 
 ---
 
-## Unsubscribe Message
+### Unsubscribe Message
 
 To cancel one or more channel subscriptions without disconnecting:
 
@@ -308,7 +295,7 @@ On failure:
 
 ---
 
-## Heartbeat
+### Heartbeat
 
 Send `"ping"` as a plain text frame every **25 seconds**.
 The server responds with `"pong"`. If no pong is received within 25 seconds, reconnect.
@@ -320,7 +307,7 @@ server → "pong"
 
 ---
 
-## Connection Lifecycle
+### Connection Lifecycle
 
 ```
 1. connect (TLS WebSocket)
@@ -335,7 +322,7 @@ server → "pong"
 
 ---
 
-## Reconnection Strategy
+### Reconnection Strategy
 
 The server may disconnect clients during maintenance or network issues.
 Recommended reconnect policy:

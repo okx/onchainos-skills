@@ -1,16 +1,22 @@
 # Onchain OS DEX Signal — CLI Command Reference
 
+## Commands
+
 Detailed parameter tables, return field schemas, and usage examples for the tracker, signal, and leaderboard commands.
 
 ---
 
-## 1. onchainos tracker activities (address tracker)
+### `onchainos tracker activities`
 
 Get latest DEX activities for tracked addresses. Supports smart money, KOL, or custom multi-address tracking, with filters for trade type, chain, volume, market cap, liquidity, and holder count.
+
+#### Syntax
 
 ```bash
 onchainos tracker activities --tracker-type <type> [options]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
@@ -26,7 +32,9 @@ onchainos tracker activities --tracker-type <type> [options]
 | `--min-liquidity` | No | - | Minimum liquidity (USD) |
 | `--max-liquidity` | No | - | Maximum liquidity (USD) |
 
-**Return fields** (inside `trades` array):
+#### Return Fields
+
+inside `trades` array.
 
 | Field | Type | Description |
 |---|---|---|
@@ -43,7 +51,7 @@ onchainos tracker activities --tracker-type <type> [options]
 | `tradeType` | String | Trade direction: `1`=buy, `2`=sell |
 | `tradeTime` | String | Transaction time (Unix milliseconds) |
 
-**Examples**:
+#### Examples
 
 ```bash
 # Latest trades by platform smart money (all chains)
@@ -60,17 +68,28 @@ onchainos tracker activities --tracker-type multi_address \
 onchainos tracker activities --tracker-type smart_money --trade-type 1 --min-volume 10000
 ```
 
+**User says:** "What are smart money wallets buying on Solana?" (transaction-level)
+
+```bash
+onchainos tracker activities --tracker-type smart_money --chain solana --trade-type 1
+# -> Display latest smart money buy transactions on Solana
+```
+
 ---
 
-## 2. onchainos signal chains
+### `onchainos signal chains`
 
 Get supported chains for market signals. No parameters required.
+
+#### Syntax
 
 ```bash
 onchainos signal chains
 ```
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -80,13 +99,17 @@ onchainos signal chains
 
 > Call this first when signal data is needed — confirm chain support before calling `onchainos signal list`.
 
-## 3. onchainos signal list
+### `onchainos signal list`
 
 Get latest buy-direction token signals sorted descending by time.
+
+#### Syntax
 
 ```bash
 onchainos signal list --chain <chain> [--limit <n>] [--cursor <cursor>] [options]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
@@ -104,7 +127,9 @@ onchainos signal list --chain <chain> [--limit <n>] [--cursor <cursor>] [options
 | `--limit` | No | `20` | Number of results per page (max 100) |
 | `--cursor` | No | - | Pagination cursor — pass the `cursor` field from the last item of the previous response to get the next page |
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -125,14 +150,7 @@ onchainos signal list --chain <chain> [--limit <n>] [--cursor <cursor>] [options
 | `token.top10HolderPercent` | String | Percentage of supply held by top 10 holders |
 | `cursor` | String | Per-item pagination cursor — pass the `cursor` of the **last item** as the next request's `--cursor` to fetch the next page |
 
-## Input / Output Examples
-
-**User says:** "What are smart money wallets buying on Solana?" (transaction-level)
-
-```bash
-onchainos tracker activities --tracker-type smart_money --chain solana --trade-type 1
-# -> Display latest smart money buy transactions on Solana
-```
+#### Examples
 
 **User says:** "Show me smart money buy signal alerts on Solana" (aggregated alerts)
 
@@ -151,16 +169,20 @@ onchainos signal list --chain ethereum --wallet-type 3 --min-amount-usd 10000
 
 ---
 
-## 4. onchainos leaderboard supported-chains
+### `onchainos leaderboard supported-chains`
 
 
 Get supported chains for the leaderboard. No parameters required.
+
+#### Syntax
 
 ```bash
 onchainos leaderboard supported-chains
 ```
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -172,13 +194,17 @@ onchainos leaderboard supported-chains
 
 ---
 
-## 5. onchainos leaderboard list
+### `onchainos leaderboard list`
 
 Get top trader leaderboard ranked by PnL, win rate, volume, tx count, or ROI. Returns at most 20 entries per request.
+
+#### Syntax
 
 ```bash
 onchainos leaderboard list --chain <chain> --time-frame <tf> --sort-by <sort> [options]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
@@ -195,7 +221,9 @@ onchainos leaderboard list --chain <chain> --time-frame <tf> --sort-by <sort> [o
 | `--min-tx-volume` | No | - | Minimum transaction volume (USD) |
 | `--max-tx-volume` | No | - | Maximum transaction volume (USD) |
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -213,7 +241,7 @@ onchainos leaderboard list --chain <chain> --time-frame <tf> --sort-by <sort> [o
 | `txs` | String | Total transaction count in the selected time frame |
 | `lastActiveTimestamp` | String | Last active time (Unix milliseconds) |
 
-**Examples**:
+#### Examples
 
 ```bash
 # Top traders on Solana by PnL over last 7D

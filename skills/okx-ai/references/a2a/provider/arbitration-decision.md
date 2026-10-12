@@ -1,19 +1,23 @@
-# ASP Refund-or-Evaluation Decision
+# ASP Refund-or-Evaluation decision
 
-Use this leaf for `job_rejected`, `sub_user_reject`, a pending refund request,
+## Module Description
+
+Use this Reference for `job_rejected`, `sub_user_reject`, a pending refund request,
 or an explicit request to evaluate one rejected task.
 
 A zero-price one-time task whose fresh status is Failed(9) is terminal and must
-not enter this leaf. Notify the ASP owner of the Failed result and execute the
+not enter this Reference. Notify the ASP owner of the Failed result and execute the
 returned task-scoped cleanup action; do not offer refund or platform evaluation.
 
-## Refund request detail and decision
+
+## Flow
+### Refund request detail and decision
 
 For a System entry, consume the fresh progression result already produced by
 the A2A router. For a selected pending request, use the fresh `refund-detail`
 result. Render [Buyer Refund Request](#buyer-refund-request).
 
-## Resolve the decision
+### Resolve the decision
 
 Bind an event-created card to its Job ID, decision ID, deadline, and choices in
 `pending-decisions-v2`. Bind a card opened from a selected pending request to
@@ -38,13 +42,15 @@ Apply this response matrix to either binding:
 The returned action is the final authorization. Present one concise localized
 result after the command completes.
 
-## Output Templates
+
+## Output Rules
+### Output Templates
 
 The template below is an English source. Reply in the language of the current
 conversation while preserving the full Job ID, amounts, token symbols,
 timestamps, and user-authored reasons exactly.
 
-### Buyer Refund Request
+#### Buyer Refund Request
 
 ```markdown
 ### Buyer Refund Request
@@ -61,10 +67,10 @@ timestamps, and user-authored reasons exactly.
 
 Please respond by the deadline. Otherwise, a full refund will be issued automatically.
 
-To refund the buyer, reply “Approve refund”. To request platform evaluation, reply “Request evaluation” and include your evaluation reason.
+To refund the buyer, reply "Approve refund". To request platform evaluation, reply "Request evaluation" and include your evaluation reason.
 ```
 
-### Seller Refund Rejection
+#### Seller Refund Rejection
 
 Render this decision card only after the ASP has chosen to reject the refund
 but has not yet supplied an evaluation reason. It is not a new authorization;

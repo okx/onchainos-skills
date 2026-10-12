@@ -1,12 +1,16 @@
 # User Task and Deliverable Queries
 
+## Module Description
+
 This leaf performs read-only queries and returns fresh task data.
 
-## One task
+
+## Flow
+### One task
 
 Choose the branch from the user's requested information:
 
-| Intent | Branch |
+| Requested information | Handling branch |
 |---|---|
 | Progress, status, lifecycle, timeline, current stage, responsible party, or next step | Task-type gate, then the type-appropriate lifecycle timeline |
 | Task details, basic information, attributes, type, fee, provider, or description | Task details |
@@ -27,7 +31,7 @@ title, task type, role, status, and counterparty, then wait for a selection.
 The command combines non-terminal one-time tasks and subscriptions. Do not
 substitute either type-specific list or silently omit one task type.
 
-### Lifecycle query and task-type gate
+#### Lifecycle query and task-type gate
 
 For any progress-like intent defined above, run exactly one read-only lifecycle
 query:
@@ -47,7 +51,7 @@ Route the returned `taskType` without rerunning the command:
 - Unknown or missing: stop and report that the task type could not be
   established. Never assume an untyped task is one-time.
 
-### One-time lifecycle timeline
+#### One-time lifecycle timeline
 
 Use this rendering only when the lifecycle result's `taskType` is `one_time`.
 
@@ -103,7 +107,7 @@ When `display.handledBy` is exactly `ASP` or `Platform`, render this source
 sentence in the conversation language using the returned fields:
 
 ```text
-Currently handled by {localized display.handledBy}; next: {localized display.next}. You can say “View task details” to review the details.
+Currently handled by {localized display.handledBy}; next: {localized display.next}. You can say "View task details" to review the details.
 ```
 
 Preserve the meaning of `display.next` and render this sentence once.
@@ -193,7 +197,7 @@ display rules:
    - Deliverable: [<absolutePath>](<absolutePath>)
    ```
 
-### Submitted one-time review recovery
+#### Submitted one-time review recovery
 
 After rendering the normal card above, enter this recovery when the same status
 result says `Task type: one_time`, `Task status: Awaiting buyer review`, and
@@ -259,7 +263,7 @@ make another task-detail/`next-action` query, call `okx-a2a user list` or
 
 Use Refund V2 settlement provenance to confirm the refund result.
 
-## Buyer refund tasks
+### Buyer refund tasks
 
 Use [Refund Task List](#refund-task-list) for both query modes:
 
@@ -316,7 +320,7 @@ display rules:
    `statusName` only as a raw compatibility key.
 5. Preserve each returned page and its pagination.
 
-## Saved deliverables
+### Saved deliverables
 
 ```text
 onchainos agent task-deliverable-list --job-id <jobId> --role <user|asp>
@@ -327,13 +331,15 @@ For one task, show the original name, type, human-readable size, absolute path,
 and saved time. For multiple tasks, group by title and full Job ID. An empty
 result means no saved deliverables were found.
 
-## Task-scoped messages
+### Task-scoped messages
 
 When no pending decision owns the reply and the user wants to supplement,
 clarify, or discuss an existing task, enter [`peer.md`](peer.md). A read-only
 query ends after presenting its result.
 
-## Output Templates
+
+## Output Rules
+### Output Templates
 
 The templates below are English sources. Reply in the language of the current
 conversation while preserving Job IDs, Agent IDs, amounts, token symbols,
@@ -342,7 +348,7 @@ timestamps, and user-authored reasons exactly.
 Use tables only for multi-record list results. Render every single-record
 detail or confirmation as one `- Label: value` item per available field.
 
-### Refund Task List
+#### Refund Task List
 
 ```markdown
 You have {refundCount} refund tasks:
@@ -361,7 +367,7 @@ Display rules:
 3. Use the CLI-provided task type, amount, and deadline directly.
 4. Use the same table for `available` and `requested` modes.
 
-### Refund Request Details
+#### Refund Request Details
 
 ```markdown
 ### Refund Request Details

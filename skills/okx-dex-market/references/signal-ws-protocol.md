@@ -1,33 +1,19 @@
 # Onchain OS DEX Signal — WebSocket Protocol Reference
 
+## Module Description
+
 This document is for **developers and agents** who want to connect directly to the Onchain OS DEX WebSocket
 and subscribe to real-time data.
 
----
+## Connection Protocol
 
-## Endpoint
+### Endpoint
 
 ```
 wss://wsdex.okx.com/ws/v6/dex
 ```
 
 Uses TLS. Connect with any standard WebSocket client that supports TLS.
-
----
-
-## Authentication
-
-The Onchain OS DEX WebSocket uses HMAC-SHA256 API key authentication, which is the same scheme
-as the OKX REST API. Full documentation:
-👉 https://web3.okx.com/onchainos/dev-docs/market/websocket-login
-
-### Credentials
-
-Obtain your API Key, Secret Key, and Passphrase from the
-[OKX Developer Portal](https://web3.okx.com/onchain-os/dev-portal).
-
-> **Security**: Never hardcode credentials in source code. Use environment variables or a `.env` file.
-> Ensure `.env` is listed in `.gitignore` — never commit it to version control.
 
 ### Login Message
 
@@ -104,7 +90,7 @@ Wait for this ACK before sending subscribe messages. Recommended timeout: 10 sec
 
 ---
 
-## Push Message Envelope
+### Push Message Envelope
 
 Every push message from the server uses the same envelope structure:
 
@@ -119,9 +105,9 @@ The "Push Data Fields" tables below describe the contents of each object inside 
 
 ---
 
-## Channels
+### Channels
 
-### `dex-market-new-signal-openapi` — Signal Alerts
+#### `dex-market-new-signal-openapi` — Signal Alerts
 
 Retrieve real-time aggregated buy signal alerts from smart money, KOL, and whale wallets.
 Single-chain subscription only.
@@ -131,14 +117,14 @@ Subscribe arg:
 { "channel": "dex-market-new-signal-openapi", "chainIndex": "1" }
 ```
 
-#### Subscribe Parameters
+##### Subscribe Parameters
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `channel` | String | Yes | `"dex-market-new-signal-openapi"` |
 | `chainIndex` | String | Yes | Chain ID — single chain only (e.g. `"1"` = Ethereum, `"501"` = Solana) |
 
-#### Push Data Fields
+##### Push Data Fields
 
 | Field | Type | Description |
 |---|---|---|
@@ -159,7 +145,7 @@ Subscribe arg:
 | `amountUsd` | String | Total trade amount (USD) |
 | `soldRatioPercentage` | String | Sell ratio (%) — lower means wallets are still holding |
 
-#### Push Example
+##### Push Example
 
 ```json
 {
@@ -191,7 +177,7 @@ Subscribe arg:
 
 ---
 
-### `kol_smartmoney-tracker-activity` (Public)
+#### `kol_smartmoney-tracker-activity` (Public)
 
 Aggregated real-time trade feed from KOL wallets and smart money tracked by OKX.
 No wallet address parameter needed.
@@ -201,7 +187,7 @@ Subscribe arg:
 { "channel": "kol_smartmoney-tracker-activity" }
 ```
 
-### `address-tracker-activity` (Per-address)
+#### `address-tracker-activity` (Per-address)
 
 Real-time trade feed for a custom wallet address.
 Send **one subscription arg per address** (up to 200 addresses per connection). If you need to track more than 200 addresses, create additional WebSocket connections.
@@ -215,7 +201,7 @@ Supports both EVM addresses (`0x...`) and Solana addresses (base58).
 
 ---
 
-## Subscribe Message
+### Subscribe Message
 
 Send a single subscribe message containing all channel args:
 
@@ -247,7 +233,7 @@ If any arg fails, you receive:
 
 ---
 
-## Unsubscribe Message
+### Unsubscribe Message
 
 To cancel one or more channel subscriptions without disconnecting:
 
@@ -280,7 +266,7 @@ On failure:
 
 ---
 
-## Push Data Format
+### Push Data Format
 
 When a trade event occurs, the server pushes:
 
@@ -341,7 +327,7 @@ For `address-tracker-activity`, the `arg` also includes `walletAddress`:
 
 ---
 
-## Heartbeat
+### Heartbeat
 
 Send `"ping"` as a plain text frame every **25 seconds**.
 The server responds with `"pong"`. If no pong is received within 25 seconds, reconnect.
@@ -353,7 +339,7 @@ server → "pong"
 
 ---
 
-## Connection Lifecycle
+### Connection Lifecycle
 
 ```
 1. connect (TLS WebSocket)
@@ -378,7 +364,7 @@ Treat this as a signal to gracefully disconnect and reconnect after a short dela
 
 ---
 
-## Reconnection Strategy
+### Reconnection Strategy
 
 The server may disconnect clients during maintenance or network issues.
 Recommended reconnect policy:
@@ -387,4 +373,3 @@ Recommended reconnect policy:
 - On exhaustion: surface error to the user
 
 After reconnecting, re-send the full login + subscribe sequence.
-

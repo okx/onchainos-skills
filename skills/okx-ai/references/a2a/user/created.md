@@ -1,5 +1,7 @@
 # Created Task Handoff
 
+## Module Description
+
 Use this leaf for `job_created` after `next-action` has fetched fresh task
 state. The CLI-returned playbook owns designated-provider routing, session
 creation, prefetch, and all current branch guards.

@@ -1,17 +1,27 @@
 # My Subscriptions
 
+## Module Description
+
 Browse my subscription task lists or details.
 
-## Commands
 
-| Intent | Reference |
-|---|---|
-| My subscriptions | `onchainos agent subscription-list --page-size 10` |
-| Next page | `onchainos agent subscription-list --cursor <nextCursor> --page-size <pageSize>` |
-| Selected subscription name, provider, fee, trial, renewal, billing, or other metadata | `onchainos agent subscribe-detail <jobId> --format json` |
-| Selected subscription progress, status, lifecycle, timeline, current stage, responsible party, or next step | `onchainos agent lifecycle <jobId>` |
+## Intent Routing
 
-## Subscription detail query
+### Hot subscription reads
+
+| User intent | Reference | Hot command |
+|---|---|---|
+| My subscriptions | — | `onchainos agent subscription-list --page-size 10` |
+| Next page with the returned cursor | — | `onchainos agent subscription-list --cursor <nextCursor> --page-size <pageSize>` |
+| Selected subscription name, provider, fee, trial, renewal, billing, or other metadata | — | `onchainos agent subscribe-detail <jobId> --format json` |
+| Selected subscription progress, status, lifecycle, timeline, current stage, responsible party, or next step | — | `onchainos agent lifecycle <jobId>` |
+
+These are read-only hot commands. Use the current Reference's result and
+rendering rules directly; do not read the CLI Reference or run `--help` first.
+
+
+## Flow
+### Subscription detail query
 
 Use this entry when the selected Job ID is already known to be a subscription,
 or when `../task-query.md` has type-gated it as `subscription`. Run exactly one
@@ -25,11 +35,11 @@ Render the successful result through §Detail below. Do not run lifecycle merely
 to fill detail-card fields, and do not substitute `subscription-list` for a
 selected Job ID.
 
-## Subscription lifecycle query
+### Subscription lifecycle query
 
 Use this entry only for progress, status, lifecycle, timeline, current stage,
 responsible party, or next-step intent. When `../task-query.md` supplies a
-lifecycle result, reuse it and do not run another command. When this leaf is
+lifecycle result, reuse it and do not run another command. When this Reference is
 entered directly for an already-established subscription, run exactly one
 read-only query:
 
@@ -86,17 +96,19 @@ devices, cancel, renew, sign, pay, or execute a returned next step. A displayed
 choice is an invitation for a later user decision, not permission to execute it
 during the lifecycle query.
 
-## List
+
+## Output Rules
+### List
 
 Render only the current `payload.items` page. Keep CLI order. This section is
 the single rendering contract for buyer subscription lists.
 
-### How to render list
+#### How to render list
 This is a mandatory, exact rendering contract.
 For every subscription-list result, render every non-empty section below.
 Never summarize, shorten, reorder rows.
 Always respond and render all user-facing content in the language currently used by the user.
-#### template
+##### template
 ```markdown
 {When activeRows is non-empty}
 #### Active Subscriptions ({payload.summary.activeCount})
@@ -123,7 +135,7 @@ No subscriptions found.
 #### Next steps：
 {Rendered nextAction list}
 ```
-#### template rules
+##### template rules
 1. Group rows by `listStatus`, preserving CLI order.
 2. Render the Active Subscriptions heading and table only when `activeRows` is
    non-empty. Render the Ended Subscriptions heading and table only when
@@ -137,13 +149,13 @@ No subscriptions found.
 6. Subscription lifecycle status is internal: never render a row's `status`,
    `statusName`, `statusLabel`, or `statusDescription`.
 
-### Constraints
+#### Constraints
 
 - Use `nextCursor` unchanged to continue the list.
 - The query and rendered recommendations are read-only. Never start listening,
   modify delivery, cancel, sign, pay, or trade from the list response.
 
-## Detail
+### Detail
 
 This is the Buyer-side detail card. ASP-side task details remain owned by
 [`../provider/task-query.md`](../provider/task-query.md) and its `agent asp
@@ -181,7 +193,7 @@ formatted timestamps and an explicit UTC offset.
 Subscription lifecycle status is internal: never render `status`, `statusName`,
 `statusLabel`, or `statusDescription` in the detail card.
 
-### Constraints
+#### Constraints
 
 - Use an explicit Job ID or the single unambiguous Job ID bound to the current
   subscription context. Never infer a Job ID from a title.

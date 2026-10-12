@@ -1,8 +1,12 @@
 # ASP Listing Validation
 
+## Module Description
+
 Validate ASP identity and service information before create or update.
 
-## When to run
+
+## Flow
+### When to run
 
 - **Registration:** validate the full identity and service set after the user confirms all services.
 - **Update:** validate after the user confirms all changes, using final identity values and changed
@@ -10,14 +14,14 @@ Validate ASP identity and service information before create or update.
 
 Validate once per flow, never inside a service loop or before final confirmation.
 
-## Workflow
+### Workflow
 
-### 1. Run CLI validation
+#### 1. Run CLI validation
 
 Call `validate-listing` once with the applicable identity and service information, then read `pass`
 and `findings[]` from the result.
 
-#### CLI reference
+##### CLI reference
 
 ```bash
 onchainos agent validate-listing \
@@ -30,7 +34,7 @@ onchainos agent validate-listing \
 - Each finding contains `field`, `severity`, `message`, and a diagnostic `code`.
 - Preserve CLI severities and never expose `code`.
 
-### 2. Apply semantic validation
+#### 2. Apply semantic validation
 
 Keep every CLI finding and add only checks that require semantic judgment:
 
@@ -46,7 +50,7 @@ Keep every CLI finding and add only checks that require semantic judgment:
 
 Use only these rules for semantic severity and exceptions; never restate or reinterpret CLI rules.
 
-### 3. Merge findings and resolve
+#### 3. Merge findings and resolve
 
 - Merge CLI and semantic findings, preserve severity, de-duplicate by `(field,message)`, and
   localize messages. Map dotted `field` values to card rows, bold affected name rows, and never show

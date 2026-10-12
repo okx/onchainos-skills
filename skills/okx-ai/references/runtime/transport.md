@@ -1,5 +1,7 @@
 # A2A Transport
 
+## Module Description
+
 This helper owns task-scoped communication mechanics after a business leaf has
 selected a message. It never chooses business intent or task state.
 

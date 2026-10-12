@@ -1,9 +1,13 @@
 # ASP Evaluation Queries
 
+## Module Description
+
 Use this leaf for pending refund requests, evaluation records, and evaluation
 details.
 
-## Pending refund requests
+
+## Flow
+### Pending refund requests
 
 Pending evaluation, evaluable-task, and required-evaluation intents all mean
 the current rejected-task set, rather than the filed-evaluation list. Query it
@@ -22,7 +26,7 @@ Request decision template:
 onchainos agent refund-detail <jobId> --role provider --agent-id <aspAgentId>
 ```
 
-## Evaluation records
+### Evaluation records
 
 An in-progress, filed, or completed evaluation query uses:
 
@@ -32,7 +36,9 @@ onchainos agent arbitration-list --agent-id <aspAgentId> [--page <n>] [--page-si
 
 Render [Evaluation Records](#evaluation-records).
 
-## Evaluation details
+
+## Output Rules
+### Evaluation details
 
 ```text
 onchainos agent arbitration-detail <jobId> --agent-id <aspAgentId>
@@ -40,7 +46,7 @@ onchainos agent arbitration-detail <jobId> --agent-id <aspAgentId>
 
 Render [Evaluation Details](#evaluation-details).
 
-## Output Templates
+### Output Templates
 
 The templates below are English sources. Reply in the language of the current
 conversation while preserving Job IDs, amounts, token symbols, timestamps, and
@@ -52,7 +58,7 @@ detail as one `- Label: value` item per available field.
 Translate each list title and every table header into the user's language.
 The English templates below are the source wording and field order only.
 
-### Pending Refund Requests
+#### Pending Refund Requests
 
 ```markdown
 | # | Service Name | Job ID | Task Type | Requested Refund | Response Deadline |
@@ -77,7 +83,7 @@ Display rules:
    current conversation language. The English template fixes only field order
    and meaning; preserve the available actions and deadline consequence.
 
-### Evaluation Records
+#### Evaluation Records
 
 ```markdown
 You have {evaluationCount} evaluation records:
@@ -98,7 +104,7 @@ Display rules:
 4. Render `Action Deadline` when at least one returned value is present.
 5. Restrict selection to `nextAction[id=view_arbitration].params.allowedJobIds`.
 
-### Evaluation Details
+#### Evaluation Details
 
 ```markdown
 ### Evaluation Details

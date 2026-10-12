@@ -1,10 +1,14 @@
 # ASP — Designated Provider Decision (v2)
 
+## Module Description
+
 This reference implements Lark flow §1.3 for designated-provider assignments.
 The Buyer has already created and funded the task or subscription. The ASP no
 longer applies or counter-applies.
 
-## Trigger and authoritative status
+
+## Flow
+### Trigger and authoritative status
 
 - Single task trigger: `job_asp_selected`.
 - Subscription trigger: `sub_open`, delivered to both Buyer and ASP after the
@@ -20,7 +24,7 @@ longer applies or counter-applies.
   second mutation or broadcast.
 - Any other status is an idempotent stop.
 
-## Registered Service check
+### Registered Service check
 
 The CLI checks the exact designated Service through:
 
@@ -35,7 +39,7 @@ onchainos agent service-list --agent-id <aspAgentId> --service-id <serviceId>
   `serviceDescription`. Ignore `serviceGuide`, Guide Consent, examples, command
   templates, and every other listing field when making the assignment decision.
 
-## One semantic decision
+### One semantic decision
 
 Use inputs by assignment type:
 
@@ -76,7 +80,7 @@ Apply this strict boundary before choosing:
 
 No legacy `apply`, counter-offer, or `asp-reject` path is part of this flow.
 
-## ACCEPT
+### ACCEPT
 
 Reconfirm the latest status is CREATED, then run exactly one command:
 
@@ -92,7 +96,8 @@ The command calls the documented mutation once, validates `jobId`, `uopData`,
 and response type, signs, and requires a full broadcast receipt. Unknown network
 results are not automatically retried; reconcile from the latest detail.
 
-## REJECT
+
+### REJECT
 
 A concrete reason is mandatory and capped at 512 Unicode characters:
 
@@ -109,9 +114,10 @@ onchainos agent decline-subscription <jobId> \
 The backend mutation body receives `sessionCert`; the reason is included in the
 broadcast `bizContext`.
 
-## NEED_PARAMS
+
+### NEED_PARAMS
 
 Single tasks only: enter [`../params.md`](../params.md). It is the sole owner of
 request IDs, rounds, complete replacement parameters, backend-update
 confirmation, and the three-successful-update limit. A subscription must never
-enter this leaf.
+enter this flow.

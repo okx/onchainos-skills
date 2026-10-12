@@ -1,12 +1,16 @@
 # Third-Party Plugin Pre-flight (Solana)
 
+## Module Description
+
 > Load before dispatching a third-party Solana DeFi plugin command that performs an on-chain write.
 
 Third-party Solana DeFi plugins (e.g. `kamino-plugin`, `raydium-plugin`) call `onchainos wallet contract-call --force` internally. Pre-flight Gas Station status on Solana before invoking the plugin's write command.
 
 Gas Station is Solana-only: the Relayer is the native fee payer, and gas is debited via an SPL stablecoin transfer inside the same multi-signer transaction.
 
-## Pre-flight checklist
+## Flow
+
+### Pre-flight checklist
 
 Before a plugin command that performs an on-chain write (`--confirm` / `execute` / `--broadcast`):
 
@@ -24,17 +28,19 @@ Before a plugin command that performs an on-chain write (`--confirm` / `execute`
 | `INSUFFICIENT_ALL` | Render `references/gas-station.md` Scene E. |
 | `HAS_PENDING_TX` | Tell the user to wait for the pending GS tx to clear. |
 
-## Skip pre-flight when
+### Skip pre-flight when
 
 - The plugin invocation is dry-run / simulation.
 - The plugin command is read-only (e.g. `kamino-plugin positions`, `health-factor`, `reserves`, `quickstart`).
 - `status` already returned `READY` for this `(solana, from)` tuple in the current conversation.
 
-## Reactive recovery (plugin already failed)
+## Troubleshooting
+
+### Reactive recovery (plugin already failed)
 
 When a plugin returns a vague error, follow `references/gas-station.md` → "Plugin Bail Recovery" (authoritative). If the plugin swallowed stdout so no Confirming JSON is visible, run `onchainos wallet gas-station status --chain solana [--from <addr>]` and branch per the Pre-flight checklist above. Exit-code quick-reference:
 
-## Exit codes (seen through a plugin)
+### Exit codes (seen through a plugin)
 
 | Exit | Meaning | Agent action |
 |---|---|---|

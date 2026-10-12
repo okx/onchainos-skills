@@ -1,12 +1,16 @@
 # Ensure OKX A2A Communication Ready
 
+## Environment Boundary
+
 Recovery procedure for the OKX A2A communication runtime. Use it only when the environment looks unavailable or uninitialized — e.g. `okx-a2a` is missing, or an `okx-a2a` command (daemon / switch-runtime / agent refresh / setup / session / user notify) fails with a runtime or plugin error.
 
 Readiness is owned entirely by the `okx-a2a` CLI. This file is just the two steps that install it and let it repair itself; do not reimplement daemon / runtime-switch / plugin logic here.
 
-## Steps
 
-### 1. Ensure `okx-a2a` is installed
+## Flow
+### Steps
+
+#### 1. Ensure `okx-a2a` is installed
 
 ```bash
 command -v okx-a2a >/dev/null 2>&1 || npm i -g @okxweb3/a2a-node
@@ -14,7 +18,7 @@ command -v okx-a2a >/dev/null 2>&1 || npm i -g @okxweb3/a2a-node
 
 If `npm` is missing, stop and tell the user Node.js + npm are required to bootstrap OKX A2A communication.
 
-### 2. Repair the environment
+#### 2. Repair the environment
 
 ```bash
 okx-a2a doctor --fix --json

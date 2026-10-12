@@ -1,10 +1,14 @@
 # Runtime Decision Backlog
 
+## Module Description
+
 Use this leaf for one-shot decision-list reads and replies. It never starts a
 long poll or schedules a wake. Message history/unread event requests instead
 use [`watch.md`](watch.md), which drains the event backlog before waiting.
 
-## Durable CLI queue
+
+## Flow
+### Durable CLI queue
 
 For the full pending-decision queue, run:
 
@@ -16,9 +20,9 @@ With one active `[USER_DECISION_REQUEST]`, pass the reply verbatim to its
 pre-filled `resolve-prompt`. With multiple cards, select by explicit Job ID or
 label and ask only when still ambiguous.
 
-## Surfaced but unanswered watch decisions
+### Surfaced but unanswered watch decisions
 
-For “outstanding/pending/unhandled decisions”, run exactly, without pipes or
+For "outstanding/pending/unhandled decisions", run exactly, without pipes or
 redirects:
 
 ```text
@@ -39,7 +43,7 @@ Render all remaining items in one message, numbered in order, with each
 Localize the hint but preserve `JobID` and examples. End the turn without
 watching or scheduling a wake.
 
-## Reply binding
+### Reply binding
 
 Map a leading list index or `JobID <prefix>` to the rendered item. If only one
 item exists, an unqualified reply belongs to it. For multiple items, require a

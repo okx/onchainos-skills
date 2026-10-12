@@ -1,8 +1,8 @@
 # Cross-Chain Bridge — Troubleshooting
 
-Load on a failure, edge case, no-route fallback, or a conceptual "how does it work" question. Never show raw error codes or CLI output to the user — translate every failure into plain language; codes stay in the diagnostic summary only.
-
 ## FAQ
+
+Load on a failure, edge case, no-route fallback, or a conceptual "how does it work" question. Never show raw error codes or CLI output to the user — translate every failure into plain language; codes stay in the diagnostic summary only.
 
 | Question | Answer |
 |---|---|
@@ -12,7 +12,9 @@ Load on a failure, edge case, no-route fallback, or a conceptual "how does it wo
 | Why a receive address sometimes? | Heterogeneous pairs (EVM↔non-EVM) can't infer the destination from the sender. |
 | Atomic / refundable? | No atomicity guarantee; `status` exposes no refund/failure sub-state. For stuck transfers, verify on the destination chain / bridge scan page first. |
 
-## No-Route Fallback (empty `routerList` / `action=fallback`)
+## Recovery
+
+### No-Route Fallback (empty `routerList` / `action=fallback`)
 
 Normal branches, not errors: the backend auto-probes transit assets and hands you the result — you do NOT run any discovery loop. Both commands surface the same `fallback` object (`quote`: `data[0]` = `{routerList:[], fallback:{...}}`; `execute`: `data` = `{action:"fallback", routerList:[], fallback:{...}}`). Branch on `fallback.outcome`:
 
@@ -75,7 +77,7 @@ Diagnostic Summary:
   cliVersion:    <onchainos --version>
 ```
 
-## Edge Cases
+### Edge Cases
 
 - **Chain pair returns no bridges**: localize with two single-flag queries — `cross-chain bridges --from-chain <X>` (source supported?) then `--to-chain <Y>` (destination reachable?). Suggest a supported chain or two-hop.
 - **Approval failed inside `execute`**: the approval/revoke tx didn't confirm — nothing bridged. Check source-chain gas, re-run the same `execute` (re-quotes + re-approves). USDT-pattern tokens auto revoke→approve when `needCancelApprove=true`.
@@ -86,11 +88,11 @@ Diagnostic Summary:
 - **`status` stuck at PENDING**: `status` reflects the backend's fill-event listener (lags). In flight (normal) → wait up to `estimateTime × 10`, check the bridge scan page. Already filled, listener lagging (abnormal, mainly ACROSS V3) → destination balance already rose by ~`minimumReceived` (`wallet balance --chain <toChain>` or explorer); funds arrived, tell the user with that evidence and stop waiting. No refund/failure sub-state; echoed `bridgeId` can be wrong — trust your own record. Long PENDING with no on-chain fill → escalate.
 - **Network error**: retry once; if still failing, generate the diagnostic summary and prompt.
 
-## Status Polling
+### Status Polling
 
 Interactive chat: do NOT auto-loop — run `status` once per request, report, and if not `SUCCESS` tell the user when to ask again (route's `estimateTime`). If the user explicitly asks for a polling script: exponential backoff (10→20→40→60→60s), stop after `SUCCESS` or `estimateTime × 5`. Two traps: (1) every `status` call needs the full triple `(--tx-hash | --order-id) + --bridge-id + --from-chain` or it returns 50014; (2) in zsh do NOT name the loop variable `status` (read-only) — use `st`.
 
-## Bridge Explorer References
+### Bridge Explorer References
 
 For long-stuck cases, point users to the bridge's own scan page (map `bridgeId` → name → URL via `cross-chain bridges`):
 - Stargate / LayerZero: https://layerzeroscan.com/

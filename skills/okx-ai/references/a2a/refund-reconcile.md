@@ -1,5 +1,7 @@
 # Buyer Refund Reconciliation
 
+## Module Description
+
 Use this leaf for refund events, progress queries, recovery, and terminal
 rendering. Events are wake-up signals only: always re-read fresh authoritative
 state and apply [`../shared/refund-contract.md`](../shared/refund-contract.md).
@@ -9,7 +11,9 @@ Relevant signals include `job_closed`, `job_refunded`, `job_auto_refunded`,
 `job_asp_reject_expire`, `sub_asp_agree`, `sub_reject_refund_notify`, and
 `dispute_resolved`.
 
-## Result families
+
+## Flow
+### Result families
 
 - `refund_confirmed`: render the full original-token refund as terminal only
   after the finality matrix passes. Translate `Refund completed` into the

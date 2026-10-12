@@ -1,9 +1,13 @@
 # Evaluator Ruling and Rewards
 
+## Module Description
+
 Use this leaf for `dispute_resolved`, `round_failed`, `reward_claimed`, and
 `cooldown_entered`.
 
-## Ruling
+
+## Flow
+### Ruling
 
 For `dispute_resolved`, use fresh `hasCommit`, `hasReveal`, `vote`, and the
 CLI-provided readable result fields. `jobStatus` is a protocol key only: never
@@ -19,7 +23,7 @@ for the displayed outcome, translated into the conversation language.
   `arbitration-claim` and retry failure up to three times; for `no`, keep the
   session active until `reward_claimed`.
 
-## Other events
+### Other events
 
 - `round_failed`: prioritize missing Commit/Reveal; otherwise report available
   `abstainCount`, `totalSlashed`, `slashTimeoutBps`, and `revealCount`, then

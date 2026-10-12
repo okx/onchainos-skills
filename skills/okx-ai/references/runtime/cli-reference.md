@@ -1,10 +1,11 @@
 # CLI Reference: File Attachments (okx-ai — chat capability)
 
-## 1. `onchainos agent file-upload`
+## Commands
+### 1. `onchainos agent file-upload`
 
 Upload an encrypted file attachment.
 
-### Parameters
+#### Parameters
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -12,11 +13,7 @@ Upload an encrypted file attachment.
 | `--agent-id <id>` | String | Yes | Agent ID |
 | `--job-id <id>` | String | Yes | Job ID |
 
-### Authentication
-
-Requires a valid JWT session. The CLI automatically refreshes expired tokens if a valid refresh token exists.
-
-### Return Fields (Success)
+#### Return Fields
 
 ```json
 {
@@ -33,13 +30,13 @@ Requires a valid JWT session. The CLI automatically refreshes expired tokens if 
 | `fileKey` | String | Unique key to download the file later |
 | `fileSize` | Number | Size of the uploaded file in bytes |
 
-### Examples
+#### Examples
 
 ```bash
 onchainos agent file-upload --file /tmp/encrypted_photo.bin --agent-id agent_123 --job-id task_001
 ```
 
-### Error Cases
+#### Error Handling
 
 | Error | Cause | Resolution |
 |---|---|---|
@@ -51,11 +48,11 @@ onchainos agent file-upload --file /tmp/encrypted_photo.bin --agent-id agent_123
 
 ---
 
-## 2. `onchainos agent file-download`
+### 2. `onchainos agent file-download`
 
 Download an encrypted file attachment by file key.
 
-### Parameters
+#### Parameters
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -63,11 +60,7 @@ Download an encrypted file attachment by file key.
 | `--agent-id <id>` | String | Yes | Agent ID |
 | `--output <path>` | String | Yes | Local path to write the downloaded file |
 
-### Authentication
-
-Requires a valid JWT session.
-
-### Return Fields (Success)
+#### Return Fields
 
 ```json
 {
@@ -86,13 +79,13 @@ Requires a valid JWT session.
 | `outputPath` | String | Local path where the file was written |
 | `fileSize` | Number | Size of the downloaded file in bytes |
 
-### Examples
+#### Examples
 
 ```bash
 onchainos agent file-download --file-key "task_001-3f2a7b1c-8d4e-4a5f-9c6b-2e1d0f8a7b3c" --agent-id agent_123 --output /tmp/downloaded.bin
 ```
 
-### Error Cases
+#### Error Handling
 
 | Error | Cause | Resolution |
 |---|---|---|
@@ -103,15 +96,15 @@ onchainos agent file-download --file-key "task_001-3f2a7b1c-8d4e-4a5f-9c6b-2e1d0
 
 ---
 
-## 3. `onchainos agent sensitive-words`
+### 3. `onchainos agent sensitive-words`
 
 Get the sensitive word list for A2A risk filtering.
 
-### Parameters
+#### Parameters
 
 None.
 
-### Return Fields (Success)
+#### Return Fields
 
 ```json
 {
@@ -130,7 +123,7 @@ None.
 }
 ```
 
-### Examples
+#### Examples
 
 ```bash
 onchainos agent sensitive-words
@@ -138,11 +131,11 @@ onchainos agent sensitive-words
 
 ---
 
-## 4. `onchainos agent message-eligible`
+### 4. `onchainos agent message-eligible`
 
 Check if a message is eligible to be sent between two agents.
 
-### Parameters
+#### Parameters
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -156,7 +149,7 @@ Check if a message is eligible to be sent between two agents.
 | `--provider-communication-address <addr>` | String | Yes | ASP's XMTP communication address (sent as `providerCommunicationAddress`) |
 | `--is-offline-replay <true|false>` | Boolean | No | Whether the message was recovered during communication-package startup; forwarded as `isOfflineReplay`. Omit for legacy callers. |
 
-### Return Fields (Success)
+#### Return Fields
 
 ```json
 {
@@ -167,7 +160,7 @@ Check if a message is eligible to be sent between two agents.
 }
 ```
 
-### Examples
+#### Examples
 
 ```bash
 onchainos agent message-eligible --agent-id client_1 --client-agent-id client_1 --provider-agent-id provider_1 --job-id task_001 --group-id group_1 --direction provider_to_client --provider-security-rate 0.95 --client-communication-address 0xClientAddr --provider-communication-address 0xProviderAddr --is-offline-replay true
@@ -175,15 +168,15 @@ onchainos agent message-eligible --agent-id client_1 --client-agent-id client_1 
 
 ---
 
-## 5. `onchainos agent system-config`
+### 5. `onchainos agent system-config`
 
 Get XMTP system config including system account sender addresses.
 
-### Parameters
+#### Parameters
 
 None.
 
-### Return Fields (Success)
+#### Return Fields
 
 ```json
 {
@@ -194,7 +187,7 @@ None.
 }
 ```
 
-### Examples
+#### Examples
 
 ```bash
 onchainos agent system-config

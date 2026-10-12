@@ -1,5 +1,7 @@
 # ASP Evaluation Actions
 
+## Module Description
+
 Execute only the action returned by the latest bound refund-or-evaluation
 decision.
 
@@ -14,7 +16,9 @@ Both evaluation commands use one combined `approveAndCreateDispute`
 transaction in the current conversation. Preserve the user-authored evaluation
 reason verbatim.
 
-## Reason handoff
+
+## Flow
+### Reason handoff
 
 Before broadcasting, each command sends one task-scoped session message so the
 later evidence event receives the same reason without machine persistence.

@@ -1,8 +1,8 @@
 # Capability: Market — Troubleshooting
 
-Error handling, edge cases, and region restrictions for the Market capability. Load operational flow and parameter schemas separately through the top-level conditional-reference table.
+## Failure Diagnostics
 
-## Region Restrictions (IP Blocking)
+Error handling, edge cases, and region restrictions for the Market capability. For normal flow, return to [market.md](market.md); read [market-cli-reference.md](market-cli-reference.md) only when command facts are needed.
 
 Some services are geo-restricted. When a command fails with error code `50125` or `80001`, return a friendly message without exposing the raw error code:
 
@@ -23,7 +23,7 @@ Examples:
 
 Do not expose raw error codes or internal error messages to the user.
 
-## Edge Cases
+## Recovery
 
 - **Invalid token address**: returns empty data or error — prompt user to verify, or use `onchainos token search` to resolve
 - **Unsupported chain**: the CLI will report an error — try a different chain name

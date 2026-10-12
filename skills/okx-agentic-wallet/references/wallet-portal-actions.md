@@ -1,12 +1,12 @@
 # Portal Actions — Policy Settings & Wallet Export
 
+## Module Description
+
 > Load when: new user login (`isNew: true`), after `wallet add`, the user asks about Policy / spending limits / whitelist, or the user asks to export wallet / mnemonic / migrate / import a hardware wallet.
 
 Policy configuration must be completed by the user on the Web portal. The Agent only detects the scenario, explains the risk, gives the jump link, and outputs the verbatim template below. The Agent must **never** display any mnemonic phrase or private key content in the conversation.
 
-## Templates
-
-**IMPORTANT**: Print the matching template verbatim. For the **Policy Settings** template, the link and trailing navigation sentence are chosen by `loginType` (from `wallet status`, or the `login` response) — the table has an `email` row and an `ak` row. Row selection is **internal — never explain it to the user**: pick the row by `loginType` and render it directly (do NOT add phrases like "Google login uses the email flow"). If `loginType` is unknown or unrecognized, run `onchainos wallet status` first and treat it as `email`.
+## Output Rules
 
 ### Template: Policy Settings
 
@@ -19,7 +19,9 @@ Policy configuration must be completed by the user on the Web portal. The Agent 
 | `email` | `https://web3.okx.com/portfolio/agentic-wallet-policy` | Log in to your Agentic Wallet, then hover over your profile in the top-right corner and select "Policy Setting" from the dropdown menu. |
 | `ak` | `https://web3.okx.com/onchainos/dev-portal` | Log in with the EOA wallet that created the Agentic Wallet and open the OKX Web3 Dev platform, and click on the Agentic Wallet - Policy Setting in the upper right corner to set security rules. |
 
-## Available Policy Rules
+## Security
+
+### Available Policy Rules
 
 Policy **only** includes the following rules. Do NOT invent or mention any rules beyond this list (e.g., no "transaction count limit", no "gas limit", no "token blacklist"):
 
@@ -30,7 +32,15 @@ Policy **only** includes the following rules. Do NOT invent or mention any rules
 | Daily trade limit | Max USD amount for trades (swaps) per day (resets at UTC 0:00) | `dailyTradeTxLimit` / `dailyTradeTxFlag` / `dailyTradeTxUsed` |
 | Transfer whitelist | Only allow transfers to pre-approved addresses | Configured on Web portal only |
 
-## Trigger flows
+## Flow
+
+### Resolve policy template
+
+For the **Policy Settings** template, select the `email` or `ak` row from the
+current `loginType` in the login response or `wallet status`. If it is unknown
+or unrecognized, run `onchainos wallet status` and use `email` as the fallback.
+
+### Trigger flows
 
 The following are **trigger conditions** — when any is met, the Agent **MUST** output the corresponding guidance. Do not skip or omit.
 

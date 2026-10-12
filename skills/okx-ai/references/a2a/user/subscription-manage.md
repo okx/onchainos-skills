@@ -1,10 +1,14 @@
 # Subscription Management
 
-Use this leaf after `subscription.md` identifies one exact subscription. Device
+## Module Description
+
+Use this Reference after `subscription.md` identifies one exact subscription. Device
 receipt changes are owned by `receipt.md`; refunds are owned by
 `refund-prepare.md`.
 
-## Post-creation handoff
+
+## Flow
+### Post-creation handoff
 
 After `create-subscribe` succeeds, state that messages go to all logged-in
 devices and can be changed later. Then ask, without waiting before watch:
@@ -27,7 +31,7 @@ confirmation and immediately before entering that watch, render the localized
 copy-trade status reminder in §Copy-trade status reminder. This is a
 user-visible reminder, not part of the offline-delivery preference question.
 
-## Management actions
+### Management actions
 
 | Intent | Command/boundary |
 |---|---|
@@ -43,7 +47,40 @@ user-visible reminder, not part of the offline-delivery preference question.
 Do not write when the fresh value already matches. A preference-write failure
 does not roll back creation and does not authorize a retry.
 
-## Cancel subscription
+### Scoped receipt flow
+
+1. Resolve exactly one Active buyer subscription from an explicit Job ID/title
+   or fresh current list/detail. Historical recency is not enough.
+2. Run `subscribe-detail <jobId> --format json`.
+3. Require Active status. Ensure this device receives using `receipt.md`; never
+   collapse `deviceList:null` and `[]`, and never drop other device IDs.
+4. Immediately before watch, fresh detail must show
+   `thisDeviceReceives=true`.
+5. For a `guide_direct` subscription, render the localized copy-trade status
+   reminder in §Copy-trade status reminder after receipt is restored and before
+   watch.
+6. Enter `../../runtime/watch.md` with sticky `--job-id <jobId>`. Never substitute
+   a global watch or claim that starting watch proves a new signal exists.
+
+Restoring receipt does not recreate or modify Guide Consent. A missing Guide
+or Consent keeps signals visible but disables local automatic execution. When
+the User explicitly asks to resume automatic copy-trading on this device, use
+`restore-copytrade.md`; it rebuilds the missing local Consent and execution
+configuration from the runtime-recovered Guide.
+
+### Copy-trade status reminder
+
+When the fresh local execution configuration is `guide_direct`, render this as
+a standalone user-visible message, localized to the conversation language:
+
+> Automatic copy-trading is enabled. You can ask me about the copy-trading status at any time.
+
+Show this reminder once after the initial successful subscription confirmation,
+and once after a successful listening/receipt restoration. Do not show it for a
+`signal_only` subscription, before the receipt gate succeeds, or on watch-loop
+re-entry.
+
+### Cancel subscription
 
 Intent: cancel a subscription. Confirm `trialType` and `autoRenew` from the
 fresh list/detail in hand.
@@ -67,40 +104,9 @@ fresh list/detail in hand.
   `{periodEnd}`: locale date from `subEndTime` (fallback `subBufferEndTime`).
   Immediate termination → [`refund-prepare.md`](refund-prepare.md).
 
-## Scoped receipt flow
 
-1. Resolve exactly one Active buyer subscription from an explicit Job ID/title
-   or fresh current list/detail. Historical recency is not enough.
-2. Run `subscribe-detail <jobId> --format json`.
-3. Require Active status. Ensure this device receives using `receipt.md`; never
-   collapse `deviceList:null` and `[]`, and never drop other device IDs.
-4. Immediately before watch, fresh detail must show
-   `thisDeviceReceives=true`.
-5. For a `guide_direct` subscription, render the localized copy-trade status
-   reminder in §Copy-trade status reminder after receipt is restored and before
-   watch.
-6. Enter `../../runtime/watch.md` with sticky `--job-id <jobId>`. Never substitute
-   a global watch or claim that starting watch proves a new signal exists.
-
-Restoring receipt does not recreate or modify Guide Consent. A missing Guide
-or Consent keeps signals visible but disables local automatic execution. When
-the User explicitly asks to resume automatic copy-trading on this device, use
-`restore-copytrade.md`; it rebuilds the missing local Consent and execution
-configuration from the runtime-recovered Guide.
-
-## Copy-trade status reminder
-
-When the fresh local execution configuration is `guide_direct`, render this as
-a standalone user-visible message, localized to the conversation language:
-
-> Automatic copy-trading is enabled. You can ask me about the copy-trading status at any time.
-
-Show this reminder once after the initial successful subscription confirmation,
-and once after a successful listening/receipt restoration. Do not show it for a
-`signal_only` subscription, before the receipt gate succeeds, or on watch-loop
-re-entry.
-
-## Device and execution safety
+## Security
+### Device and execution safety
 
 - `deviceList:null` means default-all; `[]` means explicitly none.
 - Any explicit receiver update is built from a fresh complete read and

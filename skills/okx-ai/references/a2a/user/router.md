@@ -1,12 +1,29 @@
 # A2A User Router
 
+## State Routing
+
 Use this router only after `../router.md` identifies the receiving role as
-User/Buyer. Select exactly one final leaf per intent and stop routing; the
+User/Buyer. Select exactly one final business Reference per intent and stop routing; the
 explicit multi-intent read-only exception is defined below.
 
-## Free-text intents
 
-| Intent | Final leaf |
+### System events
+
+| Input or state | Reference |
+|---|---|
+| `job_created` | [`created.md`](created.md) |
+| `task_params_request`, `task_params_response`, `task_params_update` | [`../params.md`](../params.md) |
+| `job_submitted`, `deliverable_received` | [`intake.md`](intake.md) |
+| `job_completed`, `job_auto_completed` | [`../completion.md`](../completion.md) |
+| `job_refunded`, `job_auto_refunded`, `job_closed`, `job_expired`, `job_asp_reject_expire`, `job_asp_reject_closed` | [`../refund-reconcile.md`](../refund-reconcile.md) |
+| `sub_open`, `sub_created`, `sub_asp_selected`, other `sub_*` | [`subscription-events.md`](subscription-events.md) |
+| Active subscription signal | [`subscription-signal.md`](subscription-signal.md) |
+
+## Intent Routing
+
+### Free-text intents
+
+| User intent | Reference |
 |---|---|
 | Continue a selected Service after `task-create-prepare` | [`create-prepare.md`](create-prepare.md) |
 | Create a one-time task or answer its Guide | [`create.md`](create.md); Guide-only step → [`create-guide.md`](create-guide.md) |
@@ -33,25 +50,15 @@ subscription lifecycle query in `subscription.md`.
 Prefer the most specific matching row. Receipt/device wording wins over generic
 subscription metadata wording, and Signal, copy-trade-result, or `deliveryId`
 wording wins over both. When the User explicitly requests fields owned by more
-than one read-only leaf, execute each required read-only query and combine the
+than one read-only Reference, execute each required read-only query and combine the
 results in one response. Never drop an explicitly requested field merely to
-select one leaf.
+select one Reference.
 
-## System events
 
-| Event or phase | Final leaf |
-|---|---|
-| `job_created` | [`created.md`](created.md) |
-| `task_params_request`, `task_params_response`, `task_params_update` | [`../params.md`](../params.md) |
-| `job_submitted`, `deliverable_received` | [`intake.md`](intake.md) |
-| `job_completed`, `job_auto_completed` | [`../completion.md`](../completion.md) |
-| `job_refunded`, `job_auto_refunded`, `job_closed`, `job_expired`, `job_asp_reject_expire`, `job_asp_reject_closed` | [`../refund-reconcile.md`](../refund-reconcile.md) |
-| `sub_open`, `sub_created`, `sub_asp_selected`, other `sub_*` | [`subscription-events.md`](subscription-events.md) |
-| Active subscription signal | [`subscription-signal.md`](subscription-signal.md) |
+## Action Routing
+### Progression actions
 
-## Progression actions
-
-| Action ID | Final leaf |
+| Action ID | Reference |
 |---|---|
 | `restore_subscription` | [`duplicate-subscription.md`](duplicate-subscription.md) |
 | `open_create_playbook` | [`create.md`](create.md) |
@@ -62,5 +69,9 @@ select one leaf.
 | `provide_refund_reason` | [`refund-confirm.md`](refund-confirm.md) |
 | `cancel_trial_conversion`, `close_created_subscription`, `close_zero_price`, `execute_direct_refund`, `submit_refund_request` | [`refund-confirm.md`](refund-confirm.md); after the bound confirmation load [`refund-execute.md`](refund-execute.md) |
 
-Cross-domain actions are intercepted before this router is loaded. Treat an
-unknown action as a coverage failure.
+Cross-domain actions are intercepted before this router is loaded.
+
+## Troubleshooting
+### Coverage failure
+
+Treat an unknown action as a coverage failure: report it and stop routing.

@@ -1,5 +1,7 @@
 # User Task Rating
 
+## Module Description
+
 Use this flow when a Buyer provides their own rating for an Active subscription
 or a Completed A2A one-time task/subscription. A user-authored rating is keyed by
 the selected `jobId` and replaces any AI-generated rating for that same Job.
@@ -7,7 +9,9 @@ Viewing an Agent's existing reviews or reputation remains an Identity query.
 
 Never use this flow for A2MCP. Never rate a one-time task before it is Completed.
 
-## Select the Job
+
+## Flow
+### Select the Job
 
 Build the eligible set from these queries:
 
@@ -47,7 +51,7 @@ if the row or either Agent ID is missing. Do not substitute detail, status,
 device, or task-session data. Do not add fee, renewal, device, or billing fields
 to the selection table.
 
-## Inspect an existing rating
+### Inspect an existing rating
 
 ```bash
 onchainos agent task-feedback \
@@ -62,7 +66,7 @@ this `jobId`. Do not stop or require a separate overwrite confirmation. An empty
 after the User selects a row from the already verified unreviewed candidate
 table.
 
-## Collect the rating
+### Collect the rating
 
 Require both values from the User:
 
@@ -76,7 +80,7 @@ translate, or rewrite the description.
 The User's complete score-and-description reply authorizes one submission; do
 not request another confirmation.
 
-## Submit
+### Submit
 
 ```bash
 onchainos agent feedback-submit \
@@ -92,7 +96,7 @@ verbatim, with each dynamic value as one literal argv value. The backend keys
 the rating by `jobId`; this submission replaces an existing AI-generated rating
 for the same Job. Submit once; never retry an unknown result automatically.
 
-## Result
+### Result
 
 Only `ok=true` with a non-empty `data.txHash` proves success. Render a localized
 success result in this order:

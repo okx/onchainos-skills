@@ -1,8 +1,8 @@
 # Capability: Social — Troubleshooting
 
-Error handling, edge cases, and region restrictions for the Social capability. Load operational flow and parameter schemas separately through the top-level conditional-reference table.
+## Recovery
 
-## Edge Cases
+Error handling, edge cases, and region restrictions for the Social capability. For normal flow, return to [social.md](social.md); read [social-cli-reference.md](social-cli-reference.md) only when command facts are needed.
 
 - **Empty articles array**: no news matched the filters in the time window — suggest broadening (drop `--platform`, widen `--begin`/`--end`, drop `--sentiment` / `--importance`).
 - **`news-detail` returns empty**: the article id may have expired or been delisted by the upstream platform. Ask the user to verify the id from a recent list call.
@@ -14,7 +14,7 @@ Error handling, edge cases, and region restrictions for the Social capability. L
 - **Language fallback**: not all upstream platforms translate every article. If the user requested `zh_CN` and the response is still in English, note that and proceed.
 - **Network error**: retry once, then prompt the user to try again later.
 
-## Region Restrictions (IP Blocking)
+## Failure Diagnostics
 
 When a command fails with error code `50125` or `80001`, display:
 

@@ -1,16 +1,22 @@
 # Onchain OS DEX Trenches — CLI Command Reference
 
+## Commands
+
 Detailed parameter tables, return field schemas, and usage examples for all 7 memepump commands.
 
-## 1. onchainos memepump chains
+### `onchainos memepump chains`
 
 Get supported chains and protocols for meme pump. No parameters required.
+
+#### Syntax
 
 ```bash
 onchainos memepump chains
 ```
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -21,13 +27,17 @@ onchainos memepump chains
 
 > Currently supports: Solana (501), BSC (56), X Layer (196), TRON (195).
 
-## 2. onchainos memepump tokens
+### `onchainos memepump tokens`
 
 List meme pump tokens with advanced filtering. Returns up to 30 tokens per request.
+
+#### Syntax
 
 ```bash
 onchainos memepump tokens --chain <chain> --stage <stage> [options]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
@@ -96,15 +106,30 @@ onchainos memepump tokens --chain <chain> --stage <stage> [options]
 | `--min-fees-native` | No | - | Min fees in native currency |
 | `--max-fees-native` | No | - | Max fees in native currency |
 
-**Return fields**: Array of token objects (same structure as `memepump-token-details` response).
+#### Return Fields
 
-## 3. onchainos memepump token-details
+Array of token objects (same structure as `memepump-token-details` response).
+
+#### Examples
+
+**User says:** "Show me new meme tokens on Solana"
+
+```bash
+onchainos memepump tokens --chain solana --stage NEW
+# -> Display list of new meme pump tokens with market data and audit tags
+```
+
+### `onchainos memepump token-details`
 
 Get detailed information for a specific meme pump token.
+
+#### Syntax
 
 ```bash
 onchainos memepump token-details --address <address> [--chain <chain>]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
@@ -112,7 +137,9 @@ onchainos memepump token-details --address <address> [--chain <chain>]
 | `--chain` | No | `solana` | Chain name |
 | `--wallet` | No | - | User wallet address (for position and P&L data) |
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -150,20 +177,26 @@ onchainos memepump token-details --address <address> [--chain <chain>]
 | `bagsFeeClaimed` | Boolean | Bags fee claimed |
 | `aped` | String | Same-car wallet count |
 
-## 4. onchainos memepump token-dev-info
+### `onchainos memepump token-dev-info`
 
 Get developer analysis including rug pull history, migration stats, and holding info.
+
+#### Syntax
 
 ```bash
 onchainos memepump token-dev-info --address <address> [--chain <chain>]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--address` | Yes | - | Token contract address |
 | `--chain` | No | `solana` | Chain name |
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -179,20 +212,35 @@ onchainos memepump token-dev-info --address <address> [--chain <chain>]
 
 > **Note**: `devHoldingInfo` may be `null` if the creator address is unavailable.
 
-## 5. onchainos memepump similar-tokens
+#### Examples
+
+**User says:** "Is this meme token safe? Check the developer"
+
+```bash
+onchainos memepump token-dev-info --address <address> --chain solana
+# -> Display dev rug pull count, migration count, golden gems, dev holding info
+```
+
+### `onchainos memepump similar-tokens`
 
 Find similar tokens created by the same developer. Returns at most 2 results.
+
+#### Syntax
 
 ```bash
 onchainos memepump similar-tokens --address <address> [--chain <chain>]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--address` | Yes | - | Token contract address |
 | `--chain` | No | `solana` | Chain name |
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -203,20 +251,26 @@ onchainos memepump similar-tokens --address <address> [--chain <chain>]
 | `data[].lastTxTimestamp` | String | Last transaction timestamp (Unix ms) |
 | `data[].createdTimestamp` | String | Creation timestamp (Unix ms) |
 
-## 6. onchainos memepump token-bundle-info
+### `onchainos memepump token-bundle-info`
 
 Get bundle/sniper analysis for a token.
+
+#### Syntax
 
 ```bash
 onchainos memepump token-bundle-info --address <address> [--chain <chain>]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
 | `--address` | Yes | - | Token contract address |
 | `--chain` | No | `solana` | Chain name |
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -225,13 +279,26 @@ onchainos memepump token-bundle-info --address <address> [--chain <chain>]
 | `bundledValueNative` | String | Total bundled value in native token |
 | `bundledTokenAmount` | String | Total bundled token amount |
 
-## 7. onchainos memepump aped-wallet
+#### Examples
+
+**User says:** "Check if this token has bundler activity"
+
+```bash
+onchainos memepump token-bundle-info --address <address> --chain solana
+# -> Display bundler count, bundled value, bundled token amount
+```
+
+### `onchainos memepump aped-wallet`
 
 Get the aped (same-car) wallet list for a token.
+
+#### Syntax
 
 ```bash
 onchainos memepump aped-wallet --address <address> [--chain <chain>]
 ```
+
+#### Parameters
 
 | Param | Required | Default | Description |
 |---|---|---|---|
@@ -239,7 +306,9 @@ onchainos memepump aped-wallet --address <address> [--chain <chain>]
 | `--chain` | No | `solana` | Chain name |
 | `--wallet` | No | - | User wallet address (highlights your wallet if present in the aped list) |
 
-**Return fields**:
+#### Return Fields
+
+
 
 | Field | Type | Description |
 |---|---|---|
@@ -250,28 +319,7 @@ onchainos memepump aped-wallet --address <address> [--chain <chain>]
 | `data[].totalPnl` | String | Total PnL in USD |
 | `data[].pnlPercent` | String | PnL percentage |
 
-## Input / Output Examples
-
-**User says:** "Show me new meme tokens on Solana"
-
-```bash
-onchainos memepump tokens --chain solana --stage NEW
-# -> Display list of new meme pump tokens with market data and audit tags
-```
-
-**User says:** "Is this meme token safe? Check the developer"
-
-```bash
-onchainos memepump token-dev-info --address <address> --chain solana
-# -> Display dev rug pull count, migration count, golden gems, dev holding info
-```
-
-**User says:** "Check if this token has bundler activity"
-
-```bash
-onchainos memepump token-bundle-info --address <address> --chain solana
-# -> Display bundler count, bundled value, bundled token amount
-```
+#### Examples
 
 **User says:** "Who else has bought this meme token?"
 
