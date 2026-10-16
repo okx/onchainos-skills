@@ -140,7 +140,7 @@ fn duplicate_subscription_for_service(
         .transpose()
 }
 
-async fn fetch_service_detail(user_agent_id: &str, sid: &str) -> Result<Value> {
+pub(crate) async fn fetch_service_detail(user_agent_id: &str, sid: &str) -> Result<Value> {
     let output = tokio::process::Command::new(std::env::current_exe()?)
         .args([
             "agent",
@@ -224,6 +224,41 @@ fn trial_available(service: &Value) -> bool {
     supports_trial && has_positive_trial
 }
 
+/// Pre-computed Trial copy for the subscription creation confirmation card
+/// (FR-1-R1/R2/R3). `None` for any non-subscription service, so the field is
+/// simply absent in every other context — the Skill layer only ever renders
+/// it verbatim, it never re-derives these branches itself.
+fn trial_display(service: &Value) -> Option<String> {
+    let info = service.get("subscriptionInfo")?.as_object()?;
+    let free_trial = decimal(info.get("freeTrial"), "subscriptionInfo.freeTrial")
+        .ok()
+        .flatten();
+    if !free_trial.is_some_and(|value| value > 0.0) {
+        return Some("No trial available".to_string());
+    }
+    if info.get("supportTrial").and_then(Value::as_bool) != Some(true) {
+        return Some(
+            "You have already used the free trial for this service. The subscription fee will be charged directly."
+                .to_string(),
+        );
+    }
+    let fee_amount = scalar_display(info.get("feeAmount")?)?;
+    let fee_token_symbol = service.get("feeTokenSymbol")?.as_str()?;
+    Some(format!(
+        "3-day free trial. After the trial ends, the first-period fee of {fee_amount} {fee_token_symbol} will be charged automatically."
+    ))
+}
+
+/// Render a JSON scalar exactly as received — no reparsing/reformatting of
+/// numeric strings, so pricing values stay byte-for-byte what the backend sent.
+fn scalar_display(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => Some(text.clone()),
+        Value::Number(number) => Some(number.to_string()),
+        _ => None,
+    }
+}
+
 fn normalize_service(mut service: Value) -> Value {
     let description = service
         .get("serviceDescription")
@@ -292,7 +327,10 @@ pub(crate) async fn handle_task_create_prepare(
         return Ok(());
     }
 
-    let service = normalize_service(service);
+    let mut service = normalize_service(service);
+    if let Some(display) = trial_display(&service) {
+        service["trialDisplay"] = Value::String(display);
+    }
 
     // Match create-subscribe's write-boundary source and status policy: only an
     // Active subscription to this exact service blocks a new purchase. Normalize
@@ -397,6 +435,57 @@ mod tests {
         assert!(!trial_available(&subscription_service(true, json!(0))));
         assert!(!trial_available(&subscription_service(true, Value::Null)));
         assert!(!trial_available(&subscription_service(false, json!(7))));
+    }
+
+    #[test]
+    fn trial_display_is_none_for_non_subscription_service() {
+        assert_eq!(trial_display(&json!({"serviceType": "A2A"})), None);
+        assert_eq!(
+            trial_display(&json!({"supportSubscription": false, "subscriptionInfo": null})),
+            None
+        );
+    }
+
+    #[test]
+    fn trial_display_covers_no_trial_cases() {
+        for free_trial in [json!(0), json!(-5), Value::Null] {
+            let service = subscription_service(true, free_trial);
+            assert_eq!(
+                trial_display(&service),
+                Some("No trial available".to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn trial_display_covers_ineligible_case() {
+        let service = subscription_service(false, json!(72));
+        assert_eq!(
+            trial_display(&service),
+            Some(
+                "You have already used the free trial for this service. The subscription fee will be charged directly."
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn trial_display_renders_fee_verbatim_for_eligible_trial() {
+        let service = json!({
+            "feeTokenSymbol": "USDT",
+            "subscriptionInfo": {
+                "supportTrial": true,
+                "freeTrial": 72,
+                "feeAmount": "10.00"
+            }
+        });
+        assert_eq!(
+            trial_display(&service),
+            Some(
+                "3-day free trial. After the trial ends, the first-period fee of 10.00 USDT will be charged automatically."
+                    .to_string()
+            )
+        );
     }
 
     #[test]

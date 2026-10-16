@@ -20,6 +20,19 @@ enum DeliverPayload {
 
 struct ParsedA2aDeliver {
     payload: DeliverPayload,
+    kind: EnvelopeKind,
+}
+
+/// Which wire protocol produced a [`ParsedA2aDeliver`]. The legacy variant
+/// carries no extra data (its binding is proven entirely by `receiverAgentId`
+/// at parse time); the new-version variant carries the envelope's `aspAgentId`
+/// so the caller can run the trusted-task-context business-binding gate
+/// (`subscription_push_binding_failure`) before any persistence/review side
+/// effect.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EnvelopeKind {
+    LegacyAgentChat,
+    SubscriptionPush { asp_agent_id: Option<String> },
 }
 
 /// Parse the `content` field of an `[intent:deliver]` A2A message.
@@ -173,10 +186,29 @@ fn parse_a2a_envelope(
     expected_job_id: &str,
     expected_agent_id: &str,
 ) -> Option<ParsedA2aDeliver> {
-    if expected_job_id.is_empty()
-        || expected_agent_id.is_empty()
-        || json.get("msgType").and_then(|v| v.as_str()) != Some("a2a-agent-chat")
-        || json.get("jobId").and_then(|v| v.as_str()) != Some(expected_job_id)
+    if expected_job_id.is_empty() || expected_agent_id.is_empty() {
+        return None;
+    }
+    match json.get("msgType").and_then(|v| v.as_str()) {
+        Some("a2a-agent-chat") => {
+            parse_a2a_agent_chat_envelope(json, expected_job_id, expected_agent_id)
+        }
+        Some("a2a-subscription-push") => {
+            parse_a2a_subscription_push_envelope(json, expected_job_id, expected_agent_id)
+        }
+        _ => None,
+    }
+}
+
+/// Legacy `a2a-agent-chat` envelope (byte-for-byte unchanged): requires an
+/// embedded `jobId:` line in `content` matching the top-level `jobId`, then
+/// parses the `[intent:deliver]` frame via `parse_deliver_content`.
+fn parse_a2a_agent_chat_envelope(
+    json: &serde_json::Value,
+    expected_job_id: &str,
+    expected_agent_id: &str,
+) -> Option<ParsedA2aDeliver> {
+    if json.get("jobId").and_then(|v| v.as_str()) != Some(expected_job_id)
         || json.get("receiverAgentId").and_then(|v| v.as_str()) != Some(expected_agent_id)
     {
         return None;
@@ -191,7 +223,83 @@ fn parse_a2a_envelope(
     }
     Some(ParsedA2aDeliver {
         payload: parse_deliver_content(content)?,
+        kind: EnvelopeKind::LegacyAgentChat,
     })
+}
+
+/// New-version `a2a-subscription-push` envelope, independent of
+/// `parse_deliver_content`: binding is proven solely by the top-level
+/// `jobId`/`userAgentId` fields against the trusted CLI context. The okx-a2a
+/// daemon's actual per-task delivery carries `jobId`, `userAgentId`,
+/// `aspAgentId`, and `content` — there is NO `receiverAgentId` on this
+/// protocol (that field only exists on the legacy `a2a-agent-chat` envelope
+/// above). `content` is opaque ASP signal text returned verbatim as
+/// `DeliverPayload::Text` — NO `[intent:deliver]` trailer, embedded `jobId:`
+/// line, or `deliverableType` parsing, even if the text happens to contain
+/// those tokens (C-NOFRAME, C-BIND). The envelope's `aspAgentId` is threaded
+/// through as `EnvelopeKind::SubscriptionPush` so the caller can run the
+/// trusted-task-context business-binding gate before any persistence/review
+/// side effect — that cross-check (non-subscription task / ASP mismatch /
+/// unknown task type) is CLI-intake business logic, not envelope parsing, so
+/// it does not belong in this function.
+fn parse_a2a_subscription_push_envelope(
+    json: &serde_json::Value,
+    expected_job_id: &str,
+    expected_agent_id: &str,
+) -> Option<ParsedA2aDeliver> {
+    if json.get("jobId").and_then(|v| v.as_str()) != Some(expected_job_id)
+        || json.get("userAgentId").and_then(|v| v.as_str()) != Some(expected_agent_id)
+    {
+        return None;
+    }
+    let content = json.get("content").and_then(|v| v.as_str())?;
+    if content.is_empty() {
+        return None;
+    }
+    let asp_agent_id = json
+        .get("aspAgentId")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    Some(ParsedA2aDeliver {
+        payload: DeliverPayload::Text(content.to_string()),
+        kind: EnvelopeKind::SubscriptionPush { asp_agent_id },
+    })
+}
+
+/// Fail-closed trusted-task-context gate for the new-version
+/// `a2a-subscription-push` protocol. Must run BEFORE any persistence or
+/// review side effect (download, `handle_save`, review-card creation): this
+/// protocol may only ever enter the subscription-signal lifecycle, never the
+/// generic `deliverable_task_route` classification that a stale/missing/
+/// one-time `jobType` would otherwise send into one-time task review.
+///
+/// Returns `Some(reason)` when the envelope must be rejected: no trusted task
+/// context at all, a non-subscription (or unknown) `jobType`, a receiving
+/// User that does not match the trusted context's `userAgentId`, or an ASP
+/// that does not match the trusted context's `providerAgentId`. Returns
+/// `None` only when every trusted-context check passes.
+fn subscription_push_binding_failure(
+    prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
+    agent_id: &str,
+    asp_agent_id: Option<&str>,
+) -> Option<&'static str> {
+    let Some(task) = prefetched else {
+        return Some(
+            "subscription-push envelope has no trusted task context to verify against",
+        );
+    };
+    if task.job_type != Some(1) {
+        return Some("subscription-push envelope does not match a subscription task");
+    }
+    if task.user_agent_id.as_deref() != Some(agent_id) {
+        return Some(
+            "subscription-push envelope receiving User does not match the trusted task context",
+        );
+    }
+    match (asp_agent_id, task.provider_agent_id.as_deref()) {
+        (Some(envelope_asp), Some(trusted_asp)) if envelope_asp == trusted_asp => None,
+        _ => Some("subscription-push envelope ASP does not match the trusted task context"),
+    }
 }
 
 /// Read a validated A2A JSON envelope from a temp file and extract the deliver
@@ -1165,8 +1273,16 @@ fn deliverable_intake_failed(ctx: &FlowContext<'_>, reason: &str) -> String {
     )
 }
 
-fn single_review_ready(status: Option<i64>, review_marker_exists: bool) -> bool {
-    status == Some(2) || review_marker_exists
+/// Out-of-order gate: the deliverable-first path may resume the review flow
+/// only once the matching `job_submitted` event has already arrived (durable
+/// marker present). Task-detail `status == Submitted` is no longer
+/// sufficient — the event is the only source of this card's review
+/// deadline, so we must not advance before it exists. `Some(expire_time)` =
+/// ready (the persisted event expireTime, if any); `None` = not ready.
+fn review_marker_state(job_id: &str) -> Option<Option<i64>> {
+    use crate::commands::agent_commerce::task::common::deliverables;
+    deliverables::has_review_marker(job_id)
+        .then(|| deliverables::review_marker_event_expire_time(job_id))
 }
 
 /// CLI-mode fast path: download + save in-process, return a notify-only prompt.
@@ -1205,7 +1321,7 @@ pub(crate) async fn deliverable_received_cli(
         return deliverable_intake_failed(ctx, "the required --a2a-file envelope is missing");
     }
     let transport_identity = a2a_transport_identity(a2a_file);
-    let payload = match parse_a2a_file(a2a_file, job_id, agent_id) {
+    let parsed = match parse_a2a_file(a2a_file, job_id, agent_id) {
         Some(parsed) => {
             audit::log(
                 "cli",
@@ -1215,7 +1331,7 @@ pub(crate) async fn deliverable_received_cli(
                 Some([base_tags.clone(), vec![format!("path={a2a_file}")]].concat()),
                 None,
             );
-            parsed.payload
+            parsed
         }
         None => {
             audit::log(
@@ -1229,6 +1345,29 @@ pub(crate) async fn deliverable_received_cli(
             return deliverable_intake_failed(ctx, "the A2A envelope or deliver frame is invalid");
         }
     };
+
+    // New-version `a2a-subscription-push` deliveries may only ever enter the
+    // subscription-signal lifecycle. Exclude non-subscription / identity-
+    // mismatched / unverifiable deliveries here, using the trusted task
+    // context fetched independently of the envelope — BEFORE any download,
+    // `handle_save`, or review-card side effect runs below. The legacy
+    // `a2a-agent-chat` protocol is untouched by this gate.
+    if let EnvelopeKind::SubscriptionPush { ref asp_agent_id } = parsed.kind {
+        if let Some(reason) =
+            subscription_push_binding_failure(ctx.prefetched, agent_id, asp_agent_id.as_deref())
+        {
+            audit::log(
+                "cli",
+                "user/subscription_push_binding_rejected",
+                false,
+                Duration::default(),
+                Some(base_tags.clone()),
+                Some(reason),
+            );
+            return deliverable_intake_failed(ctx, reason);
+        }
+    }
+    let payload = parsed.payload;
 
     let dtype_str = match &payload {
         DeliverPayload::File { .. } => "file",
@@ -1577,21 +1716,21 @@ pub(crate) async fn deliverable_received_cli(
         }
     }
 
-    // A single task creates the acceptance decision immediately when authoritative
-    // detail already says `submitted`. The marker covers the inverse arrival order,
-    // where job_submitted was processed before this A2A delivery.
-    if single_review_ready(
-        ctx.prefetched.and_then(|p| p.status),
-        deliverables::has_review_marker(job_id),
-    ) {
-        deliverables::delete_review_marker(job_id);
+    // A single task resumes the acceptance decision only once the matching
+    // `job_submitted` event has already arrived (durable marker present,
+    // carrying that event's expireTime) — task-detail status alone is never
+    // sufficient, since the event is this card's only deadline source. The
+    // marker is deliberately NOT deleted here: card-building/delivery can
+    // still fail after this point, and the persisted expireTime must remain
+    // recoverable until `mark_review_card_sent` confirms genuine delivery.
+    if let Some(marker_expire_time) = review_marker_state(job_id) {
         audit::log(
             "cli",
             "user/deliverable_received_marker_found",
             true,
             Duration::default(),
             Some(base_tags.clone()),
-            Some("single task is submitted and deliverable is saved; entering review flow"),
+            Some("job_submitted event already observed and deliverable is saved; entering review flow"),
         );
 
         let mut patched = ctx.prefetched.cloned().unwrap_or_else(|| {
@@ -1651,7 +1790,10 @@ pub(crate) async fn deliverable_received_cli(
             prefetched: Some(&patched),
             data: ctx.data,
         };
-        return job_submitted_escrow(&merged_ctx);
+        // This deliverable-first entry's envelope is a deliver frame, not a
+        // `job_submitted` event — thread through whatever the already-arrived
+        // event persisted in the marker instead of inventing `None`.
+        return job_submitted_escrow(&merged_ctx, marker_expire_time);
     }
 
     format!(
@@ -1675,14 +1817,45 @@ pub(crate) async fn deliverable_received_cli(
 
 /// Top-level post-submit dispatcher for Task escrow jobs.
 /// Legacy paymentMode=3 jobs are stopped instead of emitting the removed A2MCP playbook.
-pub(crate) fn job_submitted(ctx: &FlowContext<'_>) -> String {
+pub(crate) fn job_submitted(ctx: &FlowContext<'_>, message: Option<&serde_json::Value>) -> String {
     if ctx.payment_mode == Some(3) {
         return format!(
             "legacy_a2mcp_flow_removed: task-based A2MCP processing is disabled for job {}. Stop; do not review, complete, sign, or pay.",
             ctx.job_id
         );
     }
-    job_submitted_escrow(ctx)
+    // The `job_submitted` event's own `expireTime` is the sole source of this
+    // card's review deadline — only this event entry carries it. Persist it
+    // durably before attempting the review flow at all: if the deliverable
+    // is already ready but something later fails, the deadline must not be
+    // lost. `write_review_marker` performs the "already sent?" check and the
+    // persist atomically under one lock, so there is no window for a
+    // duplicate/replayed event to resurrect the marker after a real send.
+    use crate::commands::agent_commerce::task::common::{deadline, deliverables};
+    let event_expire = message
+        .and_then(|m| m.get("expireTime"))
+        .and_then(deadline::parse_timestamp_value);
+    match deliverables::write_review_marker(ctx.job_id, event_expire) {
+        Ok(deliverables::ReviewMarkerOutcome::AlreadySent) => job_submitted_escrow(ctx, None),
+        Ok(deliverables::ReviewMarkerOutcome::Written { persisted, conflicting }) => {
+            if let Some(rejected) = conflicting {
+                crate::audit::log(
+                    "cli",
+                    "user/review_marker_expire_time_conflict",
+                    false,
+                    std::time::Duration::default(),
+                    Some(vec![format!("jobId={}", ctx.job_id)]),
+                    Some(&format!("kept {persisted:?}, rejected conflicting {rejected}")),
+                );
+            }
+            job_submitted_escrow(ctx, persisted)
+        }
+        Err(error) => format!(
+            "[System] job_submitted review deferred for job {}: the internal out-of-order marker could not be persisted ({error}).\n\
+             No user-facing action and no acceptance decision. Do not inspect chat history or reconstruct a deliverable manually; wait for a fresh validated event after local storage recovers.\n",
+            ctx.job_id
+        ),
+    }
 }
 
 fn job_submitted_waiting_for_deliverable(job_id: &str) -> String {
@@ -1697,7 +1870,7 @@ fn job_submitted_waiting_for_deliverable(job_id: &str) -> String {
 ///   → Step 3 (compose review user_content) → push pending-decisions-v2 review card.
 /// User must reply A (approve) / B + reason (reject). The B reply is the final
 /// confirmation for a fresh Refund V2 rejection write. Auto-approve is strictly forbidden.
-pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
+pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>, event_expire_time: Option<i64>) -> String {
     let job_id = ctx.job_id;
     let agent_id = ctx.agent_id;
     let short_id = ctx.short_id;
@@ -1770,7 +1943,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
                         prefetched: Some(&patched),
                         data: ctx.data,
                     };
-                    return job_submitted_escrow(&patched_ctx);
+                    return job_submitted_escrow(&patched_ctx, event_expire_time);
                 }
             }
         }
@@ -1807,21 +1980,44 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
                 prefetched: Some(&patched),
                 data: ctx.data,
             };
-            return job_submitted_escrow(&patched_ctx);
+            return job_submitted_escrow(&patched_ctx, event_expire_time);
         }
-        return match deliverables::write_review_marker(job_id) {
-            Ok(()) => job_submitted_waiting_for_deliverable(job_id),
-            Err(error) => format!(
-                "[System] job_submitted review deferred for job {job_id}: the internal out-of-order marker could not be persisted ({error}).\n\
-                 No user-facing action and no acceptance decision. Do not inspect chat history or reconstruct a deliverable manually; wait for a fresh validated event after local storage recovers.\n"
-            ),
-        };
+        // The marker is already durable by the time this function runs — it
+        // was either just written at the `job_submitted` entry point, or
+        // (deliverable-first ordering) already existed before this call was
+        // even reached, per `review_marker_state`'s gate — so there is
+        // nothing left to persist here.
+        return job_submitted_waiting_for_deliverable(job_id);
     }
 
     let d = p
         .deliverable
         .as_ref()
         .expect("usable deliverable was required before composing a review card");
+
+    // FR-1-AC-3 (BR3): a saved deliverable whose content has gone stale
+    // between the earlier gate and this render must fail closed into the
+    // existing recovery/error path — never render `<content unavailable>`
+    // or any other placeholder into an acceptable decision card.
+    if d.deliverable_type == "text" {
+        let has_readable_text = d
+            .text_content
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|content| !content.is_empty());
+        if !has_readable_text {
+            return format!(
+                "[job_submitted_escrow] saved text deliverable for job {job_id} has no readable content; cannot compose an acceptance card.\n\n\
+                 Enter through `skills/okx-ai/SKILL.md`, then see `skills/okx-ai/references/runtime/recovery.md` §2 — push `cli_failed` decision.\n"
+            );
+        }
+    } else if !std::path::Path::new(&d.path).is_file() {
+        return format!(
+            "[job_submitted_escrow] saved file deliverable for job {job_id} no longer points at a regular file; cannot compose an acceptance card.\n\n\
+             Enter through `skills/okx-ai/SKILL.md`, then see `skills/okx-ai/references/runtime/recovery.md` §2 — push `cli_failed` decision.\n"
+        );
+    }
+
     // The deliverable-driven path can reach review before the queued
     // `job_submitted` event. Establish the same approval gate here so the
     // user's first card is immediately actionable.
@@ -1834,7 +2030,7 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
         );
     }
     let step2 = if d.deliverable_type == "text" {
-        let content = d.text_content.as_deref().unwrap_or("<content unavailable>");
+        let content = d.text_content.as_deref().unwrap_or_default();
         format!(
             "\
      **Step 2 — Deliverable already saved**:\n\
@@ -1856,56 +2052,50 @@ pub(crate) fn job_submitted_escrow(ctx: &FlowContext<'_>) -> String {
         )
     };
 
-    // Step 3 — compose review card user_content + push via pending-decisions-v2.
+    // Step 3 — the review deadline comes only from the same Job ID's
+    // `job_submitted` event `expireTime` (already resolved/persisted by the
+    // caller — see `job_submitted` and `review_marker_state`); `None` ⇒
+    // omit the whole line, never extrapolate from `now` or any task-detail
+    // field. Then compose the frozen acceptance-card template (FR-1) and
+    // push it via pending-decisions-v2.
+    use crate::commands::agent_commerce::task::common::deadline;
+    let review_deadline =
+        event_expire_time.and_then(deadline::format_local_timestamp_with_offset);
+    let job_name = Some(title_display)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(p.title.as_str());
+    let card = if d.deliverable_type == "text" {
+        super::super::content::deliverable_review_text_user_prompt(
+            job_name,
+            job_id,
+            review_deadline.as_deref(),
+        )
+    } else {
+        super::super::content::deliverable_review_file_user_prompt(
+            job_name,
+            job_id,
+            review_deadline.as_deref(),
+        )
+    };
+
     let request_block = crate::commands::agent_commerce::task::common::pending_v2::request_command_block(
         job_id,
         "user",
         agent_id,
         Some(provider_field),
-        "<composed in Step 3a from the deliverableType template above — paste the localized result here verbatim, including the A. and B. option lines>",
+        &card,
         &format!("[Decision {short_id}] {title_display} acceptance decision"),
         "job_submitted",
     );
-
-    // Append the review-deadline reminder to the acceptance card. `None`
-    // (no absolute deadline and no submittedAt-derived fallback) means the card
-    // renders without a deadline rather than inventing one from the current time.
-    use crate::commands::agent_commerce::task::common::deadline::{self, DeadlineKind};
-    let review_deadline_line = deadline::deadline_reminder_line(
-        p.review_expire_time,
-        chrono::Local::now().timestamp(),
-        DeadlineKind::Review,
-    )
-    .map(|l| format!("{l}\n"))
-    .unwrap_or_default();
 
     format!(
     "MUST use `pending-decisions-v2 request` — NOT `onchainos agent user-notify` (one-way = no relay = deadlock). Auto-approval forbidden.\n\n\
      [Your next actions (strict order)]\n\n\
      {step2}\
-     **Step 3 — Compose `--user-content` and push decision card:**\n\n\
-     Compose `--user-content` from Step 2's deliverable variables (fill placeholders from runtime values):\n\n\
-     `<localPath>` must be the full absolute path (e.g. /Users/xxx/…). Never abbreviate or shorten.\n\n\
-     ▸ deliverableType=file:\n\
+     **Step 3 — Localize and push the decision card:**\n\n\
+     Localize ONLY the fixed copy and the `Select one` / `A.` / `B.` option labels below into the user's language. Insert the Job ID, job name, the deliverable body / local path, and the review deadline **verbatim** — never translate, summarize, abbreviate, or truncate them. Fill `<deliverableText>` from Step 2's deliverableText verbatim (full content, no truncation); fill `<localPath>` from Step 2's localPath verbatim (full absolute path, e.g. /Users/xxx/…, never abbreviated).\n\n\
      ```\n\
-     [Job {short_id}] The ASP has submitted the deliverable (file).\n\
-     File path: [<localPath>](<localPath>)\n\
-     Payment: escrow\n\
-     A. Approve → reply 'A'\n\
-     B. Reject → reply 'B' and include a rejection reason\n\
-     {review_deadline_line}\
-     ```\n\n\
-     ▸ deliverableType=text:\n\
-     ```\n\
-     [Job {short_id}] The ASP has submitted the deliverable (text).\n\
-     Saved at: [<localPath>](<localPath>)\n\
-     ---Deliverable---\n\
-     <deliverableText from Step 2 — full content, no truncation>\n\
-     ---End of deliverable---\n\
-     Payment: escrow\n\
-     A. Approve → reply 'A'\n\
-     B. Reject → reply 'B' and include a rejection reason\n\
-     {review_deadline_line}\
+     {card}\n\
      ```\n\n\
      Push to user (localize `--user-content` and `--list-label` to user's language first):\n\n\
      {request_block}\n"
@@ -2004,7 +2194,7 @@ mod tests {
     }
 
     fn job_accepted_output(amount: &str, symbol: &str) -> String {
-        let mut prefetched = escrow_ctx_with_expire(None);
+        let mut prefetched = escrow_ctx_with_expire();
         prefetched.token_amount = amount.to_string();
         prefetched.token_symbol = symbol.to_string();
         let ctx = crate::commands::agent_commerce::task::user::flow::FlowContext {
@@ -2135,15 +2325,41 @@ mod tests {
     }
 
     #[test]
-    fn single_review_starts_only_after_submitted_or_out_of_order_marker() {
-        assert!(!single_review_ready(Some(1), false));
-        assert!(single_review_ready(Some(2), false));
-        assert!(single_review_ready(Some(1), true));
+    fn review_marker_state_requires_the_marker_regardless_of_status() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let test_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp");
+        std::fs::create_dir_all(&test_root).unwrap();
+        let home = tempfile::Builder::new()
+            .prefix("review-marker-state-")
+            .tempdir_in(&test_root)
+            .unwrap();
+        let _onchainos_home = EnvVarGuard::set("ONCHAINOS_HOME", home.path());
+
+        // No marker ⇒ not ready, regardless of what task-detail status would
+        // have been — the removed `status == Submitted` shortcut is no
+        // longer even an input to this gate.
+        assert_eq!(review_marker_state("0xno-marker"), None);
+
+        crate::commands::agent_commerce::task::common::deliverables::write_review_marker(
+            "0xwith-value",
+            Some(1_700_000_000),
+        )
+        .unwrap();
+        assert_eq!(review_marker_state("0xwith-value"), Some(Some(1_700_000_000)));
+
+        // Legacy/empty marker ⇒ ready, deadline unknown.
+        crate::commands::agent_commerce::task::common::deliverables::write_review_marker(
+            "0xempty", None,
+        )
+        .unwrap();
+        assert_eq!(review_marker_state("0xempty"), Some(None));
     }
 
     #[test]
     fn deliverable_route_uses_authoritative_job_type_not_snapshot_presence() {
-        let mut prefetched = escrow_ctx_with_expire(None);
+        let mut prefetched = escrow_ctx_with_expire();
 
         prefetched.job_type = Some(1);
         assert_eq!(
@@ -2683,6 +2899,194 @@ autotrade: {\"schemaVersion\":1,\"deliveryId\":\"legacy-1\"}";
         assert!(parse_deliver_content(content).is_none());
     }
 
+    // ── a2a-subscription-push: new-version, protocol-independent branch ────
+    //
+    // Real-shape fixture: the okx-a2a daemon's actual per-task delivery for
+    // this protocol carries jobId / userAgentId / aspAgentId / content — NOT
+    // receiverAgentId (see openclaw-a2a-chat-extension/bu-a2a/node/src/
+    // message-handler.ts in the okx-a2a daemon repo, not present here).
+
+    #[test]
+    fn parse_a2a_envelope_subscription_push_returns_opaque_text() {
+        let envelope = serde_json::json!({
+            "msgType": "a2a-subscription-push",
+            "jobId": "0xabc123",
+            "userAgentId": "1696",
+            "aspAgentId": "558",
+            "content": "BTC crossed $70k",
+        });
+
+        let parsed = parse_a2a_envelope(&envelope, "0xabc123", "1696")
+            .expect("matching binding should parse");
+        assert_eq!(
+            parsed.kind,
+            EnvelopeKind::SubscriptionPush {
+                asp_agent_id: Some("558".to_string())
+            }
+        );
+        match parsed.payload {
+            DeliverPayload::Text(text) => assert_eq!(text, "BTC crossed $70k"),
+            DeliverPayload::File { .. } => panic!("expected text deliverable"),
+        }
+    }
+
+    #[test]
+    fn parse_a2a_envelope_subscription_push_rejects_mismatched_binding() {
+        let wrong_job = serde_json::json!({
+            "msgType": "a2a-subscription-push",
+            "jobId": "0xother",
+            "userAgentId": "1696",
+            "aspAgentId": "558",
+            "content": "signal",
+        });
+        assert!(parse_a2a_envelope(&wrong_job, "0xabc123", "1696").is_none());
+
+        let wrong_user = serde_json::json!({
+            "msgType": "a2a-subscription-push",
+            "jobId": "0xabc123",
+            "userAgentId": "9999",
+            "aspAgentId": "558",
+            "content": "signal",
+        });
+        assert!(parse_a2a_envelope(&wrong_user, "0xabc123", "1696").is_none());
+    }
+
+    #[test]
+    fn parse_a2a_envelope_subscription_push_has_no_receiver_agent_id_field() {
+        // Regression guard for the real-world bug: a real daemon delivery has
+        // no receiverAgentId at all. It must still parse via userAgentId.
+        let envelope = serde_json::json!({
+            "msgType": "a2a-subscription-push",
+            "jobId": "0xabc123",
+            "userAgentId": "1696",
+            "aspAgentId": "558",
+            "content": "signal",
+        });
+        assert!(envelope.get("receiverAgentId").is_none());
+        assert!(parse_a2a_envelope(&envelope, "0xabc123", "1696").is_some());
+    }
+
+    #[test]
+    fn parse_a2a_envelope_subscription_push_preserves_raw_body_even_with_legacy_tokens() {
+        // Content that happens to contain [intent:deliver]/deliverableType lines must
+        // still be treated as opaque Text, never parsed as a legacy deliver frame.
+        let envelope = serde_json::json!({
+            "msgType": "a2a-subscription-push",
+            "jobId": "0xabc123",
+            "userAgentId": "1696",
+            "aspAgentId": "558",
+            "content": "jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]",
+        });
+
+        let parsed = parse_a2a_envelope(&envelope, "0xabc123", "1696")
+            .expect("subscription-push content must parse regardless of legacy-looking tokens");
+        match parsed.payload {
+            DeliverPayload::Text(text) => assert_eq!(
+                text,
+                "jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"
+            ),
+            DeliverPayload::File { .. } => panic!("expected text deliverable"),
+        }
+    }
+
+    // ── subscription_push_binding_failure: trusted-task-context gate ───────
+    //
+    // These are the behavior tests the user flagged as missing: a fail-closed
+    // gate that must run before any persistence/review side effect, using
+    // trusted task-detail fields (job_type / user_agent_id / provider_agent_id
+    // from GET /task/{jobId}) rather than anything the envelope itself claims.
+
+    fn subscription_task_ctx(
+        job_type: Option<i64>,
+        user_agent_id: Option<&str>,
+        provider_agent_id: Option<&str>,
+    ) -> crate::commands::agent_commerce::task::common::PreFetchedTaskContext {
+        let mut ctx = escrow_ctx_with_expire();
+        ctx.job_type = job_type;
+        ctx.user_agent_id = user_agent_id.map(str::to_string);
+        ctx.provider_agent_id = provider_agent_id.map(str::to_string);
+        ctx
+    }
+
+    #[test]
+    fn binding_gate_passes_for_matching_subscription_task() {
+        let ctx = subscription_task_ctx(Some(1), Some("1696"), Some("558"));
+        assert_eq!(
+            subscription_push_binding_failure(Some(&ctx), "1696", Some("558")),
+            None
+        );
+    }
+
+    #[test]
+    fn binding_gate_rejects_missing_trusted_context() {
+        assert!(subscription_push_binding_failure(None, "1696", Some("558")).is_some());
+    }
+
+    #[test]
+    fn binding_gate_rejects_non_subscription_job_type() {
+        // jobType=0 (one-time task): the exact mismatch the bug report described —
+        // a new-protocol message must never ride the one-time review flow.
+        let ctx = subscription_task_ctx(Some(0), Some("1696"), Some("558"));
+        let reason = subscription_push_binding_failure(Some(&ctx), "1696", Some("558"))
+            .expect("non-subscription jobType must be excluded");
+        assert!(reason.contains("subscription task"));
+    }
+
+    #[test]
+    fn binding_gate_rejects_unknown_job_type() {
+        let ctx = subscription_task_ctx(None, Some("1696"), Some("558"));
+        assert!(subscription_push_binding_failure(Some(&ctx), "1696", Some("558")).is_some());
+    }
+
+    #[test]
+    fn binding_gate_rejects_receiving_user_mismatch() {
+        let ctx = subscription_task_ctx(Some(1), Some("other-user"), Some("558"));
+        let reason = subscription_push_binding_failure(Some(&ctx), "1696", Some("558"))
+            .expect("User mismatch against trusted context must be excluded");
+        assert!(reason.contains("User"));
+    }
+
+    #[test]
+    fn binding_gate_rejects_asp_mismatch() {
+        let ctx = subscription_task_ctx(Some(1), Some("1696"), Some("other-asp"));
+        let reason = subscription_push_binding_failure(Some(&ctx), "1696", Some("558"))
+            .expect("ASP mismatch against trusted context must be excluded");
+        assert!(reason.contains("ASP"));
+    }
+
+    #[test]
+    fn binding_gate_rejects_missing_envelope_asp_agent_id() {
+        let ctx = subscription_task_ctx(Some(1), Some("1696"), Some("558"));
+        assert!(subscription_push_binding_failure(Some(&ctx), "1696", None).is_some());
+    }
+
+    #[test]
+    fn parse_a2a_envelope_legacy_agent_chat_unchanged_regression() {
+        let framed = serde_json::json!({
+            "msgType": "a2a-agent-chat",
+            "jobId": "0xnormal",
+            "receiverAgentId": "8315",
+            "content": "jobId: 0xnormal\ndeliverableType: text\n- - -\nHello\n- - -\n[intent:deliver]",
+        });
+        let parsed =
+            parse_a2a_envelope(&framed, "0xnormal", "8315").expect("legacy frame still parses");
+        match parsed.payload {
+            DeliverPayload::Text(text) => assert_eq!(text, "Hello"),
+            DeliverPayload::File { .. } => panic!("expected text deliverable"),
+        }
+
+        let unframed = serde_json::json!({
+            "msgType": "a2a-agent-chat",
+            "jobId": "0xnormal",
+            "receiverAgentId": "8315",
+            "content": "no intent trailer here",
+        });
+        assert!(
+            parse_a2a_envelope(&unframed, "0xnormal", "8315").is_none(),
+            "legacy a2a-agent-chat without [intent:deliver] must still fail"
+        );
+    }
+
     #[test]
     fn parse_missing_fields_returns_none() {
         let content = "jobId: 0xabc\ndeliverableType: file\nfileKey: k\n[intent:deliver]";
@@ -2716,7 +3120,7 @@ Part B continues
     // ── Current per-delivery spool recovery processes oldest → newest ──
     #[test]
     fn recover_processes_oldest_spool_file_first() {
-        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         // Redirect BOTH the spool dir (via TMPDIR → a2a_spool_dir) and ONCHAINOS_HOME
         // to isolated temp dirs so the test is hermetic and never touches a hardcoded
         // /tmp. The tempdirs are created BEFORE TMPDIR is set, so they land in the real
@@ -2786,7 +3190,7 @@ Part B continues
     // ── FB2: a poison-pill oldest spool file is quarantined, not re-selected ──
     #[test]
     fn recover_skips_poison_pill_and_processes_next() {
-        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let test_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join("test_tmp");
@@ -2844,11 +3248,9 @@ Part B continues
         assert!(!good.exists(), "processed good file must be deleted");
     }
 
-    // ── job_submitted_escrow review-deadline reminder (FR-2) ─────────────
+    // ── job_submitted_escrow review-deadline reminder (event-only source) ──
 
-    fn escrow_ctx_with_expire(
-        expire_time: Option<i64>,
-    ) -> crate::commands::agent_commerce::task::common::PreFetchedTaskContext {
+    fn escrow_ctx_with_expire() -> crate::commands::agent_commerce::task::common::PreFetchedTaskContext {
         use crate::commands::agent_commerce::task::common::{
             PreFetchedDeliverable, PreFetchedTaskContext,
         };
@@ -2887,14 +3289,72 @@ Part B continues
             verified_transaction_hash: None,
             refund_request_provenance: false,
             expire_time: None,
-            review_expire_time: expire_time,
+            review_expire_time: None,
             test_flag: false,
         }
     }
 
+    /// A task-detail context with no deliverable attached yet — for the
+    /// end-to-end out-of-order tests, where the deliverable is recovered
+    /// via the manifest `deliverable_received_cli` wrote, not pre-attached.
+    fn ctx_without_deliverable(
+        provider_agent_id: &str,
+    ) -> crate::commands::agent_commerce::task::common::PreFetchedTaskContext {
+        use crate::commands::agent_commerce::task::common::PreFetchedTaskContext;
+        PreFetchedTaskContext {
+            title: "Test Task".to_string(),
+            description: String::new(),
+            job_type: Some(0),
+            trial_type: None,
+            token_symbol: "USDT".to_string(),
+            token_amount: "10".to_string(),
+            payment_mode: Some(1),
+            max_budget: None,
+            provider_agent_id: Some(provider_agent_id.to_string()),
+            provider_name: None,
+            user_agent_id: None,
+            status: Some(2),
+            deliverable: None,
+            service_id: None,
+            service_name: None,
+            service_token_address: None,
+            service_token_amount: None,
+            service_params: None,
+            refund_reason: None,
+            period_start_time: None,
+            period_end_time: None,
+            user_agent_address: None,
+            token_address: None,
+            verified_transaction_hash: None,
+            refund_request_provenance: false,
+            expire_time: None,
+            review_expire_time: None,
+            test_flag: false,
+        }
+    }
+
+    /// Write a minimal valid `a2a-agent-chat` text-deliver envelope under
+    /// the system temp dir (required by `is_safe_a2a_file_path`) so
+    /// `deliverable_received_cli` can be driven end-to-end in tests.
+    fn write_a2a_text_envelope(job_id: &str, agent_id: &str, body: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join("onchainos-core-tests");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("a2a-{job_id}.json"));
+        let envelope = serde_json::json!({
+            "msgType": "a2a-agent-chat",
+            "jobId": job_id,
+            "receiverAgentId": agent_id,
+            "content": format!(
+                "jobId: {job_id}\ndeliverableType: text\n- - -\n{body}\n- - -\n[intent:deliver]"
+            ),
+        });
+        std::fs::write(&path, serde_json::to_string(&envelope).unwrap()).unwrap();
+        path
+    }
+
     #[test]
     fn escrow_card_waits_when_prefetched_deliverable_file_is_missing() {
-        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let test_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join("test_tmp");
@@ -2905,7 +3365,7 @@ Part B continues
             .unwrap();
         let _onchainos_home = EnvVarGuard::set("ONCHAINOS_HOME", home.path());
 
-        let mut p = escrow_ctx_with_expire(None);
+        let mut p = escrow_ctx_with_expire();
         p.deliverable.as_mut().unwrap().path =
             home.path().join("does-not-exist.txt").display().to_string();
         let ctx = crate::commands::agent_commerce::task::user::flow::FlowContext {
@@ -2921,7 +3381,10 @@ Part B continues
             data: None,
         };
 
-        let output = job_submitted_escrow(&ctx);
+        // Through the real entry point: `job_submitted_escrow` no longer
+        // writes the marker itself — `job_submitted` must have already done
+        // so before delegating.
+        let output = job_submitted(&ctx, None);
         assert!(output.contains("No user-facing action and no acceptance decision"));
         assert!(!output.contains("pending-decisions-v2 request"));
         assert!(!output.contains("session history"));
@@ -2930,23 +3393,31 @@ Part B continues
                 "0xstale"
             )
         );
+        assert_eq!(
+            crate::commands::agent_commerce::task::common::deliverables::review_marker_event_expire_time(
+                "0xstale"
+            ),
+            None
+        );
     }
 
+    // (a) text + event expireTime (the only deadline source now) → the
+    // event-derived deadline renders, with the header and A/B option labels.
     #[test]
-    fn escrow_card_appends_review_line_when_expire_time_present() {
-        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+    fn escrow_card_shows_event_derived_deadline_for_text() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let test_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join("test_tmp");
         std::fs::create_dir_all(&test_root).unwrap();
         let home = tempfile::Builder::new()
-            .prefix("submitted-review-card-")
+            .prefix("submitted-review-card-event-deadline-")
             .tempdir_in(&test_root)
             .unwrap();
         let _onchainos_home = EnvVarGuard::set("ONCHAINOS_HOME", home.path());
 
-        let now = chrono::Local::now().timestamp();
-        let p = escrow_ctx_with_expire(Some(now + 3 * 86_400));
+        let event_expire = 1_700_000_000_i64;
+        let p = escrow_ctx_with_expire();
         let ctx = crate::commands::agent_commerce::task::user::flow::FlowContext {
             job_id: "0xabc",
             agent_id: "426",
@@ -2959,22 +3430,109 @@ Part B continues
             prefetched: Some(&p),
             data: None,
         };
-        let out = job_submitted_escrow(&ctx);
+        let out = job_submitted_escrow(&ctx, Some(event_expire));
         assert!(
-            out.contains("⏰ Review deadline: 3 day(s)"),
-            "escrow card should append the Review reminder line; got:\n{out}"
-        );
-        assert!(out.contains("A. Approve → reply 'A'"), "{out}");
-        assert!(
-            out.contains("B. Reject → reply 'B' and include a rejection reason"),
+            out.contains("[Deliverable Awaiting Review] The ASP has submitted a text deliverable for Test Task."),
             "{out}"
         );
-        assert!(!out.contains("Full refund request:"), "{out}");
+        let when = crate::commands::agent_commerce::task::common::deadline::format_local_timestamp_with_offset(event_expire).unwrap();
+        assert!(
+            out.contains(&format!("Review deadline: {when}")),
+            "event-derived deadline must render; got:\n{out}"
+        );
+        assert!(out.contains("Job status: Submitted"), "{out}");
+        assert!(out.contains("A. Accept the deliverable"), "{out}");
+        assert!(
+            out.contains("B. Reject the deliverable and provide a reason"),
+            "{out}"
+        );
+        assert!(!out.contains("Payment: escrow"), "{out}");
+        assert!(!out.contains("deliverableUrl"), "{out}");
     }
 
+    // (a') file + event expireTime → the deadline renders on the file card too.
     #[test]
-    fn escrow_card_no_reminder_when_expire_time_none() {
-        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+    fn escrow_card_shows_event_derived_deadline_for_file() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let test_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp");
+        std::fs::create_dir_all(&test_root).unwrap();
+        let home = tempfile::Builder::new()
+            .prefix("submitted-review-card-file-shown-")
+            .tempdir_in(&test_root)
+            .unwrap();
+        let _onchainos_home = EnvVarGuard::set("ONCHAINOS_HOME", home.path());
+
+        let event_expire = 1_700_000_000_i64;
+        let mut p = escrow_ctx_with_expire();
+        p.deliverable.as_mut().unwrap().deliverable_type = "file".to_string();
+        let ctx = crate::commands::agent_commerce::task::user::flow::FlowContext {
+            job_id: "0xfile-shown",
+            agent_id: "426",
+            short_id: "0xfile-shown",
+            title_display: "Test Task",
+            title_query_hint: "",
+            title_in_extract: "",
+            terminal_session_hint: String::new(),
+            payment_mode: Some(1),
+            prefetched: Some(&p),
+            data: None,
+        };
+        let out = job_submitted_escrow(&ctx, Some(event_expire));
+        let when = crate::commands::agent_commerce::task::common::deadline::format_local_timestamp_with_offset(event_expire).unwrap();
+        assert!(out.contains(&format!("Review deadline: {when}")), "{out}");
+        assert!(out.contains("Local file path: <localPath>"), "{out}");
+    }
+
+    // (b) empty/`None` text_content → recovery/error (BR3/FR-1-AC-3); no
+    // `pending-decisions-v2 request`.
+    #[test]
+    fn escrow_card_recovers_when_text_deliverable_has_no_readable_content() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let test_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp");
+        std::fs::create_dir_all(&test_root).unwrap();
+        let home = tempfile::Builder::new()
+            .prefix("submitted-missing-text-content-")
+            .tempdir_in(&test_root)
+            .unwrap();
+        let _onchainos_home = EnvVarGuard::set("ONCHAINOS_HOME", home.path());
+
+        let mut p = escrow_ctx_with_expire();
+        p.deliverable.as_mut().unwrap().text_content = None;
+        let ctx = crate::commands::agent_commerce::task::user::flow::FlowContext {
+            job_id: "0xnotext",
+            agent_id: "426",
+            short_id: "0xnotext",
+            title_display: "Test Task",
+            title_query_hint: "",
+            title_in_extract: "",
+            terminal_session_hint: String::new(),
+            payment_mode: Some(1),
+            prefetched: Some(&p),
+            data: None,
+        };
+        // Through the real entry point — see the comment on
+        // `escrow_card_waits_when_prefetched_deliverable_file_is_missing`.
+        let out = job_submitted(&ctx, None);
+        assert!(out.contains("cli_failed"), "{out}");
+        assert!(out.contains("recovery.md"), "{out}");
+        assert!(!out.contains("pending-decisions-v2 request"), "{out}");
+        assert!(!out.contains("<content unavailable>"), "{out}");
+        assert!(
+            crate::commands::agent_commerce::task::common::deliverables::has_review_marker(
+                "0xnotext"
+            )
+        );
+    }
+
+    // (c) file deliverable, no event deadline → the card renders without a
+    // `Review deadline` line (never extrapolated from now or any detail field).
+    #[test]
+    fn escrow_card_file_without_deadline_source_omits_the_line() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let test_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join("test_tmp");
@@ -2985,7 +3543,8 @@ Part B continues
             .unwrap();
         let _onchainos_home = EnvVarGuard::set("ONCHAINOS_HOME", home.path());
 
-        let p = escrow_ctx_with_expire(None);
+        let mut p = escrow_ctx_with_expire();
+        p.deliverable.as_mut().unwrap().deliverable_type = "file".to_string();
         let ctx = crate::commands::agent_commerce::task::user::flow::FlowContext {
             job_id: "0xabc",
             agent_id: "426",
@@ -2998,10 +3557,400 @@ Part B continues
             prefetched: Some(&p),
             data: None,
         };
-        let out = job_submitted_escrow(&ctx);
+        let out = job_submitted_escrow(&ctx, None);
         assert!(
-            !out.contains('⏰'),
-            "no reminder line when expire_time is None; got:\n{out}"
+            !out.contains("Review deadline"),
+            "no reminder line when the event carries no expireTime; got:\n{out}"
         );
+        assert!(
+            out.contains("[Deliverable Awaiting Review] The ASP has submitted a file deliverable for Test Task."),
+            "{out}"
+        );
+        assert!(out.contains("Local file path: <localPath>"), "{out}");
+    }
+
+    // (c') text deliverable, no event deadline → omits the line too.
+    #[test]
+    fn escrow_card_text_without_deadline_source_omits_the_line() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let test_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp");
+        std::fs::create_dir_all(&test_root).unwrap();
+        let home = tempfile::Builder::new()
+            .prefix("submitted-review-card-text-hidden-")
+            .tempdir_in(&test_root)
+            .unwrap();
+        let _onchainos_home = EnvVarGuard::set("ONCHAINOS_HOME", home.path());
+
+        let p = escrow_ctx_with_expire();
+        let ctx = crate::commands::agent_commerce::task::user::flow::FlowContext {
+            job_id: "0xtext-hidden",
+            agent_id: "426",
+            short_id: "0xtext-hidden",
+            title_display: "Test Task",
+            title_query_hint: "",
+            title_in_extract: "",
+            terminal_session_hint: String::new(),
+            payment_mode: Some(1),
+            prefetched: Some(&p),
+            data: None,
+        };
+        let out = job_submitted_escrow(&ctx, None);
+        assert!(!out.contains("Review deadline"), "{out}");
+        assert!(out.contains("Deliverable:"), "{out}");
+    }
+
+    // (e) a dedup marker already present → "already delivered", no second
+    // card (NFR-1-AC-2: one card per Job ID).
+    #[test]
+    fn escrow_card_skips_when_already_delivered() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let test_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp");
+        std::fs::create_dir_all(&test_root).unwrap();
+        let home = tempfile::Builder::new()
+            .prefix("submitted-review-card-dedup-")
+            .tempdir_in(&test_root)
+            .unwrap();
+        let _onchainos_home = EnvVarGuard::set("ONCHAINOS_HOME", home.path());
+
+        let job_id = "0xdedup";
+        crate::commands::agent_commerce::task::common::deliverables::mark_review_card_sent(job_id)
+            .unwrap();
+        let p = escrow_ctx_with_expire();
+        let ctx = crate::commands::agent_commerce::task::user::flow::FlowContext {
+            job_id,
+            agent_id: "426",
+            short_id: job_id,
+            title_display: "Test Task",
+            title_query_hint: "",
+            title_in_extract: "",
+            terminal_session_hint: String::new(),
+            payment_mode: Some(1),
+            prefetched: Some(&p),
+            data: None,
+        };
+        let out = job_submitted_escrow(&ctx, None);
+        assert!(out.contains("already delivered"), "{out}");
+        assert!(!out.contains("pending-decisions-v2 request"), "{out}");
+    }
+
+    // ── job_submitted: event-expireTime extraction + marker persistence ──
+
+    #[test]
+    fn job_submitted_with_valid_expire_time_shows_deadline_and_keeps_marker() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let test_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp");
+        std::fs::create_dir_all(&test_root).unwrap();
+        let home = tempfile::Builder::new()
+            .prefix("job-submitted-valid-expire-")
+            .tempdir_in(&test_root)
+            .unwrap();
+        let _onchainos_home = EnvVarGuard::set("ONCHAINOS_HOME", home.path());
+
+        let job_id = "0xjs-valid";
+        let event_expire = 1_700_000_000_i64;
+        let p = escrow_ctx_with_expire();
+        let ctx = crate::commands::agent_commerce::task::user::flow::FlowContext {
+            job_id,
+            agent_id: "426",
+            short_id: job_id,
+            title_display: "Test Task",
+            title_query_hint: "",
+            title_in_extract: "",
+            terminal_session_hint: String::new(),
+            payment_mode: Some(1),
+            prefetched: Some(&p),
+            data: None,
+        };
+        let message = serde_json::json!({ "expireTime": event_expire });
+        let out = job_submitted(&ctx, Some(&message));
+        let when = crate::commands::agent_commerce::task::common::deadline::format_local_timestamp_with_offset(event_expire).unwrap();
+        assert!(out.contains(&format!("Review deadline: {when}")), "{out}");
+        assert_eq!(
+            crate::commands::agent_commerce::task::common::deliverables::review_marker_event_expire_time(job_id),
+            Some(event_expire)
+        );
+    }
+
+    #[test]
+    fn job_submitted_with_missing_expire_time_omits_deadline_marker_holds_none() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let test_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp");
+        std::fs::create_dir_all(&test_root).unwrap();
+        let home = tempfile::Builder::new()
+            .prefix("job-submitted-missing-expire-")
+            .tempdir_in(&test_root)
+            .unwrap();
+        let _onchainos_home = EnvVarGuard::set("ONCHAINOS_HOME", home.path());
+
+        let job_id = "0xjs-missing";
+        let p = escrow_ctx_with_expire();
+        let ctx = crate::commands::agent_commerce::task::user::flow::FlowContext {
+            job_id,
+            agent_id: "426",
+            short_id: job_id,
+            title_display: "Test Task",
+            title_query_hint: "",
+            title_in_extract: "",
+            terminal_session_hint: String::new(),
+            payment_mode: Some(1),
+            prefetched: Some(&p),
+            data: None,
+        };
+        let message = serde_json::json!({});
+        let out = job_submitted(&ctx, Some(&message));
+        assert!(!out.contains("Review deadline"), "{out}");
+        assert_eq!(
+            crate::commands::agent_commerce::task::common::deliverables::review_marker_event_expire_time(job_id),
+            None
+        );
+        assert!(crate::commands::agent_commerce::task::common::deliverables::has_review_marker(job_id));
+    }
+
+    // ── Genuine end-to-end: both out-of-order arrival paths, through the
+    // real public entry points (`job_submitted` / `deliverable_received_cli`) ──
+
+    #[tokio::test]
+    async fn event_first_full_path_persists_and_threads_the_event_deadline() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let test_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp");
+        std::fs::create_dir_all(&test_root).unwrap();
+        let home = tempfile::Builder::new()
+            .prefix("event-first-full-path-")
+            .tempdir_in(&test_root)
+            .unwrap();
+        let _onchainos_home = EnvVarGuard::set("ONCHAINOS_HOME", home.path());
+
+        let job_id = "0xevent-first";
+        let agent_id = "426";
+        let event_expire = 1_700_000_000_i64;
+        let p = ctx_without_deliverable("558");
+
+        let ctx1 = crate::commands::agent_commerce::task::user::flow::FlowContext {
+            job_id,
+            agent_id,
+            short_id: job_id,
+            title_display: "Test Task",
+            title_query_hint: "",
+            title_in_extract: "",
+            terminal_session_hint: String::new(),
+            payment_mode: Some(1),
+            prefetched: Some(&p),
+            data: None,
+        };
+        let event_message = serde_json::json!({ "expireTime": event_expire });
+        let out1 = job_submitted(&ctx1, Some(&event_message));
+        assert!(out1.contains("No user-facing action and no acceptance decision"), "{out1}");
+        assert_eq!(
+            crate::commands::agent_commerce::task::common::deliverables::review_marker_event_expire_time(job_id),
+            Some(event_expire)
+        );
+
+        let a2a_path = write_a2a_text_envelope(job_id, agent_id, "GOOD DELIVERABLE");
+        let ctx2 = crate::commands::agent_commerce::task::user::flow::FlowContext {
+            job_id,
+            agent_id,
+            short_id: job_id,
+            title_display: "Test Task",
+            title_query_hint: "",
+            title_in_extract: "",
+            terminal_session_hint: String::new(),
+            payment_mode: Some(1),
+            prefetched: Some(&p),
+            data: None,
+        };
+        let deliver_message = serde_json::json!({ "a2aFile": a2a_path.to_str().unwrap() });
+        let out2 = deliverable_received_cli(&ctx2, Some(&deliver_message)).await;
+
+        assert!(out2.contains("pending-decisions-v2 request"), "{out2}");
+        let when = crate::commands::agent_commerce::task::common::deadline::format_local_timestamp_with_offset(event_expire).unwrap();
+        assert!(out2.contains(&format!("Review deadline: {when}")), "{out2}");
+    }
+
+    #[tokio::test]
+    async fn deliverable_first_full_path_does_not_build_a_card_before_the_event_arrives() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let test_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp");
+        std::fs::create_dir_all(&test_root).unwrap();
+        let home = tempfile::Builder::new()
+            .prefix("deliverable-first-full-path-")
+            .tempdir_in(&test_root)
+            .unwrap();
+        let _onchainos_home = EnvVarGuard::set("ONCHAINOS_HOME", home.path());
+
+        let job_id = "0xdeliverable-first";
+        let agent_id = "426";
+        // `status: Some(2)` (Submitted) is already set by `ctx_without_deliverable` —
+        // this is exactly the case the review flagged: status alone must not
+        // build a card before the `job_submitted` event itself arrives.
+        let p = ctx_without_deliverable("558");
+
+        let a2a_path = write_a2a_text_envelope(job_id, agent_id, "GOOD DELIVERABLE");
+        let ctx1 = crate::commands::agent_commerce::task::user::flow::FlowContext {
+            job_id,
+            agent_id,
+            short_id: job_id,
+            title_display: "Test Task",
+            title_query_hint: "",
+            title_in_extract: "",
+            terminal_session_hint: String::new(),
+            payment_mode: Some(1),
+            prefetched: Some(&p),
+            data: None,
+        };
+        let deliver_message = serde_json::json!({ "a2aFile": a2a_path.to_str().unwrap() });
+        let out1 = deliverable_received_cli(&ctx1, Some(&deliver_message)).await;
+
+        assert!(!out1.contains("pending-decisions-v2 request"), "{out1}");
+        assert!(out1.contains("Awaiting on-chain submission confirmation"), "{out1}");
+
+        let event_expire = 1_700_000_000_i64;
+        let ctx2 = crate::commands::agent_commerce::task::user::flow::FlowContext {
+            job_id,
+            agent_id,
+            short_id: job_id,
+            title_display: "Test Task",
+            title_query_hint: "",
+            title_in_extract: "",
+            terminal_session_hint: String::new(),
+            payment_mode: Some(1),
+            prefetched: Some(&p),
+            data: None,
+        };
+        let event_message = serde_json::json!({ "expireTime": event_expire });
+        let out2 = job_submitted(&ctx2, Some(&event_message));
+
+        assert!(out2.contains("pending-decisions-v2 request"), "{out2}");
+        let when = crate::commands::agent_commerce::task::common::deadline::format_local_timestamp_with_offset(event_expire).unwrap();
+        assert!(out2.contains(&format!("Review deadline: {when}")), "{out2}");
+        // Nothing cleared it — this test never calls mark_review_card_sent.
+        assert!(crate::commands::agent_commerce::task::common::deliverables::has_review_marker(job_id));
+    }
+
+    #[test]
+    fn duplicate_events_not_yet_sent_keep_the_same_persisted_value() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let test_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp");
+        std::fs::create_dir_all(&test_root).unwrap();
+        let home = tempfile::Builder::new()
+            .prefix("duplicate-events-not-sent-")
+            .tempdir_in(&test_root)
+            .unwrap();
+        let _onchainos_home = EnvVarGuard::set("ONCHAINOS_HOME", home.path());
+
+        let job_id = "0xduplicate-not-sent";
+        let p = ctx_without_deliverable("558");
+        let ctx = crate::commands::agent_commerce::task::user::flow::FlowContext {
+            job_id,
+            agent_id: "426",
+            short_id: job_id,
+            title_display: "Test Task",
+            title_query_hint: "",
+            title_in_extract: "",
+            terminal_session_hint: String::new(),
+            payment_mode: Some(1),
+            prefetched: Some(&p),
+            data: None,
+        };
+        let event_expire = 1_700_000_000_i64;
+        let message = serde_json::json!({ "expireTime": event_expire });
+
+        let out1 = job_submitted(&ctx, Some(&message));
+        assert!(out1.contains("No user-facing action and no acceptance decision"), "{out1}");
+        let out2 = job_submitted(&ctx, Some(&message));
+        assert!(out2.contains("No user-facing action and no acceptance decision"), "{out2}");
+
+        assert_eq!(
+            crate::commands::agent_commerce::task::common::deliverables::review_marker_event_expire_time(job_id),
+            Some(event_expire)
+        );
+    }
+
+    #[test]
+    fn conflicting_events_keep_the_first_observed_value() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let test_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp");
+        std::fs::create_dir_all(&test_root).unwrap();
+        let home = tempfile::Builder::new()
+            .prefix("conflicting-events-")
+            .tempdir_in(&test_root)
+            .unwrap();
+        let _onchainos_home = EnvVarGuard::set("ONCHAINOS_HOME", home.path());
+
+        let job_id = "0xconflicting";
+        let p = ctx_without_deliverable("558");
+        let ctx = crate::commands::agent_commerce::task::user::flow::FlowContext {
+            job_id,
+            agent_id: "426",
+            short_id: job_id,
+            title_display: "Test Task",
+            title_query_hint: "",
+            title_in_extract: "",
+            terminal_session_hint: String::new(),
+            payment_mode: Some(1),
+            prefetched: Some(&p),
+            data: None,
+        };
+        let first = 1_700_000_000_i64;
+        let second = 1_700_500_000_i64;
+
+        job_submitted(&ctx, Some(&serde_json::json!({ "expireTime": first })));
+        job_submitted(&ctx, Some(&serde_json::json!({ "expireTime": second })));
+
+        assert_eq!(
+            crate::commands::agent_commerce::task::common::deliverables::review_marker_event_expire_time(job_id),
+            Some(first)
+        );
+    }
+
+    #[test]
+    fn duplicate_event_after_card_already_sent_does_not_resurrect_the_marker() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let test_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp");
+        std::fs::create_dir_all(&test_root).unwrap();
+        let home = tempfile::Builder::new()
+            .prefix("duplicate-after-sent-")
+            .tempdir_in(&test_root)
+            .unwrap();
+        let _onchainos_home = EnvVarGuard::set("ONCHAINOS_HOME", home.path());
+
+        let job_id = "0xduplicate-after-sent";
+        crate::commands::agent_commerce::task::common::deliverables::mark_review_card_sent(job_id)
+            .unwrap();
+        let p = ctx_without_deliverable("558");
+        let ctx = crate::commands::agent_commerce::task::user::flow::FlowContext {
+            job_id,
+            agent_id: "426",
+            short_id: job_id,
+            title_display: "Test Task",
+            title_query_hint: "",
+            title_in_extract: "",
+            terminal_session_hint: String::new(),
+            payment_mode: Some(1),
+            prefetched: Some(&p),
+            data: None,
+        };
+        let message = serde_json::json!({ "expireTime": 1_700_000_000_i64 });
+        let out = job_submitted(&ctx, Some(&message));
+
+        assert!(out.contains("already delivered"), "{out}");
+        assert!(!crate::commands::agent_commerce::task::common::deliverables::has_review_marker(job_id));
     }
 }

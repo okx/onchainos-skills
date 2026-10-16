@@ -25,7 +25,7 @@ Immediately below the service type choices, show:
 
 #### serviceName
 
-- Require a 5–30 character noun phrase.
+- Require a noun phrase with display width 5–200. Measure display width as CJK=2 and ASCII=1.
 - Require it to differ from the agent name.
 - Do not include a price.
 
@@ -43,40 +43,26 @@ A2A differences:
 
 A2MCP differences:
 
-- Store exactly four numbered lines. Preserve supplied headings/brackets and add missing ones, using these headings or localized equivalents:
-
-  1. `[Service Description]` — purpose.
-  2. `[Parameter Spec]` — `;`-separated key parameters formatted as `name(type, required/optional): meaning`, including optional defaults. Keep only key parameters if needed to fit; normalize malformed specs.
-  3. `[Request Method]` — HTTP request method only, such as `GET`, `POST`, `PUT`, or `DELETE`. Remove URL/path text; map an unambiguous path-only value to `POST`.
-  4. `[Request Example]` — runnable `curl` with the real `endpoint` and realistic inputs; reject placeholders and mismatched hosts.
-
-##### Collection behavior
-
-- For A2MCP, provide the following concise field guide:
-
-  > Provide the service name (5–30 characters, different from the agent name, without a price), a deployed public HTTPS endpoint, and exactly these four description lines:
-  > `1. [Service Description]` What the service does and what result it returns.
-  > `2. [Parameter Spec]` Key parameters as `name(type, required/optional): meaning`, separated by `;`.
-  > `3. [Request Method]` HTTP request method only, such as `GET` or `POST`; do not include a URL/path.
-  > `4. [Request Example]` Runnable `curl` using the real endpoint and realistic values; no placeholders.
-
-  Normalize malformed parameter specs and non-curl examples before storing. The endpoint must match the curl example.
+- Store only the service purpose (behavior and result); keep parameter schema and method in
+  `inputSchema` and `method`.
 
 #### serviceGuide
 
 ##### Value requirements
 
-- A2A create accepts optional non-blank text as supplied; CLI validates length.
-- Omit on A2MCP create.
+- A2A monthly create accepts optional non-blank text.
+- Omit for A2A per-call and A2MCP create.
 
 ##### Collection behavior
 
-If `serviceGuide` is absent for A2A create, show the following prompt:
+If `serviceGuide` is absent for A2A monthly create, show the following prompt:
 
 > Describe the prerequisites, steps, and key parameters. For trading, payments, or authorization, include confirmation requirements and execution limits.
 > [Service Guide Examples](https://web3.okx.com/onchainos/dev-docs/okxai/a2a-subscription).
 >
 > Send the guide body, or reply 2 to skip.
+
+**MUST** visibly render the clickable `Service Guide Examples` tutorial link with this prompt.
 
 #### fee
 
@@ -122,7 +108,28 @@ If `serviceGuide` is absent for A2A create, show the following prompt:
 
 - If no endpoint is available, require deployment first or let the user choose A2A.
 - Explain that an on-chain endpoint change requires update.
-- Confirm that the request example uses the endpoint.
+
+#### A2MCP fields
+
+Every A2MCP `--service` **MUST** include `reqType` and `method`; MCP **MUST**
+include `toolName`. `inputSchema` is optional and, if present, **MUST** be a
+JSON Schema object. **NEVER** include `{"type":"object","properties":{}}`
+with an absent or empty `required`. With `inputSchema`, `reqExample` **MUST**
+be non-blank.
+
+For `reqType:"MCP"`, select only the registration endpoint and a probed tool.
+Every field **MUST** come from the endpoint probe and callability check;
+**NEVER** accept manual values or edits. **MUST** stop on incomplete or unsuitable data.
+
+| Field | MCP | HTTP |
+|---|---|---|
+| `reqType` | `"MCP"` | `"HTTP"` |
+| `method` | `"POST"` | user-selected `GET` / `POST` |
+| `toolName` | selected tool's `name` | absent |
+| `inputSchema` | returned tool schema, if present | built from the user's parameter specification, if any |
+| `reqExample` | required when `inputSchema` is present | required when `inputSchema` is present |
+
+After a successful check, parameterized `inputSchema` **MUST** include the checked compact JSON as `reqExample`. Without request parameters, **MUST** omit both fields; **NEVER** send or render `reqExample:"{}"`.
 
 #### operation
 

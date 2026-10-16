@@ -1,9 +1,11 @@
 # Agent and service discovery
 
+## Module Description
+
 A Service **MUST** be matched and explicitly selected by the User before `task-create-prepare`.
 Never create a task directly from an Agent ID, Service ID, service name, or search request.
 
-## Search
+## Flow
 
 ### Extract arguments
 
@@ -117,7 +119,7 @@ result until it has been loaded.
 Do not load any A2A creation or action reference before the user explicitly
 selects a Service and `task-create-prepare` returns its next action.
 
-## Display results
+### Display results
 
 **MUST** group `services[]` by `asp.aspAgentId` in returned order and render
 each group with the `Agent Service group` template in `output-templates.md`.
@@ -128,7 +130,7 @@ each group with the `Agent Service group` template in `output-templates.md`.
 <CLI-returned tip>
 ```
 
-## Pagination
+### Pagination
 
 When `hasMore == true`, `searchAfter` is non-empty, and the user asks for more, run:
 
@@ -139,7 +141,7 @@ onchainos agent service-match --search-after <searchAfter> --limit <n>
 Use the `searchAfter` value returned by the immediately preceding query exactly as returned.
 Do not modify, decode, encode, truncate, or regenerate it. Apply the same rules to every page.
 
-## Select a service
+### Select a service
 
 Use the selected Service's numeric `sid` and its owning `asp.aspAgentId`
 internally. **NEVER** show `sid`.
@@ -149,6 +151,6 @@ User message, route by the selected Service's `serviceType`:
 
 - `A2A`: pass its numeric `sid` to
   [`../a2a/user/create-prepare.md`](../a2a/user/create-prepare.md).
-- `A2MCP`: pass its numeric `sid` and `asp.aspAgentId` to
+- `A2MCP`: pass its `id` field as the numeric `sid`, and its `asp.aspAgentId`, to
   [`../a2mcp/handoff.md`](../a2mcp/handoff.md) for explicit MCP preparation.
 - Missing or unsupported type: stop; do not guess a preparation path.

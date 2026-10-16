@@ -4,14 +4,16 @@ description: "Handle agent payments and paid endpoints via x402, MPP, payment li
 license: MIT
 metadata:
   author: okx
-  version: "4.6.4"
+  version: "4.6.5"
   homepage: "https://web3.okx.com"
 ---
 
 # OKX Agent Payments Protocol (Dispatcher)
 
-- Structured `execute_a2mcp_payment` action → read
-  `references/a2mcp-execute.md`; do not enter the generic payment routes.
+For an active marketplace A2MCP invocation started by `agent a2mcp invoke`,
+follow `../okx-ai/references/a2mcp/invoke.md` through confirmation, payment,
+and result presentation. Its bound `paymentId` does not start a new generic
+quote or confirmation flow here.
 
 > **READ FIRST — ZERO-TEXT-ON-TRIGGER + NEVER-SKIP-USER-GATES.**
 >

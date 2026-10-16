@@ -99,3 +99,7 @@ claude mcp add --scope user onchainos-cli onchainos mcp
 ## License
 
 MIT
+
+## Disclaimer
+
+See [DISCLAIMER.md](DISCLAIMER.md).

@@ -29,7 +29,14 @@ pub(super) fn redact_token_for_debug(token: &str) -> String {
         return format!("{token}***");
     }
     let head: String = token.chars().take(8).collect();
-    let tail: String = token.chars().rev().take(6).collect::<String>().chars().rev().collect();
+    let tail: String = token
+        .chars()
+        .rev()
+        .take(6)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
     format!("{}***{}", head, tail)
 }
 
@@ -60,10 +67,7 @@ pub(super) fn reconstruct_get_url_for_log(
     if filtered.is_empty() {
         return format!("{base}{path}");
     }
-    let pairs: Vec<String> = filtered
-        .iter()
-        .map(|(k, v)| format!("{k}={v}"))
-        .collect();
+    let pairs: Vec<String> = filtered.iter().map(|(k, v)| format!("{k}={v}")).collect();
     format!("{base}{path}?{}", pairs.join("&"))
 }
 
@@ -168,6 +172,37 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
         .endpoint
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
+    service.req_type = service
+        .req_type
+        .map(|value| value.trim().to_ascii_uppercase())
+        .filter(|value| !value.is_empty());
+    service.method = service
+        .method
+        .map(|value| value.trim().to_ascii_uppercase())
+        .filter(|value| !value.is_empty());
+    service.tool_name = service
+        .tool_name
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    service.req_example = service
+        .req_example
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if service
+        .input_schema
+        .as_ref()
+        .is_some_and(is_empty_input_schema)
+    {
+        service.input_schema = None;
+    }
+    if service
+        .input_schema
+        .as_ref()
+        .is_none_or(Value::is_null)
+        && service.req_example.as_deref() == Some("{}")
+    {
+        service.req_example = None;
+    }
     // `freeTrial`: trim; an EMPTY string and an ABSENT key are equivalent —
     // both mean "no trial" — so collapse "" to None. The field is then omitted
     // from the wire payload, and a missing `freeTrial` is read as no trial.
@@ -303,6 +338,38 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
             if service.endpoint.is_none() {
                 bail!("missing required field in --service for A2MCP: endpoint");
             }
+            let req_type = service
+                .req_type
+                .as_deref()
+                .ok_or_else(|| anyhow!("missing required field in --service for A2MCP: reqType"))?;
+            if !matches!(req_type, "MCP" | "HTTP") {
+                bail!("invalid reqType in --service for A2MCP: expected MCP or HTTP");
+            }
+            let method = service
+                .method
+                .as_deref()
+                .ok_or_else(|| anyhow!("missing required field in --service for A2MCP: method"))?;
+            if !matches!(method, "GET" | "POST") {
+                bail!("invalid method in --service for A2MCP: expected GET or POST");
+            }
+            if service.input_schema.as_ref().is_some_and(|schema| !schema.is_object()) {
+                bail!(
+                    "invalid inputSchema in --service for A2MCP: expected JSON object"
+                );
+            }
+            if service.input_schema.is_some() && service.req_example.is_none() {
+                bail!(
+                    "missing required field in --service for A2MCP: reqExample is required when inputSchema is provided"
+                );
+            }
+            if req_type == "MCP" {
+                if service.tool_name.is_none() {
+                    bail!("missing required field in --service for MCP A2MCP: toolName");
+                }
+                if method != "POST" {
+                    bail!("invalid method in --service for MCP A2MCP: expected POST");
+                }
+            }
         }
         other => bail!("invalid serviceType in --service: {other} (expected: A2A or A2MCP)"),
     }
@@ -326,6 +393,21 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
     }
 
     Ok(service)
+}
+
+fn is_empty_input_schema(schema: &Value) -> bool {
+    let Some(object) = schema.as_object() else {
+        return false;
+    };
+    object.keys().all(|key| matches!(key.as_str(), "type" | "properties" | "required"))
+        && object.get("type").and_then(Value::as_str) == Some("object")
+        // Missing or empty `properties` means no request parameters.
+        && object
+            .get("properties")
+            .is_none_or(|properties| properties.as_object().is_some_and(serde_json::Map::is_empty))
+        && object
+            .get("required")
+            .is_none_or(|required| required.as_array().is_some_and(Vec::is_empty))
 }
 
 /// True when `s` is a plain decimal number with at most `max_decimals`
@@ -865,7 +947,9 @@ fn card_row(label: &str, value: impl Into<String>) -> Value {
 /// (`0xABCD…WXYZ`). Returns `None` when the value isn't a usable hex address.
 fn short_address(address: &str) -> Option<String> {
     let address = address.trim();
-    let hex = address.strip_prefix("0x").or_else(|| address.strip_prefix("0X"))?;
+    let hex = address
+        .strip_prefix("0x")
+        .or_else(|| address.strip_prefix("0X"))?;
     if hex.len() < 8 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
@@ -1034,14 +1118,23 @@ fn build_agent_card(map: &serde_json::Map<String, Value>) -> Vec<Value> {
     // 1. Agent ID (omit if absent).
     if let Some(id) = map
         .get("agentId")
-        .and_then(|v| v.as_u64().map(|n| n.to_string()).or_else(|| v.as_str().map(str::to_string)))
+        .and_then(|v| {
+            v.as_u64()
+                .map(|n| n.to_string())
+                .or_else(|| v.as_str().map(str::to_string))
+        })
         .filter(|s| !s.trim().is_empty())
     {
         card.push(card_row("Agent ID", format!("#{id}")));
     }
 
     // 2. Name (omit if absent/empty).
-    if let Some(name) = map.get("name").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(name) = map
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         card.push(card_row("Name", name));
     }
 
@@ -1085,7 +1178,9 @@ fn build_agent_card(map: &serde_json::Map<String, Value>) -> Vec<Value> {
     let description = first_str(map, &["description", "profileDescription"]);
     card.push(card_row(
         "Description",
-        description.map(str::to_string).unwrap_or_else(|| "(not set)".to_string()),
+        description
+            .map(str::to_string)
+            .unwrap_or_else(|| "(not set)".to_string()),
     ));
 
     // 8. Profile photo — verbatim URL or "default" when empty. Live backend
@@ -1093,7 +1188,9 @@ fn build_agent_card(map: &serde_json::Map<String, Value>) -> Vec<Value> {
     let picture = first_str(map, &["picture", "profilePicture"]);
     card.push(card_row(
         "Profile photo",
-        picture.map(str::to_string).unwrap_or_else(|| "default".to_string()),
+        picture
+            .map(str::to_string)
+            .unwrap_or_else(|| "default".to_string()),
     ));
 
     // 9. Service rows — ASP ROLE ONLY (omit entirely otherwise).
@@ -1113,15 +1210,17 @@ fn build_agent_card(map: &serde_json::Map<String, Value>) -> Vec<Value> {
     if let Some(reputation) = map.get("reputation") {
         if let Some(stars) = rating_stars(reputation) {
             let count = reputation.get("count").and_then(Value::as_u64).unwrap_or(0);
-            card.push(card_row(
-                "Rating",
-                format!("★ {stars} ({count} reviews)"),
-            ));
+            card.push(card_row("Rating", format!("★ {stars} ({count} reviews)")));
         }
     }
 
     // 11. txHash — only when present (absent on read-only get).
-    if let Some(tx_hash) = map.get("txHash").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(tx_hash) = map
+        .get("txHash")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         card.push(card_row("txHash", tx_hash));
     }
 
@@ -1493,9 +1592,34 @@ fn build_service_cells(index: usize, service: &Value) -> Option<Vec<Value>> {
     };
 
     // Description: truncate per §4 (~80 chars). Empty → `—`.
-    let description = first_str(s, &["serviceDescription", "ServiceDescription", "servicedescription"])
+    let description = first_str(
+        s,
+        &[
+            "serviceDescription",
+            "ServiceDescription",
+            "servicedescription",
+        ],
+    )
         .map(|d| truncate_name(d, 80))
         .unwrap_or_else(|| "—".to_string());
+
+    // §2.3 (CHANGED): 4 read-only A2MCP display cells appended after
+    // `Description`. Missing values render `—` (per surrounding cells, not the
+    // spec table's literal `--`). TBC[8]: camelCase backend keys; TBC[2]:
+    // pre-existing services omit these → `—`.
+    let req_type = first_str(s, &["reqType"])
+        .map(str::to_string)
+        .unwrap_or_else(|| "—".to_string());
+    let method = first_str(s, &["method"])
+        .map(str::to_string)
+        .unwrap_or_else(|| "—".to_string());
+    let tool_name = first_str(s, &["toolName"])
+        .map(str::to_string)
+        .unwrap_or_else(|| "—".to_string());
+    let req_example = first_str(s, &["reqExample"])
+        .map(|e| truncate_name(e, 80))
+        .unwrap_or_else(|| "—".to_string());
+
     Some(vec![
         cell("#", index.to_string()),
         cell("Name", name),
@@ -1505,6 +1629,10 @@ fn build_service_cells(index: usize, service: &Value) -> Option<Vec<Value>> {
         cell("Free trial", free_trial),
         cell("Endpoint", endpoint),
         cell("Description", description),
+        cell("Request type", req_type),
+        cell("Method", method),
+        cell("Tool name", tool_name),
+        cell("Request example", req_example),
     ])
 }
 
@@ -1605,14 +1733,12 @@ fn derive_has_more(map: &mut serde_json::Map<String, Value>) {
 fn build_feedback_cells(map: &serde_json::Map<String, Value>) -> Vec<Value> {
     let score_100 = ["valueString", "value"].into_iter().find_map(|key| {
         map.get(key).and_then(|value| match value {
-            Value::String(value) => {
-                value
+            Value::String(value) => value
                     .trim()
                     .strip_suffix("/100")
                     .unwrap_or(value.trim())
                     .parse::<f64>()
-                    .ok()
-            }
+                .ok(),
             Value::Number(value) => value.as_f64(),
             _ => None,
         })
@@ -1642,7 +1768,8 @@ fn build_feedback_cells(map: &serde_json::Map<String, Value>) -> Vec<Value> {
         })
         .unwrap_or_else(|| "—".to_string());
 
-    let date = map.get("time")
+    let date = map
+        .get("time")
         .and_then(|value| {
             value
                 .as_i64()

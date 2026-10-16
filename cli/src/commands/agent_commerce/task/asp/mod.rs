@@ -25,6 +25,7 @@ mod dispute_raise;
 pub mod flow;
 mod provider_decision;
 pub mod subscription;
+mod subscription_push;
 mod task_query;
 mod v2;
 
@@ -69,6 +70,15 @@ pub enum ProviderCommand {
         /// the providerAgentId field in job detail may be null, so reverse lookup is unreliable.
         #[arg(long = "agent-id")]
         agent_id: String,
+    },
+    /// Broadcast an Active-subscription signal to all Shared Groups of a Service (V2).
+    SubscriptionPush {
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        #[arg(long = "service-id")]
+        service_id: String,
+        #[arg(long)]
+        content: String,
     },
     /// ASP agrees to refund (agreeRefund API → sign → broadcast)
     AgreeRefund {
@@ -295,6 +305,14 @@ pub async fn run_provider(cmd: ProviderCommand, _ctx: &Context) -> Result<()> {
             agent_id,
         } => {
             deliver::handle_deliver(&mut client, &job_id, &file, &deliverable_text, &agent_id).await
+        }
+        ProviderCommand::SubscriptionPush {
+            agent_id,
+            service_id,
+            content,
+        } => {
+            subscription_push::handle_subscription_push(&mut client, &agent_id, &service_id, &content)
+                .await
         }
         ProviderCommand::AgreeRefund { job_id, agent_id } => {
             agreerefund::handle_agree_refund(&mut client, &job_id, &agent_id).await

@@ -548,25 +548,15 @@ fn user_ignores_service() {
 }
 
 #[test]
-fn bilingual_name_without_middledot_fails_n6() {
-    let r = run_validation("asp", Some("健身 Bot"), None, None);
-    assert!(codes(&r).contains(&"N6".to_string()), "got {:?}", codes(&r));
-}
-
-#[test]
-fn bilingual_name_with_middledot_ok_n6() {
-    let r = run_validation("asp", Some("健身 \u{00B7} Bot"), None, None);
-    assert!(
-        !codes(&r).contains(&"N6".to_string()),
-        "got {:?}",
-        codes(&r)
-    );
+fn mixed_chinese_english_asp_name_passes_without_separator() {
+    let r = run_validation("asp", Some("btc定投"), None, None);
+    assert!(r.pass, "got {:?}", codes(&r));
 }
 
 #[test]
 fn long_bilingual_name_not_blocked_by_cjk_length_cap() {
-    // 22 chars: a mixed CJK + Latin name (N6-compliant separator) must use
-    // the 3..=25 bound, NOT the dense pure-CJK 12-char cap, so no N1.
+    // 22 chars: a mixed CJK + Latin name must use the 3..=25 bound, NOT the
+    // dense pure-CJK 12-char cap, so no N1.
     let r = run_validation(
         "asp",
         Some("健身 \u{00B7} Fitness Coach Pro"),
@@ -575,11 +565,6 @@ fn long_bilingual_name_not_blocked_by_cjk_length_cap() {
     );
     assert!(
         !codes(&r).contains(&"N1".to_string()),
-        "got {:?}",
-        codes(&r)
-    );
-    assert!(
-        !codes(&r).contains(&"N6".to_string()),
         "got {:?}",
         codes(&r)
     );
@@ -848,7 +833,7 @@ fn negative_capability_no_longer_flagged_on_name_or_description() {
 
 #[test]
 fn negative_capability_no_longer_flagged_on_service_name_or_description() {
-    // Service NAME carrying the gap wording (5–30 chars so S1 doesn't fire) and a
+    // Service NAME carrying the gap wording (within the 5–200-width S1 range) and a
     // description carrying it too → the whole listing passes.
     let service = svc(
         "暂不支持跨链的摘要服务",
@@ -1557,7 +1542,7 @@ fn description_with_url_fails_d6() {
 
 #[test]
 fn service_name_four_chars_fails_s1() {
-    // 4 chars — below the 5-char minimum.
+    // 4 ASCII display columns — below the minimum of 5.
     let service = svc(
         "Abcd",
         "Does a thing.\nMore detail here.\nDo the thing",
@@ -1583,9 +1568,9 @@ fn service_name_five_chars_passes_s1() {
 }
 
 #[test]
-fn service_name_thirty_chars_passes_s1() {
+fn service_name_two_hundred_ascii_chars_passes_s1() {
     let service = svc(
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234",
+        &"A".repeat(200),
         "Does a thing.\nMore detail here.\nDo the thing",
         "A2A",
         "5",
@@ -1596,9 +1581,9 @@ fn service_name_thirty_chars_passes_s1() {
 }
 
 #[test]
-fn service_name_thirty_one_chars_fails_s1() {
+fn service_name_two_hundred_one_ascii_chars_fails_s1() {
     let service = svc(
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ12345",
+        &"A".repeat(201),
         "Does a thing.\nMore detail here.\nDo the thing",
         "A2A",
         "5",
@@ -1606,6 +1591,58 @@ fn service_name_thirty_one_chars_fails_s1() {
     );
     let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
     assert!(codes(&r).contains(&"S1".to_string()), "got {:?}", codes(&r));
+}
+
+#[test]
+fn service_name_one_hundred_cjk_chars_passes_s1() {
+    // 100 CJK characters = display width 200.
+    let service = svc(
+        &"测".repeat(100),
+        "Does a thing.\nMore detail here.\nDo the thing",
+        "A2A",
+        "5",
+        None,
+    );
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert!(!codes(&r).contains(&"S1".to_string()), "got {:?}", codes(&r));
+}
+
+#[test]
+fn service_name_one_hundred_one_cjk_chars_fails_s1() {
+    // 101 CJK characters = display width 202.
+    let service = svc(
+        &"测".repeat(101),
+        "Does a thing.\nMore detail here.\nDo the thing",
+        "A2A",
+        "5",
+        None,
+    );
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert!(codes(&r).contains(&"S1".to_string()), "got {:?}", codes(&r));
+}
+
+#[test]
+fn service_name_minimum_uses_display_width() {
+    // Two CJK characters have width 4; adding one ASCII character reaches 5.
+    let too_narrow = svc(
+        "测试",
+        "Does a thing.\nMore detail here.\nDo the thing",
+        "A2A",
+        "5",
+        None,
+    );
+    let valid = svc(
+        "测试A",
+        "Does a thing.\nMore detail here.\nDo the thing",
+        "A2A",
+        "5",
+        None,
+    );
+
+    let narrow_result = run_validation("asp", Some("Agent Name"), None, Some(&too_narrow));
+    let valid_result = run_validation("asp", Some("Agent Name"), None, Some(&valid));
+    assert!(codes(&narrow_result).contains(&"S1".to_string()));
+    assert!(!codes(&valid_result).contains(&"S1".to_string()));
 }
 
 // ─── has_test_marker full branch coverage ──────────────────────────────────
@@ -1987,156 +2024,14 @@ fn a2a_subscription_delete_bypasses_optional_service_guide_checks() {
     assert!(r.pass, "got {:?}", codes(&r));
 }
 
-// ─── EP1: A2MCP endpoint uniqueness within one submission (FE-EP-01) ────────
-// Mirrors the S2 serviceName dedup: case-insensitive exact match on the trimmed
-// endpoint; A2A / empty-endpoint services skipped; delete-op services excluded;
-// same-`id` services treated as the same service being edited (self-exclusion);
-// no short-circuit (every later duplicate gets its own EP1).
-
+// Duplicate endpoints are intentionally allowed; endpoint validity is still
+// checked independently for each A2MCP service.
 #[test]
-fn a2mcp_duplicate_endpoints_fail_ep1() {
-    // Two A2MCP services sharing an endpoint → EP1 on the LATER one, pass:false.
+fn a2mcp_duplicate_endpoints_are_allowed() {
     let services = r#"[
         {"serviceName":"Price Feed One","serviceDescription":"Returns token prices.","serviceType":"A2MCP","fee":"10","endpoint":"https://example.com/mcp"},
         {"serviceName":"Price Feed Two","serviceDescription":"Returns other prices.","serviceType":"A2MCP","fee":"12","endpoint":"https://example.com/mcp"}
     ]"#;
     let r = run_validation("asp", Some("Agent Name"), None, Some(services));
-    assert!(codes(&r).contains(&"EP1".to_string()), "got {:?}", codes(&r));
-    assert!(
-        r.findings
-            .iter()
-            .any(|f| f.code == "EP1" && f.field == "service[1].endpoint"),
-        "EP1 belongs on the later duplicate service, got {:?}",
-        codes(&r)
-    );
-    assert!(!r.pass);
-}
-
-#[test]
-fn a2mcp_duplicate_endpoints_case_insensitive() {
-    // `https://Example.COM/mcp` vs `https://example.com/mcp` → still a duplicate
-    // (eq_ignore_ascii_case, mirroring the serviceName dedup).
-    let services = r#"[
-        {"serviceName":"Price Feed One","serviceDescription":"Returns token prices.","serviceType":"A2MCP","fee":"10","endpoint":"https://Example.COM/mcp"},
-        {"serviceName":"Price Feed Two","serviceDescription":"Returns other prices.","serviceType":"A2MCP","fee":"12","endpoint":"https://example.com/mcp"}
-    ]"#;
-    let r = run_validation("asp", Some("Agent Name"), None, Some(services));
-    assert!(codes(&r).contains(&"EP1".to_string()), "got {:?}", codes(&r));
-    assert!(!r.pass);
-}
-
-#[test]
-fn a2mcp_different_endpoints_pass() {
-    // Distinct endpoints, everything else valid → no EP1, pass:true.
-    let services = r#"[
-        {"serviceName":"Price Feed One","serviceDescription":"Returns token prices.","serviceType":"A2MCP","fee":"10","endpoint":"https://example.com/alpha"},
-        {"serviceName":"Price Feed Two","serviceDescription":"Returns other prices.","serviceType":"A2MCP","fee":"12","endpoint":"https://example.com/beta"}
-    ]"#;
-    let r = run_validation("asp", Some("Agent Name"), None, Some(services));
-    assert!(!codes(&r).contains(&"EP1".to_string()), "got {:?}", codes(&r));
     assert!(r.pass, "got {:?}", codes(&r));
-}
-
-#[test]
-fn a2mcp_self_exclusion_same_id() {
-    // Same endpoint AND same non-empty id → the same service being edited, not a
-    // collision (self-exclusion for the update flow) → no EP1.
-    let services = r#"[
-        {"id":"42","operation":"update","serviceName":"Price Feed One","serviceDescription":"Returns token prices.","serviceType":"A2MCP","fee":"10","endpoint":"https://example.com/mcp"},
-        {"id":"42","operation":"update","serviceName":"Price Feed Two","serviceDescription":"Returns other prices.","serviceType":"A2MCP","fee":"12","endpoint":"https://example.com/mcp"}
-    ]"#;
-    let r = run_validation("asp", Some("Agent Name"), None, Some(services));
-    assert!(!codes(&r).contains(&"EP1".to_string()), "got {:?}", codes(&r));
-}
-
-#[test]
-fn a2mcp_three_services_two_collide() {
-    // svc0 & svc2 share an endpoint, svc1 differs → EP1 on service[2].endpoint
-    // ONLY (svc1 is untouched; no short-circuit swallows svc2).
-    let services = r#"[
-        {"serviceName":"Price Feed One","serviceDescription":"Returns token prices.","serviceType":"A2MCP","fee":"10","endpoint":"https://example.com/shared"},
-        {"serviceName":"Price Feed Two","serviceDescription":"Returns other prices.","serviceType":"A2MCP","fee":"12","endpoint":"https://example.com/unique"},
-        {"serviceName":"Price Feed Three","serviceDescription":"Returns more prices.","serviceType":"A2MCP","fee":"14","endpoint":"https://example.com/shared"}
-    ]"#;
-    let r = run_validation("asp", Some("Agent Name"), None, Some(services));
-    let ep1_fields: Vec<&str> = r
-        .findings
-        .iter()
-        .filter(|f| f.code == "EP1")
-        .map(|f| f.field.as_str())
-        .collect();
-    assert_eq!(
-        ep1_fields,
-        vec!["service[2].endpoint"],
-        "EP1 must land on svc2 only, got {:?}",
-        codes(&r)
-    );
-    assert!(!r.pass);
-}
-
-#[test]
-fn a2mcp_delete_operation_skipped() {
-    // A delete-op service is being removed → excluded from the comparison pool,
-    // so its endpoint no longer collides with a live service → no EP1.
-    let services = r#"[
-        {"operation":"delete","id":"9","serviceName":"Price Feed One","serviceDescription":"Returns token prices.","serviceType":"A2MCP","fee":"10","endpoint":"https://example.com/mcp"},
-        {"serviceName":"Price Feed Two","serviceDescription":"Returns other prices.","serviceType":"A2MCP","fee":"12","endpoint":"https://example.com/mcp"}
-    ]"#;
-    let r = run_validation("asp", Some("Agent Name"), None, Some(services));
-    assert!(!codes(&r).contains(&"EP1".to_string()), "got {:?}", codes(&r));
-}
-
-#[test]
-fn mixed_a2a_a2mcp_no_cross_type_collision() {
-    // An A2A service has no endpoint (skipped) and cannot collide with an A2MCP
-    // endpoint → no EP1, and the whole listing is otherwise valid.
-    let services = r#"[
-        {"serviceName":"Signal Service","serviceDescription":"Provides trading signals.","serviceType":"A2A","fee":"5"},
-        {"serviceName":"Price Feed MCP","serviceDescription":"Returns token prices.","serviceType":"A2MCP","fee":"10","endpoint":"https://example.com/mcp"}
-    ]"#;
-    let r = run_validation("asp", Some("Agent Name"), None, Some(services));
-    assert!(!codes(&r).contains(&"EP1".to_string()), "got {:?}", codes(&r));
-    assert!(r.pass, "got {:?}", codes(&r));
-}
-
-#[test]
-fn ep1_message_contains_both_service_names() {
-    // The rejection copy must name BOTH the offending service and the service
-    // that first claimed the endpoint (via the new fe::fe_ep01 helper).
-    let services = r#"[
-        {"serviceName":"Alpha Feed Svc","serviceDescription":"Returns token prices.","serviceType":"A2MCP","fee":"10","endpoint":"https://example.com/mcp"},
-        {"serviceName":"Beta Feed Svc","serviceDescription":"Returns other prices.","serviceType":"A2MCP","fee":"12","endpoint":"https://example.com/mcp"}
-    ]"#;
-    let r = run_validation("asp", Some("Agent Name"), None, Some(services));
-    let ep1 = r.findings.iter().find(|f| f.code == "EP1").expect("EP1 expected");
-    // Offending = svc1 ("Beta Feed Svc"); conflicting first-claimer = svc0.
-    assert!(
-        ep1.message.contains("Beta Feed Svc"),
-        "must name the offending service: {}",
-        ep1.message
-    );
-    assert!(
-        ep1.message.contains("Alpha Feed Svc"),
-        "must name the conflicting service: {}",
-        ep1.message
-    );
-    assert_eq!(
-        ep1.message,
-        super::fe::fe_ep01("Beta Feed Svc", "Alpha Feed Svc")
-    );
-}
-
-#[test]
-fn ep1_coexists_with_other_findings() {
-    // A duplicate NAME (S2) and a duplicate ENDPOINT (EP1) in one submission →
-    // BOTH codes surface (all-problems-at-once, §2.4).
-    let services = r#"[
-        {"serviceName":"Duplicate Svc","serviceDescription":"Returns token prices.","serviceType":"A2MCP","fee":"10","endpoint":"https://example.com/mcp"},
-        {"serviceName":"Duplicate Svc","serviceDescription":"Returns other prices.","serviceType":"A2MCP","fee":"12","endpoint":"https://example.com/mcp"}
-    ]"#;
-    let r = run_validation("asp", Some("Agent Name"), None, Some(services));
-    let c = codes(&r);
-    assert!(c.contains(&"S2".to_string()), "expected S2, got {:?}", c);
-    assert!(c.contains(&"EP1".to_string()), "expected EP1, got {:?}", c);
-    assert!(!r.pass);
 }

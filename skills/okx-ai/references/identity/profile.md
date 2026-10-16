@@ -42,6 +42,8 @@ onchainos agent service-list --agent-id <id> --page 1 --page-size 3
 **MUST** use the `Service table` in `output-templates.md` to render only
 returned `cells[]` in order.
 
+If any returned service is `A2MCP`, localize and append once: `Want to view method, inputSchema, or reqExample? Tell me which service.`
+
 #### Pagination
 
 When `hasMore == true` and the user asks for more, run:

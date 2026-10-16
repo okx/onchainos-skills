@@ -221,7 +221,7 @@ Reply with the number (or asset name) to continue, or `0` to cancel. We recommen
 
 ### Placeholder Resolution
 
-### Static (skill-side config; update this file when pricing changes)
+#### Static (skill-side config; update this file when pricing changes)
 
 | Placeholder | Default | Description |
 |---|---|---|
@@ -232,7 +232,7 @@ Reply with the number (or asset name) to continue, or `0` to cancel. We recommen
 | `{graceDays}` | `30` | Free grace period length (days) for existing users |
 | `{docUrl}` | _TODO — PM to provide_ | Pricing documentation URL |
 
-### Dynamic (read from event payload)
+#### Dynamic (read from event payload)
 
 | Placeholder | Source | Used by | Notes |
 |---|---|---|---|

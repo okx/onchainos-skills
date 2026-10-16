@@ -153,13 +153,15 @@ async fn mcp_only_uses_wallet_api_and_preserves_raw_snapshot() {
         "inputSchema": {"type": "object"}, "toolName": "wallet_insights_report",
     });
     let mut client = TaskApiClient {
-        response: json!([{"list": [service.clone()]}]),
+        response: json!([{"agentInfo": {"agentId": 10191}, "list": [service.clone()]}]),
         calls: vec![],
     };
     mcp_prepare::prepare_service(&mut client, "38241", "10191")
         .await
         .unwrap();
-    assert_eq!(output::take()["payload"]["serviceSnapshot"], service);
+    let out = output::take();
+    assert_eq!(out["payload"]["serviceSnapshot"], service);
+    assert_eq!(out["payload"]["agentInfo"], json!({"agentId": "10191"}));
     assert_eq!(
         client.calls,
         vec![json!({

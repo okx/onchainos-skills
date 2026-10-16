@@ -16,6 +16,7 @@ Localize all labels, headings, and static display text to the user's language; k
 - Show `serviceDescription` verbatim and `serviceType` unchanged (`A2MCP` or `A2A`).
 - For `fee` / `subscription`: `"0"` → localized Free; positive `"N"` → `N USDT` / `N USDT / month`, respectively. Map `freeTrial: "72"` to `3 days`.
 - In create confirmations and update diffs, show non-blank `serviceGuide` verbatim; otherwise omit it.
+- Create confirmations and update diffs **MUST** omit `reqExample`. Explicit inspection **MUST** omit blank values and `{}`.
 
 ### Service table
 
@@ -30,7 +31,10 @@ Localize all labels, headings, and static display text to the user's language; k
 - Apply [Service value display](#service-value-display).
 - Number services sequentially across Agent tables.
 - Merge `Fee` and `Subscription` as `Fee`.
-- Omit a column only when all of its values are `—`; otherwise display it.
+- Omit `Free trial` when every service in the table is `A2MCP`.
+- Omit `Endpoint` when every service in the table is `A2A`.
+- For all columns, omit a column only when all of its values are `—`; otherwise
+  display it.
 - Never display `serviceGuide` or internal Service UUIDs.
 
 

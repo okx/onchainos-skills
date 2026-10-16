@@ -95,6 +95,41 @@ fn confirmed_creation_sets_unforgeable_source_and_preserves_typed_params() {
 }
 
 #[test]
+fn sale_context_survives_payment_intent_storage_and_old_intents_still_load() {
+    with_home("a2mcp_sale_context_round_trip", || {
+        for (probe, context) in [
+            (
+                "new",
+                Some(super::sale_report::SaleContext::new("7514", "2130").unwrap()),
+            ),
+            ("legacy", None),
+        ] {
+            let mut frozen = frozen_request();
+            if let Some(context) = &context {
+                frozen = frozen.with_sale_context(context.clone());
+            }
+            let created = create_a2mcp_payment_intent_for_quote(A2mcpIntentCreateInput {
+                probe_id: probe.into(),
+                owner_account_id: "account_1".into(),
+                payer_address: "0x3333333333333333333333333333333333333333".into(),
+                frozen_request: frozen,
+                selected_accept: selected_accept(),
+                created_at: 1000,
+                expires_at: 1200,
+                user_confirmed: false,
+            })
+            .unwrap();
+            let loaded = super::a2mcp::read_a2mcp_payment_intent(
+                created.payment_id(), "account_1", 1001,
+            )
+            .unwrap();
+            assert_eq!(loaded.frozen_request().sale_context(), context.as_ref());
+            assert_eq!(loaded.frozen_request().typed_params()["count"], json!(2));
+        }
+    });
+}
+
+#[test]
 fn intent_creation_requires_explicit_confirmation_and_sufficient_balance() {
     with_home("a2mcp_intent_confirmation", || {
         let mut input = A2mcpIntentCreateInput {

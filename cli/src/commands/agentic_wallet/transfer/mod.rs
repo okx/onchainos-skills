@@ -1588,6 +1588,10 @@ pub async fn execute_contract_call(
         bail!("either --input-data (EVM) or --unsigned-tx (SOL) is required");
     }
 
+    // Generic contract calls are classified as DApp interactions by default.
+    // Specialized callers pass their own category explicitly.
+    let agent_biz_type = agent_biz_type.or(Some("dapp"));
+
     sign_and_broadcast(
         chain,
         from,

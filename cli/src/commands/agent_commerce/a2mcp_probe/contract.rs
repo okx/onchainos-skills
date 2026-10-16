@@ -119,9 +119,22 @@ pub(super) fn parse_probe_input(
                 .filter(|value| !value.trim().is_empty())
                 .map(ToOwned::to_owned),
             provider_agent_id: object
-                .get("asp")
-                .and_then(Value::as_object)
-                .and_then(|asp| scalar_string(asp.get("aspAgentId")))
+                .get("agentInfo")
+                .and_then(|agent_info| scalar_string(agent_info.get("agentId")))
+                .or_else(|| {
+                    routing
+                        .agent_info
+                        .as_ref()
+                        .and_then(|agent_info| scalar_string(agent_info.get("agentId")))
+                })
+                // Accept legacy routing snapshots while new preparations use
+                // the documented 4.4 response field `agentInfo.agentId`.
+                .or_else(|| {
+                    object
+                        .get("asp")
+                        .and_then(Value::as_object)
+                        .and_then(|asp| scalar_string(asp.get("aspAgentId")))
+                })
                 .filter(|value| !value.trim().is_empty()),
             endpoint,
             method,

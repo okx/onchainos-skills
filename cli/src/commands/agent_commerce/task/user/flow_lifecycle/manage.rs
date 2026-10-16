@@ -281,7 +281,6 @@ Step 6 -- Publish subscription (create-subscribe)
 ```bash
 onchainos agent create-subscribe \\
   --service-id <serviceId> \\
-  --use-trial <true|false> \\
   --service-token-amount \"<subscriptionInfo.feeAmount>\" \\
   --service-token-address \"<feeToken>\" \\
   --auto-renew <0|1> \\

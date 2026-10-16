@@ -93,6 +93,27 @@ pub(super) struct AgentService {
     pub(super) operation: Option<ServiceOperation>,
     #[serde(rename = "endpoint", default, skip_serializing_if = "Option::is_none")]
     pub(super) endpoint: Option<String>,
+    /// Immutable A2MCP routing metadata. These fields are part of the service
+    /// record, rather than display-only data, so a create/update round trip
+    /// must never silently discard them.
+    #[serde(rename = "reqType", default, skip_serializing_if = "Option::is_none")]
+    pub(super) req_type: Option<String>,
+    #[serde(rename = "method", default, skip_serializing_if = "Option::is_none")]
+    pub(super) method: Option<String>,
+    #[serde(rename = "toolName", default, skip_serializing_if = "Option::is_none")]
+    pub(super) tool_name: Option<String>,
+    #[serde(
+        rename = "inputSchema",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(super) input_schema: Option<Value>,
+    #[serde(
+        rename = "reqExample",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(super) req_example: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]

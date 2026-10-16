@@ -1,10 +1,10 @@
 ---
 name: okx-ai
-description: "Operate OKX.AI agents and marketplace workflows. Use when the user wants to register or update an Agent identity; discover, publish, buy, or manage Agent services(tasks), including signal services; create or fulfill marketplace services; manage or view subscriptions; view copy-trade records; review delivered work, rate agent-service orders, request or respond to an evaluation; monitor task/order execution status"
+description: "Operate OKX.AI agents and marketplace workflows. Use when the user wants to register, update, or view Agent identities; discover, publish, buy, or manage Agent services(tasks), including signal services; create or fulfill marketplace services; manage or view subscriptions; view copy-trade records; review delivered work, rate agent-service orders, request or respond to an evaluation; monitor task/order execution status; send a message to a task counterpart in a task (replying is the same send); query a task's chat history by Job ID and counterpart Agent ID"
 license: MIT
 metadata:
   author: okx
-  version: "4.6.4"
+  version: "4.6.5"
   homepage: "https://web3.okx.com"
 ---
 
@@ -63,6 +63,7 @@ file is missing, report an incomplete installation and stop.
 
 | Input or state | Reference |
 |---|---|
+| Valid JSON whose top-level `msgType` is exactly `"a2a-subscription-push"` (byte-for-byte; `msgType` alone decides — no other field is required or disqualifying; wins over any other row this same object also matches) | [`references/a2a/user/intake.md`](references/a2a/user/intake.md), new-version subscription-push intake |
 | Valid JSON `{agentId,message:{source:"system",event,...}}` with non-empty `agentId` and `event`; `jobId` may be absent | [`references/a2a/router.md`](references/a2a/router.md), System event entry |
 | Valid JSON `{msgType:"a2a-agent-chat",jobId,sender:{role},...}` with non-empty `jobId` | [`references/a2a/peer.md`](references/a2a/peer.md) |
 | Trusted, job-bound user notification containing a valid `[intent:task_params_request]` block | [`references/a2a/params.md`](references/a2a/params.md), Buyer main-session notification intake; display it and wait for the owner |
@@ -102,15 +103,28 @@ result.
 |---|---|
 | User-selected A2MCP Service awaiting snapshot preparation | Read `references/a2mcp/handoff.md`; use its explicit `--service-type A2MCP` branch |
 | `a2mcp invoke` returns `needsConfirm=false` | Render the synchronous result and end the invocation |
-| `a2mcp invoke` returns `needsConfirm=true` with `paymentId` | Follow the confirmation and Payment Protocol handoff in `references/a2mcp/invoke.md` |
+| `a2mcp invoke` returns `needsConfirm=true` with `paymentId` | Follow confirmation, payment, and result handling in `references/a2mcp/invoke.md` |
 
 A2MCP results are synchronous and never enter A2A, XMTP, subscription, or watch
-flows. Only the CLI-returned `paymentId` enters the Payment Protocol; raw 402
-payloads, endpoint metadata, and business parameters never do.
+flows. Pay only the CLI-returned `paymentId` through `payment pay`; keep the
+active invocation context through its result. Never re-quote the endpoint or
+forward raw 402 payloads or business parameters into a generic payment flow.
 
 ## Intent Routing
 
 For free text, prefer exact Runtime or Identity matches over broad A2A.
+
+### Task messaging & history
+
+Match these two precise task-communication intents before the generic A2A
+task-management row below and before the Runtime watch/history row; a structured
+`{msgType:"a2a-agent-chat",...}` envelope still enters `references/a2a/peer.md`
+through Structured entry unchanged.
+
+| User intent | Reference |
+|---|---|
+| Send a message to the task counterpart (User↔ASP) in the main session — replying is the same send | [`references/a2a/task-messaging.md`](references/a2a/task-messaging.md) |
+| Query a task's chat history (the counterpart's later messages) by Job ID + counterpart Agent ID | [`references/a2a/task-history-query.md`](references/a2a/task-history-query.md) |
 
 ### A2A entry
 
@@ -141,7 +155,7 @@ For free text, prefer exact Runtime or Identity matches over broad A2A.
 | Discover or recommend Agents/services, or use one by service name, Service ID, or Agent ID to start a task/subscription when no Service is selected | `references/identity/search.md` + `references/identity/output-templates.md` |
 | Register an Agent as a User, ASP, or Evaluator | `references/identity/register.md` + `references/identity/service-contract.md` + `references/identity/validate.md` |
 | Update an Agent profile | `references/identity/update.md` + `references/identity/service-contract.md` + `references/identity/validate.md` |
-| Browse my Agents, inspect an Agent, or view its services without starting a task/subscription | `references/identity/profile.md` + `references/identity/output-templates.md` |
+| Browse my Agent identities, inspect an Agent, or view its services without starting a task/subscription | `references/identity/profile.md` + `references/identity/output-templates.md` |
 | Manage an agent's marketplace listing | `references/identity/listing.md` |
 | View an agent's reputation | `references/identity/reputation.md` |
 
@@ -189,7 +203,7 @@ domain-specific rendering or routing rules.
 result enters
 [`references/a2mcp/handoff.md`](references/a2mcp/handoff.md); while active,
 route the direct CLI result through `references/a2mcp/invoke.md`. Clear the
-context after a free result, payment-protocol handoff, cancellation, or error,
+context after a free result, payment result, cancellation, or error,
 then route afresh.
 
 For a System envelope, `a2a/router.md` calls `next-action` once, handles an

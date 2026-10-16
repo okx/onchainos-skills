@@ -27,8 +27,10 @@ pub struct CreateArgs {
     /// for `user` / `evaluator`).
     ///
     /// Element keys:
-    ///   • serviceName        — required. 5–30 chars; must differ from the agent
-    ///                          name; no price info and no test/env markers.
+    ///   • serviceName        — required. Display width 5–200 (CJK/full-width
+    ///                          characters count as 2, Latin/half-width as 1);
+    ///                          must differ from the agent name and include no
+    ///                          price info or test/env markers.
     ///   • serviceDescription — required. A newline-separated structure whose
     ///                          part count and meanings depend on serviceType:
     ///                            A2MCP (request description — all FOUR parts
@@ -149,7 +151,8 @@ pub struct UpdateArgs {
     pub picture: Option<String>,
     /// Optional. Incremental service changes as a JSON array — only the services
     /// you want to add / modify / remove, NOT the full list. Element keys:
-    /// `serviceName` (5–30 chars, distinct from the agent name),
+    /// `serviceName` (display width 5–200, with CJK/full-width characters
+    /// counting as 2 and Latin/half-width as 1; distinct from the agent name),
     /// `serviceDescription` (newline-separated structure whose part count and
     /// meanings depend on serviceType — A2MCP request description (all FOUR
     /// REQUIRED; an A2MCP listing missing any is rejected at listing QA): line 1

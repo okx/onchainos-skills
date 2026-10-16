@@ -107,7 +107,7 @@ The "Push Data Fields" tables below describe the contents of each object inside 
 
 ### Channels
 
-#### `dex-market-new-signal-openapi` — Signal Alerts
+#### `dex-market-new-signal-openapi`
 
 Retrieve real-time aggregated buy signal alerts from smart money, KOL, and whale wallets.
 Single-chain subscription only.
@@ -177,7 +177,7 @@ Subscribe arg:
 
 ---
 
-#### `kol_smartmoney-tracker-activity` (Public)
+#### `kol_smartmoney-tracker-activity`
 
 Aggregated real-time trade feed from KOL wallets and smart money tracked by OKX.
 No wallet address parameter needed.
@@ -187,7 +187,7 @@ Subscribe arg:
 { "channel": "kol_smartmoney-tracker-activity" }
 ```
 
-#### `address-tracker-activity` (Per-address)
+#### `address-tracker-activity`
 
 Real-time trade feed for a custom wallet address.
 Send **one subscription arg per address** (up to 200 addresses per connection). If you need to track more than 200 addresses, create additional WebSocket connections.

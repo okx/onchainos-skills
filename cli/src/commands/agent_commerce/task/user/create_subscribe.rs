@@ -18,7 +18,6 @@ pub(crate) const SUBSCRIBE_API_PREFIX: &str = "/priapi/v1/aieco/task/subscribe";
 
 pub struct CreateSubscribeParams {
     pub service_id: String,
-    pub use_trial: bool,
     pub service_params: String,
     pub service_token_amount: String,
     pub service_token_address: String,
@@ -182,6 +181,106 @@ fn build_duplicate_subscription_block(
     block
 }
 
+/// Normalize a JSON scalar `sid` (string or integer) to a trimmed, non-empty String.
+fn sid_to_string(value: &serde_json::Value) -> Option<String> {
+    value
+        .as_str()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| value.as_i64().map(|n| n.to_string()))
+        .or_else(|| value.as_u64().map(|n| n.to_string()))
+}
+
+/// Find the matching Service's numeric sid in a `service-list` response and
+/// return it as a string. The marketplace `sid` is carried as each service-list
+/// row's `id` field (the `serviceId` is the UUID). Tolerates both response
+/// shapes: an array of `{ list: [service…] }` wrappers, or a single object
+/// carrying a flat `list`/`services` array.
+fn find_service_sid(data: &serde_json::Value, service_id: &str) -> Option<String> {
+    fn scan(services: &[serde_json::Value], service_id: &str) -> Option<String> {
+        services.iter().find_map(|service| {
+            let matches = service
+                .get("serviceId")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                == Some(service_id);
+            if matches {
+                service.get("id").and_then(sid_to_string)
+            } else {
+                None
+            }
+        })
+    }
+    match data {
+        serde_json::Value::Array(wrappers) => wrappers.iter().find_map(|wrapper| {
+            wrapper
+                .get("list")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|services| scan(services, service_id))
+        }),
+        object => ["list", "services"].into_iter().find_map(|key| {
+            object
+                .get(key)
+                .and_then(serde_json::Value::as_array)
+                .and_then(|services| scan(services, service_id))
+        }),
+    }
+}
+
+/// Resolve the Service's numeric `sid` from its `providerAgentId` + `serviceId`
+/// via `onchainos agent service-list`. create-subscribe only holds the Service
+/// UUID, while the authoritative trial-state fetch (`service/search`) is keyed by
+/// `sid`.
+async fn resolve_service_sid(provider_agent_id: &str, service_id: &str) -> Result<String> {
+    let output = tokio::process::Command::new(std::env::current_exe()?)
+        .args([
+            "agent",
+            "service-list",
+            "--agent-id",
+            provider_agent_id,
+            "--service-id",
+            service_id,
+            "--page",
+            "1",
+            "--page-size",
+            "100",
+        ])
+        .output()
+        .await
+        .context("failed to invoke service-list")?;
+    if !output.status.success() {
+        bail!(
+            "service-list failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .context("failed to parse service-list JSON output")?;
+    let data = response.get("data").unwrap_or(&response);
+    find_service_sid(data, service_id).ok_or_else(|| {
+        anyhow::anyhow!("service-list returned no Service matching serviceId `{service_id}`")
+    })
+}
+
+/// Compute `useTrial` from authoritative Service state instead of a caller flag.
+/// Mirrors `task-create-prepare`'s subscription handling: resolve the Service via
+/// its `sid` and use `subscriptionInfo.supportTrial` as the trial decision.
+async fn resolve_use_trial(
+    provider_agent_id: &str,
+    service_id: &str,
+    user_agent_id: &str,
+) -> Result<bool> {
+    let sid = resolve_service_sid(provider_agent_id, service_id).await?;
+    let service = super::task_create_prepare::fetch_service_detail(user_agent_id, &sid).await?;
+    Ok(service
+        .get("subscriptionInfo")
+        .and_then(|info| info.get("supportTrial"))
+        .or_else(|| service.get("supportTrial"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false))
+}
+
 pub async fn handle_create_subscribe(
     client: &mut TaskApiClient,
     params: CreateSubscribeParams,
@@ -246,12 +345,21 @@ pub async fn handle_create_subscribe(
         return Ok(());
     }
 
+    // Resolve the trial decision from authoritative Service state (never a caller
+    // flag): service-list → sid → service/search detail → subscriptionInfo.supportTrial.
+    let use_trial = resolve_use_trial(
+        &params.provider_agent_id,
+        &params.service_id,
+        &user_agent_id,
+    )
+    .await?;
+
     let (account_id, address) = signing::resolve_wallet_by_agent_id(&user_agent_id).await?;
     let receipt = super::v2::execute_create_subscription(
         client,
         super::v2::CreateSubscriptionInput {
             service_id: &params.service_id,
-            use_trial: params.use_trial,
+            use_trial,
             service_params: &params.service_params,
             service_token_amount: &params.service_token_amount,
             service_token_address: &params.service_token_address,
@@ -409,7 +517,6 @@ mod tests {
             "create-subscribe",
             "--service-id",
             "svc_001",
-            "--use-trial",
             "--service-token-amount",
             "10",
             "--service-token-address",
@@ -426,7 +533,6 @@ mod tests {
         match cli.cmd {
             super::super::TaskCommand::CreateSubscribe {
                 service_id,
-                use_trial,
                 service_token_amount,
                 service_token_address,
                 auto_renew,
@@ -442,7 +548,6 @@ mod tests {
                 format,
             } => {
                 assert_eq!(service_id, "svc_001");
-                assert!(use_trial);
                 assert_eq!(service_token_amount, "10");
                 assert_eq!(service_token_address, "0x6776");
                 assert_eq!(auto_renew, "1");
@@ -521,11 +626,9 @@ mod tests {
         match cli.cmd {
             super::super::TaskCommand::CreateSubscribe {
                 provider_agent_id,
-                use_trial,
                 ..
             } => {
                 assert_eq!(provider_agent_id, "agent-99");
-                assert!(!use_trial);
             }
             _ => panic!("expected CreateSubscribe"),
         }
@@ -671,10 +774,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn find_service_sid_reads_id_from_service_list_wrapper_shape() {
+        // service-list wraps `data` as [{ agentInfo, list:[service…] }]; the sid
+        // we need is each row's numeric `id`, located by matching `serviceId`.
+        let data = serde_json::json!([{
+            "agentInfo": {"agentId": "9967"},
+            "list": [{
+                "id": 38259,
+                "serviceId": "1cbf0412-5570-4109-9dd6-cba39fca7de4",
+                "serviceName": "Trade kit",
+                "subscription": [{"fee": "0.1", "interval": "month"}],
+                "freeTrial": "72"
+            }],
+            "hasMore": false
+        }]);
+        assert_eq!(
+            super::find_service_sid(&data, "1cbf0412-5570-4109-9dd6-cba39fca7de4"),
+            Some("38259".to_string())
+        );
+        assert_eq!(super::find_service_sid(&data, "no-such-uuid"), None);
+    }
+
+    #[test]
+    fn find_service_sid_reads_id_from_flat_object_shape() {
+        let data = serde_json::json!({
+            "list": [{"id": "77", "serviceId": "svc-uuid"}],
+            "page": 1
+        });
+        assert_eq!(
+            super::find_service_sid(&data, "svc-uuid"),
+            Some("77".to_string())
+        );
+    }
+
     fn params_fixture(provider: Option<&str>) -> super::CreateSubscribeParams {
         super::CreateSubscribeParams {
             service_id: "svc".to_string(),
-            use_trial: false,
             service_params: String::new(),
             service_token_amount: "10".to_string(),
             service_token_address: "0xtok".to_string(),
@@ -767,7 +903,6 @@ mod tests {
     fn create_without_guide_has_no_execution_profile() {
         let params = CreateSubscribeParams {
             service_id: "svc_report_only".to_string(),
-            use_trial: false,
             service_params: String::new(),
             service_token_amount: "10".to_string(),
             service_token_address: "0x6776".to_string(),

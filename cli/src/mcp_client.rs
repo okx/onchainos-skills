@@ -50,7 +50,7 @@ pub struct McpTool {
 pub enum ToolCallOutcome {
     /// Non-402 response carrying the tool's JSON-RPC `result`.
     Free(Value),
-    /// HTTP 402 — the challenge header value + the raw response body.
+    /// A transport 402 or MCP v2 `PaymentRequired` tool result.
     Paid { header: String, body: String },
 }
 
@@ -238,8 +238,13 @@ pub struct McpClient {
 impl McpClient {
     /// Build a client for `url` with a bounded timeout.
     pub fn new(url: &str) -> Result<Self> {
+        Self::with_timeout(url, std::time::Duration::from_secs(MCP_TIMEOUT_SECS))
+    }
+
+    /// Build a client for `url` whose every request is bounded by `timeout`.
+    pub fn with_timeout(url: &str, timeout: std::time::Duration) -> Result<Self> {
         let http = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(MCP_TIMEOUT_SECS))
+            .timeout(timeout)
             .build()
             .map_err(|e| anyhow!("{TOKEN_ENDPOINT_UNREACHABLE}: {e}"))?;
         Ok(Self {
@@ -379,7 +384,37 @@ impl McpClient {
         }
         let envelope = parse_streamable_body(&body)?;
         let result = jsonrpc_result(&envelope)?;
+        if let Some(challenge) = Self::mcp_payment_required(&result) {
+            return Ok(ToolCallOutcome::Paid {
+                header: challenge,
+                body,
+            });
+        }
         Ok(ToolCallOutcome::Free(result))
+    }
+
+    /// Extract an x402 v2 MCP `PaymentRequired` object. The transport requires
+    /// `structuredContent`; the text form is retained solely as a compatibility
+    /// fallback for older MCP clients.
+    fn mcp_payment_required(result: &Value) -> Option<String> {
+        if result.get("isError").and_then(Value::as_bool) != Some(true) {
+            return None;
+        }
+        let structured = result.get("structuredContent").cloned().or_else(|| {
+            result
+                .get("content")
+                .and_then(Value::as_array)
+                .and_then(|content| content.first())
+                .and_then(|entry| entry.get("text"))
+                .and_then(Value::as_str)
+                .and_then(|text| serde_json::from_str::<Value>(text).ok())
+        })?;
+        (structured.get("x402Version").is_some()
+            && structured
+                .get("accepts")
+                .and_then(Value::as_array)
+                .is_some_and(|v| !v.is_empty()))
+        .then(|| structured.to_string())
     }
 
     /// Signed replay (id 4): replay the SAME `tools/call` with a TEE-signed
@@ -673,6 +708,27 @@ data: {\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"ok\":true}}\n\
             }
             other => panic!("2xx must map to Free, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn recognizes_mcp_v2_structured_payment_required() {
+        let result = json!({
+            "isError": true,
+            "structuredContent": {
+                "x402Version": 2,
+                "accepts": [{"scheme": "exact", "amount": "10000"}]
+            }
+        });
+        let challenge = McpClient::mcp_payment_required(&result).expect("v2 payment requirement");
+        assert_eq!(
+            serde_json::from_str::<Value>(&challenge).unwrap()["accepts"][0]["amount"],
+            "10000"
+        );
+    }
+
+    #[test]
+    fn ignores_non_payment_mcp_errors() {
+        assert!(McpClient::mcp_payment_required(&json!({"isError": true, "structuredContent": {}})).is_none());
     }
 
     #[tokio::test]

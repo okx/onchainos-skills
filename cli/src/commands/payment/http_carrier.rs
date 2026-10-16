@@ -34,6 +34,12 @@ fn carrier_for(name: &str, plan: &[ParamSpec], body_bearing: bool) -> ParamCarri
     }
 }
 
+/// Carrier `name` is sent on for `method`, exactly as [`build_typed_request`]
+/// places it. Shared with replay diagnostics so they cannot drift.
+pub(super) fn resolve_carrier(name: &str, plan: &[ParamSpec], method: &str) -> ParamCarrier {
+    carrier_for(name, plan, is_body_bearing(method))
+}
+
 /// Assemble a `reqwest::RequestBuilder` for `method url` placing each `(key,
 /// value)` param on its carrier (per `plan`, else the method default):
 /// - `path`   → substitute `{key}` placeholders in the URL;

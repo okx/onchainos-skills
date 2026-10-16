@@ -85,13 +85,15 @@ First collect and confirm [`serviceType`](service-contract.md#servicetype), then
 
 1. Collect the billing choice and price; derive [`fee`](service-contract.md#fee), [`subscription`](service-contract.md#subscription), and [`freeTrial`](service-contract.md#freetrial).
 2. Collect [`serviceName`](service-contract.md#servicename) and [`serviceDescription`](service-contract.md#servicedescription) together.
-3. Collect or explicitly skip [`serviceGuide`](service-contract.md#serviceguide).
+3. Monthly only: collect or skip [`serviceGuide`](service-contract.md#serviceguide).
 
 ###### A2MCP service order
 
-1. Collect [`fee`](service-contract.md#fee).
-2. Collect [`serviceName`](service-contract.md#servicename) and [`serviceDescription`](service-contract.md#servicedescription) together. Include the A2MCP field guide from the service contract so the user understands how to fill in each field.
-3. Collect and verify [`endpoint`](service-contract.md#endpoint), including its match with the request example.
+Follow [`a2mcp-service-definition.md`](a2mcp-service-definition.md).
+
+For `data.type:"mcp"`, collect only the endpoint and a probed tool. All fields
+**MUST** come from endpoint discovery and callability verification per the
+[`A2MCP fields` contract](service-contract.md#a2mcp-fields); **NEVER** accept manual values or edits.
 
 ###### Service collection completion
 
@@ -130,19 +132,16 @@ Please review the service information above. Reply `1` to confirm and create, or
 
 Rules:
 
-1. Render one row per confirmed service in collection order, numbered consecutively from 1. Keep all template columns.
+1. Render confirmed services in collection order, numbered consecutively from 1. Hide type-specific columns when inapplicable.
 2. Show `serviceName` and `serviceDescription` verbatim. Do not rewrite or translate them.
 3. Show `serviceType` only as `A2A` or `A2MCP`.
 4. Show a zero price as `Free`, without a currency or billing period. Otherwise, show `N USDT / call` or `N USDT / month`, based on the confirmed billing model.
-5. For A2A, use `—` for `endpoint`. Show `freeTrial` as `3 days` only for a confirmed 3-day subscription trial; otherwise use `—`. Show a non-blank `serviceGuide` verbatim with
-   necessary line breaks; otherwise use `—`.
-6. For A2MCP, preserve the complete HTTPS `endpoint` without truncation. Use `—` for `freeTrial` and `serviceGuide`.
-7. For every role, only the exact reply `1` to that role's final confirmation card may trigger the
-   single `agent create`.
-8. For ASP, a reply that specifies changes returns to service collection without creating the
-   identity. Apply the requested changes, revalidate all services, and render the updated final
-   confirmation card again.
-9. Do not skip final confirmation, reuse an earlier confirmation, or show bash.
+5. A2A NEVER renders `Endpoint`; show `freeTrial: "72"` as `3 days`, otherwise `—`; show non-blank `serviceGuide` verbatim, otherwise `—`.
+6. A2MCP preserves the complete HTTPS `endpoint` and NEVER renders `Free trial` or `Service Guide`.
+7. If any confirmed service is `A2MCP`, localize and append once: `Want to view method, inputSchema, or reqExample? Tell me which service.`
+8. For every role, only the exact reply `1` to that role's final confirmation card may trigger the single `agent create`.
+9. For ASP, a reply that specifies changes returns to service collection without creating the identity. Apply the requested changes, revalidate all services, and render the updated final confirmation card again.
+10. Do not skip final confirmation, reuse an earlier confirmation, or show bash.
 
 #### 6. Registration execution
 

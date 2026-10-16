@@ -6,6 +6,7 @@
 //! Layout:
 //! - `args`      — clap::Args for every subcommand
 //! - `models`    — serde data structures + constants
+//! - `mcp_tool_list` — MCP endpoint detection and tool discovery
 //! - `utils`     — stateless helpers (HTTP client, logging, parsing)
 //! - `signing`   — signing seed + Erc8004Payload + broadcast
 //! - `queries`   — read-side commands (get / search / service-list /
@@ -28,6 +29,7 @@ macro_rules! debug_log {
 }
 
 mod args;
+mod mcp_tool_list;
 mod models;
 mod mutations;
 mod queries;
@@ -44,6 +46,7 @@ pub use args::{
     ServiceListArgs, ServiceMatchArgs, TaskFeedbackArgs, UpdateArgs, UploadArgs, ValidateListingArgs,
     XmtpSignArgs,
 };
+pub use mcp_tool_list::{mcp_tool_list, McpToolListArgs};
 
 // Pure-local validator — hidden CLI entry point used by the skill during QA.
 pub use validate::validate_listing;

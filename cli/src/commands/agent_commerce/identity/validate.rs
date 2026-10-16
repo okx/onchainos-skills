@@ -8,7 +8,6 @@
 
 use anyhow::Result;
 use serde::Serialize;
-use serde_json::Value;
 
 use crate::commands::Context;
 
@@ -46,9 +45,9 @@ pub async fn validate_listing(args: ValidateListingArgs, _ctx: &Context) -> Resu
 // fine-grained internal `code` (U1/N1/S1/T1/P1/D1…) is kept for diagnostics and
 // tests; the user-facing string is `message`.
 mod fe {
-    pub const FE03: &str = "The Agent name doesn't meet the naming rules: it may contain a test marker, an ordinal suffix, or special symbols, or its length or bilingual format is invalid. Use a clean brand name instead: 2\u{2013}12 characters in Chinese or 3\u{2013}25 in English, with no test markers, ordinals, or special symbols; for a bilingual name, use the \"Chinese name \u{00B7} English name\" format. Then resubmit.";
+    pub const FE03: &str = "The Agent name doesn't meet the naming rules: it may contain a test marker, an ordinal suffix, or special symbols, or its length is invalid. Use a clean brand name instead: 2\u{2013}12 characters for a Chinese-only name or 3\u{2013}25 characters for any other name, with no test markers, ordinals, or special symbols. Then resubmit.";
     pub const FE05: &str = "The Agent description has an issue: it contains a URL or a test marker (e.g. \"(test)\", \"-pre\", or a trailing \"beta\"), exceeds 500 characters, or is empty. Remove any links and test markers, trim it to 500 characters or fewer, and make sure it's filled in. Then resubmit.";
-    pub const FE06: &str = "The service name doesn't meet the rules: its length is out of range, it duplicates the Agent name or another service name, or it contains pricing or a test marker. Keep every service name unique, 5\u{2013}30 characters long, and different from the Agent name; move any pricing to the fee field, remove test markers, then resubmit.";
+    pub const FE06: &str = "The service name doesn't meet the rules: its length is out of range, it duplicates the Agent name or another service name, or it contains pricing or a test marker. Keep every service name unique, with a display width of 5\u{2013}200 (CJK/full-width characters count as 2, Latin/half-width as 1), and different from the Agent name; move any pricing to the fee field, remove test markers, then resubmit.";
     /// FE-10 proper — the `serviceType` VALUE itself is neither A2A nor A2MCP (T1).
     pub const FE10: &str = "The service type must be exactly A2A or A2MCP; the current value is invalid. Select A2A or A2MCP from the menu, then resubmit.";
     /// U5 — the serviceType value is VALID, but the service name or description
@@ -91,19 +90,6 @@ mod fe {
     pub fn fe_price_zero(service_name: &str) -> String {
         format!(
             "The subscription price for \"{service_name}\" must be greater than 0. Please update the price and try again."
-        )
-    }
-    /// FE-EP-01 (EP1) — within-submission A2MCP endpoint collision. Unlike the
-    /// static rule-group constants, this copy names BOTH the offending service
-    /// and the one that first claimed the endpoint, so it is formatted at
-    /// finding-creation time (same pattern as `service_guide_too_long`).
-    pub fn fe_ep01(service_name: &str, conflicting_name: &str) -> String {
-        format!(
-            "The Endpoint for \"{}\" is already used by \"{}\". \
-             Please use a different Endpoint and try again. \
-             If you have any questions, contact the OKX.AI team \
-             via customer support in the bottom-right corner of okx.ai.",
-            service_name, conflicting_name,
         )
     }
     /// FE-21 (必填 / 长度) — SPLIT per sub-check, because the two are not
@@ -273,7 +259,6 @@ pub(crate) fn run_validation(
                             check_service(i, svc, name, &mut findings);
                         }
                         check_duplicate_service_names(&services, &mut findings);
-                        check_duplicate_endpoints(&services, &mut findings); // FE-EP-01
                     }
                     Err(()) => findings.push(Finding::block("service", "PARSE", fe::FE13)),
                 }
@@ -298,7 +283,7 @@ pub(crate) fn run_validation(
     ValidationResult { pass, findings }
 }
 
-// ─── Name rules (N1, N2, N3, N6, N8) + Universal U1 on the name ─────────────
+// ─── Name rules (N1, N2, N3, N8) + Universal U1 on the name ─────────────────
 
 fn check_name(name: &str, findings: &mut Vec<Finding>) {
     if name.is_empty() {
@@ -312,10 +297,9 @@ fn check_name(name: &str, findings: &mut Vec<Finding>) {
     if has_test_marker(name) {
         findings.push(Finding::block("name", "U1", fe::FE03));
     }
-    // N1 length: pure-CJK → 2..=12 chars; mixed (CJK + Latin, e.g. the
-    // N6-encouraged "CJK · English" form) and Latin → 3..=25 chars. Only a
-    // purely-CJK name uses the dense 12-char bound, so a bilingual name is not
-    // wrongly rejected for length by the CJK cap.
+    // N1 length: pure-CJK → 2..=12 chars; mixed CJK + Latin and Latin-only →
+    // 3..=25 chars. Only a purely-CJK name uses the dense 12-char bound, so a
+    // mixed-language name is not wrongly rejected for length by the CJK cap.
     let char_count = name.chars().count();
     if contains_cjk(name) && !contains_latin_letter(name) {
         if !(2..=12).contains(&char_count) {
@@ -333,11 +317,6 @@ fn check_name(name: &str, findings: &mut Vec<Finding>) {
     // N3 ordinal suffix.
     if has_ordinal_suffix(name) {
         findings.push(Finding::block("name", "N3", fe::FE03));
-    }
-
-    // N6 bilingual separator.
-    if contains_cjk(name) && contains_latin_letter(name) && !name.contains(" \u{00B7} ") {
-        findings.push(Finding::block("name", "N6", fe::FE03));
     }
 
     // N8 decorative symbols.
@@ -373,7 +352,6 @@ fn check_service(index: usize, svc: &AgentService, agent_name: &str, findings: &
     let stype = svc.service_type.to_ascii_uppercase();
     let is_a2mcp = stype == "A2MCP";
     let is_a2a = stype == "A2A";
-
     // ── ServiceType (T1) ──────────────────────────────────────────────────
     if !is_a2mcp && !is_a2a {
         findings.push(Finding::block(f("servicetype"), "T1", fe::FE10));
@@ -427,8 +405,8 @@ fn check_service(index: usize, svc: &AgentService, agent_name: &str, findings: &
 
     // ── ServiceName (S1/S3/S4/S6) ─────────────────────────────────────────
     if !svc.service_name.is_empty() {
-        let name_chars = svc.service_name.chars().count();
-        if !(5..=30).contains(&name_chars) {
+        let name_width = display_width(&svc.service_name);
+        if !(5..=200).contains(&name_width) {
             findings.push(Finding::block(f("name"), "S1", fe::FE06));
         }
         if !agent_name.is_empty()
@@ -491,60 +469,6 @@ fn check_duplicate_service_names(services: &[AgentService], findings: &mut Vec<F
             ));
         } else {
             seen_names.push(service_name);
-        }
-    }
-}
-
-/// EP1: A2MCP endpoints within one ASP submission must be unique. Mirrors
-/// `check_duplicate_service_names`: case-insensitive exact match on the
-/// already-trimmed endpoint string (no trailing-slash / query / port
-/// normalization — see spec §1.4). Services with `operation == Delete` are
-/// being removed, and A2A / empty-endpoint services have no endpoint, so both
-/// are skipped. Self-exclusion: two entries sharing the SAME non-empty `id`
-/// are the same service being edited, not a collision (spec §1.5). Does NOT
-/// short-circuit — every later duplicate gets its own finding (spec §2.4).
-fn check_duplicate_endpoints(services: &[AgentService], findings: &mut Vec<Finding>) {
-    // Each entry: (trimmed endpoint, first-claiming index, Option<non-empty id>).
-    let mut seen: Vec<(&str, usize, Option<String>)> = Vec::new();
-
-    for (index, service) in services.iter().enumerate() {
-        // A delete-op service is being removed — it never claims an endpoint.
-        if service.operation == Some(ServiceOperation::Delete) {
-            continue;
-        }
-        // A2A services (and any empty endpoint) do not participate.
-        let endpoint = match service.endpoint.as_deref().map(str::trim) {
-            Some(ep) if !ep.is_empty() => ep,
-            _ => continue,
-        };
-
-        // Self-exclusion key: a non-empty `id` identifies an existing service
-        // being edited; the same id sharing an endpoint is itself, not a clash.
-        let self_id = service.id.as_ref().and_then(|id| match id {
-            Value::String(id) if !id.is_empty() => Some(id.clone()),
-            Value::Number(id) => Some(id.to_string()),
-            _ => None,
-        });
-
-        let conflict = seen.iter().find(|(seen_ep, _, seen_id)| {
-            seen_ep.eq_ignore_ascii_case(endpoint)
-                && !(self_id.is_some() && seen_id.as_ref() == self_id.as_ref())
-        });
-
-        if let Some((_, first_idx, _)) = conflict {
-            let conflicting_name = &services[*first_idx].service_name;
-            findings.push(Finding::block(
-                format!("service[{index}].endpoint"),
-                "EP1",
-                &fe::fe_ep01(&service.service_name, conflicting_name),
-            ));
-        } else if !seen
-            .iter()
-            .any(|(seen_ep, _, _)| seen_ep.eq_ignore_ascii_case(endpoint))
-        {
-            // Record only the FIRST occurrence of an endpoint so the conflict
-            // message always points back to the original claimant.
-            seen.push((endpoint, index, self_id));
         }
     }
 }

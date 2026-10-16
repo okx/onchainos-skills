@@ -107,7 +107,7 @@ The "Push Data Fields" tables below describe the contents of each object inside 
 
 ### Channels
 
-#### `dex-market-memepump-new-token-openapi` — New Token Listing
+#### `dex-market-memepump-new-token-openapi`
 
 Real-time push of newly launched meme tokens on supported launchpads (Pump.fun, Bonk, Believe, etc.).
 Delivers the full token snapshot on first appearance.
@@ -211,7 +211,7 @@ Subscribe arg:
 
 ---
 
-#### `dex-market-memepump-update-metrics-openapi` — Token Metrics Update
+#### `dex-market-memepump-update-metrics-openapi`
 
 Real-time incremental updates for meme token metrics (market data, holder stats, social).
 Pushed when any metric changes for tracked tokens on the subscribed chain.

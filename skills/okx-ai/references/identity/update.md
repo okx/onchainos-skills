@@ -28,9 +28,10 @@ Actions:
 1. Collect only identity fields or services explicitly changed by the user.
 2. For each new service, collect [`serviceType`](service-contract.md#servicetype), then follow the matching order strictly:
    - **A2A:** collect the billing choice and price to derive [`fee`](service-contract.md#fee), [`subscription`](service-contract.md#subscription), and [`freeTrial`](service-contract.md#freetrial) → collect [`serviceName`](service-contract.md#servicename) and [`serviceDescription`](service-contract.md#servicedescription) together → collect or explicitly skip [`serviceGuide`](service-contract.md#serviceguide).
-   - **A2MCP:** collect [`fee`](service-contract.md#fee) → collect [`serviceName`](service-contract.md#servicename) and [`serviceDescription`](service-contract.md#servicedescription) together → collect and verify [`endpoint`](service-contract.md#endpoint).
+   - **A2MCP:** follow [`a2mcp-service-definition.md`](a2mcp-service-definition.md).
 3. After each new service, ask **1. Add another service / 2. Done**. On 1, repeat from `serviceType`; on 2, continue collecting other explicit changes or proceed to [§3. Service delta](#3-service-delta).
-4. For existing services, collect only the requested updates or deletion intent, then continue to [§3. Service delta](#3-service-delta).
+4. For existing services, collect only requested updates or deletion intent, then continue to
+   [§3](#3-service-delta). For A2MCP, follow [its update flow](#update-an-existing-a2mcp-service).
 
 Rules:
 
@@ -63,9 +64,29 @@ Rules:
 - Preserve `freeTrial` unless the user explicitly changes it. On explicit change, `"72"` enables the trial and omission disables it; never send `""` or `"0"`.
 - Preserve a fetched non-blank `serviceGuide` unless explicitly changed. A missing/blank guide need not be filled.
 
-##### A2MCP service update
+#### Update an Existing A2MCP Service
 
-- Preserve a fetched non-blank `serviceGuide` so unrelated edits do not erase legacy data.
+##### Identify the Existing Service and Its Type
+
+Retain the selected service's `id`. **MUST** branch only on stored `reqType`:
+`"MCP"` uses the MCP flow; `"HTTP"` uses the HTTP flow.
+
+##### Update a Service Backed by an MCP Endpoint
+
+**NEVER** accept user-supplied service fields. **MUST** refresh through
+[`a2mcp-service-definition.md`](a2mcp-service-definition.md) using the stored endpoint and
+`toolName`. Stop if the tool is missing or the refreshed service is unchanged.
+
+The endpoint and `toolName` **MUST** remain unchanged; every MCP service field
+**MUST** come from that probe and callability check. **NEVER** accept stale
+values; **MUST** stop on incomplete probe data.
+
+##### Update a Service Backed by an HTTP Endpoint
+
+**NEVER** accept manual `fee`; use validation fee. 
+**NEVER** probe the endpoint to derive service fields. Collect [request parameters](a2mcp-service-definition.md#http-request-parameters), then complete
+[callability](a2mcp-service-definition.md#3-verify-callability) and
+[retry](a2mcp-service-definition.md#4-resolve-a-failed-callability-check).
 
 #### 4. Validation
 
@@ -84,7 +105,8 @@ Actions:
 
 1. Show one final diff with each changed field's current and new value.
 2. Display service values according to [`output-templates.md` §Service value display](output-templates.md#service-value-display).
-3. Obtain fresh explicit confirmation.
+3. If the diff includes `A2MCP`, localize and append once: `Want to view method, inputSchema, or reqExample? Tell me which service.`
+4. Obtain fresh explicit confirmation.
 
 Rules:
 

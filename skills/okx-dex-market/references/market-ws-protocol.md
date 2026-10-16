@@ -107,7 +107,7 @@ The "Push Data Fields" tables below describe the contents of each object inside 
 
 ### Channels
 
-#### `price` — Token Price
+#### `price`
 
 Retrieve the latest price of a token. Data is pushed whenever there is an update.
 
@@ -149,7 +149,7 @@ Subscribe arg:
 
 ---
 
-#### `dex-token-candle{period}` — Candlestick
+#### `dex-token-candle{period}`
 
 Retrieve candlestick (K-line) data for a token. Maximum push frequency: once per second.
 
