@@ -160,6 +160,74 @@ pub fn job_completed_escrow_user_notify(
     )
 }
 
+// ── Event::JobSubmitted — User acceptance decision card (FR-1) ─────
+
+/// Shared skeleton for the User acceptance decision card (text and file
+/// share everything except the one type-specific data line). `data_line` is
+/// the type-specific line (`Deliverable: <deliverableText>` / `Local file
+/// path: <localPath>`); `review_deadline` renders the `Review deadline:`
+/// line only when a valid absolute value resolved (FR-2-AC-4) — the whole
+/// line is omitted, never an empty slot, when `None`.
+fn deliverable_review_user_prompt(
+    header: &str,
+    job_id: &str,
+    data_line: &str,
+    review_deadline: Option<&str>,
+) -> String {
+    let mut out = format!(
+        "{header}\n\n\
+         Job ID: {job_id}\n\
+         {data_line}\n"
+    );
+    if let Some(value) = review_deadline {
+        out.push_str(&format!("Review deadline: {value}\n"));
+    }
+    out.push_str(
+        "Job status: Submitted\n\n\
+         Select one:\n\
+         A. Accept the deliverable\n\
+         B. Reject the deliverable and provide a reason",
+    );
+    out
+}
+
+/// User acceptance decision card — text deliverable (FR-1). `job_name` and
+/// `job_id` are embedded directly by Rust (controlled values); `<deliverableText>`
+/// stays a literal placeholder the agent fills verbatim from the Step-2 data
+/// block. No `Payment:` line, no `deliverableUrl`, no `Saved at:`/save-path.
+pub fn deliverable_review_text_user_prompt(
+    job_name: &str,
+    job_id: &str,
+    review_deadline: Option<&str>,
+) -> String {
+    deliverable_review_user_prompt(
+        &format!(
+            "[Deliverable Awaiting Review] The ASP has submitted a text deliverable for {job_name}. Please complete your review by the deadline. If you do not review the deliverable in time, it will be accepted automatically and payment will be released to the ASP. This action cannot be reversed."
+        ),
+        job_id,
+        "Deliverable: <deliverableText>",
+        review_deadline,
+    )
+}
+
+/// User acceptance decision card — file deliverable (FR-1). `<localPath>`
+/// stays a literal placeholder the agent fills verbatim (full absolute path)
+/// from the Step-2 data block. No `Payment:` line, no ASP notes, no URL.
+pub fn deliverable_review_file_user_prompt(
+    job_name: &str,
+    job_id: &str,
+    review_deadline: Option<&str>,
+) -> String {
+    deliverable_review_user_prompt(
+        &format!(
+            "[Deliverable Awaiting Review] The ASP has submitted a file deliverable for {job_name}. The file has been downloaded locally. Please complete your review by the deadline. If you do not review the deliverable in time, it will be accepted automatically and payment will be released to the ASP. This action cannot be reversed."
+        ),
+        job_id,
+        "Local file path: <localPath>",
+        review_deadline,
+    )
+}
+
 // ── Event::DisputeResolved ─────────────────────────────────────────
 
 /// Per-evaluator verdict rationales block shared by both `DisputeResolved` outcomes.
@@ -1203,6 +1271,60 @@ mod tests {
             ),
             "[Refund Request Processed] The ASP did not respond to the refund request for One-off analysis by the deadline. No charges were incurred, so no refund is required.\n\nJob ID: job-2\nASP response deadline: 2023-11-14 22:13 UTC\nJob status: Failed"
         );
+    }
+
+    // ── FR-1: deliverable_review_*_user_prompt (acceptance decision card) ──
+
+    #[test]
+    fn deliverable_review_text_user_prompt_with_deadline_matches_spec() {
+        assert_eq!(
+            deliverable_review_text_user_prompt(
+                "Audit Job",
+                "job-123",
+                Some("2026-01-02 03:04 (UTC+08:00)"),
+            ),
+            "[Deliverable Awaiting Review] The ASP has submitted a text deliverable for Audit Job. Please complete your review by the deadline. If you do not review the deliverable in time, it will be accepted automatically and payment will be released to the ASP. This action cannot be reversed.\n\nJob ID: job-123\nDeliverable: <deliverableText>\nReview deadline: 2026-01-02 03:04 (UTC+08:00)\nJob status: Submitted\n\nSelect one:\nA. Accept the deliverable\nB. Reject the deliverable and provide a reason"
+        );
+    }
+
+    #[test]
+    fn deliverable_review_text_user_prompt_without_deadline_omits_the_whole_line() {
+        let out = deliverable_review_text_user_prompt("Audit Job", "job-123", None);
+        assert_eq!(
+            out,
+            "[Deliverable Awaiting Review] The ASP has submitted a text deliverable for Audit Job. Please complete your review by the deadline. If you do not review the deliverable in time, it will be accepted automatically and payment will be released to the ASP. This action cannot be reversed.\n\nJob ID: job-123\nDeliverable: <deliverableText>\nJob status: Submitted\n\nSelect one:\nA. Accept the deliverable\nB. Reject the deliverable and provide a reason"
+        );
+        assert!(!out.contains("Review deadline"), "{out}");
+        assert!(!out.contains("Saved at"), "{out}");
+        assert!(!out.contains("Payment"), "{out}");
+        assert!(!out.contains("deliverableUrl"), "{out}");
+        assert!(!out.contains("http"), "{out}");
+    }
+
+    #[test]
+    fn deliverable_review_file_user_prompt_with_deadline_matches_spec() {
+        assert_eq!(
+            deliverable_review_file_user_prompt(
+                "Audit Job",
+                "job-123",
+                Some("2026-01-02 03:04 (UTC+08:00)"),
+            ),
+            "[Deliverable Awaiting Review] The ASP has submitted a file deliverable for Audit Job. The file has been downloaded locally. Please complete your review by the deadline. If you do not review the deliverable in time, it will be accepted automatically and payment will be released to the ASP. This action cannot be reversed.\n\nJob ID: job-123\nLocal file path: <localPath>\nReview deadline: 2026-01-02 03:04 (UTC+08:00)\nJob status: Submitted\n\nSelect one:\nA. Accept the deliverable\nB. Reject the deliverable and provide a reason"
+        );
+    }
+
+    #[test]
+    fn deliverable_review_file_user_prompt_without_deadline_has_no_asp_notes_or_url() {
+        let out = deliverable_review_file_user_prompt("Audit Job", "job-123", None);
+        assert_eq!(
+            out,
+            "[Deliverable Awaiting Review] The ASP has submitted a file deliverable for Audit Job. The file has been downloaded locally. Please complete your review by the deadline. If you do not review the deliverable in time, it will be accepted automatically and payment will be released to the ASP. This action cannot be reversed.\n\nJob ID: job-123\nLocal file path: <localPath>\nJob status: Submitted\n\nSelect one:\nA. Accept the deliverable\nB. Reject the deliverable and provide a reason"
+        );
+        assert!(!out.contains("Review deadline"), "{out}");
+        assert!(!out.contains("Payment"), "{out}");
+        assert!(!out.contains("Saved at"), "{out}");
+        assert!(!out.contains("deliverableUrl"), "{out}");
+        assert!(!out.contains("http"), "{out}");
     }
 
     // ── T2: job_accepted_escrow_user_notify zero-amount → `Amount: Free` ──

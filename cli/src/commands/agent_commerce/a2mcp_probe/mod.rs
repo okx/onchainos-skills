@@ -133,6 +133,8 @@ struct RoutingPayload {
     schema_version: u64,
     service_snapshot: Value,
     #[serde(default)]
+    agent_info: Option<Value>,
+    #[serde(default)]
     request_spec: Option<RequestSpec>,
 }
 

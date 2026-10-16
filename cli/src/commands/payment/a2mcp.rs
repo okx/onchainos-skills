@@ -40,6 +40,8 @@ pub enum A2mcpPaymentSource {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct A2mcpFrozenRequestV1 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sale_context: Option<super::sale_report::SaleContext>,
     endpoint: String,
     method: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -100,6 +102,7 @@ impl A2mcpFrozenRequestV1 {
             }
         }
         Ok(Self {
+            sale_context: None,
             endpoint,
             method,
             mcp_tool: None,
@@ -142,8 +145,17 @@ impl A2mcpFrozenRequestV1 {
         self.resource.as_ref()
     }
 
+    pub fn with_sale_context(mut self, context: super::sale_report::SaleContext) -> Self {
+        self.sale_context = Some(context);
+        self
+    }
+
+    pub fn sale_context(&self) -> Option<&super::sale_report::SaleContext> {
+        self.sale_context.as_ref()
+    }
+
     fn validate_consistency(&self) -> Result<()> {
-        let rebuilt = if let Some(tool) = &self.mcp_tool {
+        let mut rebuilt = if let Some(tool) = &self.mcp_tool {
             Self::new_mcp(
                 self.endpoint.clone(),
                 tool.clone(),
@@ -159,6 +171,10 @@ impl A2mcpFrozenRequestV1 {
                 self.resource.clone(),
             )?
         };
+        if let Some(context) = &self.sale_context {
+            context.validate()?;
+            rebuilt.sale_context = Some(context.clone());
+        }
         if rebuilt != *self {
             bail!("{ERR_INVALID_INTENT}: frozen request is inconsistent");
         }

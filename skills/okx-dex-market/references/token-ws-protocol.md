@@ -92,7 +92,7 @@ Wait for this ACK before sending subscribe messages. Recommended timeout: 10 sec
 
 ### Channels
 
-#### `price-info` — Token Price Info (Detailed)
+#### `price-info`
 
 Retrieve detailed price data including market cap, price changes, volume, liquidity, and holder count.
 Maximum push frequency: once per second.
@@ -165,7 +165,7 @@ Subscribe arg:
 
 ---
 
-#### `trades` — Recent Trades
+#### `trades`
 
 Retrieve recent trade data. Data is pushed whenever there is a trade.
 

@@ -427,7 +427,7 @@ Task is at a terminal state — run the cleanup command (handles pending-decisio
         Event::DeliverableReceived => {
             super::flow_lifecycle::deliverable_received_cli(&ctx, message).await
         }
-        Event::JobSubmitted => super::flow_lifecycle::job_submitted(&ctx),
+        Event::JobSubmitted => super::flow_lifecycle::job_submitted(&ctx, message),
         Event::JobRejected => super::flow_lifecycle::job_rejected(&ctx),
         Event::JobDisputed => super::flow_lifecycle::job_disputed(&ctx),
         Event::Other(ref s) if s == "approve_review" => {

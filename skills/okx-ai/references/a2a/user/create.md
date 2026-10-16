@@ -1,12 +1,16 @@
 # One-Time Task Creation
 
+## Module Description
+
 Enter only from `create-prepare.md` with the latest bound Service payload.
 `decision=ready` does not authorize creation. Subscription Services route to
 `subscription-create.md` instead, before this file's input-collection rules
 are applied. In particular, never apply this file's 20–2000-character
 Description requirement to a subscription.
 
-## Collect inputs
+## Flow
+
+### Collect inputs
 
 If `payload.serviceGuide` is non-blank, complete and independently confirm
 `create-guide.md` first. Then parse only `payload.serviceDescription` for
@@ -24,7 +28,7 @@ required values together; re-ask only missing or invalid values. Produce:
 If supplementary files are implied but absent, ask once whether to add them now
 or after creation. Do not show a second standalone parameter confirmation.
 
-## Final confirmation
+### Final confirmation
 
 scene: One-time job creation confirmation
 
@@ -56,7 +60,7 @@ display rules:
 9. Guide only the `Confirm` action. Do not add a `Cancel` action or cancellation
    instruction to the confirmation copy.
 
-## Communication check
+### Communication check
 
 After confirmation, run once:
 
@@ -69,7 +73,7 @@ hint/note and ask the User to choose Repair communication or Continue creation.
 Repair uses `../../shared/chat-comm-init.md`. Reuse the confirmed task parameters;
 do not repeat this check or the confirmation afterward.
 
-## Create once
+### Create once
 
 Use `payload.serviceId` for `--service-id`; `sid` is never the Service UUID.
 

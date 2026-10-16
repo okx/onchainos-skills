@@ -20,6 +20,14 @@ use crate::commands::agentic_wallet::common::ERR_NOT_LOGGED_IN;
 use crate::commands::payment::addr::parse_recipient_addr;
 use crate::{keyring_store, wallet_api::WalletApiClient, wallet_store};
 
+macro_rules! payment_debug_log {
+    ($($arg:tt)*) => {
+        if cfg!(feature = "debug-log") {
+            eprintln!($($arg)*);
+        }
+    };
+}
+
 /// Which pricing tier to sign for. The server's config response groups paths
 /// into `BASIC` / `PREMIUM` tiers, and each accepts entry's `amount` is an
 /// object keyed by these tier names. The caller decides which tier to sign
@@ -1578,6 +1586,7 @@ async fn pay_a2mcp_intent(payment_id: &str, owner: &str) -> Result<Value> {
 
     let mut intent = super::a2mcp::read_a2mcp_payment_intent(payment_id, owner, now_unix())?;
     intent.begin_signing(now_unix())?;
+    payment_debug_log!("[payment][a2mcp] payment_id={payment_id} stage=signing_start");
     let accepts = json!([intent.selected_accept().raw().clone()]);
 
     let (proof, entry) = loop {
@@ -1592,11 +1601,13 @@ async fn pay_a2mcp_intent(payment_id: &str, owner: &str) -> Result<Value> {
                 continue;
             }
             Err(error) => {
+                payment_debug_log!("[payment][a2mcp] payment_id={payment_id} stage=signing_failed");
                 intent.mark_failed_terminal()?;
                 return Err(error);
             }
         }
     };
+    payment_debug_log!("[payment][a2mcp] payment_id={payment_id} stage=signature_complete");
     intent.mark_proof_generated()?;
 
     let header = match intent.frozen_request().resource() {
@@ -1616,10 +1627,35 @@ async fn pay_a2mcp_intent(payment_id: &str, owner: &str) -> Result<Value> {
     };
     intent.mark_replaying()?;
 
+    let frozen = intent.frozen_request();
+    let endpoint = safe_endpoint_label(frozen.endpoint());
+    let request_summary = if let Some(tool) = frozen.mcp_tool() {
+        format!(
+            "transport=mcp method=POST endpoint={endpoint} tool={tool} param_keys={}",
+            json_param_summary(frozen.typed_params())
+        )
+    } else {
+        format!(
+            "transport=http method={} endpoint={} param_keys={}",
+            frozen.method(),
+            endpoint,
+            typed_param_summary(frozen.typed_params(), frozen.param_plan(), frozen.method())
+        )
+    };
+    payment_debug_log!(
+        "[payment][a2mcp] payment_id={payment_id} stage=replay_start header_name={header_name} {request_summary}"
+    );
+
     // There is exactly one signed Endpoint replay. No automatic retry is
     // permitted after proof generation, including transport failures.
     let (status, tx_hash, result, error, decoded_receipt) =
         replay_a2mcp(&intent, header_name, &header_value).await;
+    let error = error.map(|error| format!("request=({request_summary}); {error}"));
+    payment_debug_log!(
+        "[payment][a2mcp] payment_id={payment_id} stage=replay_complete status={status} tx_hash_present={} receipt_present={}",
+        tx_hash.is_some(),
+        decoded_receipt.is_some()
+    );
     match status.as_str() {
         "success" => intent.mark_success()?,
         "pending" => intent.mark_pending_terminal()?,
@@ -1632,6 +1668,12 @@ async fn pay_a2mcp_intent(payment_id: &str, owner: &str) -> Result<Value> {
             | A2mcpExecutionState::FailedTerminal
     ));
 
+    if status == "success" {
+        if let Some(context) = intent.frozen_request().sale_context() {
+            super::sale_report::record_success(context, owner);
+        }
+    }
+
     let out = PayResult {
         ok: status == "success",
         payment_id: payment_id.to_string(),
@@ -1643,6 +1685,128 @@ async fn pay_a2mcp_intent(payment_id: &str, owner: &str) -> Result<Value> {
         decoded_receipt,
     };
     serde_json::to_value(out).map_err(Into::into)
+}
+
+fn safe_endpoint_label(endpoint: &str) -> String {
+    match url::Url::parse(endpoint) {
+        Ok(mut url) => {
+            url.set_query(None);
+            url.set_fragment(None);
+            url.set_username("").ok();
+            url.set_password(None).ok();
+            url.to_string()
+        }
+        Err(_) => "<invalid-endpoint>".to_string(),
+    }
+}
+
+/// JSON type name for replay diagnostics. Only names and types are reported;
+/// parameter values never reach the diagnostic text.
+fn json_kind(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(number) if number.is_i64() || number.is_u64() => "integer",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+fn json_param_summary(params: &serde_json::Map<String, Value>) -> String {
+    let summary: serde_json::Map<String, Value> = params
+        .iter()
+        .map(|(name, value)| (name.clone(), Value::String(json_kind(value).to_string())))
+        .collect();
+    serde_json::to_string(&summary).unwrap_or_else(|_| "{}".to_string())
+}
+
+fn typed_param_summary(
+    params: &serde_json::Map<String, Value>,
+    plan: &[ParamSpec],
+    method: &str,
+) -> String {
+    let summary: serde_json::Map<String, Value> = params
+        .iter()
+        .map(|(name, value)| {
+            // Same carrier resolution the replay request is built with.
+            let carrier = match super::http_carrier::resolve_carrier(name, plan, method) {
+                super::state::ParamCarrier::Query => "query",
+                super::state::ParamCarrier::Body => "body",
+                super::state::ParamCarrier::Header => "header",
+                super::state::ParamCarrier::Path => "path",
+            };
+            (
+                name.clone(),
+                json!({ "type": json_kind(value), "carrier": carrier }),
+            )
+        })
+        .collect();
+    serde_json::to_string(&summary).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Replace every URL in `text` with its [`safe_endpoint_label`] form, so a
+/// diagnostic never carries query values, credentials, or fragments. This also
+/// covers URLs that reqwest normalized and that no longer match the endpoint
+/// string byte-for-byte.
+fn redact_urls(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = ["http://", "https://"]
+        .iter()
+        .filter_map(|scheme| rest.find(scheme))
+        .min()
+    {
+        out.push_str(&rest[..start]);
+        let tail = &rest[start..];
+        let end = tail
+            .find(|c: char| c.is_whitespace() || matches!(c, ')' | '"' | '\'' | '>'))
+            .unwrap_or(tail.len());
+        out.push_str(&safe_endpoint_label(&tail[..end]));
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Diagnostic for a reqwest failure on the signed HTTP replay. reqwest's own
+/// message embeds the request URL, which carries substituted path and query
+/// parameter values, so the URL is dropped; the caller's request summary names
+/// the endpoint instead.
+fn replay_error(stage: &str, error: reqwest::Error, endpoint: &str) -> String {
+    let error = error.without_url();
+    let mut detail = error.to_string();
+    let mut source = std::error::Error::source(&error);
+    while let Some(cause) = source {
+        let cause_text = cause.to_string();
+        if !cause_text.is_empty() && !detail.contains(&cause_text) {
+            detail.push_str(": ");
+            detail.push_str(&cause_text);
+        }
+        source = cause.source();
+    }
+    let detail = redact_urls(&detail);
+    payment_debug_log!(
+        "[payment][a2mcp] stage={stage} endpoint={} error={detail}",
+        safe_endpoint_label(endpoint)
+    );
+    format!("{stage}: {detail}")
+}
+
+fn replay_anyhow_error(stage: &str, error: &anyhow::Error, endpoint: &str) -> String {
+    let detail = redact_urls(
+        &error
+            .chain()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(": "),
+    );
+    payment_debug_log!(
+        "[payment][a2mcp] stage={stage} endpoint={} error={detail}",
+        safe_endpoint_label(endpoint)
+    );
+    format!("{stage}: {detail}")
 }
 
 fn is_retryable_a2mcp_signing_authorization_error(error: &anyhow::Error) -> bool {
@@ -1688,6 +1852,11 @@ async fn replay_a2mcp(
     }
 }
 
+/// Upper bound on waiting for the A2MCP Endpoint to answer the signed replay.
+/// For MCP it covers `initialize` and `tools/call` together. Signing happens
+/// before the replay and is not included.
+const A2MCP_REPLAY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+
 #[allow(clippy::type_complexity)]
 async fn replay_a2mcp_mcp(
     url: &str,
@@ -1696,28 +1865,86 @@ async fn replay_a2mcp_mcp(
     header_name: &str,
     header_value: &str,
 ) -> (String, Option<String>, Value, Option<String>, Option<Value>) {
+    replay_a2mcp_mcp_within(
+        url,
+        tool,
+        arguments,
+        header_name,
+        header_value,
+        A2MCP_REPLAY_TIMEOUT,
+        A2MCP_REPLAY_TIMEOUT,
+    )
+    .await
+}
+
+/// `request_timeout` bounds each HTTP request; `total_timeout` bounds the
+/// whole `initialize` + `tools/call` exchange.
+#[allow(clippy::type_complexity)]
+async fn replay_a2mcp_mcp_within(
+    url: &str,
+    tool: &str,
+    arguments: &serde_json::Map<String, Value>,
+    header_name: &str,
+    header_value: &str,
+    request_timeout: std::time::Duration,
+    total_timeout: std::time::Duration,
+) -> (String, Option<String>, Value, Option<String>, Option<Value>) {
     use crate::mcp_client::{McpClient, McpReplay};
 
-    let mut client = match McpClient::new(url) {
+    let mut client = match McpClient::with_timeout(url, request_timeout) {
         Ok(client) => client,
-        Err(error) => return failed_replay(error.to_string()),
+        Err(error) => {
+            return failed_replay(replay_anyhow_error("mcp_client_build_failed", &error, url))
+        }
     };
-    if let Err(error) = client.initialize().await {
-        return failed_replay(error.to_string());
-    }
     let replay = McpReplay {
         session_id: None,
         tool: tool.to_string(),
         arguments: Value::Object(arguments.clone()),
     };
-    let (status_code, payment_response, result) = match client
-        .call_tool_signed(&replay, header_name, header_value)
-        .await
-    {
-        Ok(replay) => replay,
-        Err(error) => return failed_replay(error.to_string()),
+    let exchange = async {
+        client
+            .initialize()
+            .await
+            .map_err(|error| replay_anyhow_error("mcp_initialize_failed", &error, url))?;
+        client
+            .call_tool_signed(&replay, header_name, header_value)
+            .await
+            .map_err(|error| replay_anyhow_error("mcp_tools_call_failed", &error, url))
     };
-    map_replay_parts(status_code, payment_response, result)
+    let (status_code, payment_response, result) =
+        match tokio::time::timeout(total_timeout, exchange).await {
+            Ok(Ok(parts)) => parts,
+            Ok(Err(detail)) => return failed_replay(detail),
+            Err(_) => {
+                return failed_replay(format!(
+                    "mcp_request_timeout: no response within {total_timeout:?}"
+                ))
+            }
+        };
+    payment_debug_log!(
+        "[payment][a2mcp] stage=mcp_response endpoint={} http_status={} payment_response_present={}",
+        safe_endpoint_label(url),
+        status_code,
+        payment_response.is_some()
+    );
+    map_a2mcp_mcp_replay(status_code, payment_response, result)
+}
+
+#[allow(clippy::type_complexity)]
+fn map_a2mcp_mcp_replay(
+    status_code: u16,
+    payment_response: Option<String>,
+    result: Value,
+) -> (String, Option<String>, Value, Option<String>, Option<Value>) {
+    let tool_failed = result.get("isError").and_then(Value::as_bool) == Some(true)
+        || (result.get("jsonrpc").is_some() && result.get("error").is_some());
+    let mut outcome = map_replay_parts(status_code, payment_response, result);
+    if (200..300).contains(&status_code) && tool_failed {
+        outcome.0 = "failed".into();
+        outcome.3 = Some("mcp_tool_failed: signed tool call returned an error".into());
+    }
+    outcome
 }
 
 /// Sign (TEE) → assemble header → replay to the merchant → decode receipt.
@@ -1798,8 +2025,31 @@ async fn replay_a2mcp_merchant(
     header_name: &str,
     header_value: &str,
 ) -> (String, Option<String>, Value, Option<String>, Option<Value>) {
+    replay_a2mcp_merchant_within(
+        url,
+        method,
+        plan,
+        typed_params,
+        header_name,
+        header_value,
+        A2MCP_REPLAY_TIMEOUT,
+    )
+    .await
+}
+
+#[allow(clippy::type_complexity)]
+async fn replay_a2mcp_merchant_within(
+    url: &str,
+    method: &str,
+    plan: &[ParamSpec],
+    typed_params: &serde_json::Map<String, Value>,
+    header_name: &str,
+    header_value: &str,
+    timeout: std::time::Duration,
+) -> (String, Option<String>, Value, Option<String>, Option<Value>) {
+    let replay_started = std::time::Instant::now();
     let client = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(timeout)
         // A signed payment replay is a single request to the frozen Endpoint.
         // Following 3xx could both violate the one-replay contract and forward
         // PAYMENT-SIGNATURE to a different host.
@@ -1807,17 +2057,37 @@ async fn replay_a2mcp_merchant(
         .build()
     {
         Ok(client) => client,
-        Err(error) => return failed_replay(error.to_string()),
+        Err(error) => return failed_replay(replay_error("http_client_build_failed", error, url)),
     };
     let request =
         match super::http_carrier::build_typed_request(&client, method, url, typed_params, plan) {
             Ok(request) => request.header(header_name, header_value),
-            Err(error) => return failed_replay(error.to_string()),
+            Err(error) => {
+                return failed_replay(replay_anyhow_error(
+                    "http_request_build_failed",
+                    &error,
+                    url,
+                ))
+            }
         };
     let response = match request.send().await {
         Ok(response) => response,
-        Err(error) => return failed_replay(error.to_string()),
+        Err(error) => {
+            let stage = if error.is_timeout() {
+                "http_request_timeout"
+            } else {
+                "http_request_send_failed"
+            };
+            return failed_replay(replay_error(stage, error, url));
+        }
     };
+    payment_debug_log!(
+        "[payment][a2mcp] stage=http_response endpoint={} http_status={} elapsed_ms={} payment_response_present={}",
+        safe_endpoint_label(url),
+        response.status().as_u16(),
+        replay_started.elapsed().as_millis(),
+        response.headers().contains_key("PAYMENT-RESPONSE")
+    );
     map_http_replay_response(response).await
 }
 
@@ -2318,6 +2588,22 @@ pub async fn fetch_session(params: SessionParams) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::await_holding_lock)] // TEST_ENV_MUTEX serializes process-wide env vars across async tests
+    #[test]
+    fn a2mcp_sale_success_requires_successful_mcp_tool_not_just_http_200() {
+        for result in [
+            serde_json::json!({"isError":true,"content":[{"type":"text","text":"tool failed"}]}),
+            serde_json::json!({"jsonrpc":"2.0","id":4,"error":{"code":-32603,"message":"internal error"}}),
+        ] {
+            let outcome = super::map_a2mcp_mcp_replay(200, None, result.clone());
+            assert_eq!(outcome.0, "failed");
+            assert_eq!(outcome.2, result);
+            assert!(outcome.3.unwrap().contains("mcp_tool_failed"));
+        }
+        assert_eq!(super::map_a2mcp_mcp_replay(200, None, serde_json::json!({"content":[]})).0, "success");
+        assert_eq!(super::map_a2mcp_mcp_replay(402, None, serde_json::json!({})).0, "pending");
+        assert_eq!(super::map_a2mcp_mcp_replay(500, None, serde_json::json!({})).0, "failed");
+    }
+
     use super::*;
 
     // ── rank_candidates (business rule) ───────────────────────────────
@@ -4112,5 +4398,121 @@ mod tests {
                 "must not retry terminal precondition: {terminal}"
             );
         }
+    }
+
+    // ── A2MCP replay diagnostics never carry parameter values ─────────
+    #[test]
+    fn redact_urls_strips_query_and_handles_normalized_urls() {
+        let text = "error sending request for url (http://127.0.0.1:9/?wallet=0xabc&birth=1990): x";
+        let redacted = redact_urls(text);
+        assert_eq!(
+            redacted,
+            "error sending request for url (http://127.0.0.1:9/): x"
+        );
+        assert_eq!(
+            redact_urls("a https://u:p@h.example/mcp?key=s#f b"),
+            "a https://h.example/mcp b"
+        );
+        assert_eq!(redact_urls("no url here"), "no url here");
+    }
+
+    #[tokio::test]
+    async fn replay_error_omits_path_and_query_values() {
+        // A just-released local port refuses the connection deterministically.
+        let addr = std::net::TcpListener::bind("127.0.0.1:0")
+            .expect("bind")
+            .local_addr()
+            .expect("addr");
+        let error = reqwest::Client::new()
+            .get(format!("http://{addr}/v1/0xSECRET"))
+            .query(&[("wallet", "0xSECRET"), ("birth", "1990-01-12")])
+            .send()
+            .await
+            .unwrap_err();
+        let text = replay_error(
+            "http_request_send_failed",
+            error,
+            &format!("http://{addr}/v1/{{wallet}}"),
+        );
+        assert!(text.starts_with("http_request_send_failed: "), "{text}");
+        assert!(!text.contains("0xSECRET"), "{text}");
+        assert!(!text.contains("1990-01-12"), "{text}");
+    }
+
+    #[test]
+    fn typed_param_summary_matches_request_carrier_resolution() {
+        let params = serde_json::Map::from_iter([
+            ("a".to_string(), json!(1)),
+            ("b".to_string(), json!("secret")),
+        ]);
+        let post = typed_param_summary(&params, &[], "post");
+        assert!(
+            post.contains(r#""a":{"carrier":"body","type":"integer"}"#),
+            "{post}"
+        );
+        let get = typed_param_summary(&params, &[], "GET");
+        assert!(
+            get.contains(r#""b":{"carrier":"query","type":"string"}"#),
+            "{get}"
+        );
+        assert!(!post.contains("secret") && !get.contains("secret"));
+    }
+
+    // ── A2MCP signed replay waits up to A2MCP_REPLAY_TIMEOUT ──────────
+    /// Accepts one connection and never answers, like a stalled merchant.
+    fn stalled_endpoint() -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind stalled endpoint");
+        let addr = listener.local_addr().expect("stalled endpoint addr");
+        std::thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                drop(stream);
+            }
+        });
+        format!("http://{addr}/agent")
+    }
+
+    #[test]
+    fn a2mcp_replay_waits_up_to_180_seconds() {
+        assert_eq!(A2MCP_REPLAY_TIMEOUT, std::time::Duration::from_secs(180));
+    }
+
+    #[tokio::test]
+    async fn http_replay_timeout_is_reported_as_timeout() {
+        let url = stalled_endpoint();
+        let (status, tx_hash, result, error, _receipt) = replay_a2mcp_merchant_within(
+            &url,
+            "POST",
+            &[],
+            &serde_json::Map::new(),
+            "PAYMENT-SIGNATURE",
+            "signed",
+            std::time::Duration::from_millis(300),
+        )
+        .await;
+        assert_eq!(status, "failed");
+        assert!(tx_hash.is_none() && result.is_null());
+        let error = error.expect("timeout error");
+        assert!(error.starts_with("http_request_timeout: "), "{error}");
+    }
+
+    #[tokio::test]
+    async fn mcp_replay_total_timeout_bounds_the_whole_exchange() {
+        let url = stalled_endpoint();
+        // The per-request bound is longer than the total bound, so only the
+        // total deadline can end this exchange.
+        let (status, _tx, _result, error, _receipt) = replay_a2mcp_mcp_within(
+            &url,
+            "tool",
+            &serde_json::Map::new(),
+            "PAYMENT-SIGNATURE",
+            "signed",
+            std::time::Duration::from_secs(5),
+            std::time::Duration::from_millis(300),
+        )
+        .await;
+        assert_eq!(status, "failed");
+        let error = error.expect("timeout error");
+        assert!(error.starts_with("mcp_request_timeout: "), "{error}");
     }
 }

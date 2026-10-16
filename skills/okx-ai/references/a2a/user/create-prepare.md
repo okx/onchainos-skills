@@ -1,5 +1,7 @@
 # One-Time Task Preparation
 
+## Module Description
+
 Use this leaf only after the User explicitly selects an A2A Service. Keep the
 selected numeric `sid` internal and run:
 
@@ -17,7 +19,9 @@ repeat those reads in the Skill. A successful response contains
 `phase/decision/reason/nextAction/payload` under `data`; select exactly one row
 from the Result matrix below without re-entering a router.
 
-## Result matrix
+## Flow
+
+### Result matrix
 
 | Phase / reason | Required behavior |
 |---|---|

@@ -156,8 +156,6 @@ pub enum AgentCommand {
     CreateSubscribe {
         #[arg(long = "service-id")]
         service_id: String,
-        #[arg(long = "use-trial", action = clap::ArgAction::Set, value_parser = clap::builder::BoolishValueParser::new(), default_value = "false")]
-        use_trial: bool,
         #[arg(long = "service-params", default_value = "")]
         service_params: String,
         #[arg(long = "service-token-amount")]
@@ -313,6 +311,17 @@ pub enum AgentCommand {
     /// Fetch one current marketplace Service by sid.
     #[command(name = "service-detail")]
     ServiceDetail(task::user::ServiceDetailArgs),
+
+    /// List subscription jobs for a verified XMTP sender inbox.
+    #[command(name = "list-jobs-by-verified-sender")]
+    ListJobsByVerifiedSender {
+        #[arg(long = "group-id", value_name = "GROUP_ID")]
+        group_id: String,
+        #[arg(long = "sender-inbox-id", value_name = "SENDER_INBOX_ID")]
+        sender_inbox_id: String,
+        #[arg(long = "agentic-id", value_name = "AGENT_ID")]
+        agentic_id: String,
+    },
 
     /// Run deterministic task-creation checks for a selected Service
     #[command(name = "task-create-prepare")]
@@ -702,6 +711,16 @@ pub enum AgentCommand {
         /// Provider agentId (required). Beta backend rejects empty agenticId header → 3001 auth fail.
         #[arg(long = "agent-id")]
         agent_id: String,
+    },
+
+    /// Broadcast an Active-subscription signal to all Shared Groups of a Service (V2).
+    SubscriptionPush {
+        #[arg(long = "agent-id")]
+        agent_id: String,
+        #[arg(long = "service-id")]
+        service_id: String,
+        #[arg(long)]
+        content: String,
     },
 
     /// Check deterministic local Trade Kit CLI/version/capability compatibility.
@@ -1408,6 +1427,10 @@ pub enum AgentCommand {
 }
 
 pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
+    // The isolated reporting worker must not flush unrelated agent task queues.
+    if matches!(&cmd, AgentCommand::A2mcp { command: a2mcp::A2mcpCommand::ReportSale }) {
+        return a2mcp::run(a2mcp::A2mcpCommand::ReportSale).await;
+    }
     use task::user::TaskCommand as T;
 
     // Opportunistic notification worker: every Agent invocation (including
@@ -1497,7 +1520,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::CreateSubscribe {
             service_id,
-            use_trial,
             service_params,
             service_token_amount,
             service_token_address,
@@ -1515,7 +1537,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             task::user::run_task(
                 T::CreateSubscribe {
                     service_id,
-                    use_trial,
                     service_params,
                     service_token_amount,
                     service_token_address,
@@ -1635,6 +1656,22 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
 
         AgentCommand::ServiceDetail(args) => {
             task::user::run_task(T::ServiceDetail(args), ctx).await
+        }
+
+        AgentCommand::ListJobsByVerifiedSender {
+            group_id,
+            sender_inbox_id,
+            agentic_id,
+        } => {
+            task::user::run_task(
+                T::ListJobsByVerifiedSender {
+                    group_id,
+                    sender_inbox_id,
+                    agentic_id,
+                },
+                ctx,
+            )
+            .await
         }
 
         AgentCommand::TaskCreatePrepare(args) => {
@@ -2041,6 +2078,22 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
                     file,
                     deliverable_text,
                     agent_id,
+                },
+                ctx,
+            )
+            .await
+        }
+
+        AgentCommand::SubscriptionPush {
+            agent_id,
+            service_id,
+            content,
+        } => {
+            task::asp::run_provider(
+                task::asp::ProviderCommand::SubscriptionPush {
+                    agent_id,
+                    service_id,
+                    content,
                 },
                 ctx,
             )
@@ -3369,9 +3422,23 @@ fn validate_a2a_file_arg(
         .get("msgType")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("--a2a-file payload.msgType is required"))?;
-    if msg_type != "a2a-agent-chat" {
-        anyhow::bail!("--a2a-file payload.msgType must be a2a-agent-chat");
+    match msg_type {
+        "a2a-agent-chat" => validate_a2a_agent_chat_payload(&payload, message_job_id, agent_id),
+        "a2a-subscription-push" => {
+            validate_a2a_subscription_push_payload(&payload, message_job_id, agent_id)
+        }
+        _ => anyhow::bail!("--a2a-file payload.msgType must be a2a-agent-chat"),
     }
+}
+
+/// Legacy `a2a-agent-chat` envelope validation (byte-for-byte unchanged):
+/// requires the `[intent:deliver]` trailer and an embedded `jobId:` line in
+/// `content` that matches the top-level `jobId`.
+fn validate_a2a_agent_chat_payload(
+    payload: &serde_json::Value,
+    message_job_id: &str,
+    agent_id: &str,
+) -> anyhow::Result<String> {
     let pj = payload
         .get("jobId")
         .and_then(|v| v.as_str())
@@ -3411,7 +3478,55 @@ fn validate_a2a_file_arg(
             "--a2a-file content jobId {embedded_job_id} does not match payload jobId {pj}"
         );
     }
-    let canonical = serde_json::to_string(&payload)?;
+    let canonical = serde_json::to_string(payload)?;
+    persist_validated_a2a_spool(pj, &canonical)
+}
+
+/// New-version `a2a-subscription-push` envelope validation: protocol-independent
+/// from the legacy `a2a-agent-chat` frame. The okx-a2a daemon's actual
+/// per-task delivery for this protocol carries `jobId`, `userAgentId`,
+/// `aspAgentId`, and `content` — there is NO `receiverAgentId` field on this
+/// protocol (that name is specific to the legacy `a2a-agent-chat` envelope).
+/// Binding is proven by the top-level `jobId`/`userAgentId` fields alone;
+/// `content` is opaque ASP signal text with NO `[intent:deliver]` trailer,
+/// embedded `jobId:` line, or `deliverableType` requirement (C-NOFRAME,
+/// C-BIND). `aspAgentId` presence is required here so the CLI intake layer
+/// (`subscription_push_binding_failure` in `flow_lifecycle/core.rs`) can
+/// cross-check it against the trusted task context before any
+/// persistence/review side effect; this function does not itself validate
+/// the ASP identity.
+fn validate_a2a_subscription_push_payload(
+    payload: &serde_json::Value,
+    message_job_id: &str,
+    agent_id: &str,
+) -> anyhow::Result<String> {
+    let pj = payload
+        .get("jobId")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("--a2a-file payload.jobId is required"))?;
+    if pj != message_job_id {
+        anyhow::bail!(
+            "--a2a-file payload jobId {pj} does not match --message jobId {message_job_id}"
+        );
+    }
+    let receiver = payload
+        .get("userAgentId")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("--a2a-file payload.userAgentId is required"))?;
+    if receiver != agent_id {
+        anyhow::bail!("--a2a-file userAgentId {receiver} does not match --agentId {agent_id}");
+    }
+    payload
+        .get("aspAgentId")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("--a2a-file payload.aspAgentId is required"))?;
+    payload
+        .get("content")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("--a2a-file payload.content is required"))?;
+    let canonical = serde_json::to_string(payload)?;
     persist_validated_a2a_spool(pj, &canonical)
 }
 
@@ -3722,6 +3837,152 @@ mod escape_control_chars_tests {
         }
         std::fs::remove_file(spool1).ok();
         std::fs::remove_file(spool2).ok();
+    }
+
+    // ── a2a-subscription-push: new-version, protocol-independent branch ────
+    //
+    // Real-shape fixture: the okx-a2a daemon's actual per-task delivery for
+    // this protocol carries jobId / userAgentId / aspAgentId / content — NOT
+    // receiverAgentId (that field is specific to the legacy a2a-agent-chat
+    // envelope below). See message-handler.ts in the okx-a2a daemon (not in
+    // this repo); these fixtures mirror its real wire shape.
+
+    #[test]
+    fn accepts_subscription_push_with_matching_binding_and_plain_content() {
+        let path = write_temp_a2a(
+            "subscription-push-ok.json",
+            r#"{"msgType":"a2a-subscription-push","jobId":"0xabc123","userAgentId":"1696","aspAgentId":"558","content":"BTC crossed $70k"}"#,
+        );
+
+        let got = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696").unwrap();
+        assert_ne!(got, path.to_string_lossy());
+        let parsed: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&got).unwrap()).unwrap();
+        assert_eq!(parsed["jobId"], "0xabc123");
+        assert_eq!(parsed["content"], "BTC crossed $70k");
+        std::fs::remove_file(got).ok();
+    }
+
+    #[test]
+    fn rejects_subscription_push_with_mismatched_job_id() {
+        let path = write_temp_a2a(
+            "subscription-push-wrong-job.json",
+            r#"{"msgType":"a2a-subscription-push","jobId":"0xother","userAgentId":"1696","aspAgentId":"558","content":"signal"}"#,
+        );
+
+        let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("jobId mismatch must fail")
+            .to_string();
+        assert!(err.contains("jobId"));
+        assert!(err.contains("0xother"));
+    }
+
+    #[test]
+    fn rejects_subscription_push_with_mismatched_user_agent_id() {
+        let path = write_temp_a2a(
+            "subscription-push-wrong-user.json",
+            r#"{"msgType":"a2a-subscription-push","jobId":"0xabc123","userAgentId":"9999","aspAgentId":"558","content":"signal"}"#,
+        );
+
+        let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("userAgentId mismatch must fail")
+            .to_string();
+        assert!(err.contains("userAgentId"));
+    }
+
+    #[test]
+    fn rejects_subscription_push_without_receiver_agent_id_field() {
+        // Regression guard for the real-world bug: the daemon's actual delivery
+        // has no receiverAgentId at all. This must fail on the real missing
+        // field (userAgentId), not resurrect a receiverAgentId requirement.
+        let path = write_temp_a2a(
+            "subscription-push-no-user-field.json",
+            r#"{"msgType":"a2a-subscription-push","jobId":"0xabc123","aspAgentId":"558","content":"signal"}"#,
+        );
+
+        let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("missing userAgentId must fail")
+            .to_string();
+        assert!(err.contains("payload.userAgentId is required"));
+        assert!(!err.contains("receiverAgentId"));
+    }
+
+    #[test]
+    fn rejects_subscription_push_without_asp_agent_id() {
+        let path = write_temp_a2a(
+            "subscription-push-no-asp.json",
+            r#"{"msgType":"a2a-subscription-push","jobId":"0xabc123","userAgentId":"1696","content":"signal"}"#,
+        );
+
+        let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("missing aspAgentId must fail")
+            .to_string();
+        assert!(err.contains("payload.aspAgentId is required"));
+    }
+
+    #[test]
+    fn rejects_subscription_push_with_missing_content() {
+        let path = write_temp_a2a(
+            "subscription-push-missing-content.json",
+            r#"{"msgType":"a2a-subscription-push","jobId":"0xabc123","userAgentId":"1696","aspAgentId":"558"}"#,
+        );
+
+        let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("missing content must fail")
+            .to_string();
+        assert!(err.contains("content"));
+    }
+
+    #[test]
+    fn rejects_subscription_push_with_empty_content() {
+        let path = write_temp_a2a(
+            "subscription-push-empty-content.json",
+            r#"{"msgType":"a2a-subscription-push","jobId":"0xabc123","userAgentId":"1696","aspAgentId":"558","content":""}"#,
+        );
+
+        let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("empty content must fail")
+            .to_string();
+        assert!(err.contains("content"));
+    }
+
+    #[test]
+    fn accepts_subscription_push_content_without_intent_deliver_trailer() {
+        // Unlike the legacy a2a-agent-chat branch, no [intent:deliver] trailer,
+        // embedded `jobId:` line, or `deliverableType` is required.
+        let path = write_temp_a2a(
+            "subscription-push-no-frame.json",
+            r#"{"msgType":"a2a-subscription-push","jobId":"0xabc123","userAgentId":"1696","aspAgentId":"558","content":"plain ASP signal text with no frame at all"}"#,
+        );
+
+        let got = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696").unwrap();
+        std::fs::remove_file(got).ok();
+    }
+
+    #[test]
+    fn legacy_a2a_agent_chat_full_intent_deliver_frame_still_accepted() {
+        // Regression guard (C-LEGACY-INTACT): legacy branch byte-for-byte unchanged.
+        let path = write_temp_a2a(
+            "legacy-regression-ok.json",
+            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","receiverAgentId":"1696","content":"jobId: 0xabc123\ndeliverableType: text\n- - -\nbody\n- - -\n[intent:deliver]"}"#,
+        );
+
+        let got = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696").unwrap();
+        std::fs::remove_file(got).ok();
+    }
+
+    #[test]
+    fn legacy_a2a_agent_chat_without_intent_deliver_trailer_still_rejected() {
+        // Regression guard (C-LEGACY-INTACT): legacy strictness preserved.
+        let path = write_temp_a2a(
+            "legacy-regression-reject.json",
+            r#"{"msgType":"a2a-agent-chat","jobId":"0xabc123","receiverAgentId":"1696","content":"no trailer here"}"#,
+        );
+
+        let err = validate_a2a_file_arg(path.to_str().unwrap(), "0xabc123", "1696")
+            .expect_err("legacy content must still require [intent:deliver]")
+            .to_string();
+        assert!(err.contains("content must end with [intent:deliver]"));
     }
 
     #[test]

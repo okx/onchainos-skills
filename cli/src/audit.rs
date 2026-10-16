@@ -468,6 +468,8 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
             use crate::commands::agent_commerce::a2mcp::A2mcpCommand;
             match command {
                 A2mcpCommand::Invoke(_) => "a2mcp invoke".into(),
+                A2mcpCommand::ToolList(_) => "a2mcp tool-list".into(),
+                A2mcpCommand::ReportSale => "a2mcp report-sale".into(),
             }
         }
         // Keep opaque routing/prepared JSON out of the audit command label.
@@ -546,6 +548,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         // Task (provider)
         AgentCommand::Apply { .. } => "apply".into(),
         AgentCommand::Deliver { .. } => "deliver".into(),
+        AgentCommand::SubscriptionPush { .. } => "subscription-push".into(),
         AgentCommand::TradeKitReadiness { .. } => "trade-kit-readiness".into(),
         AgentCommand::AutotradeGrantCheck { .. } => "autotrade-grant-check".into(),
         #[cfg(debug_assertions)]
@@ -619,6 +622,7 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::AspMatch { .. } => "asp-match".into(),
         AgentCommand::ServiceMatch(_) => "service-match".into(),
         AgentCommand::ServiceDetail(_) => "service-detail".into(),
+        AgentCommand::ListJobsByVerifiedSender { .. } => "list-jobs-by-verified-sender".into(),
         AgentCommand::TaskServiceSelect(_) => "task-service-select".into(),
         AgentCommand::TaskCreatePrepare(_) => "task-create-prepare".into(),
         AgentCommand::SetAsp { .. } => "set-asp".into(),

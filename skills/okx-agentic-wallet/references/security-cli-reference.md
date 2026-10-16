@@ -37,8 +37,6 @@ CLI riskLevel×direction matrix (returned in `action`; do NOT recompute — kept
 | MEDIUM | warn | warn |
 | LOW | safe | safe |
 
-#### Token risk label catalog
-
 **Critical (block buy):** `isHoneypot` (cannot sell after buying), `isRubbishAirdrop` (spam/scam airdrop), `isAirdropScam` (gas-mint scam).
 
 **High (pause buy for confirmation):** `isHasAssetEditAuth` (privileged address — Solana only, `chainId 501`), `isLowLiquidity`, `isDumping`, `isLiquidityRemoval`, `isPump`, `isWash`, `isFakeLiquidity`, `isWash2`, `isFundLinkage` (rugpull gang), `isVeryLowLpBurn`, `isVeryHighLpHolderProp`, `isHasBlockingHis` (freeze history), `isOverIssued`, `isCounterfeit`, `isNotOpenSource`.

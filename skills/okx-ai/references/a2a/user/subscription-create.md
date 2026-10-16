@@ -51,9 +51,7 @@ not ask the User to supply them when they can be derived; ask only when a
 required value is ambiguous or cannot be formed safely. Never require the User
 to write a task/subscription description of any minimum length, including more
 than 20 characters; the one-time-task 20–2000-character rule does not apply.
-Collect explicit Service inputs and attachments. Set `useTrial=true` automatically
-when `payload.subscriptionInfo.supportTrial=true`; otherwise set it to `false`.
-Never ask the User whether to use a free trial. Ask exactly one subscription
+Collect explicit Service inputs and attachments. Ask exactly one subscription
 preference question: whether to enable auto-renew, and retain the User's
 explicit answer as `autoRenew`. Render this single-subscription confirmation as
 a field list. Render [Subscription Creation Confirmation](#subscription-creation-confirmation).
@@ -65,7 +63,6 @@ check defined by `create.md`.
 ```bash
 onchainos agent create-subscribe \
   --service-id <payload.serviceId> \
-  --use-trial <true|false> \
   --service-token-amount <payload.subscriptionInfo.feeAmount> \
   --service-token-address <payload.feeToken> \
   --auto-renew <retained-autoRenew> \
@@ -105,7 +102,7 @@ The CLI owns Guide execution-profile persistence and broadcast activation.
 - Subscription Description: {confirmedDescription}
 - Provider: {providerAgent}
 - Service Price: {feeAmount} {feeTokenSymbol} / {interval}
-- Trial: {trialDurationOrNo}
+- Trial: {trialDisplay}
 - Auto-Renew: {OnOrOff}
 - Service Guide Consent: {guideConsent} *(only when the Guide is non-blank)*
 ```

@@ -172,6 +172,36 @@ pub fn run_with_retry(args: &[&str]) -> std::process::Output {
     onchainos().args(args).output().expect("failed to execute")
 }
 
+/// Like `run_with_retry`, but runs a command pinned to a scrubbed sandbox
+/// `home` (via [`scrubbed`]). Same rate-limit retry policy (3 attempts on exit
+/// != 0 + "Rate limited"). Use for `live` cases that must run against a
+/// guaranteed-clean `ONCHAINOS_HOME` (e.g. proving an unauthenticated call is
+/// refused) yet still tolerate a transient rate-limit on the backend.
+pub fn run_scrubbed_with_retry(home: &Path, args: &[&str]) -> std::process::Output {
+    for attempt in 0..3 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_secs(attempt));
+        }
+        let mut cmd = onchainos();
+        let output = scrubbed(&mut cmd, home)
+            .args(args)
+            .output()
+            .expect("failed to execute");
+        if output.status.success() {
+            return output;
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if !stdout.contains("Rate limited") {
+            return output;
+        }
+    }
+    let mut cmd = onchainos();
+    scrubbed(&mut cmd, home)
+        .args(args)
+        .output()
+        .expect("failed to execute")
+}
+
 /// Extract a list of items from either a flat array or an object whose body
 /// carries the list under one of the common wrapper keys (`list` / `data` /
 /// `items` / `signals`). Keeping one extractor shared across signal and token

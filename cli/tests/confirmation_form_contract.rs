@@ -32,6 +32,7 @@ const A2MCP_HANDOFF: &str = include_str!("../../skills/okx-ai/references/a2mcp/h
 const A2MCP_INVOKE: &str = include_str!("../../skills/okx-ai/references/a2mcp/invoke.md");
 const A2MCP_OUTPUT_TEMPLATES: &str =
     include_str!("../../skills/okx-ai/references/a2mcp/output-templates.md");
+const IDENTITY_UPDATE: &str = include_str!("../../skills/okx-ai/references/identity/update.md");
 
 #[test]
 fn v2_uses_role_scoped_lazy_routing() {
@@ -100,12 +101,23 @@ fn a2mcp_uses_unified_immutable_invoke_contract() {
     assert!(!continuation.contains("validity is unknown"));
     assert!(confirmation.contains("ask for explicit confirmation before paying"));
     assert!(confirmation.contains("On confirmation run:"));
+    assert!(confirmation.contains("can take up to 180 seconds"));
+    assert!(confirmation.contains("keep reading that same session until the command exits"));
     assert!(confirmation.contains("The CLI checks expiry before signing"));
     assert!(confirmation.contains("Never use `pay` to probe Intent validity"));
     assert!(confirmation.contains("expired/missing Intent"));
     assert!(confirmation.contains("A user-requested new attempt requires a fresh invocation and confirmation"));
     assert!(confirmation.contains("If the Service snapshot, typed parameters, or payment selection changed"));
     assert!(A2MCP_INVOKE.contains("[`output-templates.md`](output-templates.md)"));
+}
+
+#[test]
+fn mcp_service_updates_only_use_probed_information() {
+    assert!(IDENTITY_UPDATE.contains("**NEVER** accept user-supplied service fields"));
+    assert!(IDENTITY_UPDATE.contains("**MUST** refresh through"));
+    assert!(IDENTITY_UPDATE.contains("using the stored endpoint"));
+    assert!(IDENTITY_UPDATE.contains("`toolName`. Stop"));
+    assert!(IDENTITY_UPDATE.contains("tool is missing or the refreshed service is unchanged"));
 }
 
 #[test]
@@ -120,7 +132,8 @@ fn a2mcp_preserves_the_five_row_card_with_current_invocation_fields() {
         .map(|line| line.split('|').nth(1).unwrap().trim())
         .collect::<Vec<_>>();
     assert_eq!(rows, ["Service Provider", "Service Name", "Endpoint", "Fee", "Service Parameters"]);
-    assert!(card.contains("serviceSnapshot.asp.aspAgentId"));
+    assert!(card.contains("payload.agentInfo.agentId"));
+    assert!(!card.contains("serviceSnapshot.asp.aspAgentId"));
     assert!(card.contains("serviceSnapshot.serviceName"));
     assert!(card.contains("serviceSnapshot.endpoint"));
     assert!(card.contains("--params-base64"));

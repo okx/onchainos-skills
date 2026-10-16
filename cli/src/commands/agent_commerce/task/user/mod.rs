@@ -27,6 +27,7 @@ pub mod flow;
 mod flow_lifecycle;
 pub(crate) use flow_lifecycle::try_recover_from_temp_file;
 mod flow_negotiate;
+pub(crate) mod list_jobs_by_verified_sender;
 pub(crate) mod my_tasks;
 pub(crate) mod negotiate;
 mod query;
@@ -223,9 +224,6 @@ pub enum TaskCommand {
     CreateSubscribe {
         #[arg(long = "service-id")]
         service_id: String,
-        /// Use trial period (if available)
-        #[arg(long = "use-trial", default_value = "false")]
-        use_trial: bool,
         /// Service input parameters (JSON string)
         #[arg(long = "service-params", default_value = "")]
         service_params: String,
@@ -293,6 +291,16 @@ pub enum TaskCommand {
     /// Fetch one current marketplace Service by sid.
     #[command(name = "service-detail")]
     ServiceDetail(ServiceDetailArgs),
+    /// List subscription jobs for a verified XMTP sender inbox.
+    #[command(name = "list-jobs-by-verified-sender")]
+    ListJobsByVerifiedSender {
+        #[arg(long = "group-id", value_name = "GROUP_ID")]
+        group_id: String,
+        #[arg(long = "sender-inbox-id", value_name = "SENDER_INBOX_ID")]
+        sender_inbox_id: String,
+        #[arg(long = "agentic-id", value_name = "AGENT_ID")]
+        agentic_id: String,
+    },
     /// Prepare task creation from a selected Service ID
     #[command(name = "task-create-prepare")]
     TaskCreatePrepare(TaskCreatePrepareArgs),
@@ -1973,7 +1981,6 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         }
         TaskCommand::CreateSubscribe {
             service_id,
-            use_trial,
             service_params,
             service_token_amount,
             service_token_address,
@@ -1993,7 +2000,6 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
                 &mut client,
                 create_subscribe::CreateSubscribeParams {
                     service_id,
-                    use_trial,
                     service_params,
                     service_token_amount,
                     service_token_address,
@@ -2041,6 +2047,21 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         }
         TaskCommand::ServiceDetail(args) => {
             service_detail::handle_service_detail(&mut client, &args.sid, &args.agentic_id).await
+        }
+        TaskCommand::ListJobsByVerifiedSender {
+            group_id,
+            sender_inbox_id,
+            agentic_id,
+        } => {
+            let data = list_jobs_by_verified_sender::handle_list_jobs_by_verified_sender(
+                &mut client,
+                &group_id,
+                &sender_inbox_id,
+                &agentic_id,
+            )
+            .await?;
+            crate::output::success(data);
+            Ok(())
         }
         TaskCommand::TaskCreatePrepare(args) => {
             match args.service_type {

@@ -12,7 +12,4 @@
 
 
 ## Troubleshooting
-
-### Known global-install warning
-
 - **A global install printed `PromptScript does not support global skill installation`** (only with `npx skills add … --yes -g`) → known upstream `npx skills` limitation: the skill files installed correctly. It's safe to ignore.

@@ -1,5 +1,7 @@
 # Progression Envelope
 
+## Flow
+
 Use this envelope when a CLI result requires continuation:
 
 ```json

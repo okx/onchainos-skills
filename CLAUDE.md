@@ -26,3 +26,9 @@
 If the request can plausibly match more than one skill, read the candidate
 `SKILL.md` files and use their routing rules. The skills own detailed capability
 lists, aliases, command indexes, and tie-breakers; do not duplicate them here.
+
+## Skill authoring
+
+When you create or modify a Skill file, start from the matching template in
+[`templates/`](templates/) and follow the rules in
+[`templates/README.md`](templates/README.md).

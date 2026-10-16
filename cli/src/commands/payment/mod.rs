@@ -6,6 +6,7 @@ pub mod dispatcher;
 pub mod http_carrier;
 pub mod payment_flow;
 pub mod quote;
+pub mod sale_report;
 pub mod session_state;
 pub mod state;
 pub mod subscription;
