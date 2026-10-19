@@ -1,34 +1,19 @@
 # Project guidance
 
-## Command discipline
+## Developing in this repository
 
-- Before running `onchainos`, read the matched skill's `SKILL.md`; never guess
-  command syntax or supported flags.
-- Report a CLI command only after it actually ran. Use CLI output for live data,
-  never skill text or model memory.
-- Do not use the retired `onchainos preflight` command. Installation, update,
-  and reinstall use `npx -y @okxweb3/onchainos-installer install` (use `--beta` when needed).
+This repository uses [`AGENTS.md`](AGENTS.md) as the canonical cross-agent
+development guide.
 
-## Route before acting
+Before editing any file:
+1. Read `AGENTS.md`.
+2. Classify the task as Skill-only, CLI-only, mixed, or guidance-only.
+3. Follow the matching first-read workflow described there.
 
-- For token research, market overview, smart-money, new-token scanning, wallet
-  analysis, portfolio, or wallet monitoring, read `workflows/INDEX.md` first.
-  For Chinese requests, also read `workflows/references/keyword-glossary.md`.
-- Wallet actions and security checks → `okx-agentic-wallet`.
-- Named third-party DApps → `okx-dapp-discovery`.
-- Agent identity, task lifecycle, marketplace subscriptions, and task monitoring
-  → `okx-ai`.
-- HTTP 402, x402, MPP, and payment IDs → `okx-agent-payments-protocol`.
-- DeFi yield, protocol positions, deposits, withdrawals, and rewards → `okx-defi`.
-- OnchainOS installation, onboarding, OKX.AI introduction, and support →
-  `okx-guide`.
-
-If the request can plausibly match more than one skill, read the candidate
-`SKILL.md` files and use their routing rules. The skills own detailed capability
-lists, aliases, command indexes, and tie-breakers; do not duplicate them here.
-
-## Skill authoring
-
-When you create or modify a Skill file, start from the matching template in
-[`templates/`](templates/) and follow the rules in
-[`templates/README.md`](templates/README.md).
+Claude-specific notes:
+- Do not start editing before reading the matching rules and templates: for Skill
+  work, `templates/` and `rules/skill-rules.md`; for CLI work,
+  `rules/cli-io-rules.md`.
+- State a short change plan before you edit, and keep changes minimal and scoped.
+- After the change, run the validation that matches it and report the result.
+- Do not add external document links or sensitive information to guidance files.
