@@ -38,6 +38,14 @@ fn preserve_existing_user_rating(
     if let Some(payload) = result["payload"].as_object_mut() {
         payload.remove("ratingResultNotification");
     }
+    if let (Some(job_id), Some(content)) = (
+        result["payload"]["jobId"].as_str(),
+        result["payload"]["notification"]["content"].as_str(),
+    ) {
+        if let Some(content) = content.strip_suffix(&rating_invitation(job_id)) {
+            result["payload"]["notification"]["content"] = serde_json::json!(content);
+        }
+    }
 }
 
 fn result_from_task_detail(
@@ -137,13 +145,17 @@ fn completion_notification(
         )
     };
     let rating_invitation = if include_rating_invitation {
-        format!(
-            "\n\nTo rate this job, reply \"Rate job\". Your rating for Job ID `{job_id}` replaces the AI-generated rating."
-        )
+        rating_invitation(job_id)
     } else {
         String::new()
     };
     format!("{TERMINAL_NOTIFICATION_MARKER} {content}{rating_invitation}")
+}
+
+fn rating_invitation(job_id: &str) -> String {
+    format!(
+        "\n\nThe system will automatically complete the rating. To rate this job manually, reply \"Rate job\". Your rating for Job ID `{job_id}` replaces the AI-generated rating."
+    )
 }
 
 fn deliverable_files(job_id: &str) -> Vec<serde_json::Value> {
@@ -204,22 +216,59 @@ mod tests {
             "{\"chain\":\"xlayer\"}"
         );
         assert_eq!(output["payload"]["notification"]["localize"], true);
-        assert!(output["payload"]["notification"]["content"]
+        let content = output["payload"]["notification"]["content"]
             .as_str()
-            .unwrap()
-            .starts_with(TERMINAL_NOTIFICATION_MARKER));
-        assert!(output["payload"]["notification"]["content"]
-            .as_str()
-            .unwrap()
-            .contains("Audit report"));
-        assert!(output["payload"]["notification"]["content"]
-            .as_str()
-            .unwrap()
-            .contains("reply \"Rate job\""));
+            .unwrap();
+        assert_eq!(
+            content,
+            format!(
+                "{TERMINAL_NOTIFICATION_MARKER} [Job Completed] Audit report (`job-1`) — approved by the User Agent; funds released to the ASP.\n- Spent: 12 USDT\n- Payment: escrow\n\nThe system will automatically complete the rating. To rate this job manually, reply \"Rate job\". Your rating for Job ID `job-1` replaces the AI-generated rating."
+            )
+        );
+        assert_eq!(
+            content.matches("automatically complete the rating").count(),
+            1
+        );
+        assert_eq!(content.matches("reply \"Rate job\"").count(), 1);
         assert!(output["payload"]["ratingResultNotification"]
             .as_str()
             .unwrap()
             .contains("<score>"));
+    }
+
+    #[test]
+    fn x402_completion_keeps_payment_details_and_one_rating_invitation() {
+        let output = result_from_task_detail(
+            "job-2",
+            "user-1",
+            Ok(serde_json::json!({
+                "jobId": "job-2",
+                "status": 6,
+                "title": "Market report",
+                "paymentMode": 3,
+                "tokenAmount": "4",
+                "tokenSymbol": "USDC",
+                "providerAgentId": "provider-1"
+            })),
+        );
+        let content = output["payload"]["notification"]["content"]
+            .as_str()
+            .unwrap();
+
+        assert_eq!(output["reason"], "notification_and_rating_required");
+        assert_eq!(output["payload"]["rating"]["required"], true);
+        assert_eq!(output["payload"]["notification"]["localize"], true);
+        assert_eq!(
+            content,
+            format!(
+                "{TERMINAL_NOTIFICATION_MARKER} [x402 Job Completed] Market report (`job-2`) — all steps complete.\n- Spent: 4 USDC\n- Payment: x402\n\nThe system will automatically complete the rating. To rate this job manually, reply \"Rate job\". Your rating for Job ID `job-2` replaces the AI-generated rating."
+            )
+        );
+        assert_eq!(
+            content.matches("automatically complete the rating").count(),
+            1
+        );
+        assert_eq!(content.matches("reply \"Rate job\"").count(), 1);
     }
 
     #[test]
@@ -241,10 +290,11 @@ mod tests {
             .as_str()
             .unwrap()
             .starts_with(TERMINAL_NOTIFICATION_MARKER));
-        assert!(!output["payload"]["notification"]["content"]
+        let content = output["payload"]["notification"]["content"]
             .as_str()
-            .unwrap()
-            .contains("Rate job"));
+            .unwrap();
+        assert!(!content.contains("Rate job"));
+        assert!(!content.contains("automatically complete the rating"));
     }
 
     #[test]
@@ -253,6 +303,8 @@ mod tests {
             "jobId": "job-1",
             "status": 6,
             "title": "Audit report",
+            "tokenAmount": "12",
+            "tokenSymbol": "USDT",
             "providerAgentId": "provider-1"
         });
         let mut output = result_from_task_detail("job-1", "user-1", Ok(task));
@@ -262,6 +314,13 @@ mod tests {
         assert_eq!(output["reason"], "notification_required");
         assert_eq!(output["payload"]["rating"]["required"], false);
         assert!(output["payload"].get("ratingResultNotification").is_none());
+        assert_eq!(
+            output["payload"]["notification"]["content"],
+            format!(
+                "{TERMINAL_NOTIFICATION_MARKER} [Job Completed] Audit report (`job-1`) — approved by the User Agent; funds released to the ASP.\n- Spent: 12 USDT\n- Payment: escrow"
+            )
+        );
+        assert_eq!(output["payload"]["notification"]["localize"], true);
     }
 
     #[test]
@@ -270,6 +329,8 @@ mod tests {
             "jobId": "job-1",
             "status": 6,
             "title": "Audit report",
+            "tokenAmount": "12",
+            "tokenSymbol": "USDT",
             "providerAgentId": "provider-1"
         });
         let mut output = result_from_task_detail("job-1", "user-1", Ok(task));
@@ -277,6 +338,31 @@ mod tests {
         preserve_existing_user_rating(&mut output, Err(anyhow::anyhow!("lookup failed")));
 
         assert_eq!(output["payload"]["rating"]["required"], false);
+        assert!(output["payload"].get("ratingResultNotification").is_none());
+        assert_eq!(
+            output["payload"]["notification"]["content"],
+            format!(
+                "{TERMINAL_NOTIFICATION_MARKER} [Job Completed] Audit report (`job-1`) — approved by the User Agent; funds released to the ASP.\n- Spent: 12 USDT\n- Payment: escrow"
+            )
+        );
+    }
+
+    #[test]
+    fn missing_user_rating_keeps_automatic_and_manual_rating_guidance() {
+        let mut output = result_from_task_detail(
+            "job-1",
+            "user-1",
+            Ok(serde_json::json!({
+                "jobId": "job-1",
+                "status": 6,
+                "providerAgentId": "provider-1"
+            })),
+        );
+        let original_output = output.clone();
+
+        preserve_existing_user_rating(&mut output, Ok(false));
+
+        assert_eq!(output, original_output);
     }
 
     #[test]

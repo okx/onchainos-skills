@@ -202,6 +202,13 @@ fn unwrap_envelope(body: Value) -> Result<Value> {
     Ok(body["data"].clone())
 }
 
+fn truncate_dex_token_metadata(path: &str, value: &mut Value) {
+    if !path.starts_with("/api/v6/dex/") {
+        return;
+    }
+    crate::token_metadata::truncate(value);
+}
+
 impl ApiClient {
     /// Create a client with JWT auth when logged in, otherwise anonymous auth.
     pub fn new() -> Result<Self> {
@@ -964,7 +971,9 @@ impl ApiClient {
         // that want the raw body instead (e.g. strategy endpoints reading
         // `body.code` for typed retry detection) use the `*_raw` variants
         // which short-circuit before this point.
-        unwrap_envelope(body)
+        let mut data = unwrap_envelope(body)?;
+        truncate_dex_token_metadata(path, &mut data);
+        Ok(data)
     }
 
     /// Pre-envelope variant of `handle_response`. Performs the same HTTP-level
@@ -1786,7 +1795,7 @@ pub(crate) async fn handle_agent_commerce_response(
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_msg, ApiClient};
+    use super::{extract_msg, truncate_dex_token_metadata, ApiClient};
     use serde_json::json;
 
     // ── extract_msg ──────────────────────────────────────────────────────────
@@ -1819,6 +1828,19 @@ mod tests {
     fn extract_msg_trims_surrounding_whitespace() {
         let v = json!("  no liquidity  ");
         assert_eq!(extract_msg(&v), "no liquidity");
+    }
+
+    // ── DEX token metadata truncation ────────────────────────────────────────
+
+    #[test]
+    fn token_metadata_outside_dex_responses_is_unchanged() {
+        let value = "x".repeat(81);
+        let mut data = json!({"name": value, "tokenSymbol": value});
+        let original = data.clone();
+
+        truncate_dex_token_metadata("/api/v6/security/token-scan", &mut data);
+
+        assert_eq!(data, original);
     }
     use super::{PaymentCache, PaymentRequired, PaymentTier, TierState};
     use serde_json::Value;

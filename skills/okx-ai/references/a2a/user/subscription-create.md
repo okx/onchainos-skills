@@ -105,6 +105,8 @@ The CLI owns Guide execution-profile persistence and broadcast activation.
 - Trial: {trialDisplay}
 - Auto-Renew: {OnOrOff}
 - Service Guide Consent: {guideConsent} *(only when the Guide is non-blank)*
+
+{payload.creationConfirmation}
 ```
 
 Render attachments below the field list. Do not show Service Parameters or

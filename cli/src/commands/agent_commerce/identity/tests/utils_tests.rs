@@ -712,6 +712,67 @@ fn build_search_table_has_fixed_columns_and_walks_flat_list() {
 // ─── §4 service-list cells ───────────────────────────────────────────
 
 #[test]
+fn build_service_cells_hides_endpoint_for_both_types_and_all_endpoint_states() {
+    for service_type in ["A2A", "A2MCP", "a2a", "a2mcp"] {
+        let base = json!({
+            "serviceName": "Service",
+            "serviceType": service_type,
+            "fee": "5",
+            "serviceDescription": "Description stays visible.",
+        });
+        let expected = build_service_cells(1, &base).unwrap();
+        assert_eq!(expected.len(), 11);
+        assert_eq!(
+            expected[6],
+            json!({"label": "Description", "value": "Description stays visible."})
+        );
+        assert!(!expected.iter().any(|c| c["label"] == "Endpoint"));
+        for key in ["endpoint", "Endpoint"] {
+            for endpoint in [
+                Value::Null,
+                json!(""),
+                json!("https://service.example/hidden"),
+            ] {
+                let mut svc = base.clone();
+                svc[key] = endpoint;
+                let original = svc.clone();
+                assert_eq!(build_service_cells(1, &svc).unwrap(), expected);
+                assert_eq!(svc, original);
+            }
+        }
+    }
+}
+
+#[test]
+fn add_service_list_cells_preserves_endpoint_and_other_source_fields() {
+    let services = json!([
+        {"serviceName": "A2A", "serviceType": "A2A", "endpoint": "https://a2a.example/hidden"},
+        {"serviceName": "A2MCP", "serviceType": "A2MCP", "Endpoint": "https://mcp.example/hidden", "inputSchema": {"type": "object"}},
+        {"serviceName": "No endpoint", "serviceType": "A2MCP"},
+    ]);
+    for key in ["list", "services"] {
+        let mut data = json!({"page": 2, "pageSize": 3, "total": 7});
+        data[key] = services.clone();
+        add_service_list_cells(&mut data);
+        assert_eq!(data["hasMore"], true);
+        for (i, original) in services.as_array().unwrap().iter().enumerate() {
+            let cells = data[key][i]
+                .as_object_mut()
+                .unwrap()
+                .remove("cells")
+                .unwrap();
+            assert!(!cells
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["label"] == "Endpoint"));
+            assert!(!cells.to_string().contains("/hidden"));
+            assert_eq!(&data[key][i], original);
+        }
+    }
+}
+
+#[test]
 fn build_service_cells_a2mcp_pascalcase() {
     // service-list returns PascalCase keys per references/identity/profile.md §Services for an explicit Agent ID.
     let svc = json!({
@@ -731,10 +792,6 @@ fn build_service_cells_a2mcp_pascalcase() {
             ("Fee".to_string(), "10 USDT".to_string()),
             ("Subscription".to_string(), "—".to_string()),
             ("Free trial".to_string(), "—".to_string()),
-            (
-                "Endpoint".to_string(),
-                "https://api.example.com/mcp".to_string()
-            ),
             (
                 "Description".to_string(),
                 "Query protocol TVL by chain.".to_string()
@@ -787,8 +844,8 @@ fn build_service_cells_a2a_single_fee() {
     assert_eq!(pairs[4], ("Subscription".to_string(), "—".to_string()));
     // A single-fee A2A never has a free trial.
     assert_eq!(pairs[5], ("Free trial".to_string(), "—".to_string()));
-    // A2A endpoint always `—`.
-    assert_eq!(pairs[6], ("Endpoint".to_string(), "—".to_string()));
+    // A2A lists omit Endpoint entirely.
+    assert!(!pairs.iter().any(|(label, _)| label == "Endpoint"));
 }
 
 #[test]
@@ -811,7 +868,7 @@ fn build_service_cells_a2a_subscription() {
     );
     // No freeTrial in this fixture → `—`.
     assert_eq!(pairs[5], ("Free trial".to_string(), "—".to_string()));
-    assert_eq!(pairs[6], ("Endpoint".to_string(), "—".to_string()));
+    assert!(!pairs.iter().any(|(label, _)| label == "Endpoint"));
     assert!(!pairs.iter().any(|(label, _)| label == "Service guide"));
 }
 
@@ -970,13 +1027,13 @@ fn build_service_cells_a2mcp_new_fields_all_present() {
     });
     let cells = build_service_cells(1, &svc).expect("cells");
     let pairs = cell_pairs(&Value::Array(cells));
-    // First 8 cells unchanged; new cells begin at index 8.
-    assert_eq!(pairs[8], ("Request type".to_string(), "MCP".to_string()));
-    assert_eq!(pairs[9], ("Method".to_string(), "POST".to_string()));
-    assert_eq!(pairs[10], ("Tool name".to_string(), "quote".to_string()));
+    // Remaining 7 core cells retain their order; request cells begin at index 7.
+    assert_eq!(pairs[7], ("Request type".to_string(), "MCP".to_string()));
+    assert_eq!(pairs[8], ("Method".to_string(), "POST".to_string()));
+    assert_eq!(pairs[9], ("Tool name".to_string(), "quote".to_string()));
     assert!(!pairs.iter().any(|(label, _)| label == "Input schema"));
     // Request example is truncate_name(s, 80) → ≤ 81 chars (80 + ellipsis).
-    let (req_example_label, req_example_value) = &pairs[11];
+    let (req_example_label, req_example_value) = &pairs[10];
     assert_eq!(req_example_label, "Request example");
     assert!(req_example_value.chars().count() <= 81);
 }
@@ -997,16 +1054,16 @@ fn build_service_cells_a2mcp_new_fields_http_empty_and_null() {
     });
     let cells = build_service_cells(1, &svc).expect("cells");
     let pairs = cell_pairs(&Value::Array(cells));
-    assert_eq!(pairs[8], ("Request type".to_string(), "HTTP".to_string()));
-    assert_eq!(pairs[9], ("Method".to_string(), "GET".to_string()));
-    assert_eq!(pairs[10], ("Tool name".to_string(), "—".to_string()));
-    assert_eq!(pairs[11], ("Request example".to_string(), "—".to_string()));
+    assert_eq!(pairs[7], ("Request type".to_string(), "HTTP".to_string()));
+    assert_eq!(pairs[8], ("Method".to_string(), "GET".to_string()));
+    assert_eq!(pairs[9], ("Tool name".to_string(), "—".to_string()));
+    assert_eq!(pairs[10], ("Request example".to_string(), "—".to_string()));
 }
 
 #[test]
 fn build_service_cells_new_fields_missing_render_dash() {
     // Pre-existing service (TBC[2]): none of the 4 keys present → all `—`,
-    // and the first 8 cells are unchanged.
+    // and the remaining 7 core cells are unchanged.
     let svc = json!({
         "ServiceName": "TVL Query",
         "ServiceType": "A2MCP",
@@ -1016,9 +1073,9 @@ fn build_service_cells_new_fields_missing_render_dash() {
     });
     let cells = build_service_cells(1, &svc).expect("cells");
     let pairs = cell_pairs(&Value::Array(cells));
-    // First 8 cells byte-for-byte unchanged.
+    // Remaining 7 core cells retain their values.
     assert_eq!(
-        pairs[..8],
+        pairs[..7],
         [
             ("#".to_string(), "1".to_string()),
             ("Name".to_string(), "TVL Query".to_string()),
@@ -1027,21 +1084,17 @@ fn build_service_cells_new_fields_missing_render_dash() {
             ("Subscription".to_string(), "—".to_string()),
             ("Free trial".to_string(), "—".to_string()),
             (
-                "Endpoint".to_string(),
-                "https://api.example.com/mcp".to_string()
-            ),
-            (
                 "Description".to_string(),
                 "Query protocol TVL by chain.".to_string()
             ),
         ]
     );
     // 4 new cells all `—`, in documented order.
-    assert_eq!(pairs[8], ("Request type".to_string(), "—".to_string()));
-    assert_eq!(pairs[9], ("Method".to_string(), "—".to_string()));
-    assert_eq!(pairs[10], ("Tool name".to_string(), "—".to_string()));
-    assert_eq!(pairs[11], ("Request example".to_string(), "—".to_string()));
-    assert_eq!(pairs.len(), 12);
+    assert_eq!(pairs[7], ("Request type".to_string(), "—".to_string()));
+    assert_eq!(pairs[8], ("Method".to_string(), "—".to_string()));
+    assert_eq!(pairs[9], ("Tool name".to_string(), "—".to_string()));
+    assert_eq!(pairs[10], ("Request example".to_string(), "—".to_string()));
+    assert_eq!(pairs.len(), 11);
 }
 
 #[test]

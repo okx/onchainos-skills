@@ -30,7 +30,8 @@ onchainos agent deactivate --agent-id <agentId>
 ### Result
 
 - `blockType: 1`: explain that only ASP agents can be listed.
-- `submitApproval.success: true`: say the listing was submitted for review.
+- `submitApproval[0].success: true`: localize and render the complete
+  `submissionNotice` without summarizing, preserving the Agent Name.
 - `activate.approvalStatus: 2`: say the listing is under review.
 - `activate.success: true`: say the agent is published.
 - Deactivation with `success: true`: say the agent is unpublished.

@@ -270,7 +270,7 @@ async fn connect_and_stream(
                             return Ok(reason);
                         }
                         if let Ok(push) = serde_json::from_str::<WsPush>(&text) {
-                            append_events(dir, &push.arg.channel, &push.data)?;
+                            append_push_events(dir, push)?;
                         }
                     }
                     Some(Ok(Message::Close(_))) => {
@@ -292,13 +292,8 @@ async fn wait_for_login_ack(ws: &mut WsStream) -> Result<()> {
             match ws.next().await {
                 Some(Ok(Message::Text(text))) => {
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                        if v.get("event").and_then(|e| e.as_str()) == Some("login") {
-                            let code = v.get("code").and_then(|c| c.as_str()).unwrap_or("-1");
-                            if code == "0" {
-                                return Ok(());
-                            }
-                            let msg = v.get("msg").and_then(|m| m.as_str()).unwrap_or("unknown");
-                            return Err(anyhow::anyhow!("login error: {}", msg));
+                        if let Some(result) = login_event_result(&v) {
+                            return result;
                         }
                     }
                 }
@@ -310,6 +305,27 @@ async fn wait_for_login_ack(ws: &mut WsStream) -> Result<()> {
     })
     .await
     .unwrap_or(Err(anyhow::anyhow!("login ack timeout")))
+}
+
+fn login_event_result(value: &serde_json::Value) -> Option<Result<()>> {
+    let event = value.get("event").and_then(|event| event.as_str())?;
+    if event != "login" && event != "error" {
+        return None;
+    }
+
+    let code = value
+        .get("code")
+        .and_then(|code| code.as_str())
+        .unwrap_or("-1");
+    if event == "login" && code == "0" {
+        return Some(Ok(()));
+    }
+
+    let message = value
+        .get("msg")
+        .and_then(|message| message.as_str())
+        .unwrap_or("unknown");
+    Some(Err(anyhow::anyhow!("login error {}: {}", code, message)))
 }
 
 /// Wait for `count` subscribe ACKs (one per subscription arg).
@@ -358,7 +374,7 @@ async fn recv_pong(ws: &mut WsStream, dir: &Path) -> Result<()> {
             Some(Ok(Message::Text(text))) => {
                 // Push data arrived while waiting for pong — process it to avoid data loss.
                 if let Ok(push) = serde_json::from_str::<WsPush>(&text) {
-                    append_events(dir, &push.arg.channel, &push.data)?;
+                    append_push_events(dir, push)?;
                 }
             }
             Some(Err(e)) => return Err(e.into()),
@@ -366,6 +382,13 @@ async fn recv_pong(ws: &mut WsStream, dir: &Path) -> Result<()> {
             _ => {}
         }
     }
+}
+
+fn append_push_events(dir: &Path, mut push: WsPush) -> Result<()> {
+    for event in &mut push.data {
+        crate::token_metadata::truncate(event);
+    }
+    append_events(dir, &push.arg.channel, &push.data)
 }
 
 fn check_notice(text: &str) -> Option<String> {
@@ -391,6 +414,22 @@ struct WsPushArg {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn login_error_event_is_reported_immediately() {
+        let value = serde_json::json!({
+            "event": "error",
+            "code": "60009",
+            "msg": "Login failed.",
+            "connId": "a4d3ae55"
+        });
+
+        let error = login_event_result(&value)
+            .expect("login error event must be handled")
+            .expect_err("login error event must fail");
+
+        assert_eq!(error.to_string(), "login error 60009: Login failed.");
+    }
 
     /// Create a unique empty temp directory under `target/test_tmp/watch_daemon/`.
     fn test_dir(name: &str) -> std::path::PathBuf {
@@ -453,6 +492,74 @@ mod tests {
             !dir.join("status").exists(),
             "valid config must not write a config_corrupt status"
         );
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn websocket_push_truncates_token_metadata_before_persisting() {
+        let dir = test_dir("truncate_token_metadata");
+        let push = WsPush {
+            arg: WsPushArg {
+                channel: "dex-token-trades".to_string(),
+            },
+            data: vec![serde_json::json!({
+                "tokenSymbol": "é".repeat(81),
+                "token": {"name": "n".repeat(81), "symbol": "TOKEN"},
+                "description": "d".repeat(81)
+            })],
+        };
+
+        append_push_events(&dir, push).unwrap();
+        let stored = fs::read_to_string(dir.join("events.dex-token-trades.0.jsonl")).unwrap();
+        let event: serde_json::Value = serde_json::from_str(stored.trim()).unwrap();
+
+        assert_eq!(event["tokenSymbol"], format!("{}...", "é".repeat(80)));
+        assert_eq!(event["token"]["name"], format!("{}...", "n".repeat(80)));
+        assert_eq!(event["description"], "d".repeat(81));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn websocket_push_accepts_memepump_new_token_shape() {
+        let dir = test_dir("memepump_new_token_shape");
+        let text = serde_json::json!({
+            "arg": {
+                "channel": "dex-market-memepump-new-token-openapi",
+                "chainIndex": "501"
+            },
+            "data": [{
+                "bagsFeeClaimed": false,
+                "bondingPercent": "0",
+                "chainIndex": "501",
+                "createdTimestamp": "1792676849493",
+                "creatorAddress": "5DWxLTgqVaB15HzC3yFi61G7F8GWga8n9cyFZiy8oijo",
+                "market": {},
+                "name": "SOLDIER BOY X TOM PEARL",
+                "protocolId": "139048",
+                "quoteTokenAddress": "So11111111111111111111111111111111111111111",
+                "social": {
+                    "communityTakeover": false,
+                    "dexScreenerPaid": false,
+                    "liveOnPumpFun": false
+                },
+                "symbol": "PEARLYBOY",
+                "tags": {},
+                "tokenAddress": "2QH2wZq3cM2h7BSZYiEdK8RL7ecBzhroC71iAKtjpump"
+            }]
+        })
+        .to_string();
+        let push: WsPush = serde_json::from_str(&text).expect("memepump push must deserialize");
+
+        append_push_events(&dir, push).unwrap();
+
+        let stored =
+            fs::read_to_string(dir.join("events.dex-market-memepump-new-token-openapi.0.jsonl"))
+                .unwrap();
+        let event: serde_json::Value = serde_json::from_str(stored.trim()).unwrap();
+        assert_eq!(event["name"], "SOLDIER BOY X TOM PEARL");
+        assert_eq!(event["symbol"], "PEARLYBOY");
 
         fs::remove_dir_all(&dir).ok();
     }

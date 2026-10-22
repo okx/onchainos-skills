@@ -4,7 +4,7 @@ use anyhow::{anyhow, bail, Context as _, Result};
 use serde_json::{json, Map, Value};
 
 use crate::commands::agent_commerce::task::common::{
-    self, autotrade::tooling, network::task_api_client::TaskApiClient,
+    self, autotrade::amount::Decimal, autotrade::tooling, network::task_api_client::TaskApiClient,
 };
 use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
 
@@ -259,6 +259,46 @@ fn scalar_display(value: &Value) -> Option<String> {
     }
 }
 
+/// Complete final-confirmation copy from the bound Service, independent of
+/// creation decisions and request parameters. Keep amount strings unchanged.
+fn creation_confirmation(service: &Value) -> Option<String> {
+    let is_subscription = service.get("supportSubscription").and_then(Value::as_bool) == Some(true);
+    let amount = if is_subscription {
+        service.get("subscriptionInfo")?.get("feeAmount")?
+    } else {
+        service.get("feeAmount")?
+    };
+    let is_zero = match amount {
+        Value::String(text) => Decimal::parse(text.trim()).ok()?.is_zero(),
+        Value::Number(number) => {
+            let value = number.as_f64()?;
+            if !value.is_finite() || value < 0.0 {
+                return None;
+            }
+            value == 0.0
+        }
+        _ => return None,
+    };
+    let amount = scalar_display(amount)?;
+    if !is_subscription && is_zero {
+        return Some("This task requires no payment. To create it, reply “Confirm”.".to_string());
+    }
+    let token_symbol = service.get("feeTokenSymbol")?.as_str()?;
+    if is_subscription && trial_available(service) {
+        Some(format!(
+            "After you confirm, the subscription task will be created. The free trial starts after the ASP accepts the task. When the trial ends, the first-period fee of {amount} {token_symbol} will be deducted. If you do not wish to continue, cancel the subscription before the charge. To continue, reply “Confirm”."
+        ))
+    } else if is_subscription {
+        Some(format!(
+            "After you confirm, the first-period subscription fee of {amount} {token_symbol} will be deducted. To continue, reply “Confirm”."
+        ))
+    } else {
+        Some(format!(
+            "After you confirm creation, the task fee of {amount} {token_symbol} will be deducted. To continue, reply “Confirm”."
+        ))
+    }
+}
+
 fn normalize_service(mut service: Value) -> Value {
     let description = service
         .get("serviceDescription")
@@ -330,6 +370,9 @@ pub(crate) async fn handle_task_create_prepare(
     let mut service = normalize_service(service);
     if let Some(display) = trial_display(&service) {
         service["trialDisplay"] = Value::String(display);
+    }
+    if let Some(display) = creation_confirmation(&service) {
+        service["creationConfirmation"] = Value::String(display);
     }
 
     // Match create-subscribe's write-boundary source and status policy: only an
@@ -435,6 +478,101 @@ mod tests {
         assert!(!trial_available(&subscription_service(true, json!(0))));
         assert!(!trial_available(&subscription_service(true, Value::Null)));
         assert!(!trial_available(&subscription_service(false, json!(7))));
+    }
+
+    #[test]
+    fn creation_confirmation_distinguishes_paid_and_free_one_time_tasks() {
+        for amount in [json!(0), json!("0.00")] {
+            let service = json!({"supportSubscription": false, "feeAmount": amount});
+            assert_eq!(
+                creation_confirmation(&service).as_deref(),
+                Some("This task requires no payment. To create it, reply “Confirm”.")
+            );
+        }
+        for (amount, display) in [
+            (json!(10), "10"),
+            (json!("10.00"), "10.00"),
+            (json!(0.00000001), "1e-8"),
+            (
+                json!("0.0000000000000000000000000000000000000001"),
+                "0.0000000000000000000000000000000000000001",
+            ),
+        ] {
+            let service = json!({"feeAmount": amount, "feeTokenSymbol": "USDC"});
+            assert_eq!(
+                creation_confirmation(&service),
+                Some(format!(
+                    "After you confirm creation, the task fee of {display} USDC will be deducted. To continue, reply “Confirm”."
+                ))
+            );
+        }
+    }
+
+    #[test]
+    fn creation_confirmation_describes_trial_start_and_first_charge() {
+        for duration in [json!(24), json!("72"), json!(168)] {
+            let mut service = subscription_service(true, duration);
+            service["feeAmount"] = json!(999);
+            service["feeTokenSymbol"] = json!("USDT");
+            service["subscriptionInfo"]["feeAmount"] = json!("10.00");
+            assert_eq!(
+                creation_confirmation(&service).as_deref(),
+                Some("After you confirm, the subscription task will be created. The free trial starts after the ASP accepts the task. When the trial ends, the first-period fee of 10.00 USDT will be deducted. If you do not wish to continue, cancel the subscription before the charge. To continue, reply “Confirm”.")
+            );
+        }
+    }
+
+    #[test]
+    fn creation_confirmation_uses_subscription_fee_without_eligible_trial() {
+        for (support_trial, duration) in [
+            (false, json!(72)),
+            (true, json!(0)),
+            (true, json!(-1)),
+            (true, Value::Null),
+        ] {
+            let mut service = subscription_service(support_trial, duration);
+            service["feeAmount"] = json!(999);
+            service["feeTokenSymbol"] = json!("USDC");
+            service["subscriptionInfo"]["feeAmount"] = json!("0.0100");
+            assert_eq!(
+                creation_confirmation(&service).as_deref(),
+                Some("After you confirm, the first-period subscription fee of 0.0100 USDC will be deducted. To continue, reply “Confirm”.")
+            );
+        }
+        let service = json!({
+            "supportSubscription": true,
+            "feeTokenSymbol": "USDT",
+            "subscriptionInfo": {"feeAmount": 0}
+        });
+        assert_eq!(
+            creation_confirmation(&service).as_deref(),
+            Some("After you confirm, the first-period subscription fee of 0 USDT will be deducted. To continue, reply “Confirm”.")
+        );
+    }
+
+    #[test]
+    fn creation_confirmation_preserves_service_fields() {
+        let service = json!({
+            "serviceId": "svc-1", "feeTokenSymbol": "USDT",
+            "supportSubscription": true, "trialDisplay": "Existing Trial text",
+            "subscriptionInfo": {"feeAmount": "10.00", "freeTrial": 72, "supportTrial": true},
+            "serviceGuide": "Original guide", "serviceParams": {"enabled": false}
+        });
+        let original = service.clone();
+        assert!(creation_confirmation(&service).is_some());
+        assert_eq!(service, original);
+    }
+
+    #[test]
+    fn incomplete_display_data_does_not_invent_a_fee_or_change_the_payload() {
+        for service in [
+            json!({}),
+            json!({"feeAmount": "invalid", "feeTokenSymbol": "USDT"}),
+            json!({"feeAmount": 10}),
+            json!({"supportSubscription": true, "subscriptionInfo": {"feeAmount": 10}}),
+        ] {
+            assert_eq!(creation_confirmation(&service), None);
+        }
     }
 
     #[test]

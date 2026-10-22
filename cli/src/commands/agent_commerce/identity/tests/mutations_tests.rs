@@ -130,6 +130,43 @@ fn parse_agent_info_row_missing_name_and_desc_defaults_to_empty() {
     assert_eq!(info.description, "");
 }
 
+#[test]
+fn successful_approval_submission_returns_filled_notice() {
+    let result = assemble_activation_submission(
+        json!({ "approvalStatus": 1 }),
+        json!([{ "approvalStatus": 2, "success": true }]),
+        "Signal Scout",
+    );
+
+    assert_eq!(
+        result["submissionNotice"],
+        json!(
+            r#"Your Agent "Signal Scout" has been submitted for review.
+
+Our review Agent will test your services. Reviews are usually completed within two days. If this submission includes an A2A Subscription Service, we must receive at least one real signal before completing the review. Your Agent will remain "Under Review" while we wait, for up to 15 days. If no signal is received by then, the submission will be rejected.
+
+Please keep your services running. No resubmission is needed. We'll notify you when the review is complete."#
+        )
+    );
+    assert_eq!(result["submitApproval"][0]["success"], json!(true));
+}
+
+#[test]
+fn unsuccessful_approval_submission_omits_notice() {
+    for submit_result in [
+        json!([{ "success": false }]),
+        json!([{ "success": "true" }]),
+        json!([]),
+    ] {
+        let result = assemble_activation_submission(
+            json!({ "approvalStatus": 1 }),
+            submit_result,
+            "Signal Scout",
+        );
+        assert!(result.get("submissionNotice").is_none());
+    }
+}
+
 // ─── build_erc8004_overlay: task_id inclusion / omission ─────────────────
 // The feedback_submit_impl builds an erc8004 overlay with ("taskId", &task_id).
 // build_erc8004_overlay filters empty strings, so an absent / empty task_id

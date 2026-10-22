@@ -260,9 +260,26 @@ fn guide_direct_subscription_reminds_users_that_copy_trade_status_is_queryable()
 #[test]
 fn one_time_creation_confirmation_is_vertical_and_confirm_only() {
     assert!(CREATE.contains("render exactly one field per bullet line"));
-    assert!(CREATE.contains("To create this job, reply “Confirm”."));
+    assert!(CREATE.contains("{payload.creationConfirmation}"));
     assert!(!CREATE.contains("To cancel, reply “Cancel”."));
     assert!(CREATE.contains("Do not add a `Cancel` action"));
+}
+
+#[test]
+fn creation_templates_render_the_precomputed_payment_confirmation() {
+    for reference in [CREATE, SUBSCRIPTION_CREATE] {
+        assert_eq!(
+            reference.matches("{payload.creationConfirmation}").count(),
+            1
+        );
+        assert!(!reference.contains("if `payload.subscriptionInfo.supportTrial"));
+        assert!(!reference.contains("if `payload.subscriptionInfo.freeTrial"));
+    }
+    assert!(SUBSCRIPTION_CREATE.contains("- Trial: {trialDisplay}"));
+    assert!(CREATE.contains("--payment-token-amount <payload.feeAmount>"));
+    assert!(
+        SUBSCRIPTION_CREATE.contains("--service-token-amount <payload.subscriptionInfo.feeAmount>")
+    );
 }
 
 #[test]

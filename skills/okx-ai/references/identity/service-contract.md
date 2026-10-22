@@ -25,7 +25,7 @@ Immediately below the service type choices, show:
 
 #### serviceName
 
-- Require a noun phrase with display width 5–200. Measure display width as CJK=2 and ASCII=1.
+- Require a noun phrase, 5–100 characters.
 - Require it to differ from the agent name.
 - Do not include a price.
 
@@ -34,7 +34,7 @@ Immediately below the service type choices, show:
 ##### Value requirements
 
 - Required. It describes the service inside `--service`; never use the Agent profile's top-level `--description` as its value.
-- Require total width <2000. Measure display width as CJK=2 and ASCII=1.
+- Require under 1,000 characters.
 
 A2A differences:
 
@@ -45,6 +45,19 @@ A2MCP differences:
 
 - Store only the service purpose (behavior and result); keep parameter schema and method in
   `inputSchema` and `method`.
+
+##### Collection behavior
+
+For A2A, show the following prompt:
+
+> Please provide a service description of up to 1,000 characters.
+>
+> Be sure to include:
+> 1. Core capability: What the service does
+> 2. Deliverables: What users receive from the service
+
+**NEVER** show this prompt for A2MCP; its description is the request
+description under the A2MCP field rules above.
 
 #### serviceGuide
 
@@ -57,12 +70,13 @@ A2MCP differences:
 
 If `serviceGuide` is absent for A2A monthly create, show the following prompt:
 
-> Describe the prerequisites, steps, and key parameters. For trading, payments, or authorization, include confirmation requirements and execution limits.
-> [Service Guide Examples](https://web3.okx.com/onchainos/dev-docs/okxai/a2a-subscription).
+> Please provide a Service Guide (optional), up to 5,000 characters.
 >
-> Send the guide body, or reply 2 to skip.
+> Complete this section only if the buyer's agent needs to take further action after receiving the service output—for example, executing copy trades. Otherwise, you may skip it.
+>
+> [View the guide](https://web3.okx.com/onchainos/dev-docs/okxai/a2a-subscription).
 
-**MUST** visibly render the clickable `Service Guide Examples` tutorial link with this prompt.
+**MUST** visibly render `View the guide` as a clickable link with this prompt.
 
 #### fee
 
