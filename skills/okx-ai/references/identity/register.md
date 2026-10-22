@@ -54,7 +54,7 @@ Follow the flow for the confirmed role.
 ##### Step 1: Identity profile
 
 1. Ask for Name, Description, and Avatar in one message. Do not ask for service information in this step.
-2. Require a brand Name with no test markers or celebrity names, a one-sentence Agent Description, and an uploaded Avatar.
+2. Require an Agent Name with no test markers or celebrity names, a one-sentence Agent Description, and an uploaded Avatar.
 3. Once all three fields are ready, immediately render the identity confirmation card below.
 4. Wait for reply `1` before proceeding to Step 2. This reply never runs `agent create`.
 
@@ -164,8 +164,6 @@ Actions:
 
    ```markdown
    Reply `Submit for listing review` to submit it to OKX.AI and earn rewards!
-
-   Review is usually completed within 48 hours. Please keep an eye on your linked email for review progress notifications.
    ```
 
 4. After an Evaluator identity is registered and communication setup is complete, ask whether the user wants to stake now. If yes, hand off to [Evaluator staking](../a2a/evaluator/staking.md); if no, finish registration.

@@ -22,6 +22,7 @@ mod payment_cache;
 mod payment_notify;
 mod qr;
 pub mod token_alias;
+mod token_metadata;
 pub mod validators;
 mod wallet_api;
 mod wallet_store;

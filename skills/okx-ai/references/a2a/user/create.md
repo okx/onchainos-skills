@@ -43,7 +43,7 @@ display template:
 - Fee: {feeAmount} {feeTokenSymbol}
 - Service Parameters: {serviceParams}
 
-To create this job, reply “Confirm”.
+{payload.creationConfirmation}
 ```
 
 display rules:

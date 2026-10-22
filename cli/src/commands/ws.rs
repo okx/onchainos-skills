@@ -370,6 +370,14 @@ async fn ws_start(
     let log_file = create_daemon_log(&dir.join("daemon.log"))?;
     cmd.stderr(std::process::Stdio::from(log_file));
 
+    // Keep the daemon outside the foreground command's process group so task
+    // runners and terminal interrupts do not reap it when `ws start` exits.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

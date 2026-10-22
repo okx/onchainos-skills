@@ -21,9 +21,9 @@ Localize all labels, headings, and static display text to the user's language; k
 ### Service table
 
 ```markdown
-| # | Name | Type | Fee | Free trial | Endpoint | Description |
-|---|---|---|---|---|---|---|
-| 1 | <serviceName> | <serviceType> | <fee> | <freeTrial> | <endpoint> | <serviceDescription> |
+| # | Name | Type | Fee | Free trial | Description |
+|---|---|---|---|---|---|
+| 1 | <serviceName> | <serviceType> | <fee> | <freeTrial> | <serviceDescription> |
 ```
 
 #### Rules
@@ -32,8 +32,8 @@ Localize all labels, headings, and static display text to the user's language; k
 - Number services sequentially across Agent tables.
 - Merge `Fee` and `Subscription` as `Fee`.
 - Omit `Free trial` when every service in the table is `A2MCP`.
-- Omit `Endpoint` when every service in the table is `A2A`.
-- For all columns, omit a column only when all of its values are `—`; otherwise
+- Never display the `Endpoint` column.
+- For remaining columns, omit a column only when all of its values are `—`; otherwise
   display it.
 - Never display `serviceGuide` or internal Service UUIDs.
 

@@ -575,14 +575,20 @@ fn check_pricing(
 }
 
 // Service description checks split across two doc rules:
-//   • FE-21 (必填/长度) — A2A-only (an A2MCP description is the request
-//     description, FE-16, skill layer):
-//       - empty / blank → D1, BLOCKING (missing required field).
-//       - total length over the cap → D2, ADVISORY. Length uses EAST-ASIAN
-//         DISPLAY WIDTH (`display_width`: CJK = 2, ASCII = 1): total ≤ 2000 —
-//         the spec's "≤ 1000 CJK total". No per-paragraph limit.
-//       - the two carry SEPARATE messages (`fe::FE21_D1` / `fe::FE21_D2`) and can
-//         never co-occur, since D1 returns early.
+//   • FE-21 (必填/长度):
+//       - empty / blank → D1, BLOCKING (missing required field). A2A-only —
+//         an A2MCP description is the request description (FE-16, skill
+//         layer) and is not required to be non-blank here.
+//       - total length over the cap → D2, ADVISORY, for EVERY service type.
+//         An A2MCP description is request-purpose text, not buyer-facing
+//         copy, but an excessively long one is still worth flagging to the
+//         ASP (this used to be a skill-layer-only, unenforced "MUST" with no
+//         CLI backing; it is now a real, CLI-computed advisory). Length uses
+//         EAST-ASIAN DISPLAY WIDTH (`display_width`: CJK = 2, ASCII = 1):
+//         total ≤ 2000 — the spec's "≤ 1000 CJK total". No per-paragraph limit.
+//       - the two carry SEPARATE messages (`fe::FE21_D1` / `fe::FE21_D2`) and
+//         never co-occur for A2A (an empty description has width 0); D1 never
+//         fires for A2MCP.
 //     There is deliberately NO paragraph-count rule: the buyer-facing paragraph
 //     layout is guidance in the skill's collection prompts (register.md §3 Step 2c)
 //     and is never counted here, so subscription and non-subscription services are
@@ -624,9 +630,17 @@ fn check_service_description(
         }
     }
 
-    // ── Required / length — A2A only ──────────────────────────────────────
+    // ── Length cap — every service type. ADVISORY. ─────────────────────────
+    // D2 total display width <= 2000 (= 1000 CJK characters). Applies to A2A
+    // and A2MCP alike: an empty description has width 0, so this can never
+    // fire together with A2A's D1 below.
+    if display_width(desc) > 2000 {
+        findings.push(Finding::suggest(&fd, "D2", fe::FE21_D2));
+    }
+
+    // ── Required — A2A only ─────────────────────────────────────────────────
     // An A2MCP `serviceDescription` is the request description (skill rule);
-    // the buyer-facing length limit does NOT apply here.
+    // it is not required to be non-blank here.
     if is_a2mcp {
         return;
     }
@@ -634,12 +648,6 @@ fn check_service_description(
     // D1 (empty): a blank A2A description is a missing required field. BLOCKING.
     if desc.trim().is_empty() {
         findings.push(Finding::block(&fd, "D1", fe::FE21_D1));
-        return;
-    }
-
-    // D2 total display width <= 2000 (= 1000 CJK characters). ADVISORY.
-    if display_width(desc) > 2000 {
-        findings.push(Finding::suggest(&fd, "D2", fe::FE21_D2));
     }
 
     // NO paragraph-count check: the A2A three-part layout is collection-time

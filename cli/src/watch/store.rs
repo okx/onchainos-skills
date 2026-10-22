@@ -292,7 +292,10 @@ fn drain_file(
         if trimmed.is_empty() {
             continue;
         }
-        if let Ok(event) = serde_json::from_str::<Value>(trimmed) {
+        if let Ok(mut event) = serde_json::from_str::<Value>(trimmed) {
+            // Protect poll and stop --flush output from events persisted by an
+            // older CLI before token metadata truncation was added.
+            crate::token_metadata::truncate(&mut event);
             events.push(event);
             if let Some(ref mut cursors) = per_event_cursors {
                 cursors.push(Cursor {
@@ -384,4 +387,42 @@ pub fn last_poll_time(dir: &Path) -> Option<u64> {
         }
     }
     latest
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_truncates_token_metadata_from_legacy_event_files() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp")
+            .join("watch_store")
+            .join("legacy_token_metadata");
+        if dir.exists() {
+            fs::remove_dir_all(&dir).ok();
+        }
+        fs::create_dir_all(&dir).unwrap();
+        let channel = "dex-token-trades";
+        let legacy = serde_json::json!({
+            "symbol": "s".repeat(81),
+            "token": {"tokenName": "é".repeat(81)}
+        });
+        fs::write(
+            events_path(&dir, channel, 0),
+            format!("{}\n", serde_json::to_string(&legacy).unwrap()),
+        )
+        .unwrap();
+
+        let result = read_events_from_cursor(&dir, channel, 1).unwrap();
+
+        assert_eq!(result.events[0]["symbol"], format!("{}...", "s".repeat(80)));
+        assert_eq!(
+            result.events[0]["token"]["tokenName"],
+            format!("{}...", "é".repeat(80))
+        );
+
+        fs::remove_dir_all(&dir).ok();
+    }
 }

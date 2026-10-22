@@ -1531,7 +1531,7 @@ pub(super) fn build_search_table(v: &Value) -> Value {
 // ─── §4 service-list row cells ────────────────────────────────────────────
 //
 // Cells (references/identity/profile.md §Services for an explicit Agent ID), in order:
-//   # | Name | Type | Fee | Subscription | Free trial | Endpoint | Description
+//   # | Name | Type | Fee | Subscription | Free trial | Description
 // Read-only service-list never exposes Service guide for any service type;
 // serviceGuide is handled only by the guided register/update flows.
 // service-list returns PascalCase keys
@@ -1541,7 +1541,7 @@ pub(super) fn build_search_table(v: &Value) -> Value {
 // unpriced → `free`. Subscription: each
 // monthly tier `<n> USDT / month`, or `—` when there is none (or A2MCP). Free
 // trial: `<n> days`/`hours` when a subscription trial is set, else `—` (single
-// fee / A2MCP never have one). Endpoint: `—` for A2A, the URL for A2MCP.
+// fee / A2MCP never have one). Endpoint stays in source data, never in list cells.
 // Description: truncated for the discovery Service list (≤ 80 chars).
 fn build_service_cells(index: usize, service: &Value) -> Option<Vec<Value>> {
     let Value::Object(s) = service else {
@@ -1550,11 +1550,9 @@ fn build_service_cells(index: usize, service: &Value) -> Option<Vec<Value>> {
     let name = first_str(s, &["serviceName", "ServiceName", "name"])?;
 
     let raw_type = first_str(s, &["serviceType", "ServiceType", "servicetype"]).unwrap_or("");
-    let (type_label, is_a2a) = match raw_type.to_ascii_uppercase().as_str() {
-        "A2MCP" => ("A2MCP".to_string(), false),
-        "A2A" => ("A2A".to_string(), true),
-        "" => ("—".to_string(), false),
-        other => (other.to_string(), false),
+    let type_label = match raw_type.to_ascii_uppercase().as_str() {
+        "" => "—".to_string(),
+        other => other.to_string(),
     };
     let is_a2mcp = raw_type.eq_ignore_ascii_case("A2MCP");
 
@@ -1582,15 +1580,6 @@ fn build_service_cells(index: usize, service: &Value) -> Option<Vec<Value>> {
     // Free trial: `<n> days`/`hours` when a subscription trial is set; `—` otherwise.
     let free_trial = format_free_trial(s).unwrap_or_else(|| "—".to_string());
 
-    // Endpoint: `—` for A2A; the URL for A2MCP (absent → `—`).
-    let endpoint = if is_a2a {
-        "—".to_string()
-    } else {
-        first_str(s, &["endpoint", "Endpoint"])
-            .map(str::to_string)
-            .unwrap_or_else(|| "—".to_string())
-    };
-
     // Description: truncate per §4 (~80 chars). Empty → `—`.
     let description = first_str(
         s,
@@ -1600,8 +1589,8 @@ fn build_service_cells(index: usize, service: &Value) -> Option<Vec<Value>> {
             "servicedescription",
         ],
     )
-        .map(|d| truncate_name(d, 80))
-        .unwrap_or_else(|| "—".to_string());
+    .map(|d| truncate_name(d, 80))
+    .unwrap_or_else(|| "—".to_string());
 
     // §2.3 (CHANGED): 4 read-only A2MCP display cells appended after
     // `Description`. Missing values render `—` (per surrounding cells, not the
@@ -1627,7 +1616,6 @@ fn build_service_cells(index: usize, service: &Value) -> Option<Vec<Value>> {
         cell("Fee", fee_str),
         cell("Subscription", subscription_str),
         cell("Free trial", free_trial),
-        cell("Endpoint", endpoint),
         cell("Description", description),
         cell("Request type", req_type),
         cell("Method", method),

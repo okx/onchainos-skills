@@ -43,8 +43,7 @@ On a probe error, show [Endpoint unavailable](#endpoint-unavailable) and stop.
 #### HTTP workflow
 
 1. Show [HTTP service information](#http-service-information). `serviceName` **MUST** meet its
-   [requirements](service-contract.md#servicename); `serviceDescription` display width **MUST**
-   be under 2000 (CJK: 2; ASCII: 1).
+   [requirements](service-contract.md#servicename).
 2. Show [HTTP request method](#http-request-method) and collect exactly one numbered choice.
 3. Show [HTTP request parameters](#http-request-parameters), collect parameters, then assemble
    `inputSchema` as specified [below](#http-inputschema-assembly); skip when requested.
@@ -107,8 +106,8 @@ Tool 1: missing title; Tool 2: missing description
 ```markdown
 Provide the HTTP service information:
 
-1. Service name: {serviceName}
-2. Service description: {serviceDescription}
+1. Service name (5–100 characters): {serviceName}
+2. Service description (up to 1,000 characters): {serviceDescription}
 ```
 
 ### HTTP request method

@@ -53,6 +53,11 @@ use super::utils::{
 
 const PUSH_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 
+const SUBMISSION_NOTICE_TEMPLATE: &str = r#"Your Agent "{agentName}" has been submitted for review.
+
+Our review Agent will test your services. Reviews are usually completed within two days. If this submission includes an A2A Subscription Service, we must receive at least one real signal before completing the review. Your Agent will remain "Under Review" while we wait, for up to 15 days. If no signal is received by then, the submission will be rejected.
+
+Please keep your services running. No resubmission is needed. We'll notify you when the review is complete."#;
 
 // ─── Public command entry points ──────────────────────────────────────────
 
@@ -521,7 +526,7 @@ async fn update_impl(args: &UpdateArgs, ctx: &Context) -> Result<Value> {
 ///
 /// Return-structure contract (all branches):
 ///   blockType:1 + reason + agentRole   → not an ASP; agent-status never called
-///   activate [+ submitApproval] → normal path
+///   activate [+ submitApproval] [+ submissionNotice] → normal path
 async fn activate_impl(args: &ActivateArgs, ctx: &Context) -> Result<Value> {
     let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?;
 
@@ -571,10 +576,35 @@ async fn activate_impl(args: &ActivateArgs, ctx: &Context) -> Result<Value> {
     )
     .await?;
 
-    Ok(json!({
+    Ok(assemble_activation_submission(
+        activate_result,
+        submit_result,
+        agent_info
+            .as_ref()
+            .map(|info| info.name.as_str())
+            .unwrap_or(""),
+    ))
+}
+
+fn assemble_activation_submission(
+    activate_result: Value,
+    submit_result: Value,
+    agent_name: &str,
+) -> Value {
+    let submitted = submit_result
+        .get(0)
+        .and_then(|result| result.get("success"))
+        .and_then(Value::as_bool)
+        == Some(true);
+    let mut result = json!({
         "activate": activate_result,
         "submitApproval": submit_result,
-    }))
+    });
+    if submitted {
+        result["submissionNotice"] =
+            Value::String(SUBMISSION_NOTICE_TEMPLATE.replace("{agentName}", agent_name));
+    }
+    result
 }
 
 // ─── Activate helpers ─────────────────────────────────────────────────────────

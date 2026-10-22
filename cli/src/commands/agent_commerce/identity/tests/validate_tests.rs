@@ -1397,6 +1397,36 @@ fn a2mcp_description_still_blocks_test_marker_fe22() {
 }
 
 #[test]
+fn a2mcp_description_over_2000_width_suggests_d2() {
+    // D2 is no longer A2A-only: an over-long A2MCP request description is
+    // still flagged, advisory only (not blocking), same cap as A2A.
+    let part1 = "x".repeat(1000);
+    let part2 = "y".repeat(1001);
+    let desc = format!("{part1}\n{part2}");
+    let service = svc("Doc Summarizer", &desc, "A2MCP", "10", Some("https://example.com/mcp"));
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    let c = codes(&r);
+    assert!(c.contains(&"D2".to_string()), "got {:?}", c);
+    assert_eq!(severity_of(&r, "D2"), Some("suggest"), "D2 must stay advisory for A2MCP too");
+    assert!(!c.contains(&"D1".to_string()), "A2MCP must never trip D1, got {:?}", c);
+}
+
+#[test]
+fn a2mcp_description_under_2000_width_has_no_d2() {
+    // Short A2MCP descriptions must not spuriously trip the new D2 check.
+    let service = svc(
+        "Doc Summarizer",
+        "Summarizes a document into a short digest.",
+        "A2MCP",
+        "10",
+        Some("https://example.com/mcp"),
+    );
+    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+    assert!(!codes(&r).contains(&"D2".to_string()), "got {:?}", codes(&r));
+    assert!(r.pass, "got {:?}", codes(&r));
+}
+
+#[test]
 fn a2a_description_with_url_still_fails_d6() {
     // The URL ban stays fully in force for A2A descriptions.
     let service = svc(
