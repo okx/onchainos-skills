@@ -9,9 +9,12 @@ Follow these steps for every development change.
 
 ### 1. Align the requirement
 
-Compare the supplied requirement or technical documents with the code. If the
-current behavior and the expected behavior differ or are ambiguous, use
-`AskUserQuestion` to align with the user. Do not start development first.
+Before treating a requirement as clear, explain the supplied requirement or
+technical documents to the user: the goal, scope, and expected behavior. Use
+`AskUserQuestion` to obtain the user's confirmation. Then compare that
+confirmed understanding with the code. If the current behavior and the expected
+behavior differ or are ambiguous, use `AskUserQuestion` to align with the user.
+Do not start development until the user confirms the requirement.
 
 ### 2. Read the applicable development rules
 
