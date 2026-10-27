@@ -3,18 +3,20 @@
 This file is the canonical development guide for all coding agents in this
 repository. `CLAUDE.md` only adds Claude Code specifics on top of it.
 
-This repository has two development domains. A change can belong to one of them
-or to both.
+## Development flow
 
-| Domain | What it covers | Rules to read first |
-| --- | --- | --- |
-| Skill development | `SKILL.md`, `references/**`, `_shared/**`, routing tables, Skill rules (including how Skills describe CLI commands), and the page templates in [`templates/`](templates/) | [`rules/skill-rules.md`](rules/skill-rules.md) and [`templates/README.md`](templates/README.md) |
-| CLI development | CLI behavior under `cli/` and the CLI input/output rules (readable flag names, shared parsing helpers, JSON output) | [`rules/cli-io-rules.md`](rules/cli-io-rules.md) |
+Follow these steps for every development change.
 
-## First step: classify, then read, then edit
+### 1. Align the requirement
 
-Do not create or modify any file until you have classified the change and
-finished the matching pre-read below.
+Compare the supplied requirement or technical documents with the code. If the
+current behavior and the expected behavior differ or are ambiguous, use
+`AskUserQuestion` to align with the user. Do not start development first.
+
+### 2. Read the applicable development rules
+
+After the requirement is clear, classify the change and finish the matching
+pre-read below before creating or modifying a file.
 
 | Change type | Required first step |
 | --- | --- |
@@ -24,6 +26,27 @@ finished the matching pre-read below.
 | Guidance-only (`AGENTS.md`, `CLAUDE.md`, `rules/`) | Read the source rules that the guidance describes, then change only the guidance files |
 
 If you are unsure which row applies, treat the change as mixed.
+
+### 3. Develop and verify
+
+Implement the clear requirement. Repair only unit or integration tests that are
+directly related to it. Do not fix unrelated test failures as part of the
+change.
+
+### 4. Independently review the change
+
+Start an independent sub-agent code review after development. The reviewer must
+apply the CLI and Skill rules in this file to the changed scope.
+
+## Development domains
+
+This repository has two development domains. A change can belong to one of them
+or to both.
+
+| Domain | What it covers | Rules to read first |
+| --- | --- | --- |
+| Skill development | `SKILL.md`, `references/**`, `_shared/**`, routing tables, Skill rules (including how Skills describe CLI commands), and the page templates in [`templates/`](templates/) | [`rules/skill-rules.md`](rules/skill-rules.md) and [`templates/README.md`](templates/README.md) |
+| CLI development | CLI behavior under `cli/` and the CLI input/output rules (readable flag names, shared parsing helpers, JSON output) | [`rules/cli-io-rules.md`](rules/cli-io-rules.md) |
 
 ## Skill development
 
