@@ -198,39 +198,10 @@ fn deliverable_list_all_cjk_emoji_legacy() {
         .iter()
         .map(|r| r["jobId"].as_str().unwrap_or("").to_string())
         .collect();
-    assert!(ids.contains(&hex_a), "legacy bare-jobId dir must list: {ids:?}");
+    assert!(
+        ids.contains(&hex_a),
+        "legacy bare-jobId dir must list: {ids:?}"
+    );
     assert!(ids.contains(&hex_b), "CJK-title dir must list: {ids:?}");
     assert!(ids.contains(&hex_c), "emoji-title dir must list: {ids:?}");
-}
-
-/// `autotrade-consent-set --mode pause` with a
-/// legal jobId succeeds with the unchanged envelope — exit 0,
-/// `{consentMode:"pause", cleared:true}` — and touches nothing outside the root.
-#[test]
-fn autotrade_pause_legal_jobid_golden() {
-    let (_h, home) = fresh_home("jobid_pt_pause_golden");
-    let sentinel = plant_sentinel(&home);
-
-    let mut cmd = onchainos();
-    let out = scrubbed(&mut cmd, &home)
-        .env("HOME", &home)
-        .args([
-            "agent",
-            "autotrade-consent-set",
-            "--mode",
-            "pause",
-            "--job-id",
-            LEGAL_JOB_ID,
-            "--agent-id",
-            "test-agent",
-        ])
-        .output()
-        .expect("run autotrade-consent-set pause");
-
-    assert_eq!(out.status.code(), Some(0), "legal pause must exit 0");
-    let json = parse_stdout_json(&out);
-    assert_eq!(json["ok"], serde_json::json!(true));
-    assert_eq!(json["data"]["consentMode"], "pause");
-    assert_eq!(json["data"]["cleared"], serde_json::json!(true));
-    assert_sentinel_unchanged(&sentinel);
 }

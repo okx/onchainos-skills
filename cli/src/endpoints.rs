@@ -43,6 +43,18 @@ pub const AGENT_IDENTITY_WS_URL: &str = env!("ONCHAINOS_COMPILED_AGENT_IDENTITY_
 /// DEX WebSocket endpoint compiled from `ONCHAINOS_WS_URL` in `cli/.env`.
 pub const WS_URL: &str = env!("ONCHAINOS_COMPILED_WS_URL");
 
+/// Internal development DEX WebSocket endpoint selected by the hidden `--dev` switch.
+pub const DEV_WS_URL: &str = "wss://wsdexpre.okx.com:8443/ws/v6/dex";
+
+/// Effective DEX WebSocket endpoint for a persisted production or development session.
+pub fn dex_ws_url(dev_mode: bool) -> &'static str {
+    if dev_mode {
+        DEV_WS_URL
+    } else {
+        WS_URL
+    }
+}
+
 /// X Layer mainnet JSON-RPC endpoint.
 pub const XLAYER_RPC_URL: &str = "https://rpc.xlayer.tech";
 
@@ -60,6 +72,17 @@ mod tests {
                 || AGENT_IDENTITY_WS_URL.starts_with("wss://")
         );
         assert!(WS_URL.starts_with("ws://") || WS_URL.starts_with("wss://"));
+        assert_eq!(DEV_WS_URL, "wss://wsdexpre.okx.com:8443/ws/v6/dex");
         assert_eq!(XLAYER_RPC_URL, "https://rpc.xlayer.tech");
+    }
+
+    #[test]
+    fn dex_websocket_uses_pre_endpoint_in_dev_mode() {
+        assert_eq!(dex_ws_url(true), DEV_WS_URL);
+    }
+
+    #[test]
+    fn dex_websocket_uses_compiled_endpoint_by_default() {
+        assert_eq!(dex_ws_url(false), WS_URL);
     }
 }

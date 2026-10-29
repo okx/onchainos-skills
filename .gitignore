@@ -109,6 +109,8 @@ scripts/dev/*
 !scripts/dev/build-onchainos.sh
 !scripts/dev/dev.mjs
 !scripts/dev/dev.test.mjs
+!scripts/dev/a2a.mjs
+!scripts/dev/a2a.test.mjs
 !scripts/dev/okx-a2a.sh
 !scripts/dev/onchainos.sh
 !scripts/dev/codex-shell.sh

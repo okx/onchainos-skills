@@ -162,9 +162,11 @@ Never execute unlimited approvals. Do not set the approve amount to `type(uint25
 
 The private key is generated and stored inside a server-side secure enclave and never leaves the TEE — the Agent cannot export or locally sign with it.
 
-## Render Rules
+## Output Rules
 
-### Wallet-specific Notes
+### Render Rules
+
+#### Wallet-specific Notes
 
 - **X Layer Testnet faucet**: when the user asks for testnet tokens, or `wallet balance --chain xlayer_test` shows OKB = 0, point them to https://web3.okx.com/xlayer/faucet.
 - **XKO address**: if a user-supplied address starts with `XKO` / `xko`, display verbatim:

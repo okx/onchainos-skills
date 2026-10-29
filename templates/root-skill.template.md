@@ -44,11 +44,12 @@ description: "{concise, idiomatic trigger description}"
 ### Confirmation
 ### Trust Boundary
 
-## Render Rules
+## Output Rules
+### Render Rules
 <!-- Optional. -->
-### Amounts and Prices
-### Identifiers
-### Lists and Status
+#### Amounts and Prices
+#### Identifiers
+#### Lists and Status
 
 ## Chain Name Support
 <!-- Optional. -->

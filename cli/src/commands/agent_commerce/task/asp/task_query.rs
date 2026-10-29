@@ -57,7 +57,7 @@ fn bool_from_keys(value: &Value, keys: &[&str]) -> Option<bool> {
     })
 }
 
-fn is_zero_amount(amount: &str) -> bool {
+pub(super) fn is_zero_amount(amount: &str) -> bool {
     let amount = amount.trim().trim_start_matches('+');
     !amount.is_empty()
         && amount

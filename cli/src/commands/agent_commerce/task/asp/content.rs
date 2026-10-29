@@ -236,7 +236,7 @@ pub fn job_submitted_user_notify(job_id: &str) -> String {
     )
 }
 
-/// Per-evaluator verdict rationales block shared by all three `DisputeResolved` outcomes.
+/// Per-evaluator verdict rationales block used by the `DisputeResolved` ASP-loses outcome.
 /// Source field: `message.voteReportSummaries[*].voterReportSummary` from the system envelope.
 /// Indentation matches the ASP's 6-space bullet style (header at 6 spaces, entries at 10).
 const EVALUATION_REASONS_BLOCK: &str = "\x20\x20\x20\x20\x20\x20- Evaluation reasons:\n\
@@ -244,36 +244,41 @@ const EVALUATION_REASONS_BLOCK: &str = "\x20\x20\x20\x20\x20\x20- Evaluation rea
 \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20Evaluator 2: <voterReportSummary from message.voteReportSummaries[1]>\n\
 \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20... (one line per entry; first skip entries whose voterReportSummary is missing / empty / whitespace, then number the kept entries consecutively starting at 1 in array order — do NOT preserve gaps from the original index; omit this whole `- Evaluation reasons:` section if voteReportSummaries is missing, not an array, empty, or every entry would be skipped — do NOT print a header with no body, do NOT fabricate filler text)";
 
-/// `Event::DisputeResolved` branch A (ASP wins) — user notify emitted when the
-/// agent actually claims a non-zero reward in A-Step 2.
-pub fn dispute_won_with_claim_user_notify(job_id: &str) -> String {
-    format!(
-        "\x20\x20\x20\x20[⚖️💰 Evaluation Result] Job {job_id} (<title>) — evaluation completed; ASP wins.\n\
-         \x20\x20\x20\x20  - Evaluation Status: Decided\n\
-         \x20\x20\x20\x20  - Result: ASP won; task funds were released to the ASP\n\
-         \x20\x20\x20\x20  - Job income: <tokenAmount> <tokenSymbol>\n\
-         \x20\x20\x20\x20  - Auto-claimed account reward: <claimed amount> <symbol>\n\
-         \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
-         {EVALUATION_REASONS_BLOCK}\n\
-         \x20\x20\x20\x20  \n\
-         \x20\x20\x20\x20  This job is complete."
-    )
+/// Which "Evaluation Won" copy applies to an ASP evaluation win.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisputeWonKind {
+    /// Subscription task: this billing period's revenue will be settled.
+    Subscription,
+    /// One-time task with a price above zero: job revenue has been settled.
+    OneTimePaid,
+    /// One-time task with a zero price: no revenue, the job is complete.
+    OneTimeFree,
 }
 
-/// `Event::DisputeResolved` branch A (ASP wins) — user notify emitted when
-/// A-Step 1 `claimable` returns all zeros (nothing to claim).
-pub fn dispute_won_no_claim_user_notify(job_id: &str) -> String {
-    format!(
-        "\x20\x20\x20\x20[⚖️💰 Evaluation Result] Job {job_id} (<title>) — evaluation completed; ASP wins.\n\
-         \x20\x20\x20\x20  - Evaluation Status: Decided\n\
-         \x20\x20\x20\x20  - Result: ASP won; task funds were released to the ASP\n\
-         \x20\x20\x20\x20  - Job income: <tokenAmount> <tokenSymbol>\n\
-         \x20\x20\x20\x20  - Account-level pending reward: none (checked)\n\
-         \x20\x20\x20\x20  - User Agent: <buyerAgentId>\n\
-         {EVALUATION_REASONS_BLOCK}\n\
-         \x20\x20\x20\x20  \n\
-         \x20\x20\x20\x20  This job is complete."
-    )
+/// `Event::DisputeResolved` branch A (ASP wins) — "Evaluation Won" user notify.
+///
+/// Shows only the service, the job-scoped revenue, and the Job ID. Account-level
+/// rewards (for example the result of `asp-claim-rewards`) are deliberately not
+/// part of this copy: they cannot be attributed to this job.
+pub fn dispute_won_user_notify(
+    kind: DisputeWonKind,
+    service_name: &str,
+    job_id: &str,
+    amount: &str,
+    token_symbol: &str,
+) -> String {
+    let headline = match kind {
+        DisputeWonKind::Subscription => format!(
+            "[Evaluation Won] The ruling for {service_name} was in the ASP’s favor. {amount} {token_symbol} in revenue for this billing period will be settled to your wallet."
+        ),
+        DisputeWonKind::OneTimePaid => format!(
+            "[Evaluation Won] The ruling for {service_name} was in the ASP’s favor. {amount} {token_symbol} in job revenue has been settled to your wallet."
+        ),
+        DisputeWonKind::OneTimeFree => format!(
+            "[Evaluation Won] The ruling for {service_name} was in the ASP’s favor, and the job is complete."
+        ),
+    };
+    format!("{headline}\n- Job ID: {job_id}")
 }
 
 /// `Event::RewardClaimed` Step 1 — failure notice pushed to the user when
@@ -817,6 +822,40 @@ mod tests {
                 false,
             ),
             "[Refund Response Timed Out] You did not respond to the refund request for One-off analysis by the deadline. No charges were incurred, so no refund is required.\n\nJob ID: job-3\nResponse deadline: 2023-11-14 22:13 UTC\nJob status: Failed"
+        );
+    }
+
+    #[test]
+    fn dispute_won_copy_matches_evaluation_won_template() {
+        assert_eq!(
+            dispute_won_user_notify(
+                DisputeWonKind::Subscription,
+                "BTC Signals",
+                "job-1",
+                "12.34",
+                "USDT",
+            ),
+            "[Evaluation Won] The ruling for BTC Signals was in the ASP’s favor. 12.34 USDT in revenue for this billing period will be settled to your wallet.\n- Job ID: job-1"
+        );
+        assert_eq!(
+            dispute_won_user_notify(
+                DisputeWonKind::OneTimePaid,
+                "One-off analysis",
+                "job-2",
+                "5",
+                "USDT",
+            ),
+            "[Evaluation Won] The ruling for One-off analysis was in the ASP’s favor. 5 USDT in job revenue has been settled to your wallet.\n- Job ID: job-2"
+        );
+        assert_eq!(
+            dispute_won_user_notify(
+                DisputeWonKind::OneTimeFree,
+                "One-off analysis",
+                "job-3",
+                "0",
+                "USDT",
+            ),
+            "[Evaluation Won] The ruling for One-off analysis was in the ASP’s favor, and the job is complete.\n- Job ID: job-3"
         );
     }
 

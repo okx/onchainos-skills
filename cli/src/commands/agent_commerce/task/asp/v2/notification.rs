@@ -60,7 +60,10 @@ fn authoritative_task_kind(task: &PreFetchedTaskContext) -> Option<bool> {
     }
 }
 
-fn service_name(task: &PreFetchedTaskContext, message: Option<&serde_json::Value>) -> String {
+pub(crate) fn service_name(
+    task: &PreFetchedTaskContext,
+    message: Option<&serde_json::Value>,
+) -> String {
     task.service_name
         .as_deref()
         .and_then(authoritative_field)

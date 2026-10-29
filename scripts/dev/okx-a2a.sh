@@ -15,8 +15,9 @@ load_dev_runtime
 
 real_a2a="$dev_repo_root/.codex/bin/okx-a2a.real"
 [[ -x "$real_a2a" ]] || {
-  echo "error: global okx-a2a is unavailable; run npm run setup" >&2
+  echo "error: project-local okx-a2a is unavailable; run npm run setup" >&2
   exit 1
 }
 
+export OKX_AGENT_TASK_CLI_PATH="$dev_repo_root/.codex/a2a/node_modules/@okxweb3/a2a-node/dist/cli.js"
 exec "$real_a2a" "$@"

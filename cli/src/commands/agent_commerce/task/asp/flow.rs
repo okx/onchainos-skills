@@ -947,8 +947,7 @@ pub async fn generate_next_action(
 
         // ─── Scene 6.5: Evaluation ruling (won / lost branches distinguished by jobStatus in the inbound envelope) ─
         Event::DisputeResolved => {
-            let dispute_won_claim = super::content::dispute_won_with_claim_user_notify(job_id);
-            let dispute_won_no_claim = super::content::dispute_won_no_claim_user_notify(job_id);
+            let dispute_won = dispute_won_notify_instruction(job_id, prefetched);
             let dispute_lost = super::content::dispute_lost_user_notify(job_id);
             let rating_notify = super::content::rating_submitted_user_notify(job_id);
             let task_fields = inline_task_fields(&["title", "tokenAmount", "tokenSymbol", "buyerAgentId"]);
@@ -971,19 +970,14 @@ pub async fn generate_next_action(
              ```bash\n\
              onchainos agent asp-claim-rewards --agent-id {agent_id}\n\
              ```\n\
-             Record stdout's txHash + the actual amount / token claimed (used to notify the user in the next step).\n\n\
-             **A-Step 3 — Notify the user of the win + claim result via `onchainos agent user-notify`**:\n\n\
-             Field values for the content template come from the **Task fields** block above.\n\
+             These are account-level rewards, not income from this job. Do NOT report the claimed amount in A-Step 3.\n\n\
+             **A-Step 3 — Notify the user of the win via `onchainos agent user-notify`**:\n\n\
              ⚠️ content is the **chat the user will see** — plain natural language; **do NOT use** skill names / event names / state names / CLI flags or other technical jargon.\n\
              🌐 **Localize first** — rewrite the content below in the user's language before sending. Do NOT pass the English template verbatim to a non-English user.\n\
              ```bash\n\
              onchainos agent user-notify --content \"<localized content shown below>\"\n\
              ```\n\
-             content (choose based on whether A-Step 2 actually claimed):\n\
-             \x20\x20\x20\x20Claimed:\n\
-             {dispute_won_claim}\n\
-             \x20\x20\x20\x20Nothing to claim:\n\
-             {dispute_won_no_claim}\n\n\
+             {dispute_won}\n\n\
              🛑 Do NOT end this turn — A-Step 4 (auto-rate) and A-Step 4.5 (notify rating) below are MANDATORY.\n\n\
              **A-Step 4 — 🛑 Auto-rate the User Agent (MANDATORY):**\n\
              Based on the task description, requirements clarity, communication, and dispute outcome (you won), generate:\n\
@@ -1551,6 +1545,65 @@ pub async fn generate_next_action(
 
         Event::Other(ref other) => format!("[Unknown state] {other}\n"),
     }
+}
+
+// ── dispute_resolved helpers ────────────────────────────────────────
+
+/// A-Step 3 content for an ASP evaluation win. The fresh task detail selects the
+/// "Evaluation Won" variant and fills its values. When the task kind or the
+/// job-scoped amount is unknown, list every variant with placeholders and let the
+/// agent pick one from the task context. The service name comes only from the
+/// fresh task detail, never from the inbound envelope.
+fn dispute_won_notify_instruction(
+    job_id: &str,
+    prefetched: Option<&crate::commands::agent_commerce::task::common::PreFetchedTaskContext>,
+) -> String {
+    use super::content::{dispute_won_user_notify, DisputeWonKind};
+
+    let indent = |copy: String| copy.replace('\n', "\n\x20\x20\x20\x20");
+    if let Some(task) = prefetched {
+        let amount = task.token_amount.trim();
+        let symbol = task.token_symbol.trim();
+        let has_amount = !amount.is_empty() && !symbol.is_empty() && symbol != "?";
+        let kind = match task.job_type {
+            Some(1) if has_amount => Some(DisputeWonKind::Subscription),
+            Some(0) if super::task_query::is_zero_amount(amount) => {
+                Some(DisputeWonKind::OneTimeFree)
+            }
+            Some(0) if has_amount => Some(DisputeWonKind::OneTimePaid),
+            _ => None,
+        };
+        if let Some(kind) = kind {
+            let service_name = super::v2::notification::service_name(task, None);
+            let copy = dispute_won_user_notify(kind, &service_name, job_id, amount, symbol);
+            return format!(
+                "content (send this copy whether or not A-Step 2 claimed anything; do NOT add account-level rewards):\n\
+                 \x20\x20\x20\x20{}",
+                indent(copy)
+            );
+        }
+    }
+    let variant = |kind| {
+        indent(dispute_won_user_notify(
+            kind,
+            "<serviceName>",
+            job_id,
+            "<tokenAmount>",
+            "<tokenSymbol>",
+        ))
+    };
+    format!(
+        "content — pick exactly ONE variant by the task's `jobType` and `tokenAmount` (run `onchainos agent common context` if they are missing above). Fill `<serviceName>` with the service name, or the task title when it is unavailable. Send it whether or not A-Step 2 claimed anything; do NOT add account-level rewards:\n\
+         \x20\x20- Subscription task (jobType = 1):\n\
+         \x20\x20\x20\x20{}\n\
+         \x20\x20- One-time task (jobType = 0) with tokenAmount above 0:\n\
+         \x20\x20\x20\x20{}\n\
+         \x20\x20- One-time task (jobType = 0) with tokenAmount = 0:\n\
+         \x20\x20\x20\x20{}",
+        variant(DisputeWonKind::Subscription),
+        variant(DisputeWonKind::OneTimePaid),
+        variant(DisputeWonKind::OneTimeFree),
+    )
 }
 
 // ── user_attachment_received helpers ────────────────────────────────
@@ -2780,6 +2833,135 @@ mod tests {
             !out.contains("Legacy title"),
             "legacy title must be ignored: {out}"
         );
+    }
+
+    // ── dispute_resolved: ASP "Evaluation Won" copy ─────────────────────
+
+    fn dispute_resolved_task(
+        job_type: i64,
+        token_amount: &str,
+    ) -> crate::commands::agent_commerce::task::common::PreFetchedTaskContext {
+        crate::commands::agent_commerce::task::common::PreFetchedTaskContext::from_api_response(
+            &json!({
+                "title": "Task title",
+                "serviceName": "Alpha Service",
+                "jobType": job_type,
+                "paymentTokenAmount": token_amount,
+                "tokenSymbol": "USDT",
+                "status": 6,
+                "providerAgentId": ASP_AGENT_ID,
+                "buyerAgentId": "777",
+            }),
+        )
+    }
+
+    fn dispute_resolved_message() -> serde_json::Value {
+        json!({ "event": "dispute_resolved", "jobId": ASP_JOB_ID, "jobStatus": "complete" })
+    }
+
+    fn assert_no_account_reward_copy(out: &str) {
+        for banned in [
+            "Auto-claimed account reward",
+            "Account-level pending reward",
+            "<claimed amount>",
+            "Record stdout's txHash",
+        ] {
+            assert!(!out.contains(banned), "found {banned:?} in: {out}");
+        }
+    }
+
+    #[tokio::test]
+    async fn dispute_won_subscription_renders_period_revenue_copy() {
+        let task = dispute_resolved_task(1, "12.5");
+        let out = run_asp_with_task("dispute_resolved", dispute_resolved_message(), &task).await;
+
+        assert!(
+            out.contains("[Evaluation Won] The ruling for Alpha Service was in the ASP’s favor. 12.5 USDT in revenue for this billing period will be settled to your wallet.\n\x20\x20\x20\x20- Job ID: 0xsub01"),
+            "{out}"
+        );
+        assert!(!out.contains("in job revenue has been settled"), "{out}");
+        assert_no_account_reward_copy(&out);
+    }
+
+    #[tokio::test]
+    async fn dispute_won_paid_one_time_renders_job_revenue_copy() {
+        let task = dispute_resolved_task(0, "5");
+        let out = run_asp_with_task("dispute_resolved", dispute_resolved_message(), &task).await;
+
+        assert!(
+            out.contains("[Evaluation Won] The ruling for Alpha Service was in the ASP’s favor. 5 USDT in job revenue has been settled to your wallet.\n\x20\x20\x20\x20- Job ID: 0xsub01"),
+            "{out}"
+        );
+        assert!(!out.contains("for this billing period"), "{out}");
+        assert_no_account_reward_copy(&out);
+    }
+
+    #[tokio::test]
+    async fn dispute_won_free_one_time_renders_completion_without_amount() {
+        let task = dispute_resolved_task(0, "0");
+        let out = run_asp_with_task("dispute_resolved", dispute_resolved_message(), &task).await;
+
+        assert!(
+            out.contains("[Evaluation Won] The ruling for Alpha Service was in the ASP’s favor, and the job is complete.\n\x20\x20\x20\x20- Job ID: 0xsub01"),
+            "{out}"
+        );
+        assert!(!out.contains("0 USDT"), "{out}");
+        assert_no_account_reward_copy(&out);
+    }
+
+    #[tokio::test]
+    async fn dispute_won_keeps_account_reward_claim_out_of_the_notification() {
+        let task = dispute_resolved_task(0, "5");
+        let out = run_asp_with_task("dispute_resolved", dispute_resolved_message(), &task).await;
+
+        // The reward-claim steps are unchanged; only the notification drops them.
+        assert!(
+            out.contains("onchainos agent asp-claimable --agent-id 864"),
+            "{out}"
+        );
+        assert!(
+            out.contains("onchainos agent asp-claim-rewards --agent-id 864"),
+            "{out}"
+        );
+        assert!(
+            out.contains("Do NOT report the claimed amount in A-Step 3"),
+            "{out}"
+        );
+        assert_no_account_reward_copy(&out);
+    }
+
+    #[tokio::test]
+    async fn dispute_won_without_task_detail_lists_every_variant() {
+        let out = run_asp("dispute_resolved", dispute_resolved_message()).await;
+
+        assert!(out.contains("pick exactly ONE variant"), "{out}");
+        assert!(
+            out.contains("The ruling for <serviceName> was in the ASP’s favor. <tokenAmount> <tokenSymbol> in revenue for this billing period will be settled to your wallet."),
+            "{out}"
+        );
+        assert!(
+            out.contains("The ruling for <serviceName> was in the ASP’s favor. <tokenAmount> <tokenSymbol> in job revenue has been settled to your wallet."),
+            "{out}"
+        );
+        assert!(
+            out.contains(
+                "The ruling for <serviceName> was in the ASP’s favor, and the job is complete."
+            ),
+            "{out}"
+        );
+        assert_no_account_reward_copy(&out);
+    }
+
+    #[tokio::test]
+    async fn dispute_lost_copy_is_unchanged() {
+        let task = dispute_resolved_task(0, "5");
+        let out = run_asp_with_task("dispute_resolved", dispute_resolved_message(), &task).await;
+
+        assert!(
+            out.contains("[⚖️⚠️ Evaluation Result] Job 0xsub01 (<title>) — evaluation completed; User Agent wins."),
+            "{out}"
+        );
+        assert!(out.contains("- Evaluation reasons:"), "{out}");
     }
 
     // ── FR-3: price gate test_flag short-circuit (sandbox ASP review) ────

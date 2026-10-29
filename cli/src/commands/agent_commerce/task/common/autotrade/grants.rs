@@ -2,8 +2,8 @@
 //!
 //! One file per `jobId` at `<onchainos_home>/autotrade/grants/<jobId>.json`,
 //! written **whole** in one shot (a per-venue partial write would clobber other
-//! venues). `check_grant` is the single shared validation core behind the
-//! `autotrade-grant-check` subcommand used by model-selected Skills/plugins.
+//! venues). `check_grant` retains the shared validation core for internal callers
+//! and historical authorization records.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -256,7 +256,7 @@ const CONSENT_SELL_UNLIMITED: &str = "1000000000000000000"; // 1e18, far above a
 /// Polymarket routes retain their reduce-position sell allowance. Trade Kit is kept in
 /// a separate authorization domain and caps both sides because a CEX derivative
 /// `sell` may open or increase a short rather than reduce an existing position.
-/// Written by `autotrade-consent-set` for `Auto` mode.
+/// Retained for shared policy migration and authorization checks.
 pub fn write_cap_grant(job_id: &str, cap_u: &str, ttl_sec: u64) -> anyhow::Result<()> {
     if !job_id_is_safe(job_id) {
         anyhow::bail!("invalid job id");

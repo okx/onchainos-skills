@@ -208,6 +208,7 @@ async fn run() {
     let start = std::time::Instant::now();
 
     let ctx = commands::Context::new(&cli);
+    let dev_mode = cli.dev;
 
     let result = match cli.command {
         Commands::Market { command } => commands::market::execute(&ctx, *command).await,
@@ -229,7 +230,7 @@ async fn run() {
         Commands::Strategy { command } => {
             commands::agentic_wallet::strategy::execute(&ctx, *command).await
         }
-        Commands::Ws { command } => commands::ws::execute(command).await,
+        Commands::Ws { command } => commands::ws::execute(command, dev_mode).await,
         Commands::Workflow { command } => commands::workflows::execute(&ctx, *command).await,
         Commands::Upgrade(args) => commands::upgrade::execute(args).await,
         Commands::Preflight(args) => commands::upgrade::preflight(args).await,
@@ -262,29 +263,22 @@ async fn run() {
                         output::setup_required(&s.error_code, &s.message, &s.data);
                         std::process::exit(3);
                     }
-                    Err(e) => match e.downcast::<
-                        commands::agent_commerce::task::common::autotrade::CliBespokeExit,
-                    >() {
-                        // Handler already printed its bespoke JSON (e.g. autotrade-grant-check
-                        // {ok,reason?}); just exit with its code, no standard error envelope.
-                        // audit::log already fired above for both allow and deny.
-                        Ok(b) => std::process::exit(b.0),
-                        Err(e) => {
-                            let e = match e.downcast::<output::CliFundingBlocked>() {
-                                Ok(blocked) => {
-                                    output::error_data(blocked.data);
-                                    std::process::exit(1);
-                                }
-                                Err(e) => e,
-                            };
-                            let e = match e.downcast::<output::CliDuplicateSubscription>() {
-                                Ok(blocked) => {
-                                    output::error_data(blocked.data);
-                                    std::process::exit(1);
-                                }
-                                Err(e) => e,
-                            };
-                            match e.downcast::<commands::sink::CodedError>() {
+                    Err(e) => {
+                        let e = match e.downcast::<output::CliFundingBlocked>() {
+                            Ok(blocked) => {
+                                output::error_data(blocked.data);
+                                std::process::exit(1);
+                            }
+                            Err(e) => e,
+                        };
+                        let e = match e.downcast::<output::CliDuplicateSubscription>() {
+                            Ok(blocked) => {
+                                output::error_data(blocked.data);
+                                std::process::exit(1);
+                            }
+                            Err(e) => e,
+                        };
+                        match e.downcast::<commands::sink::CodedError>() {
                                 Ok(c) => {
                                     output::error_coded_details(
                                         &c.code,
@@ -308,10 +302,81 @@ async fn run() {
                                     }
                                 },
                             }
-                        }
-                    },
+                    }
                 },
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod cli_environment_tests {
+    use super::*;
+
+    fn with_cli_stack(test: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(test)
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn dev_flag_selects_pre_watch_environment() {
+        with_cli_stack(|| {
+            let cli = Cli::try_parse_from([
+                "onchainos",
+                "--dev",
+                "ws",
+                "start",
+                "--channel",
+                "kol_smartmoney-tracker-activity",
+            ])
+            .unwrap();
+
+            assert!(cli.dev);
+            assert_eq!(
+                watch::types::WatchEnv::from_dev_mode(cli.dev),
+                watch::types::WatchEnv::Pre
+            );
+        });
+    }
+
+    #[test]
+    fn default_cli_selects_prod_watch_environment() {
+        with_cli_stack(|| {
+            let cli = Cli::try_parse_from([
+                "onchainos",
+                "ws",
+                "start",
+                "--channel",
+                "kol_smartmoney-tracker-activity",
+            ])
+            .unwrap();
+
+            assert!(!cli.dev);
+            assert_eq!(
+                watch::types::WatchEnv::from_dev_mode(cli.dev),
+                watch::types::WatchEnv::Prod
+            );
+        });
+    }
+
+    #[test]
+    fn ws_start_rejects_removed_env_flag() {
+        with_cli_stack(|| {
+            let result = Cli::try_parse_from([
+                "onchainos",
+                "ws",
+                "start",
+                "--channel",
+                "kol_smartmoney-tracker-activity",
+                "--env",
+                "pre",
+            ]);
+
+            assert!(result.is_err());
+        });
     }
 }

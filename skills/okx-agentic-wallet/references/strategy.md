@@ -70,9 +70,11 @@ Reply confirm / change / cancel.
 
 `--trigger-price` is a USD price — make this clear to avoid confusion with an exchange rate.
 
-## Render Rules
+## Output Rules
 
-### Display Labels & Output Language (single source of truth)
+### Render Rules
+
+#### Display Labels & Output Language (single source of truth)
 
 Canonical Display labels are the only strings the agent may surface. The CLI returns `statusLabel` directly for status; for `strategyType` look up the label from the enum table in [strategy-cli-reference.md](strategy-cli-reference.md).
 
@@ -110,7 +112,14 @@ To see terminal orders, pass `--status` explicitly (see the status enum in [stra
 
 ### Async Wait Pattern
 
-`create-limit`, `cancel`, `resume` return after the request is **accepted**, not after terminal state. Pass **`--wait`** to fold the terminal-state check into the call: the CLI sleeps a fixed 3 s (covers all supported chains — never keyed to `estimatedWaitTime`), re-queries each affected order, and merges the result — `settled` (bool; for multi-order cancel/resume it is the logical AND across orders, with a per-order `orders[]` array), `status`, `statusLabel`, plus settled-only `transactionInfo` / `executionHistoryList` / `fromToken` / `toToken` / `orderStatusUpdateTime`. If `settled == false`, surface the partial state — do not loop indefinitely. **NEVER**: combine `cancel --all` with `--wait` — the CLI rejects it (`code: invalid_input`, `field: wait`, exit 1) before any cancel is sent; use `--order-id` / `--order-ids` with `--wait`, or omit `--wait` for bulk cancel. Without `--wait`, the response is acceptance-only; re-query `strategy list --order-id <orderId>` yourself if you need terminal state. Solana settles immediately (`estimatedWaitTime=0`).
+`create-limit`, `cancel`, and `resume` return after the request is **accepted**, not after it reaches a terminal state.
+
+- Pass **`--wait`** to include a terminal-state check in the command. The CLI waits a fixed 3 seconds, re-queries each affected order, and merges the result. Do not use `estimatedWaitTime` to choose the wait duration.
+- With `--wait`, read `settled`, `status`, and `statusLabel`. For a multi-order cancel or resume, `settled` is the logical AND across orders and `orders[]` contains the per-order result. A settled order also returns `transactionInfo`, `executionHistoryList`, `fromToken`, `toToken`, and `orderStatusUpdateTime`.
+- If `settled == false`, show the partial state. Do not poll indefinitely.
+- Do not combine `cancel --all` with `--wait`. The CLI rejects it before any cancel is sent (`code: invalid_input`, `field: wait`, exit 1). Use `--order-id` or `--order-ids` with `--wait`, or omit `--wait` for bulk cancel.
+- Without `--wait`, the response shows acceptance only. Run `strategy list --order-id <orderId>` when terminal state is needed.
+- Solana settles immediately (`estimatedWaitTime=0`).
 
 ### SA Activation Transparency
 

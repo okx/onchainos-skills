@@ -549,20 +549,15 @@ fn agent_sub(cmd: &crate::commands::agent_commerce::AgentCommand) -> String {
         AgentCommand::Apply { .. } => "apply".into(),
         AgentCommand::Deliver { .. } => "deliver".into(),
         AgentCommand::SubscriptionPush { .. } => "subscription-push".into(),
-        AgentCommand::TradeKitReadiness { .. } => "trade-kit-readiness".into(),
-        AgentCommand::AutotradeGrantCheck { .. } => "autotrade-grant-check".into(),
         #[cfg(debug_assertions)]
         AgentCommand::AutotradeGrantWrite { .. } => "autotrade-grant-write".into(),
         AgentCommand::AutotradeGuideConsentNew { .. } => "autotrade-guide-consent-new".into(),
         AgentCommand::AutotradeGuideConsentUpdate { .. } => "autotrade-guide-consent-update".into(),
-        AgentCommand::AutotradeConsentRequest { .. } => "autotrade-consent-request".into(),
         AgentCommand::AutotradeGuidePrepare { .. } => "autotrade-guide-prepare".into(),
         AgentCommand::AutotradeDirectClaim { .. } => "autotrade-direct-claim".into(),
         AgentCommand::AutotradeDirectFinalize { .. } => "autotrade-direct-finalize".into(),
-        AgentCommand::AutotradeOnceAuthorize { .. } => "autotrade-once-authorize".into(),
         AgentCommand::AutotradeOutcomeFlush { .. } => "autotrade-outcome-flush".into(),
         AgentCommand::AutotradeDeliveryReport { .. } => "autotrade-delivery-report".into(),
-        AgentCommand::AutotradeCapAdjustRequest { .. } => "autotrade-cap-adjust-request".into(),
         AgentCommand::AgreeRefund { .. } => "agree-refund".into(),
         AgentCommand::AspReject { .. } => "asp-reject".into(),
         AgentCommand::SubscribeActive { .. } => "subscribe-active".into(),
@@ -1127,31 +1122,6 @@ mod tests {
         let args = vec_s(&["onchainos", "agent", "deliver", "--autotrade={\"a\":1}"]);
         let out = redact_args(&args);
         assert_eq!(out[3], "--autotrade=[REDACTED]");
-    }
-
-    #[test]
-    fn grant_caps_not_redacted() {
-        // Policy caps are not secrets — must survive verbatim for audit review.
-        let args = vec_s(&[
-            "onchainos",
-            "agent",
-            "autotrade-grant-check",
-            "--job-id",
-            "j1",
-            "--venue",
-            "dex",
-            "--action",
-            "buy",
-            "--amount",
-            "100.5",
-            "--format",
-            "json",
-        ]);
-        let out = redact_args(&args);
-        assert!(
-            out.contains(&"100.5".to_string()),
-            "amount cap must not be redacted"
-        );
     }
 
     #[test]

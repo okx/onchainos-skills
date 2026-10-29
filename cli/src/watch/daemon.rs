@@ -138,7 +138,7 @@ pub async fn run_daemon(_id: &str, dir: &Path) -> Result<()> {
             }
         }
     });
-    let ws_url = crate::endpoints::WS_URL;
+    let ws_url = crate::endpoints::dex_ws_url(matches!(config.env, WatchEnv::Pre));
     let creds = match Credentials::from_watch_env(&config.env) {
         Ok(c) => c,
         Err(e) => {

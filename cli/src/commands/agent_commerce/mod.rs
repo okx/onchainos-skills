@@ -723,40 +723,6 @@ pub enum AgentCommand {
         content: String,
     },
 
-    /// Check deterministic local Trade Kit CLI/version/capability compatibility.
-    /// Never checks authentication, account permissions, network availability,
-    /// or trading availability.
-    #[command(name = "trade-kit-readiness")]
-    TradeKitReadiness {
-        /// Repeatable: spot | perp | prediction | option.
-        #[arg(long = "asset-class", required = true, action = clap::ArgAction::Append)]
-        asset_class: Vec<String>,
-        /// Target trading environment. Explicit live/demo is required by
-        /// execution flows; configured preserves the Trade Kit profile default.
-        #[arg(long, default_value = "configured")]
-        environment: String,
-    },
-
-    /// Check a per-trade amount against the buyer's written authorization (bespoke
-    /// `{ok,reason?}` process contract; NOT the standard `data` envelope).
-    #[command(name = "autotrade-grant-check")]
-    AutotradeGrantCheck {
-        #[arg(long = "job-id")]
-        job_id: String,
-        /// `dex` | `hyperliquid` (alias of `dex`) | `defi` | `polymarket` | `trade_kit`.
-        #[arg(long)]
-        venue: String,
-        /// `buy` | `sell`.
-        #[arg(long)]
-        action: String,
-        /// Decimal per-trade amount to check against the written cap (mandatory).
-        #[arg(long)]
-        amount: String,
-        /// Only `json` is accepted; any other value denies.
-        #[arg(long)]
-        format: String,
-    },
-
     /// [dev only] Seed a local grant file for testing (compiled out of release; AC-11).
     #[cfg(debug_assertions)]
     #[command(name = "autotrade-grant-write", hide = true)]
@@ -795,33 +761,6 @@ pub enum AgentCommand {
         values_json: String,
         #[arg(long = "ttl-sec", default_value_t = task::common::autotrade::DEFAULT_AUTOTRADE_TTL_SEC)]
         ttl_sec: u64,
-    },
-
-    /// Compatibility entry point for delivery policy handling. Only an active
-    /// automatic policy may continue; every non-auto policy is notify-only and
-    /// reported as a terminal skip without a per-delivery decision.
-    #[command(name = "autotrade-consent-request", hide = true)]
-    AutotradeConsentRequest {
-        #[arg(long = "job-id")]
-        job_id: String,
-        #[arg(long = "agent-id")]
-        agent_id: String,
-        #[arg(long = "delivery-id")]
-        delivery_id: String,
-        #[arg(long = "signal-type")]
-        signal_type: String,
-    },
-
-    /// Persist a short-lived, exact-delivery permit after the user chooses the
-    /// over-cap card's one-time execution option.
-    #[command(name = "autotrade-once-authorize", hide = true)]
-    AutotradeOnceAuthorize {
-        #[arg(long = "job-id")]
-        job_id: String,
-        #[arg(long = "delivery-id")]
-        delivery_id: String,
-        #[arg(long)]
-        amount: String,
     },
 
     /// Restore local Guide/Consent material without reserving execution.
@@ -888,15 +827,6 @@ pub enum AgentCommand {
         /// Concise user-safe reason; command output and credentials are forbidden.
         #[arg(long)]
         reason: String,
-    },
-
-    /// Ask whether to raise the cap after a successful over-cap one-shot.
-    #[command(name = "autotrade-cap-adjust-request", hide = true)]
-    AutotradeCapAdjustRequest {
-        #[arg(long = "job-id")]
-        job_id: String,
-        #[arg(long = "agent-id")]
-        agent_id: String,
     },
 
     /// Provider agrees to refund (agreeRefund API → sign → broadcast)
@@ -1428,7 +1358,12 @@ pub enum AgentCommand {
 
 pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
     // The isolated reporting worker must not flush unrelated agent task queues.
-    if matches!(&cmd, AgentCommand::A2mcp { command: a2mcp::A2mcpCommand::ReportSale }) {
+    if matches!(
+        &cmd,
+        AgentCommand::A2mcp {
+            command: a2mcp::A2mcpCommand::ReportSale
+        }
+    ) {
         return a2mcp::run(a2mcp::A2mcpCommand::ReportSale).await;
     }
     use task::user::TaskCommand as T;
@@ -1441,7 +1376,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
         std::time::Duration::from_millis(100),
     );
     let _ = task::common::autotrade::executor::flush_all_due(1);
-    let _ = task::common::autotrade::executor::cleanup_expired_tickets(8);
     let _ = task::common::autotrade::delivery_queue::flush_due(
         1,
         std::time::Duration::from_millis(100),
@@ -2100,52 +2034,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             .await
         }
 
-        AgentCommand::TradeKitReadiness {
-            asset_class,
-            environment,
-        } => {
-            let asset_classes =
-                task::common::autotrade::trade_kit::parse_runtime_asset_classes(&asset_class)
-                    .map_err(anyhow::Error::msg)?;
-            let environment =
-                task::common::autotrade::trade_kit::TradeEnvironment::parse(&environment)
-                    .map_err(anyhow::Error::msg)?;
-            let result =
-                task::common::autotrade::trade_kit::probe_runtime(&asset_classes, environment)
-                    .await;
-            crate::output::success(result);
-            Ok(())
-        }
-
-        // ── Auto copy-trade (grant-check public; grant-write debug-only) ─────
-        AgentCommand::AutotradeGrantCheck {
-            job_id,
-            venue,
-            action,
-            amount,
-            format,
-        } => {
-            use task::common::autotrade::{grants, CliBespokeExit};
-            // --format must be exactly "json"; any other value denies.
-            if format != "json" {
-                crate::output::bespoke_deny(grants::DENY_INVALID_FORMAT);
-                return Err(CliBespokeExit(1).into());
-            }
-            // Bespoke process contract: top-level {ok} / {ok,reason}, no `data` wrapper.
-            // audit::log (main.rs) fires for both allow and deny before the exit.
-            match grants::check_grant(&job_id, &venue, &action, &amount) {
-                Ok(()) => {
-                    crate::output::bespoke_ok();
-                    Ok(())
-                }
-                Err(deny) => {
-                    // NFR-3: `reason` is a process-level description only — never the file/path.
-                    crate::output::bespoke_deny(deny.0);
-                    Err(CliBespokeExit(1).into())
-                }
-            }
-        }
-
         #[cfg(debug_assertions)]
         AgentCommand::AutotradeGrantWrite {
             job_id,
@@ -2165,44 +2053,13 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             Ok(())
         }
 
-        AgentCommand::AutotradeConsentRequest {
-            job_id,
-            agent_id: _,
-            delivery_id,
-            signal_type: _,
-        } => {
-            use task::common::autotrade::executor;
-            // This hidden command is reached only from an in-flight legacy
-            // decision. A fixed-field Consent cannot satisfy the Guide +
-            // Guide Consent + resolved Signal contract, so never advertise a
-            // resumable execution path here.
-            let outcome = executor::report_delivery(
-                &job_id,
-                &delivery_id,
-                "skipped",
-                task::common::autotrade::GUIDE_EXECUTION_UNAVAILABLE_REASON,
-            )?;
-            let _ = task::common::okx_a2a::mark_retired_autotrade_mode_decisions_handled(&job_id);
-            crate::output::success(serde_json::json!({
-                "decision": false,
-                "decisionPushed": false,
-                "status": "skipped",
-                "reason": task::common::autotrade::GUIDE_EXECUTION_UNAVAILABLE_REASON,
-                "jobId": job_id,
-                "deliveryId": delivery_id,
-                "terminal": true,
-                "outcome": outcome,
-                "guidance": "The Signal remains saved for receive/display only. This retired Consent flow cannot authorize Guide-driven execution; do not create another execution decision.",
-            }));
-            Ok(())
-        }
-
         AgentCommand::AutotradeDirectClaim {
             job_id,
             delivery_id,
         } => {
             let result =
-                task::common::autotrade::executor::claim_guide_direct(&job_id, &delivery_id).await?;
+                task::common::autotrade::executor::claim_guide_direct(&job_id, &delivery_id)
+                    .await?;
             crate::output::success(result);
             Ok(())
         }
@@ -2238,19 +2095,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             Ok(())
         }
 
-        AgentCommand::AutotradeOnceAuthorize {
-            job_id,
-            delivery_id,
-            amount,
-        } => {
-            crate::output::success(task::common::autotrade::executor::authorize_one_time(
-                &job_id,
-                &delivery_id,
-                &amount,
-            )?);
-            Ok(())
-        }
-
         AgentCommand::AutotradeOutcomeFlush { job_id } => {
             crate::output::success(task::common::autotrade::executor::flush(&job_id)?);
             Ok(())
@@ -2271,53 +2115,14 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             Ok(())
         }
 
-        AgentCommand::AutotradeCapAdjustRequest { job_id, agent_id } => {
-            use task::common::autotrade::{card, consent};
-            let file = consent::load_consent(&job_id)?
-                .ok_or_else(|| anyhow::anyhow!("no live auto-trade consent"))?;
-            if file.mode != consent::ConsentMode::Auto {
-                anyhow::bail!("cap adjustment is only valid for auto consent");
-            }
-            let amount = file.trade_amount_u.as_deref().unwrap_or_default();
-            let cap = file.cap_u.as_deref().unwrap_or_default();
-            let amount_decimal = task::common::autotrade::amount::Decimal::parse(amount)?;
-            if matches!(
-                consent::evaluate_consent(&job_id, Some(&amount_decimal)),
-                Ok(consent::ConsentDecision::AutoOverCap)
-            ) {
-                let d = card::make_cap_adjust_decision("trade", &job_id, &agent_id, amount, cap);
-                let target = consent::load_pending_delivery_context(&job_id)?
-                    .map(|context| context.provider_agent_id);
-                match task::common::pending_v2::push_decision_direct(
-                    &job_id,
-                    "user",
-                    &agent_id,
-                    target.as_deref(),
-                    &d.user_content,
-                    &card::decision_list_label(&d),
-                    &d.source_event,
-                ) {
-                    Ok(()) => crate::output::success(serde_json::json!({
-                        "decision": true, "decisionPushed": true,
-                        "sourceEvent": d.source_event
-                    })),
-                    Err(_) => crate::output::success(d),
-                }
-            } else {
-                crate::output::success(serde_json::json!({"capAlreadySufficient": true}));
-            }
-            Ok(())
-        }
-
         AgentCommand::AutotradeGuideConsentUpdate {
             job_id,
             values_json,
         } => {
             let values = serde_json::from_str(&values_json)
                 .map_err(|error| anyhow::anyhow!("--values-json must be a JSON object: {error}"))?;
-            let consent = task::common::autotrade::guide::update_active_consent_values(
-                &job_id, values,
-            )?;
+            let consent =
+                task::common::autotrade::guide::update_active_consent_values(&job_id, values)?;
             crate::output::success(serde_json::json!({
                 "jobId": consent.job_id,
                 "consentStatus": "active",
@@ -2346,298 +2151,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
             Ok(())
         }
 
-        #[cfg(any())]
-        AgentCommand::AutotradeConsentSet {
-            job_id,
-            mode,
-            cap,
-            trade_amount,
-            agent_id,
-            ttl_sec,
-            plugin,
-            quote,
-            environment,
-            margin_mode,
-            order_policy,
-            auth_mode,
-            settings_json,
-            continuation_id,
-        } => {
-            use task::common::autotrade::{consent, grants};
-            let trade_environment = environment
-                .as_deref()
-                .map(task::common::autotrade::trade_kit::TradeEnvironment::parse)
-                .transpose()
-                .map_err(anyhow::Error::msg)?;
-            if trade_environment.is_some_and(|environment| !environment.is_explicit()) {
-                anyhow::bail!("--environment must be one of: live | demo");
-            }
-            let margin_mode = margin_mode
-                .as_deref()
-                .map(consent::MarginMode::parse)
-                .transpose()?;
-            let order_policy = order_policy
-                .as_deref()
-                .map(consent::OrderPolicy::parse)
-                .transpose()?;
-            let auth_mode = auth_mode
-                .as_deref()
-                .map(consent::TradeKitAuthMode::parse)
-                .transpose()?;
-            let dynamic_settings =
-                consent::parse_dynamic_settings_json(settings_json.as_deref(), "--settings-json")?;
-            let auto_continuation_id =
-                auto_write_continuation_id(&mode, continuation_id.as_deref())?;
-            if mode == "pause" {
-                if cap.is_some()
-                    || trade_amount.is_some()
-                    || plugin.is_some()
-                    || quote.is_some()
-                    || environment.is_some()
-                    || margin_mode.is_some()
-                    || order_policy.is_some()
-                    || auth_mode.is_some()
-                    || settings_json.is_some()
-                {
-                    anyhow::bail!("pause does not accept policy arguments");
-                }
-                consent::clear_consent(&job_id);
-                grants::clear_grant(&job_id);
-                consent::clear_pending_signal(&job_id);
-                task::common::autotrade::continuation::clear(&job_id);
-                let _ =
-                    task::common::okx_a2a::mark_retired_autotrade_mode_decisions_handled(&job_id);
-                crate::output::success(
-                    serde_json::json!({"consentMode":"pause","cleared":true,"jobId":job_id}),
-                );
-                return Ok(());
-            }
-            if agent_id.is_none() {
-                anyhow::bail!("--agent-id is required unless --mode pause");
-            }
-            if mode == "environment-set" {
-                if cap.is_some()
-                    || trade_amount.is_some()
-                    || plugin.is_some()
-                    || quote.is_some()
-                    || margin_mode.is_some()
-                    || order_policy.is_some()
-                    || auth_mode.is_some()
-                    || settings_json.is_some()
-                {
-                    anyhow::bail!("environment-set accepts only --environment");
-                }
-                let trade_environment = trade_environment
-                    .ok_or_else(|| anyhow::anyhow!("--environment is required"))?;
-                let policy = consent::write_trade_environment(&job_id, trade_environment)?;
-                crate::output::success(serde_json::json!({
-                    "consentMode": policy.mode,
-                    "tradeEnvironment": trade_environment.as_str(),
-                    "replayed": false
-                }));
-                return Ok(());
-            }
-            if mode == "settings-update" {
-                if cap.is_some() || trade_amount.is_some() || plugin.is_some() || quote.is_some() {
-                    anyhow::bail!("settings-update accepts only execution settings");
-                }
-                let policy = consent::write_trade_settings_with_dynamic(
-                    &job_id,
-                    trade_environment,
-                    margin_mode,
-                    order_policy,
-                    auth_mode,
-                    Some(&dynamic_settings),
-                )?;
-                crate::output::success(serde_json::json!({
-                    "consentMode": policy.mode,
-                    "tradeEnvironment": policy.trade_environment.map(|value| value.as_str()),
-                    "marginMode": policy.margin_mode.map(|value| value.as_str()),
-                    "orderPolicy": policy.order_policy.map(|value| value.as_str()),
-                    "authMode": policy.auth_mode.map(|value| value.as_str()),
-                    "replayed": false
-                }));
-                return Ok(());
-            }
-            if mode == "plugin-ready-check" || mode == "plugin-approved" {
-                if cap.is_some()
-                    || trade_amount.is_some()
-                    || quote.is_some()
-                    || environment.is_some()
-                    || margin_mode.is_some()
-                    || order_policy.is_some()
-                    || auth_mode.is_some()
-                    || settings_json.is_some()
-                {
-                    anyhow::bail!("plugin-ready-check accepts only --plugin");
-                }
-                let plugin = plugin.ok_or_else(|| anyhow::anyhow!("--plugin is required"))?;
-                let selected = match plugin.as_str() {
-                    "trade-kit" => anyhow::bail!(
-                        "Trade Kit readiness requires an asset class; use `onchainos agent trade-kit-readiness --asset-class <spot|perp|prediction|option>`"
-                    ),
-                    "polymarket-plugin" => {
-                        task::common::autotrade::tooling::ExecutionTool::PolymarketPlugin
-                    }
-                    "hyperliquid-plugin" => {
-                        task::common::autotrade::tooling::ExecutionTool::HyperliquidPlugin
-                    }
-                    _ => anyhow::bail!("unsupported execution plugin/tool"),
-                };
-                let inventory = task::common::autotrade::tooling::ToolInventory::detect();
-                if inventory.readiness_of(selected)
-                    != task::common::autotrade::tooling::Readiness::Ready
-                {
-                    anyhow::bail!("plugin/tool is not ready");
-                }
-                consent::write_plugin_approved(&job_id, &plugin)
-                    .map_err(|e| anyhow::anyhow!(e.0))?;
-                crate::output::success(
-                    serde_json::json!({"pluginApproved":plugin,"replayed":false}),
-                );
-                return Ok(());
-            }
-            if mode == "cap-adjust" {
-                if trade_amount.is_some()
-                    || plugin.is_some()
-                    || quote.is_some()
-                    || environment.is_some()
-                    || margin_mode.is_some()
-                    || order_policy.is_some()
-                    || auth_mode.is_some()
-                    || settings_json.is_some()
-                {
-                    anyhow::bail!("cap-adjust accepts only --cap");
-                }
-                let new_cap = cap
-                    .as_deref()
-                    .ok_or_else(|| anyhow::anyhow!("--cap is required"))?;
-                let existing = consent::load_consent(&job_id)?
-                    .ok_or_else(|| anyhow::anyhow!("no live consent"))?;
-                if existing.mode != consent::ConsentMode::Auto {
-                    anyhow::bail!("cap adjustment requires auto consent");
-                }
-                let remaining = existing
-                    .expires_at
-                    .saturating_sub(
-                        std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_secs())
-                            .unwrap_or(0),
-                    )
-                    .max(1);
-                consent::write_consent_with_trade_amount(
-                    &job_id,
-                    consent::ConsentMode::Auto,
-                    Some(new_cap),
-                    existing.trade_amount_u.as_deref(),
-                    existing.quote_token.as_deref(),
-                    remaining,
-                )?;
-                grants::write_cap_grant(&job_id, new_cap, remaining)?;
-                crate::output::success(serde_json::json!({"capAdjusted":true,"cap":new_cap}));
-                return Ok(());
-            }
-            if plugin.is_some() {
-                anyhow::bail!("--plugin is only valid with plugin-ready-check");
-            }
-            let mode_enum = match mode.as_str() {
-                "auto" => consent::ConsentMode::Auto,
-                "notify_only" | "notify-only" | "manual" | "decline" => {
-                    consent::ConsentMode::Decline
-                }
-                _ => anyhow::bail!("unsupported --mode; use auto or notify_only"),
-            };
-            if mode_enum == consent::ConsentMode::Decline
-                && (cap.is_some()
-                    || trade_amount.is_some()
-                    || quote.is_some()
-                    || environment.is_some()
-                    || margin_mode.is_some()
-                    || order_policy.is_some()
-                    || auth_mode.is_some()
-                    || settings_json.is_some())
-            {
-                anyhow::bail!("notify_only does not accept automatic execution settings");
-            }
-            let auto_write_permit = if mode_enum == consent::ConsentMode::Auto {
-                let continuation_id = auto_continuation_id.expect("required for auto mode");
-                let agent_id = agent_id.as_deref().expect("checked above");
-                task::common::autotrade::continuation::validate_auto_write(
-                    &job_id,
-                    continuation_id,
-                    &task::common::autotrade::continuation::AutoConsentWrite {
-                        agent_id,
-                        trade_amount_u: trade_amount.as_deref(),
-                        cap_u: cap.as_deref(),
-                        quote_token: quote.as_deref(),
-                        trade_environment,
-                        margin_mode,
-                        order_policy,
-                        auth_mode,
-                        dynamic_settings: &dynamic_settings,
-                    },
-                )?;
-                Some((agent_id.to_string(), continuation_id.to_string()))
-            } else {
-                None
-            };
-            consent::write_consent_policy_with_dynamic_settings(
-                &job_id,
-                mode_enum,
-                cap.as_deref(),
-                trade_amount.as_deref(),
-                quote.as_deref(),
-                trade_environment,
-                margin_mode,
-                order_policy,
-                auth_mode,
-                Some(&dynamic_settings),
-                ttl_sec,
-            )?;
-            let persisted_policy = consent::load_consent(&job_id)?;
-            let persisted_environment = persisted_policy
-                .as_ref()
-                .and_then(|policy| policy.trade_environment)
-                .map(|value| value.as_str());
-            let persisted_margin_mode = persisted_policy
-                .as_ref()
-                .and_then(|policy| policy.margin_mode)
-                .map(|value| value.as_str());
-            let persisted_order_policy = persisted_policy
-                .as_ref()
-                .and_then(|policy| policy.order_policy)
-                .map(|value| value.as_str());
-            let persisted_auth_mode = persisted_policy
-                .and_then(|policy| policy.auth_mode)
-                .map(|value| value.as_str());
-            match mode_enum {
-                consent::ConsentMode::Auto => grants::write_auto_grant(&job_id, ttl_sec)?,
-                consent::ConsentMode::Manual | consent::ConsentMode::Decline => {
-                    grants::clear_grant(&job_id)
-                }
-            }
-            if let Some((agent_id, continuation_id)) = auto_write_permit.as_ref() {
-                task::common::autotrade::continuation::consume_auto_write(
-                    &job_id,
-                    agent_id,
-                    continuation_id,
-                )?;
-            } else {
-                task::common::autotrade::continuation::clear(&job_id);
-            }
-            consent::clear_pending_signal(&job_id);
-            crate::output::success(serde_json::json!({
-                    "consentMode": if mode_enum == consent::ConsentMode::Auto { "auto" } else { "notify_only" },
-                    "cap": cap,
-                    "tradeEnvironment": persisted_environment,
-                    "marginMode": persisted_margin_mode,
-                    "orderPolicy": persisted_order_policy,
-                    "authMode": persisted_auth_mode,
-                    "replayed": false
-            }));
-            Ok(())
-        }
         AgentCommand::AgreeRefund { job_id, agent_id } => {
             task::asp::run_provider(
                 task::asp::ProviderCommand::AgreeRefund { job_id, agent_id },
@@ -3192,24 +2705,6 @@ pub async fn run(cmd: AgentCommand, ctx: &Context) -> Result<()> {
     }
 }
 
-#[cfg(any())]
-fn auto_write_continuation_id<'a>(
-    mode: &str,
-    continuation_id: Option<&'a str>,
-) -> anyhow::Result<Option<&'a str>> {
-    if mode == "auto" {
-        return continuation_id.map(Some).ok_or_else(|| {
-            anyhow::anyhow!(
-                "--continuation-id is required for --mode auto; complete and confirm the execution draft first"
-            )
-        });
-    }
-    if continuation_id.is_some() {
-        anyhow::bail!("--continuation-id is valid only with --mode auto");
-    }
-    Ok(None)
-}
-
 fn tx_failure_label(event: &str) -> &'static str {
     task::common::state_machine::Event::parse(event).failure_label()
 }
@@ -3528,151 +3023,6 @@ fn validate_a2a_subscription_push_payload(
         .ok_or_else(|| anyhow::anyhow!("--a2a-file payload.content is required"))?;
     let canonical = serde_json::to_string(payload)?;
     persist_validated_a2a_spool(pj, &canonical)
-}
-
-#[cfg(all(test, any()))]
-mod auto_consent_permit_tests {
-    use super::{auto_write_continuation_id, run, AgentCommand};
-
-    fn auto_command(continuation_id: Option<String>) -> AgentCommand {
-        AgentCommand::AutotradeConsentSet {
-            job_id: "job-1".to_string(),
-            mode: "auto".to_string(),
-            cap: None,
-            trade_amount: None,
-            agent_id: Some("7".to_string()),
-            ttl_sec: 3600,
-            plugin: None,
-            quote: None,
-            environment: None,
-            margin_mode: None,
-            order_policy: None,
-            auth_mode: None,
-            settings_json: None,
-            continuation_id,
-        }
-    }
-
-    #[test]
-    fn auto_mode_requires_a_continuation_permit() {
-        let error = auto_write_continuation_id("auto", None).unwrap_err();
-        assert!(error.to_string().contains("--continuation-id is required"));
-        assert_eq!(
-            auto_write_continuation_id("auto", Some("atc_0123456789abcdef0123456789abcdef"))
-                .unwrap(),
-            Some("atc_0123456789abcdef0123456789abcdef")
-        );
-    }
-
-    #[test]
-    fn non_auto_modes_keep_their_existing_contract() {
-        for mode in [
-            "notify_only",
-            "pause",
-            "cap-adjust",
-            "environment-set",
-            "settings-update",
-            "plugin-ready-check",
-        ] {
-            assert_eq!(auto_write_continuation_id(mode, None).unwrap(), None);
-            assert!(
-                auto_write_continuation_id(mode, Some("atc_0123456789abcdef0123456789abcdef"))
-                    .is_err()
-            );
-        }
-    }
-
-    #[test]
-    fn final_writer_validates_before_writes_and_consumes_after_grant() {
-        let source = include_str!("mod.rs");
-        let final_writer = source
-            .split_once("let auto_write_permit =")
-            .expect("final Auto writer")
-            .1;
-        let validate = final_writer
-            .find("validate_auto_write")
-            .expect("permit validation");
-        let consent = final_writer
-            .find("write_consent_policy_with_dynamic_settings")
-            .expect("consent write");
-        let grant = final_writer.find("write_auto_grant").expect("grant write");
-        let consume = final_writer
-            .find("consume_auto_write")
-            .expect("permit consumption");
-        assert!(validate < consent);
-        assert!(consent < grant);
-        assert!(grant < consume);
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn final_writer_blocks_bypass_and_consumes_successful_permit() {
-        use crate::commands::agent_commerce::task::common::autotrade::{
-            consent::{self, ConsentMode},
-            continuation::{self, ExplicitValues, Origin, SelectedMode, StartBinding},
-            grants,
-        };
-
-        let _lock = crate::home::TEST_ENV_MUTEX
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let dir = std::env::current_dir()
-            .unwrap()
-            .join("target")
-            .join(format!("auto-permit-test-{}", uuid::Uuid::new_v4()));
-        std::env::set_var("ONCHAINOS_HOME", &dir);
-        let ctx = crate::commands::Context {
-            config: crate::config::AppConfig::default(),
-            chain_override: None,
-        };
-
-        let missing = run(auto_command(None), &ctx).await.unwrap_err();
-        assert!(missing
-            .to_string()
-            .contains("--continuation-id is required"));
-        assert!(consent::load_consent("job-1").unwrap().is_none());
-        assert!(grants::check_grant("job-1", "trade_kit", "buy", "1").is_err());
-
-        let required = Vec::new();
-        let completed = continuation::start_or_update(
-            Some(StartBinding {
-                job_id: "job-1",
-                agent_id: "7",
-                selected_mode: SelectedMode::Auto,
-                mode_confirmed: true,
-                origin: Origin::SubscriptionRestore,
-                signal_type: "spot",
-                original_delivery_id: None,
-                required_fields: Some(&required),
-                service_guide_hash: None,
-                service_guide_hash_resolved: false,
-                seed_consent: None,
-            }),
-            "job-1",
-            "7",
-            None,
-            None,
-            ExplicitValues::default(),
-        )
-        .unwrap();
-        assert!(completed.complete);
-
-        run(auto_command(Some(completed.continuation_id.clone())), &ctx)
-            .await
-            .unwrap();
-        assert_eq!(
-            consent::load_consent("job-1").unwrap().unwrap().mode,
-            ConsentMode::Auto
-        );
-        assert!(grants::check_grant("job-1", "trade_kit", "buy", "1").is_ok());
-
-        let replay = run(auto_command(Some(completed.continuation_id)), &ctx)
-            .await
-            .unwrap_err();
-        assert!(replay.to_string().contains("no live consent continuation"));
-
-        std::env::remove_var("ONCHAINOS_HOME");
-        let _ = std::fs::remove_dir_all(dir);
-    }
 }
 
 #[cfg(test)]
@@ -4490,8 +3840,7 @@ fn arbitration_context_is_stale(
         && context.status == Some(9)
         && task::user::refund::is_zero_decimal(context.token_amount.trim());
 
-    !asp_free_rejection_is_terminal
-        && arbitration_decision_is_stale(source_event, message, detail)
+    !asp_free_rejection_is_terminal && arbitration_decision_is_stale(source_event, message, detail)
 }
 
 /// Most network failures degrade to no prefetch. Active-subscription startup
@@ -5559,8 +4908,7 @@ mod authoritative_detail_path_tests {
 #[cfg(test)]
 mod arbitration_freshness_tests {
     use super::{
-        arbitration_context_is_stale, arbitration_decision_is_stale,
-        arbitration_decision_source,
+        arbitration_context_is_stale, arbitration_decision_is_stale, arbitration_decision_source,
     };
 
     #[test]

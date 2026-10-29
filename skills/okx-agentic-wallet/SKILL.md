@@ -4,7 +4,7 @@ description: "Operate OKX Onchain OS wallets and execute or inspect on-chain tra
 license: MIT
 metadata:
   author: okx
-  version: "4.6.6"
+  version: "4.6.7"
   homepage: "https://web3.okx.com"
 ---
 
@@ -98,7 +98,14 @@ Never pass `--force` on the FIRST invocation of a state-changing command. Add `-
 - **Recipient validation**: EVM `0x`-prefixed, 42 chars; Solana Base58, 32–44 chars. Validate before sending.
 - **Transaction simulation**: the CLI runs pre-execution simulation; if `executeResult` is false → show `executeErrorMsg`, do NOT broadcast.
 - **Risk action priority**: `block` > `warn` > empty. Top-level `action` = highest priority from `riskItemDetail`. An empty action means only that no risk was detected within the checks performed; it is not proof that the asset, DApp, signature, or transaction is safe.
-- **CLI-classified risk verdicts**: the CLI returns the risk verdict as fields — **MUST**: read them; **NEVER**: recompute from raw `riskLevel` / `isHoneyPot` / `taxRate` client-side, since the CLI owns the matrix and hand-derived rules drift from it. `security token-scan --trade-direction` → per-token `action` (`block` / `pause` / `warn` / `safe`) plus top-level `combinedAction` (severity `block` > `pause` > `warn` > `safe`). `swap quote` / `swap swap` → per-route `action` (`ok` / `warn` / `block`) plus `reason`. The CLI only classifies; you decide the interaction: halt on `block`, require explicit yes/no on `pause`, and surface the `reason` and ask on `warn`. For `safe`, `ok`, or an empty action.
+- **CLI-classified risk verdicts**: The CLI returns the risk verdict as fields.
+  - Read the returned fields. Do not recompute a verdict from raw `riskLevel`, `isHoneyPot`, or `taxRate`. The CLI owns the matrix, so a hand-derived rule can drift.
+  - For `security token-scan --trade-direction`, read each token's `action` (`block` / `pause` / `warn` / `safe`) and the top-level `combinedAction` (`block` > `pause` > `warn` > `safe`).
+  - For `swap quote` and `swap swap`, read each route's `action` (`ok` / `warn` / `block`) and `reason`.
+  - Halt on `block`. Require explicit yes/no on `pause`. Show the `reason` and ask on `warn`. For `safe`, `ok`, or an empty action, continue with the matched flow.
 - **No token judgments**: present factual data only; never give investment advice.
 - **X Layer gas-free (on-chain only)**: after funds arrive, on-chain gas on X Layer (chainIndex 196) is free. Highlight when the user asks about gas, picks a chain, adds a wallet, or asks for a deposit address; when funding from an exchange, note that the exchange may charge a withdrawal fee (not covered).
-- **Backend-sponsored gas-free transactions**: when the backend's pre-execution (`unsignedInfo`) response marks a transaction as gas-free, the native-token balance pre-check is skipped, so the transaction can succeed even when the user holds zero native token. This is **server-authoritative** — the client never sets, requests, or overrides it; the backend chooses eligible transactions (e.g. X Layer AA mode, Solana TEE-sponsored), while all other transactions still require native token for gas. **NEVER**: preemptively tell the user they must top up native token before a send / swap — a sponsored transaction may still go through; let it attempt and surface a backend insufficient-balance error only if one actually occurs.
+- **Backend-sponsored gas-free transactions**:
+  - When the backend's pre-execution `unsignedInfo` marks a transaction as gas-free, skip the native-token balance pre-check. The transaction can succeed when the user holds zero native token.
+  - Treat this result as server-authoritative. The client does not set, request, or override it. The backend selects eligible transactions, such as X Layer AA mode and Solana TEE-sponsored transactions.
+  - Do not tell the user to top up a native token before a send or swap. Attempt the request first. Surface an insufficient-balance error only when the backend returns one.

@@ -90,7 +90,10 @@ Diagnostic Summary:
 
 ### Status Polling
 
-Interactive chat: do NOT auto-loop — run `status` once per request, report, and if not `SUCCESS` tell the user when to ask again (route's `estimateTime`). If the user explicitly asks for a polling script: exponential backoff (10→20→40→60→60s), stop after `SUCCESS` or `estimateTime × 5`. Two traps: (1) every `status` call needs the full triple `(--tx-hash | --order-id) + --bridge-id + --from-chain` or it returns 50014; (2) in zsh do NOT name the loop variable `status` (read-only) — use `st`.
+- In interactive chat, run `status` once per request. Do not auto-loop. If the result is not `SUCCESS`, report it and tell the user when to ask again (`estimateTime`).
+- If the user explicitly asks for a polling script, use exponential backoff: 10 → 20 → 40 → 60 → 60 seconds. Stop after `SUCCESS` or `estimateTime × 5`.
+- Every `status` call needs `(--tx-hash | --order-id)`, `--bridge-id`, and `--from-chain`. Without the full triple, the CLI returns 50014.
+- In zsh, do not name the loop variable `status`, because it is read-only. Use `st`.
 
 ### Bridge Explorer References
 

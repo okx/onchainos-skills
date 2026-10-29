@@ -14,8 +14,6 @@
 pub(crate) mod amount;
 pub(crate) mod card;
 pub(crate) mod consent;
-pub(crate) mod consent_reply;
-pub(crate) mod continuation;
 pub(crate) mod delivery_queue;
 pub(crate) mod executor;
 pub(crate) mod grants;
@@ -72,10 +70,6 @@ pub fn is_retired_delivery_decision(source_event: Option<&str>) -> bool {
 
 /// Audit action: buyer inbound auto-trade delivery handling.
 pub const ACTION_AUTOTRADE_DELIVER: &str = "user/autotrade_deliver";
-/// Audit action: grant-check (allow or deny; deny carries the reason).
-pub const ACTION_GRANT_CHECK: &str = "agent/autotrade_grant_check";
-/// Audit action: buyer consent record write (auto / manual / decline + cap).
-pub const ACTION_AUTOTRADE_CONSENT_SET: &str = "user/autotrade_consent_set";
 
 /// Stable machine-readable degrade reasons (buyer inbound path).
 ///
@@ -174,23 +168,3 @@ impl std::fmt::Display for AutoTradeError {
 }
 
 impl std::error::Error for AutoTradeError {}
-
-// ── Bespoke CLI exit ──────────────────────────────────────────────────────
-
-/// Typed error carrying a process exit code for handlers that print their own
-/// bespoke stdout (the `autotrade-grant-check` `{ok,reason?}` contract).
-///
-/// `main.rs run()` downcasts to this **after** `audit::log` fires (so both allow
-/// and deny are audited) and calls `std::process::exit(code)` **without** printing
-/// the standard `output::error` envelope — the handler already `println!`'d its
-/// bespoke JSON. This keeps exit-code centralization in `main.rs` intact.
-#[derive(Debug)]
-pub struct CliBespokeExit(pub i32);
-
-impl std::fmt::Display for CliBespokeExit {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "bespoke exit: {}", self.0)
-    }
-}
-
-impl std::error::Error for CliBespokeExit {}

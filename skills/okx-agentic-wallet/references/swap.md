@@ -148,9 +148,11 @@ Enable if EITHER: Potential Loss (`toTokenAmount × toTokenPrice × slippage`) �
 
 Solana: `--tips` and `computeUnitPrice` are mutually exclusive (CLI sets `computeUnitPrice=0` when `--tips` is used).
 
-## Render Rules
+## Output Rules
 
-### Swap-specific Notes
+### Render Rules
+
+#### Swap-specific Notes
 
 - `exactOut` (`--swap-mode exactOut`) only on Ethereum (`1`) / Base (`8453`) / BSC (`56`) / Arbitrum (`42161`).
 - EVM contract addresses must be all lowercase.
