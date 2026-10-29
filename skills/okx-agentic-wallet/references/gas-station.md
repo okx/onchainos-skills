@@ -2,9 +2,9 @@
 
 ## Module Description
 
-Gas Station lets the user pay gas with a stablecoin (USDT / USDC / USDG) when they lack native SOL. On Solana the Relayer is the fee payer; the stablecoin fee is collected via an SPL Token Transfer inside the same transaction — **no account upgrade, no per-chain setup, no 7702**. Solana only.
+Gas Station lets users pay Solana gas with USDT, USDC, or USDG when they do not have enough SOL. The Relayer pays the network fee. The transaction collects the stablecoin fee through an SPL token transfer. It does not need an account upgrade, per-chain setup, or 7702.
 
-**Supported scenarios**: all SPL token transfers and contract interactions (swaps, DeFi supply / borrow / redeem / claim, bridge initiation, any SPL / program interaction). Native SOL transfers do NOT trigger Gas Station. State (enable flag, default token) is scoped to `(account, Solana)`.
+**Supported scenarios**: SPL token transfers and contract interactions, including swaps, DeFi actions, bridge initiation, and other SPL-program interactions. Native SOL transfers do not use Gas Station. The enable setting and default token apply only to one `(account, Solana)` pair.
 
 Edge cases, FAQ answers, and failure diagnosis live in [gas-station-troubleshooting.md](gas-station-troubleshooting.md).
 
@@ -12,34 +12,43 @@ Edge cases, FAQ answers, and failure diagnosis live in [gas-station-troubleshoot
 
 ### Critical Rules
 
-**Backend dispatches; Agent reacts.** Do NOT check SOL balance or decide whether to use Gas Station yourself. Call `wallet send` / `wallet contract-call` as normal, read the CLI's **`scene`** discriminator (and `gasStationUsed`), and dispatch via the Outcome → render map below — do not re-derive the scene from raw backend fields. On a Confirming, show the matching scene's verbatim copy and ask the user to pick a token.
+**Let the backend choose the path.**
 
-- **NEVER pass `--gas-token-address` / `--relayer-id` / `--enable-gas-station` on the FIRST call.** They are second-phase values, used only after the user picks a token from a Confirming response.
-- **NEVER fabricate token addresses or relayer IDs** — use the exact values from the Confirming response's `next` field.
-- **NEVER proactively push Gas Station** when the user is browsing or asking unrelated questions.
-- **NEVER call Gas Station "free"** — there is a service charge in the selected stablecoin. Display `serviceCharge` + `serviceChargeSymbol` when present.
-- **NEVER combine Gas Station with Jito Bundler** — hard block (troubleshooting Edge Case 2).
+1. Run `wallet send` or `wallet contract-call` normally. Do not check the SOL balance or decide whether to use Gas Station.
+2. Read the CLI `scene` and `gasStationUsed` fields.
+3. Use the matching row in Outcome → render map. Do not derive a scene from raw backend fields.
+4. When the CLI returns Confirming, show the matching fixed copy and ask the user to choose a token.
+
+- Do not pass `--gas-token-address`, `--relayer-id`, or `--enable-gas-station` on the first call. Use them only after the user chooses a token from a Confirming response.
+- Use the exact token address and relayer ID from the Confirming response's `next` field. Do not create either value.
+- Do not suggest Gas Station when the user is browsing or asking an unrelated question.
+- Do not call Gas Station free. Show `serviceCharge` and `serviceChargeSymbol` when the CLI provides them.
+- Do not combine Gas Station with Jito Bundler. Stop and follow Troubleshooting Edge Case 2.
 
 ## Flow
 
-Gas Station is not a separate command — the backend decides per-request whether to dispatch it inside the `wallet send` / `wallet contract-call` response. First-time / token-switch cases use the Confirming Response pattern (exit code 2, Scene A / C); when a default token is pinned it runs silently (Scene B / D). **Token priority** (list ordering + auto-select): balance descending; ties USDT > USDC > USDG.
+Gas Station is not a separate transaction command. The backend decides whether to use it for each `wallet send` or `wallet contract-call` request.
 
-Always surface Gas Station when native SOL is insufficient but a supported stablecoin has enough balance — for both a fresh attempt and a "why did my transfer fail?" follow-up. When a GS transfer is blocked because the default token is insufficient and the account holds another stablecoin, propose switching the gas token (Scene C, zero-cost) before "reduce amount" or "top up default token".
+- First-time setup and token changes return Confirming (exit code 2; Scene A or C).
+- A sufficient default token uses the automatic path (Scene B or D).
+- Order token choices by balance. Break ties as USDT, then USDC, then USDG.
+
+Show the Gas Station path when SOL is insufficient and a supported stablecoin is sufficient. Do this for a new request and for a follow-up about a failed transfer. If the default token is insufficient but another supported stablecoin is sufficient, offer Scene C before suggesting a smaller transfer or a top-up.
 
 ### Outcome → render map
 
-Map the CLI `scene` directly to the fixed copy below; do NOT re-derive it, do NOT author copy yourself. On a Confirming, `next` carries the exact re-run command.
+Map the CLI `scene` directly to the fixed copy below. Do not derive another scene or write replacement copy. For a Confirming result, `next` contains the exact command to run again.
 
 | CLI `scene` | Render | Then |
 |---|---|---|
 | `gs_first_time` | Scene A | Get consent + token pick → follow `next` (re-run with `--enable-gas-station --gas-token-address <pick> --relayer-id <pick>`). On success → Scene A two-step. |
 | `gs_reenable` | Scene A (re-enable variant) | Same as `gs_first_time`; backend overwrites the previous default. |
 | `gs_token_switch` | Scene C | Get choice 1 / 2 / 3 → follow `next`. On success → Scene C post-success echo. |
-| `gs_insufficient_all` | Scene E | Bail. Do NOT re-run. |
-| `gs_pending_tx` | Edge Case 4 (troubleshooting) | Bail. Do NOT auto-retry. |
+| `gs_insufficient_all` | Scene E | Stop. Do not run the request again. |
+| `gs_pending_tx` | Edge Case 4 (troubleshooting) | Stop. Do not retry automatically. |
 | success + `gasStationUsed=true` (no `scene`) | Universal Success Reply | — |
 
-Jito hard-block, tx-cap, async-hash, native-SOL are Agent-detected — see troubleshooting Edge Cases.
+The agent detects Jito conflicts, transaction-cap limits, asynchronous hashes, and native-SOL transfers. See the Troubleshooting Edge Cases.
 
 ### Scene A — Not enabled, SOL insufficient, has sufficient stablecoin
 
@@ -59,13 +68,18 @@ About Gas Station: Gas Station aggregates third-party services, automatically co
 Confirm enabling Gas Station and paying this transaction's Gas with stablecoin?
 ```
 
-Never modify the body, drop the academy link, drop the two bullets, drop the "Tokens supported on this chain" line, or reduce to a bare yes/no.
+Keep this template complete. Do not remove the academy link, either bullet, or the supported-token line. Do not replace it with a bare yes/no question.
 
-**Consent**: on a pick → follow `next` (re-run with that token's `--gas-token-address` + `--relayer-id`; if the user confirmed without naming one, use the highest-balance sufficient token). On decline → do NOT re-run; tell them to top up SOL at `{fromAddr}`. Ambiguous / token not in list → re-prompt once, never guess.
+**Consent**:
+
+1. After a token choice, follow `next`. It reruns the command with that token's `--gas-token-address` and `--relayer-id`.
+2. If the user confirms without choosing a token, use the sufficient token with the highest balance.
+3. If the user declines, do not rerun the command. Tell them to top up SOL at `{fromAddr}`.
+4. If the choice is ambiguous or not in the list, ask once more. Do not guess.
 
 **Post-success (MANDATORY two-step, on every Scene A trigger):**
 
-Step 1 — pin the used token as default. Resolve `{chosen_token_address}` from `serviceChargeFeeTokenAddress` (or the `--gas-token-address` passed in phase 2), then call once, silently (treat non-zero exit as soft failure, continue):
+Step 1 — Set the used token as the default. Take `{chosen_token_address}` from `serviceChargeFeeTokenAddress`. If that field is absent, use the `--gas-token-address` from the second call. Run this command once without showing it to the user. If it fails, continue with the result of the completed transaction:
 ```
 onchainos wallet gas-station update-default-token --chain solana --gas-token-address {chosen_token_address}
 ```
@@ -77,11 +91,16 @@ Gas Station enabled. This transaction will pay Gas with {chosen_token}, and {cho
 
 ### Scene B / D — Silent auto-path
 
-Backend returns `gasStationUsed=true` + `autoSelectedToken=true` + non-empty `hash`; CLI silently signs + broadcasts. **B**: a default token is set and sufficient. **D**: no default set, exactly one stablecoin sufficient — backend auto-selects (do not prompt). Reply: no GS prompt, just the Universal Success Reply. For Scene D, add a one-line note that the auto-selected token was used.
+The backend returns `gasStationUsed=true`, `autoSelectedToken=true`, and a non-empty `hash`. The CLI signs and broadcasts without another prompt.
+
+- In Scene B, the configured default token is sufficient.
+- In Scene D, no default is set and exactly one stablecoin is sufficient. The backend selects that token.
+- Show only the Universal Success Reply.
+- For Scene D, add one line that names the automatically selected token.
 
 ### Scene C — Enabled, default token insufficient
 
-Backend returns `gasStationUsed=true` + `hash` empty + `gasStationFirstTimePrompt=false` + `insufficientAll=false`, default token `sufficient=false`, ≥1 alternative `sufficient=true`. CLI returns Confirming.
+The backend returns `gasStationUsed=true`, an empty `hash`, `gasStationFirstTimePrompt=false`, and `insufficientAll=false`. The default token has `sufficient=false`, and at least one alternative has `sufficient=true`. The CLI returns Confirming.
 
 ```
 The default Gas token {prev_token} has insufficient balance (need ${serviceChargeUsd}, current balance ${prev_balance_usd}).
@@ -96,16 +115,20 @@ How would you like to proceed?
 3. Top up {prev_token} and continue using it.
 ```
 
-Slots: `{prev_token}` = token at `defaultGasTokenAddress`; `{serviceChargeUsd}` / `{prev_balance_usd}` from the response; `{alt_token_N}` = each `sufficient=true` entry other than the default, in token-priority order; `{alt_token_X}` = the single alternative's symbol if only one, else `<your-pick>`. Always include all three choices and the top-up fallback; no leading/trailing lines.
+- Fill `{prev_token}` from `defaultGasTokenAddress`.
+- Take `{serviceChargeUsd}` and `{prev_balance_usd}` from the response.
+- Fill `{alt_token_N}` with each sufficient non-default token in token-priority order.
+- If there is one alternative, set `{alt_token_X}` to its symbol. Otherwise use `<your-pick>`.
+- Always show all three choices and the top-up fallback. Do not add leading or trailing text.
 
 **Response parsing:**
 
 | User choice | CLI action |
 |---|---|
-| **1** — alt token + make it default | Re-run original command with `--gas-token-address <alt_addr> --relayer-id <alt_relayer_id>`. After broadcast succeeds, silently `wallet gas-station update-default-token --chain solana --gas-token-address <alt_addr>`. Use "replace default" echo. |
-| **2** — alt token this tx only | Re-run with `--gas-token-address <alt_addr> --relayer-id <alt_relayer_id>` only (no `--enable-gas-station`, no `update-default-token`). Use "keep default" echo. |
-| **3** — top up default / cancel | Do NOT re-run. Tell user to top up at `{fromAddr}` and retry. |
-| Ambiguous / token not in list / didn't say whether to change default | Re-prompt once: ask explicitly whether to change the default (yes → 1, no → 2). Never guess. |
+| **1** — alternative token and new default | Rerun the original command with `--gas-token-address <alt_addr> --relayer-id <alt_relayer_id>`. After it broadcasts, run `wallet gas-station update-default-token --chain solana --gas-token-address <alt_addr>` without showing it to the user. Use the “replace default” echo. |
+| **2** — alternative token for this transaction | Rerun with `--gas-token-address <alt_addr> --relayer-id <alt_relayer_id>`. Do not pass `--enable-gas-station` or run `update-default-token`. Use the “keep default” echo. |
+| **3** — top up the default token or cancel | Do not rerun the command. Tell the user to top up `{fromAddr}` and retry. |
+| Ambiguous, unavailable token, or no default-token choice | Ask once whether to change the default token. A yes selects 1. A no selects 2. Do not guess. |
 
 Post-success echo (then append Universal Success Reply):
 - keep default: `Done — this transaction will pay Gas with {chosen_token}. The default token remains {prev_token}, unchanged.`
@@ -113,7 +136,7 @@ Post-success echo (then append Universal Success Reply):
 
 ### Scene E — All stablecoins insufficient
 
-Backend returns `insufficientAll=true` + all entries `sufficient=false` + `fromAddr`. CLI bails.
+The backend returns `insufficientAll=true`, all entries have `sufficient=false`, and the result contains `fromAddr`. The CLI stops.
 
 ```
 You don't have enough balance to pay Gas. Please top up first:
@@ -121,28 +144,48 @@ You don't have enough balance to pay Gas. Please top up first:
   Accepted tokens: SOL, USDT, USDC
 ```
 
-Do NOT proceed; do NOT propose Gas Station.
+Stop the flow. Do not offer Gas Station.
 
 ## Output Rules
 
 ### Output discipline (applies to every template here and in troubleshooting)
 
-All user-facing copy is product copy: render the template body verbatim, substituting only bracketed slots. When the user's language is not English, translate at output time while preserving structure and every fact — keep every clause (e.g. "now set as the default Gas token"), never substitute a chain noun (render "Solana" as-is), no leading setup line, no trailing notes beyond the template.
+Treat each template as product copy.
 
-**Output vocabulary**: refer to the feature only as "Gas Station" and the choice as "which stablecoin to pay gas". Never surface internal field names (`gasStationFirstTimePrompt`, `gasStationUsed`, `autoSelectedToken`, `hasPendingTx`, `insufficientAll`, `signType`, `multiSignerTx`, `Phase 1/2`, `DB flag`), numeric error codes, or debug/log paths.
+- Substitute only its bracketed slots.
+- Translate at output time when the user does not use English.
+- Keep the template's structure and every fact.
+- Keep the chain name “Solana” unchanged.
+- Do not add an introduction or notes after the template.
+
+**Output vocabulary**:
+
+- Call the feature “Gas Station”.
+- Call the choice “which stablecoin to pay gas”.
+- Do not show internal field names, numeric error codes, or debug and log paths. This includes `gasStationFirstTimePrompt`, `gasStationUsed`, `autoSelectedToken`, `hasPendingTx`, `insufficientAll`, `signType`, `multiSignerTx`, `Phase 1/2`, and `DB flag`.
 
 ### Universal Gas Station Success Reply (all commands)
 
-Whenever any transaction is paid via Gas Station (`wallet send`, `contract-call`, `swap`, `bridge`, any DeFi plugin — detect via `gasStationUsed=true` or a non-empty `serviceCharge` + `serviceChargeSymbol`), the reply MUST contain all four:
+When Gas Station pays a transaction fee, include all four items below. This applies to `wallet send`, `contract-call`, `swap`, `bridge`, and DeFi plugins. Detect it from `gasStationUsed=true` or from non-empty `serviceCharge` and `serviceChargeSymbol`.
 
 1. **Acknowledgment** — state plainly this tx's gas was paid via Gas Station with a stablecoin, not SOL. Never imply "free".
 2. **Service charge** — show raw amount + symbol (`{serviceCharge} {serviceChargeSymbol}`) and USD equivalent. E.g. `Network fee: 0.8 USDC (≈ $0.80, paid via Gas Station)`.
 3. **orderId** — copy verbatim; never omit or truncate.
 4. **Follow-up prompt** — `You can tell me: **check order {orderId}** to check the status.` Translate but keep the literal `check order {orderId}` idiom.
 
-**`networkFeeLabel` rule** (every GS render): when the CLI output carries `networkFeeLabel` (`Network fee` or `Network fee and Rent fee`), that string IS the label — render exactly ONE fee row using it (translate the label). Do not render it as a separate row, do not add a default `Gas fee` title alongside it. Absent → default label `Network fee`.
+**`networkFeeLabel` rule**:
 
-**When `txHash` is empty** (Relayer returns it asynchronously — usual on first response): also state the tx was submitted and the on-chain hash will come back asynchronously; ask the user to check again shortly. Never fabricate a `txHash`. Never show raw CLI commands to the user.
+- Use the CLI `networkFeeLabel` as the one fee-row label.
+- The value is `Network fee` or `Network fee and Rent fee`. Translate the label.
+- Do not render it as a separate row or add a `Gas fee` label.
+- If the field is absent, use `Network fee`.
+
+**When `txHash` is empty**:
+
+- The Relayer usually returns the on-chain hash asynchronously.
+- Say that the transaction was submitted and ask the user to check again shortly.
+- Do not create a `txHash`.
+- Do not show raw CLI commands to the user.
 
 Example:
 ```
@@ -155,7 +198,7 @@ Sent 100 USDC to CYXWm...
 You can tell me: **check order ord_ghi789rst** to check the status.
 ```
 
-Checking later: when the user says any equivalent of "check order {orderId}" (any language), run `wallet history --chain solana --order-id <orderId>` internally (not shown) and relay per troubleshooting Edge Case 5.
+When the user asks to check an order in any language, run `wallet history --chain solana --order-id <orderId>` without showing the command. Then follow Troubleshooting Edge Case 5.
 
 ## Intent Routing
 
@@ -171,9 +214,9 @@ onchainos wallet gas-station status  --chain solana [--from <solana_address>]
 onchainos wallet gas-station setup   --chain solana --gas-token-address <spl_mint> --relayer-id <id> [--from <solana_address>]
 ```
 
-- `status` — read-only readiness probe (never broadcasts; safe to call repeatedly). Returns `recommendation`: `READY` (proceed) · `ENABLE_GAS_STATION` (render Scene A) · `INSUFFICIENT_ALL` (render Scene E) · `HAS_PENDING_TX` (tell user to wait). Also `gasStationEnabled`, `gasStationDefaultToken`, `tokenList[]` (`symbol`, `feeTokenAddress`, `relayerId`, `balance`, `serviceCharge`, `sufficient`). Used by third-party plugin pre-flight ([plugin-preflight.md](wallet-plugin-preflight.md)).
-- `setup` — standalone first-time activation (idempotent; re-calling with the same default returns `alreadyActivated=true`). Only proceeds when the probe state is first-time-eligible.
-- Enable / disable / update-default-token are backend DB-flag operations — no on-chain action.
+- `status` is a read-only readiness check. It does not broadcast and is safe to repeat. Read `recommendation`: `READY` means proceed; `ENABLE_GAS_STATION` means render Scene A; `INSUFFICIENT_ALL` means render Scene E; `HAS_PENDING_TX` means ask the user to wait. It also returns `gasStationEnabled`, `gasStationDefaultToken`, and `tokenList[]` (`symbol`, `feeTokenAddress`, `relayerId`, `balance`, `serviceCharge`, `sufficient`). Third-party plugin pre-flight uses this command ([plugin-preflight.md](wallet-plugin-preflight.md)).
+- `setup` activates Gas Station for the first time. It is idempotent: repeating it with the same default returns `alreadyActivated=true`. It works only when the readiness check allows first-time activation.
+- `enable`, `disable`, and `update-default-token` update backend settings. They do not make an on-chain transaction.
 
 **User-facing reply templates** (translate at output time, semantics must not drift):
 
@@ -186,26 +229,32 @@ After any management command succeeds (`enable` / `disable` / `update-default-to
 
 | User intent | Action |
 |---|---|
-| Wants to send but lacks SOL (any wording/language) | Proceed with `wallet send` — Gas Station activates automatically. |
-| Asks whether stablecoins can pay Gas | Explain briefly from troubleshooting FAQ verbatim, then proceed if a tx is given. |
-| Any GS FAQ (what / how / fees / supported tokens / non-trigger scenarios / why a small SOL was received) | Answer from troubleshooting FAQ — verbatim (matching Q). |
+| Wants to send but lacks SOL | Run `wallet send`. Gas Station can activate automatically. |
+| Asks whether stablecoins can pay gas | Give the matching Troubleshooting FAQ answer. Then continue if the user supplied a transaction. |
+| Gas Station FAQ | Give the matching Troubleshooting FAQ answer. |
 | Change the default Gas token | `wallet gas-station update-default-token --chain solana --gas-token-address <addr>`. |
 | Enable Gas Station | `wallet gas-station enable --chain solana` (use confirmation + success templates). |
 | Disable Gas Station / stop paying with stablecoin | `wallet gas-station disable --chain solana`. If they only want to switch token, suggest `update-default-token`. |
-| Jito Bundle + stablecoin Gas | Conflicting (hard block) → troubleshooting Edge Case 2. |
-| Which tx types are supported | Answer from troubleshooting FAQ (transfers + swaps) — verbatim. |
-| Tx blocked: type not supported | Troubleshooting Edge Case 8. Bail — do NOT re-run via GS. |
-| Why didn't GS kick in | Check: pending tx? > 100,000 U? Jito Bundle? native SOL? unsupported type? → matching verbatim template. |
+| Jito Bundle and stablecoin gas | Stop. Follow Troubleshooting Edge Case 2. |
+| Asks which transaction types are supported | Give the matching Troubleshooting FAQ answer. |
+| Transaction type is not supported | Follow Troubleshooting Edge Case 8. Do not rerun through Gas Station. |
+| Asks why Gas Station did not activate | Check for a pending transaction, a transaction above 100,000 U, Jito Bundler, a native-SOL transfer, or an unsupported type. Use the matching template. |
 | Asks for a not-yet-returned tx hash / why hash is slow | Troubleshooting Edge Case 3. |
 
 ## Troubleshooting
 
 ### Plugin Bail Recovery
 
-Third-party plugins (`kamino-plugin`, `raydium-plugin`, …) invoke `wallet contract-call` as a subprocess; on a Confirming (exit code 2, `"confirming": true` in stdout) for Scene A / C, the wrapper bails on the non-zero exit. Markers: exit code **2** + stdout JSON with `"confirming": true`.
+Third-party plugins such as `kamino-plugin` and `raydium-plugin` run `wallet contract-call` as a subprocess. For a Scene A or Scene C Confirming result, the wrapper stops because the command exits with code 2. Identify this case only when exit code is **2** and stdout JSON contains `"confirming": true`.
 
-Recovery: read `scene` from the stdout JSON, dispatch via the Outcome → render map (render copy, get consent where required, run any management command it calls for — e.g. `update-default-token` on a Scene C replace-default pick), then re-invoke the **same plugin command verbatim** (the plugin rebuilds calldata and hits the auto path). `gs_insufficient_all` / `gs_pending_tx` → do NOT retry.
+Recovery:
 
-- Always parse the Confirming JSON before deciding it's recoverable; real failures differ.
-- Always get user consent for Scene A and Scene C token selection.
-- Re-invoke the same plugin command verbatim; the bail is pre-broadcast, so re-running is idempotent — do not hand-rebuild the plugin's calldata.
+1. Read `scene` from stdout JSON.
+2. Use Outcome → render map. Show the matching copy and get consent when it is required.
+3. Run any required management command, such as `update-default-token` after a Scene C “replace default” choice.
+4. Rerun the same plugin command verbatim. The plugin rebuilds the calldata and uses the automatic path.
+5. Do not retry `gs_insufficient_all` or `gs_pending_tx`.
+
+- Parse Confirming JSON before deciding that recovery is available. Other failures can have the same non-zero exit.
+- Get user consent for every Scene A or Scene C token choice.
+- Rerun the same plugin command verbatim. This path stops before broadcast, so rerunning is idempotent. Do not rebuild the plugin's calldata.

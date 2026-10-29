@@ -58,9 +58,6 @@ pub enum WsCommand {
         /// e.g. 1:0xdac17f958d2ee523a2206206994597c13d831ec7
         #[arg(long)]
         token_pair: Option<String>,
-        /// Environment: prod (default) or pre
-        #[arg(long, default_value = "prod")]
-        env: String,
         /// Auto-stop if no poll within this duration (default: 30m, 0 to disable).
         /// Formats: 30m, 1h, 2h, 0
         #[arg(long, default_value = "30m")]
@@ -122,7 +119,7 @@ pub enum WsCommand {
     },
 }
 
-pub async fn execute(cmd: WsCommand) -> Result<()> {
+pub async fn execute(cmd: WsCommand, dev_mode: bool) -> Result<()> {
     match cmd {
         WsCommand::Channels => ws_channels(),
         WsCommand::ChannelInfo { channel } => ws_channel_info(&channel),
@@ -131,7 +128,6 @@ pub async fn execute(cmd: WsCommand) -> Result<()> {
             wallet_addresses,
             chain_index,
             token_pair,
-            env,
             idle_timeout,
         } => {
             let addrs: Vec<String> = wallet_addresses
@@ -167,7 +163,7 @@ pub async fn execute(cmd: WsCommand) -> Result<()> {
                 addrs,
                 chain_indexes,
                 token_pairs,
-                &env,
+                WatchEnv::from_dev_mode(dev_mode),
                 idle_timeout_ms,
             )
             .await
@@ -256,15 +252,9 @@ async fn ws_start(
     wallet_addresses: Vec<String>,
     chain_indexes: Vec<String>,
     token_pairs: Vec<TokenPair>,
-    env: &str,
+    watch_env: WatchEnv,
     idle_timeout_ms: u64,
 ) -> Result<()> {
-    let watch_env = match env {
-        "pre" => WatchEnv::Pre,
-        "prod" => WatchEnv::Prod,
-        other => bail!("unknown --env '{}'; use pre or prod", other),
-    };
-
     let mut channels = channels;
     if channels.is_empty() {
         channels = DEFAULT_CHANNELS.iter().map(|c| c.to_string()).collect();
@@ -339,7 +329,7 @@ async fn ws_start(
                     "id": w.id,
                     "status": "already_running",
                     "channels": channels,
-                    "env": env
+                    "env": watch_env.as_str()
                 }));
                 return Ok(());
             }
@@ -394,7 +384,7 @@ async fn ws_start(
         "status": "starting",
         "pid": pid,
         "channels": channels,
-        "env": env,
+        "env": watch_env.as_str(),
         "dir": dir.to_string_lossy()
     }));
     Ok(())
@@ -703,7 +693,7 @@ fn ws_list() -> Result<()> {
             let env = w
                 .config
                 .as_ref()
-                .map(|c| format!("{:?}", c.env).to_lowercase())
+                .map(|c| c.env.as_str())
                 .unwrap_or_default();
             let created_at = w
                 .config

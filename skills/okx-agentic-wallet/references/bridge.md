@@ -21,7 +21,17 @@ After `token search`, show results and wait for confirmation (multiple → numbe
 
 **Step 1 — Resolve token addresses** (above; `--from`/`--from-chain`, `--to`/`--to-chain`).
 
-**Step 2 — Collect parameters.** Both `--from-chain` and `--to-chain` required (ask if missing). Amount → `--readable-amount`. `--slippage` only on user request. Wallet → `wallet addresses --chain <from-chain>`; use the active account's source-chain address as `--wallet` (not logged in → `login`). Receive address: same family (EVM→EVM) defaults to the current wallet (display "Sender / Receiver"); heterogeneous (EVM↔non-EVM) requires `--receive-address` matching `--to-chain` family; any `--receive-address` ≠ wallet → Fund-action gate (second confirmation). No manual balance/gas pre-check — `execute` gates it. Omit `--bridge-id` for the optimal route.
+**Step 2 — Collect parameters.**
+
+- Require both `--from-chain` and `--to-chain`. Ask when either is missing.
+- Pass the amount with `--readable-amount`.
+- Pass `--slippage` only when the user requests it.
+- Run `wallet addresses --chain <from-chain>`. Use the active account's source-chain address as `--wallet`. If the user is not logged in, follow the login flow.
+- For the same address family, such as EVM→EVM, use the current wallet as the receive address. Display it as “Sender / Receiver”.
+- For different address families, require `--receive-address` in the destination chain's address family.
+- If `--receive-address` differs from `wallet`, apply the Fund-action gate and ask for a second confirmation.
+- Do not run a manual balance or gas pre-check. `execute` performs the gate.
+- Omit `--bridge-id` to select the optimal route.
 
 **Step 2.5 — Chain-pair pre-check.** `onchainos cross-chain bridges --from-chain <X> --to-chain <Y>`. Non-empty → proceed. Empty → no bridge connects this pair; suggest a supported chain or two-hop (via Ethereum) and skip the quote (localize the gap → [bridge-troubleshooting.md](bridge-troubleshooting.md)).
 
@@ -94,7 +104,10 @@ Reuse the last `execute` response's `nextSteps.checkBridgeStatus` verbatim if av
 | `PENDING` | "Transfer in progress. Bridge: {bridgeName}. Check again shortly. Estimated arrival: ~{estimateTime}." |
 | `NOT_FOUND` | First seconds: "Bridge has not yet indexed your transaction. Wait 10–30s and re-check." Persisting >5min: "Source chain may not have confirmed it. Verify on the explorer." |
 
-One check per request — never `sleep`-loop in chat. If not `SUCCESS`, report and tell the user when to recheck (~`estimateTime`). Not atomic — don't say "complete" before `SUCCESS`. Long PENDING / stuck / no arrival → [bridge-troubleshooting.md](bridge-troubleshooting.md).
+- Run one check per request. Do not use a `sleep` loop in chat.
+- If the status is not `SUCCESS`, report it and tell the user when to check again (`~estimateTime`).
+- Do not call the transfer complete before status is `SUCCESS`.
+- For a long `PENDING`, stuck transfer, or missing arrival, read [bridge-troubleshooting.md](bridge-troubleshooting.md).
 
 ## Security
 
@@ -123,9 +136,11 @@ CLI auto-forces MEV protection for **relay / mayan / butterswap**. For other bri
 
 If `fromTokenPrice` is unavailable → enable by default. Re-evaluate on every amount change; do not carry over.
 
-## Render Rules
+## Output Rules
 
-### Amount Display
+### Render Rules
+
+#### Amount Display
 
 - Display amounts in UI units; always show both source and destination chain + token.
 - **exactIn only** — user sets the source amount; destination is bridge-determined. Never attempt exactOut.

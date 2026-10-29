@@ -43,27 +43,9 @@ fn write_direct_context(home: &std::path::Path, delivery_id: &str, saved_path: &
     );
 }
 
-fn write_legacy_context(home: &std::path::Path, delivery_id: &str) {
-    write_json(
-        &home.join(format!(
-            "autotrade/delivery-context/job1/{delivery_id}.json"
-        )),
-        &json!({
-            "version": 1,
-            "jobId": "job1",
-            "agentId": "8315",
-            "providerAgentId": "8779",
-            "originSessionKey": "job:job1:my:8315:to:8779",
-            "deliveryId": delivery_id,
-            "savedPath": "/tmp/legacy-signal.txt",
-            "deliverableType": "text",
-            "receivedAtMs": 1
-        }),
-    );
-}
-
 fn write_guide_direct_fixture(home: &std::path::Path, delivery_id: &str) -> std::path::PathBuf {
-    let source = "Read this saved Signal with the matching Consent before executing one documented trade.";
+    let source =
+        "Read this saved Signal with the matching Consent before executing one documented trade.";
     let source_hash = sha256_hex(source.as_bytes());
     let guide_hash = source_hash.clone();
     let now = std::time::SystemTime::now()
@@ -112,45 +94,21 @@ fn run(home: &std::path::Path, args: &[&str]) -> std::process::Output {
 }
 
 #[test]
-fn guide_direct_claim_requires_active_guide_consent_and_finalizes_once() {
+fn guide_direct_finalize_preserves_a_submitted_outcome_on_duplicate_report() {
     let (_guard, home) = fresh_home("cli_autotrade_direct_execution");
     let delivery_id = "delivery-direct";
     let saved_path = write_guide_direct_fixture(&home, delivery_id);
-    // This retired routing preference must not be re-evaluated at claim time.
-    // The final gate is the active local Guide + Consent contract.
+    // Stage an existing current Guide claim. Admission itself requires the
+    // authenticated subscription backend and is tested locally at its atomic
+    // reservation boundary; this CLI test covers finalization and replay.
+    assert!(saved_path.is_file());
     write_json(
-        &home.join("autotrade/subscription-config/8315/svc-guide.json"),
+        &home.join(format!("autotrade/execution-latch/job1/{delivery_id}")),
         &json!({
-            "version": 1,
-            "userAgentId": "8315",
-            "serviceId": "svc-guide",
-            "executionMode": "signal_only",
-            "updatedAtMs": 1,
+            "version": 2, "jobId": "job1", "deliveryId": delivery_id,
+            "phase": "spawned", "updatedAt": 1, "directExecutionMode": "auto"
         }),
     );
-    assert!(!fs::read_to_string(&saved_path)
-        .unwrap()
-        .trim_start()
-        .starts_with('{'));
-
-    let claimed = run(
-        &home,
-        &[
-            "agent",
-            "autotrade-direct-claim",
-            "--job-id",
-            "job1",
-            "--delivery-id",
-            delivery_id,
-        ],
-    );
-    assert!(
-        claimed.status.success(),
-        "stdout: {}\nstderr: {}",
-        String::from_utf8_lossy(&claimed.stdout),
-        String::from_utf8_lossy(&claimed.stderr)
-    );
-    assert_eq!(parse_stdout_json(&claimed)["data"]["status"], "claimed");
 
     let finalized = run(
         &home,
@@ -169,26 +127,41 @@ fn guide_direct_claim_requires_active_guide_consent_and_finalizes_once() {
             "tx_42",
         ],
     );
-    assert!(finalized.status.success());
+    assert!(
+        finalized.status.success(),
+        "{}",
+        String::from_utf8_lossy(&finalized.stdout)
+    );
     assert_eq!(parse_stdout_json(&finalized)["data"]["status"], "submitted");
 
     let duplicate = run(
         &home,
         &[
             "agent",
-            "autotrade-direct-claim",
+            "autotrade-direct-finalize",
             "--job-id",
             "job1",
             "--delivery-id",
             delivery_id,
+            "--status",
+            "failed_before_submit",
+            "--tool-id",
+            "onchainos",
+            "--reason",
+            "stale duplicate",
         ],
     );
     assert!(duplicate.status.success());
-    assert_eq!(parse_stdout_json(&duplicate)["data"]["status"], "terminal");
+    assert_eq!(parse_stdout_json(&duplicate)["data"]["status"], "submitted");
+    assert_eq!(
+        parse_stdout_json(&duplicate)["data"]["receipt"]["receiptId"],
+        "tx_42"
+    );
+    assert!(saved_path.is_file());
 }
 
 #[test]
-fn guide_direct_claim_requires_saved_signal_and_active_consent() {
+fn guide_direct_claim_requires_saved_signal_and_verified_active_subscription() {
     let (_guard, home) = fresh_home("cli_autotrade_direct_revalidation");
     let delivery_id = "delivery-revalidate";
     let saved_path = write_guide_direct_fixture(&home, delivery_id);
@@ -238,69 +211,24 @@ fn guide_direct_claim_requires_saved_signal_and_active_consent() {
         String::from_utf8_lossy(&paused_claim.stderr)
     );
     assert!(
-        paused_output.contains("active local Service Guide and Guide Consent are required"),
+        paused_output.contains("subscription is no longer Active"),
         "{paused_output}"
     );
-}
-
-#[test]
-fn legacy_consent_request_is_terminal_skip_even_when_an_old_auto_record_exists() {
-    let (_guard, home) = fresh_home("cli_autotrade_legacy_skip");
-    let delivery_id = "delivery-legacy";
-    write_legacy_context(&home, delivery_id);
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    write_json(
-        &home.join("autotrade/consent/job1.json"),
-        &json!({
-            "version": 1,
-            "jobId": "job1",
-            "mode": "auto",
-            "capU": "10",
-            "tradeAmountU": "1",
-            "createdAt": now,
-            "expiresAt": now + 3600
-        }),
-    );
-
-    let output = run(
-        &home,
-        &[
-            "agent",
-            "autotrade-consent-request",
-            "--job-id",
-            "job1",
-            "--agent-id",
-            "8315",
-            "--delivery-id",
-            delivery_id,
-            "--signal-type",
-            "spot",
-        ],
-    );
-    assert!(output.status.success());
-    let data = parse_stdout_json(&output)["data"].clone();
-    assert_eq!(data["status"], "skipped");
-    assert_eq!(data["reason"], "guide_execution_unavailable");
-    assert_eq!(data["terminal"], true);
-    assert_ne!(data["status"], "policy_ready");
+    assert!(!home.join("autotrade/execution-latch/job1").exists());
+    assert!(!home.join("autotrade/outcomes/job1").exists());
+    assert!(!home.join("autotrade/consent/job1.md").exists());
 }
 
 #[test]
 fn guide_draft_validation_command_is_removed() {
     let (_guard, home) = fresh_home("cli_autotrade_guide_draft_validation");
-    let output = run(
-        &home,
-        &[
-            "agent",
-            "autotrade-guide-draft-validate",
-        ],
-    );
+    let output = run(&home, &["agent", "autotrade-guide-draft-validate"]);
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("autotrade-guide-draft-validate"), "{stderr}");
+    assert!(
+        stderr.contains("autotrade-guide-draft-validate"),
+        "{stderr}"
+    );
     assert!(!home.join("autotrade/guide").exists());
 }
 
@@ -331,4 +259,10 @@ fn stale_direct_delivery_never_reports_no_active_execution_consent() {
     let data = parse_stdout_json(&output)["data"].clone();
     assert_eq!(data["status"], "skipped");
     assert_eq!(data["reason"], "guide_execution_unavailable");
+    assert_eq!(
+        fs::read_to_string(&saved_path).unwrap(),
+        "raw Signal stays available to the user"
+    );
+    assert!(!home.join("autotrade/consent/job1.md").exists());
+    assert!(!home.join("autotrade/one-time-permits").exists());
 }

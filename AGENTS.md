@@ -112,6 +112,10 @@ Choose the Markdown structure by content:
 | A comparison of options, states, or field mappings | Short table |
 | Commands, JSON, return values, and copyable templates | Code block |
 
+When a paragraph contains three or more independent conditions, prohibitions,
+fields, or actions, rewrite it as a list. Keep a causal sequence in prose or an
+ordered list.
+
 ## Review checklist
 
 - [ ] Skill files follow the closest template under `templates/`.

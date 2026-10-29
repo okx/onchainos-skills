@@ -180,6 +180,7 @@ pub struct WatchConfig {
     /// Chain indexes for per-chain channels: signal, memepump (PerChain).
     #[serde(default)]
     pub chain_indexes: Vec<String>,
+    #[serde(default)]
     pub env: WatchEnv,
     pub created_at: u64,
     /// Auto-stop if no poll within this duration (ms). 0 = disabled.
@@ -191,11 +192,55 @@ fn default_idle_timeout_ms() -> u64 {
     30 * 60 * 1000 // 30 minutes
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum WatchEnv {
     Pre,
+    #[default]
     Prod,
+}
+
+impl WatchEnv {
+    pub fn from_dev_mode(dev_mode: bool) -> Self {
+        if dev_mode {
+            Self::Pre
+        } else {
+            Self::Prod
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pre => "pre",
+            Self::Prod => "prod",
+        }
+    }
+}
+
+#[cfg(test)]
+mod watch_env_tests {
+    use super::*;
+
+    #[test]
+    fn dev_mode_maps_to_pre_environment() {
+        assert_eq!(WatchEnv::from_dev_mode(true), WatchEnv::Pre);
+    }
+
+    #[test]
+    fn default_mode_maps_to_prod_environment() {
+        assert_eq!(WatchEnv::from_dev_mode(false), WatchEnv::Prod);
+    }
+
+    #[test]
+    fn missing_persisted_environment_defaults_to_prod() {
+        let config: WatchConfig = serde_json::from_value(serde_json::json!({
+            "channels": ["kol_smartmoney-tracker-activity"],
+            "created_at": 0
+        }))
+        .unwrap();
+
+        assert_eq!(config.env, WatchEnv::Prod);
+    }
 }
 
 /// Daemon status written to the status file every 10s.

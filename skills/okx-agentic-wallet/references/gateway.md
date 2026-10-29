@@ -37,9 +37,11 @@ This domain is the broadcast layer for EVM MEV protection: the swap path decides
 | Ethereum / BSC / Base | Yes | add `--mev-protection` to `gateway broadcast` |
 | Solana | Not via this domain | handled on the swap path (Jito tips), not at broadcast |
 
-## Render Rules
+## Output Rules
 
-### Amount Display
+### Render Rules
+
+#### Amount Display
 
 - Gas prices in Gwei for EVM (`18.5 Gwei`), never raw wei; gas limit as an integer; USD gas cost estimate when possible; tx values in UI units.
 - Gas price fields: EIP-1559 chains use `eip1559Protocol.suggestBaseFee` + `proposePriorityFee`; legacy uses `normal`.

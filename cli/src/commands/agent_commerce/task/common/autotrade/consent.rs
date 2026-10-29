@@ -1,25 +1,11 @@
-//! Buyer-side auto-trade **consent** record (product revision 2026-07-17).
+//! Historical buyer-side Consent records and shared policy migration.
 //!
 //! One file per `jobId` at `<onchainos_home>/autotrade/consent/<jobId>.json`,
-//! written **whole** in one shot. The consent record is the client-side gate that
-//! sits AFTER the exact-Active backend subscription gate. The model-driven session
-//! uses this policy when handling an inbound signal:
-//!
-//! - no record (first time) ⇒ ask the user a three-way decision, then remember it
-//! - `Auto` + amount ≤ `capU` ⇒ auto-execute (execution card)
-//! - `Auto` + amount > `capU` ⇒ re-ask (over-cap)
-//! - `Manual` ⇒ do not auto-execute; ask a bounded one-shot execute/skip decision
-//! - `Decline` ⇒ the previous delivery was skipped; a later signal has no authorization
-//!
-//! Key granularity is **per-job** (product call, 2026-07-17): consent authorizes
-//! THIS subscription, not the ASP as a whole (a subscription's `jobId` is stable
-//! across renewals, so this does not re-prompt on renew). The per-trade `capU` is a
-//! single global buy-side cap in quote-stablecoin units (PRD: USDT); sells are never cap-gated (L1,
-//! WBW-13715 — a sell is naturally bounded by the position held).
-//!
-//! Supersedes the per-venue `grants.rs` cap model: the consent record is now the
-//! single source of truth exposed through `autotrade-grant-check`, so the
-//! Skill-selected execution tool enforces the same client-side cap.
+//! written whole in one shot. These records retain their original fixed fields
+//! for migration and internal policy checks. Current execution authorization uses
+//! the active Service Guide and Guide Consent contract in `guide.rs`.
+//! Historical manual, decline, and over-cap states do not create execution cards
+//! or authorize one-time trades.
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -28,7 +14,6 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::super::user_lang::Lang;
 use super::amount::Decimal;
 use super::grants::job_id_is_safe;
 use super::guide;
@@ -544,10 +529,6 @@ pub fn validate_dynamic_settings(settings: &DynamicConsentSettings) -> anyhow::R
     validate_dynamic_settings_impl(settings, false)
 }
 
-fn validate_dynamic_setting_updates(settings: &DynamicConsentSettings) -> anyhow::Result<()> {
-    validate_dynamic_settings_impl(settings, true)
-}
-
 pub fn validate_required_field_name(field: &str) -> anyhow::Result<()> {
     let core = matches!(
         field,
@@ -640,64 +621,10 @@ pub fn validate_amount_policy(
     }
 }
 
-pub fn parse_dynamic_settings_json(
-    input: Option<&str>,
-    flag: &str,
-) -> anyhow::Result<DynamicConsentSettings> {
-    let Some(input) = input else {
-        return Ok(DynamicConsentSettings::new());
-    };
-    if input.len() > MAX_DYNAMIC_SETTINGS_BYTES {
-        anyhow::bail!("{flag} is too large");
-    }
-    let value: Value =
-        serde_json::from_str(input).map_err(|_| anyhow::anyhow!("{flag} must be a JSON object"))?;
-    let Value::Object(values) = value else {
-        anyhow::bail!("{flag} must be a JSON object");
-    };
-    let settings = values.into_iter().collect::<DynamicConsentSettings>();
-    validate_dynamic_setting_updates(&settings)?;
-    Ok(settings)
-}
-
-pub(crate) fn merge_dynamic_settings(
-    target: &mut DynamicConsentSettings,
-    updates: &DynamicConsentSettings,
-) {
-    for (key, value) in updates {
-        if value.is_null() {
-            target.remove(key);
-        } else if key == "extra" {
-            let mut merged = target
-                .get(key)
-                .and_then(Value::as_object)
-                .cloned()
-                .unwrap_or_default();
-            if let Some(updates) = value.as_object() {
-                for (field, update) in updates {
-                    if update.is_null() {
-                        merged.remove(field);
-                    } else {
-                        merged.insert(field.clone(), update.clone());
-                    }
-                }
-            }
-            if merged.is_empty() {
-                target.remove(key);
-            } else {
-                target.insert(key.clone(), Value::Object(merged));
-            }
-        } else {
-            target.insert(key.clone(), value.clone());
-        }
-    }
-}
-
 /// Versioned, trusted metadata for a saved Active-subscription delivery.
 ///
 /// The deliverable itself remains untrusted market data. This record only proves
-/// which local artifact and stable delivery id were admitted by the CLI, so a
-/// user-decision relay can safely resume after the original model turn ended.
+/// which local artifact and stable delivery id were admitted by the CLI.
 pub const DELIVERY_CONTEXT_VERSION: u32 = 2;
 
 fn legacy_subscription_trade_path() -> SubscriptionTradePath {
@@ -723,113 +650,8 @@ pub struct DeliveryContext {
     pub execution_path: SubscriptionTradePath,
 }
 
-fn bounded_json_after_marker(raw: &str) -> Option<serde_json::Value> {
-    const MARKER: &str = "[ACTIONABLE_TRADING_SIGNAL]";
-    let tail = raw.split_once(MARKER).map(|(_, tail)| tail).unwrap_or(raw);
-    let start = tail.find('{')?;
-    serde_json::Deserializer::from_str(&tail[start..])
-        .into_iter::<serde_json::Value>()
-        .next()?
-        .ok()
-}
-
-fn short_display(value: &str, max: usize) -> String {
-    let flattened = value
-        .chars()
-        .filter(|character| !character.is_control())
-        .take(max)
-        .collect::<String>();
-    if value
-        .chars()
-        .filter(|character| !character.is_control())
-        .count()
-        > max
-    {
-        format!("{flattened}…")
-    } else {
-        flattened
-    }
-}
-
-/// Render only bounded, canonical fields from a trusted delivery context and
-/// its untrusted artifact. Raw provider prose is deliberately never copied
-/// into a decision card.
-pub fn delivery_decision_summary(context: &DeliveryContext, lang: Lang) -> String {
-    let raw = std::fs::read_to_string(&context.saved_path)
-        .ok()
-        .map(|value| value.chars().take(64 * 1024).collect::<String>());
-    let signal = raw.as_deref().and_then(bounded_json_after_marker);
-    let field = |pointer: &str| {
-        signal
-            .as_ref()
-            .and_then(|value| value.pointer(pointer))
-            .and_then(|value| match value {
-                serde_json::Value::String(value) => Some(value.clone()),
-                serde_json::Value::Number(value) => Some(value.to_string()),
-                _ => None,
-            })
-            .filter(|value| !value.trim().is_empty())
-            .map(|value| short_display(value.trim(), 128))
-    };
-    let signal_id = field("/signalId");
-    let signal_type = field("/signalType").unwrap_or_else(|| context.deliverable_type.clone());
-    let side = field("/params/side");
-    let amount = field("/params/amount");
-    let amount_unit = field("/params/amountUnit");
-    let quote = field("/params/quoteCurrency");
-    let chain = field("/params/chainIndex");
-    let token = field("/params/tokenAddress");
-    let file_name = std::path::Path::new(&context.saved_path)
-        .file_name()
-        .and_then(|value| value.to_str())
-        .map(|value| short_display(value, 96));
-
-    let mut lines = match lang {
-        Lang::Zh => vec!["[对应交付物]".to_string()],
-        Lang::En => vec!["[Deliverable for this decision]".to_string()],
-    };
-    let mut push = |zh: &str, en: &str, value: Option<String>| {
-        if let Some(value) = value {
-            lines.push(match lang {
-                Lang::Zh => format!("{zh}: {value}"),
-                Lang::En => format!("{en}: {value}"),
-            });
-        }
-    };
-    push(
-        "交付 ID",
-        "Delivery ID",
-        Some(short_display(&context.delivery_id, 128)),
-    );
-    push("信号 ID", "Signal ID", signal_id);
-    push("信号类型", "Signal type", Some(signal_type));
-    push("方向", "Side", side);
-    let amount_display = amount.map(|amount| {
-        [Some(amount), amount_unit, quote]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" ")
-    });
-    push("信号金额", "Signal amount", amount_display);
-    push("链", "Chain", chain);
-    push("Token", "Token", token);
-    if signal.is_none() {
-        push("文件", "File", file_name);
-    }
-    lines.join("\n")
-}
-
-pub fn pending_delivery_decision_summary(job_id: &str, lang: Lang) -> Option<String> {
-    load_pending_delivery_context(job_id)
-        .ok()
-        .flatten()
-        .map(|context| delivery_decision_summary(&context, lang))
-}
-
-/// Result of atomically binding an outstanding user decision to a delivery.
-/// A different pending delivery is never overwritten: doing so could let a
-/// decision reply authorize the wrong signal.
+/// Result of atomically selecting a pending delivery. A different pending
+/// delivery is never overwritten, preserving the exact signal binding.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DeliveryActivation {
     Activated(DeliveryContext),
@@ -837,11 +659,11 @@ pub enum DeliveryActivation {
     Conflict(DeliveryContext),
 }
 
-/// How the buyer wants this subscription's Active signals handled.
+/// Historical fixed-field mode retained for record migration.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ConsentMode {
-    /// Auto-execute within `capU` (buy-side); over-cap re-asks.
+    /// Historical automatic policy; current execution also requires Guide Consent.
     Auto,
     /// Legacy on-disk value. It is treated as notify-only and never authorizes
     /// a per-delivery execution decision.
@@ -863,14 +685,6 @@ pub enum TradeKitAuthMode {
 }
 
 impl TradeKitAuthMode {
-    pub fn parse(value: &str) -> anyhow::Result<Self> {
-        match value.to_ascii_lowercase().as_str() {
-            "oauth" => Ok(Self::OAuth),
-            "api_key" | "api-key" => Ok(Self::ApiKey),
-            _ => anyhow::bail!("auth mode must be one of: oauth | api_key"),
-        }
-    }
-
     pub fn as_str(self) -> &'static str {
         match self {
             Self::OAuth => "oauth",
@@ -888,14 +702,6 @@ pub enum MarginMode {
 }
 
 impl MarginMode {
-    pub fn parse(value: &str) -> anyhow::Result<Self> {
-        match value.to_ascii_lowercase().as_str() {
-            "cross" => Ok(Self::Cross),
-            "isolated" => Ok(Self::Isolated),
-            _ => anyhow::bail!("margin mode must be one of: cross | isolated"),
-        }
-    }
-
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Cross => "cross",
@@ -904,10 +710,7 @@ impl MarginMode {
     }
 }
 
-/// User-authorized policy for turning a signal entry into an order.
-///
-/// This is intentionally distinct from the execution bridge's `ExecutionMode`
-/// (`auto` / `manual` / `one_time`).
+/// Historical user-authorized order policy retained for migration.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum OrderPolicy {
@@ -916,14 +719,6 @@ pub enum OrderPolicy {
 }
 
 impl OrderPolicy {
-    pub fn parse(value: &str) -> anyhow::Result<Self> {
-        match value.to_ascii_lowercase().as_str() {
-            "market" => Ok(Self::Market),
-            "signal_price_limit" => Ok(Self::SignalPriceLimit),
-            _ => anyhow::bail!("order policy must be one of: market | signal_price_limit"),
-        }
-    }
-
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Market => "market",
@@ -993,20 +788,14 @@ pub struct ConsentFile {
     pub expires_at: u64,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ConsentLifecycle {
     Prepared,
+    // Older records were written only after broadcast.
+    #[default]
     Active,
     Aborted,
-}
-
-impl Default for ConsentLifecycle {
-    fn default() -> Self {
-        // Files before v6 were written only after broadcast, so `active` is the
-        // safe compatibility interpretation.
-        Self::Active
-    }
 }
 
 /// Read-only consent context exposed to the model-driven subscription session.
@@ -1095,22 +884,9 @@ impl ConsentSnapshot {
     }
 }
 
-/// The default quote stablecoin (PRD denominates the whole flow in USDT).
-pub const DEFAULT_QUOTE: &str = "usdt";
 /// Quote stablecoins a consent may select. Whitelisted so the "per-trade cap in
 /// stablecoin dollars" semantics can't be bent onto an arbitrary token.
 pub const QUOTE_WHITELIST: [&str; 2] = ["usdc", "usdt"];
-
-/// The quote stablecoin alias in effect for `job_id`: the consent record's
-/// choice, else [`DEFAULT_QUOTE`]. Always lowercase, always whitelisted.
-pub fn quote_token(job_id: &str) -> String {
-    load_consent(job_id)
-        .ok()
-        .flatten()
-        .and_then(|c| c.quote_token)
-        .filter(|q| QUOTE_WHITELIST.contains(&q.as_str()))
-        .unwrap_or_else(|| DEFAULT_QUOTE.to_string())
-}
 
 // ── Stable, process-level failure reasons (never echo file content) ──
 pub const CONSENT_UNREADABLE: &str = "consent_unreadable";
@@ -1206,9 +982,8 @@ fn migrate_legacy_flat_settings(file: &mut ConsentFile) {
         .insert("extra".to_string(), Value::Object(extra));
 }
 
-/// A hard consent read failure (present-but-broken record). Distinct from the
-/// normal "no record / declined / manual / auto" states carried by
-/// [`ConsentDecision`]. Fails closed at the pipeline (degrade → notify).
+/// A hard historical Consent read failure for a present-but-broken record.
+/// Callers retain the record and report the unavailable policy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConsentError(pub &'static str);
 
@@ -1219,27 +994,9 @@ impl std::fmt::Display for ConsentError {
 }
 impl std::error::Error for ConsentError {}
 
-/// The client-side consent verdict for one inbound Active signal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConsentDecision {
-    /// No record yet — ask the three-way decision.
-    FirstTime,
-    /// `Decline` (C = "don't execute THIS one") — re-ask the three-way on every signal (auto
-    /// stays off; C only rejects the current signal, it is not a persistent decline).
-    Declined,
-    /// `Manual` (B = "execute this one, then ask every time") — re-ask the three-way on every
-    /// signal (auto stays off).
-    Manual,
-    /// `Auto`, and this action is allowed to auto-execute (sell, or buy within cap).
-    AutoAllow,
-    /// `Auto`, but a buy exceeds `capU` (or `Auto` with no cap on a buy) — re-ask.
-    AutoOverCap,
-}
-
 /// `<onchainos_home>/autotrade/consent/<jobId>.md`. Self-validates `job_id`
-/// BEFORE any `onchainos_home().join(...)`, so a direct caller such
-/// as `clear_consent("../../x")` cannot reach an out-of-root `remove_file`
-/// (reuses the CONSENT_UNREADABLE bespoke exit).
+/// BEFORE any `onchainos_home().join(...)`, so historical record reads cannot
+/// escape the configured root.
 fn consent_path(job_id: &str) -> Result<PathBuf, ConsentError> {
     if !job_id_is_safe(job_id) {
         return Err(ConsentError(CONSENT_UNREADABLE));
@@ -1357,416 +1114,6 @@ pub fn consent_snapshot(job_id: &str) -> ConsentSnapshot {
         Ok(None) => ConsentSnapshot::not_set(),
         Err(_) => ConsentSnapshot::unreadable(),
     }
-}
-
-/// The client-side consent verdict for one inbound Active signal.
-///
-/// `buy_amount` is `Some` only for a cap-relevant **buy** (dex buy / defi deposit /
-/// polymarket buy — spend in quote-stablecoin units); `None` for sells and no-spend
-/// actions, which are never cap-gated. The mode dispatch (first-time / declined /
-/// manual / auto) is independent of `buy_amount`; only the `Auto` cap check uses it.
-pub fn evaluate_consent(
-    job_id: &str,
-    buy_amount: Option<&Decimal>,
-) -> Result<ConsentDecision, ConsentError> {
-    let Some(file) = load_consent(job_id)? else {
-        return Ok(ConsentDecision::FirstTime);
-    };
-    match file.mode {
-        ConsentMode::Decline => Ok(ConsentDecision::Declined),
-        ConsentMode::Manual => Ok(ConsentDecision::Manual),
-        ConsentMode::Auto => match buy_amount {
-            // Sell / no-spend under Auto ⇒ always allowed (never cap-gated).
-            None => Ok(ConsentDecision::AutoAllow),
-            // Buy under Auto ⇒ enforce the per-trade cap. A missing/unparseable cap
-            // on an Auto buy fails closed to a re-ask (never an uncapped auto-buy).
-            Some(amount) => {
-                let within = file
-                    .cap_u
-                    .as_deref()
-                    .and_then(|c| Decimal::parse(c).ok())
-                    .map(|cap| amount.le(&cap))
-                    .unwrap_or(false);
-                Ok(if within {
-                    ConsentDecision::AutoAllow
-                } else {
-                    ConsentDecision::AutoOverCap
-                })
-            }
-        },
-    }
-}
-
-/// Persist a consent record for `job_id` (release-mode; replaces the debug-only
-/// `grants::write_grant` seeding). `cap_u` is optional and validated when
-/// present for `Auto`, and must be absent for `Manual` / `Decline`.
-pub fn write_consent(
-    job_id: &str,
-    mode: ConsentMode,
-    cap_u: Option<&str>,
-    quote: Option<&str>,
-    ttl_sec: u64,
-) -> anyhow::Result<()> {
-    write_consent_with_trade_amount(job_id, mode, cap_u, None, quote, ttl_sec)
-}
-
-/// Persist consent together with an optional fixed per-trade amount.
-///
-/// `trade_amount_u = None` preserves an existing configured amount, matching
-/// the existing `quote = None` behavior. This is important for cap-only rewrites
-/// after an over-cap decision: raising the cap must not silently erase the
-/// subscription's configured execution amount. An explicitly supplied amount
-/// must be a positive decimal.
-pub fn write_consent_with_trade_amount(
-    job_id: &str,
-    mode: ConsentMode,
-    cap_u: Option<&str>,
-    trade_amount_u: Option<&str>,
-    quote: Option<&str>,
-    ttl_sec: u64,
-) -> anyhow::Result<()> {
-    write_consent_policy(job_id, mode, cap_u, trade_amount_u, quote, None, ttl_sec)
-}
-
-/// Persist consent and optionally replace the user-authorized Trade Kit
-/// environment. An omitted environment preserves an existing choice so cap,
-/// amount, quote, and renewal rewrites cannot silently clear it.
-pub fn write_consent_policy(
-    job_id: &str,
-    mode: ConsentMode,
-    cap_u: Option<&str>,
-    trade_amount_u: Option<&str>,
-    quote: Option<&str>,
-    trade_environment: Option<TradeEnvironment>,
-    ttl_sec: u64,
-) -> anyhow::Result<()> {
-    write_consent_policy_with_settings(
-        job_id,
-        mode,
-        cap_u,
-        trade_amount_u,
-        quote,
-        trade_environment,
-        None,
-        None,
-        None,
-        ttl_sec,
-    )
-}
-
-/// Persist the complete local execution policy. Omitted Trade Kit settings
-/// preserve an existing choice, which makes cap/amount changes safe and lets
-/// older callers remain source-compatible.
-// 9 independently-optional settings; a params struct would only move the same
-// fields into another type without reducing the call-site surface.
-#[allow(clippy::too_many_arguments)]
-pub fn write_consent_policy_with_settings(
-    job_id: &str,
-    mode: ConsentMode,
-    cap_u: Option<&str>,
-    trade_amount_u: Option<&str>,
-    quote: Option<&str>,
-    trade_environment: Option<TradeEnvironment>,
-    margin_mode: Option<MarginMode>,
-    order_policy: Option<OrderPolicy>,
-    auth_mode: Option<TradeKitAuthMode>,
-    ttl_sec: u64,
-) -> anyhow::Result<()> {
-    write_consent_policy_with_dynamic_settings(
-        job_id,
-        mode,
-        cap_u,
-        trade_amount_u,
-        quote,
-        trade_environment,
-        margin_mode,
-        order_policy,
-        auth_mode,
-        None,
-        ttl_sec,
-    )
-}
-
-/// Persist the complete local execution policy and merge user-confirmed,
-/// tool-specific settings. `null` values remove an existing dynamic setting;
-/// all other values remain flat in the consent JSON and model snapshot.
-pub fn write_consent_policy_with_dynamic_settings(
-    job_id: &str,
-    mode: ConsentMode,
-    cap_u: Option<&str>,
-    trade_amount_u: Option<&str>,
-    quote: Option<&str>,
-    trade_environment: Option<TradeEnvironment>,
-    margin_mode: Option<MarginMode>,
-    order_policy: Option<OrderPolicy>,
-    auth_mode: Option<TradeKitAuthMode>,
-    dynamic_updates: Option<&DynamicConsentSettings>,
-    ttl_sec: u64,
-) -> anyhow::Result<()> {
-    if !job_id_is_safe(job_id) {
-        anyhow::bail!("invalid job id");
-    }
-    if ttl_sec == 0 {
-        anyhow::bail!("--ttl-sec must be > 0");
-    }
-    // Best-effort compatibility read. This intentionally retains the historical
-    // behavior of allowing a valid new write to replace a broken old record,
-    // while preserving an in-flight prepared record's Guide binding.
-    let existing = read_consent_file(job_id).ok().flatten();
-    let cap_u = match mode {
-        ConsentMode::Auto => cap_u
-            .map(|cap| {
-                let parsed = Decimal::parse(cap)
-                    .map_err(|_| anyhow::anyhow!("--cap is not a valid decimal"))?;
-                if parsed.is_zero() {
-                    anyhow::bail!("--cap must be greater than 0");
-                }
-                Ok(cap.to_string())
-            })
-            .transpose()?,
-        ConsentMode::Manual | ConsentMode::Decline => {
-            if cap_u.is_some() {
-                anyhow::bail!("--cap is only valid with --mode auto");
-            }
-            existing.as_ref().and_then(|consent| consent.cap_u.clone())
-        }
-    };
-    let trade_amount_u = match trade_amount_u {
-        Some(amount) => {
-            let parsed = Decimal::parse(amount)
-                .map_err(|_| anyhow::anyhow!("--trade-amount is not a valid decimal"))?;
-            if parsed.is_zero() {
-                anyhow::bail!("--trade-amount must be greater than 0");
-            }
-            Some(amount.to_string())
-        }
-        None => existing.as_ref().and_then(|c| c.trade_amount_u.clone()),
-    };
-    // Quote preference: explicit value must be whitelisted; absent ⇒ KEEP the
-    // existing record's choice (an over-cap raise re-writes the record and must
-    // not silently reset a stored preference back to the default).
-    let quote_token = match quote {
-        Some(q) => {
-            let q = q.to_ascii_lowercase();
-            if !QUOTE_WHITELIST.contains(&q.as_str()) {
-                anyhow::bail!("--quote must be one of: usdc | usdt");
-            }
-            Some(q)
-        }
-        None => existing.as_ref().and_then(|c| c.quote_token.clone()),
-    };
-    if trade_environment.is_some_and(|environment| !environment.is_explicit()) {
-        anyhow::bail!("trade environment must be live or demo");
-    }
-    let trade_environment = trade_environment.or_else(|| {
-        existing
-            .as_ref()
-            .and_then(|consent| consent.trade_environment)
-    });
-    let margin_mode = margin_mode.or_else(|| existing.as_ref().and_then(|c| c.margin_mode));
-    let order_policy = order_policy.or_else(|| existing.as_ref().and_then(|c| c.order_policy));
-    let auth_mode = auth_mode.or_else(|| existing.as_ref().and_then(|c| c.auth_mode));
-    let mut dynamic_settings = existing
-        .as_ref()
-        .map(|consent| consent.dynamic_settings.clone())
-        .unwrap_or_default();
-    if let Some(updates) = dynamic_updates {
-        validate_dynamic_setting_updates(updates)?;
-        merge_dynamic_settings(&mut dynamic_settings, updates);
-    }
-    validate_dynamic_settings(&dynamic_settings)?;
-    validate_amount_policy(trade_amount_u.as_deref(), &dynamic_settings)?;
-
-    let created_at = now_secs();
-    let file = ConsentFile {
-        version: CONSENT_VERSION,
-        job_id: job_id.to_string(),
-        mode,
-        cap_u,
-        trade_amount_u,
-        quote_token,
-        trade_environment,
-        margin_mode,
-        order_policy,
-        auth_mode,
-        guide_hash: existing
-            .as_ref()
-            .and_then(|consent| consent.guide_hash.clone()),
-        lifecycle: existing
-            .as_ref()
-            .map(|consent| consent.lifecycle)
-            .unwrap_or(ConsentLifecycle::Active),
-        dynamic_settings,
-        created_at,
-        expires_at: created_at + ttl_sec,
-    };
-    if !persisted_required_fields_are_complete(&file) {
-        anyhow::bail!("requiredFields contains a setting without a confirmed value");
-    }
-
-    write_consent_file(&file)?;
-    Ok(())
-}
-
-fn write_consent_file(file: &ConsentFile) -> anyhow::Result<()> {
-    let path = consent_path(&file.job_id).map_err(|error| anyhow::anyhow!(error.0))?;
-    let body = guide::render_markdown(
-        "consent",
-        file,
-        "# Subscription Consent\n\nThis record contains user-confirmed settings for the matching local service Guide.\n",
-    )?;
-    crate::home::write_secure(&path, body.as_bytes())?;
-    Ok(())
-}
-
-/// Store the local consent before subscription broadcast. Prepared records are
-/// fail-closed: [`load_consent`] never exposes them to execution.
-#[allow(clippy::too_many_arguments)]
-pub fn write_prepared_consent_policy_with_dynamic_settings(
-    job_id: &str,
-    mode: ConsentMode,
-    cap_u: Option<&str>,
-    trade_amount_u: Option<&str>,
-    quote: Option<&str>,
-    trade_environment: Option<TradeEnvironment>,
-    margin_mode: Option<MarginMode>,
-    order_policy: Option<OrderPolicy>,
-    auth_mode: Option<TradeKitAuthMode>,
-    dynamic_updates: Option<&DynamicConsentSettings>,
-    guide_hash: &str,
-    ttl_sec: u64,
-) -> anyhow::Result<()> {
-    if guide_hash.len() != 64 || !guide_hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        anyhow::bail!("service guide hash is invalid")
-    }
-    write_consent_policy_with_dynamic_settings(
-        job_id,
-        mode,
-        cap_u,
-        trade_amount_u,
-        quote,
-        trade_environment,
-        margin_mode,
-        order_policy,
-        auth_mode,
-        dynamic_updates,
-        ttl_sec,
-    )?;
-    let mut file = read_consent_file(job_id)
-        .map_err(|error| anyhow::anyhow!(error.0))?
-        .ok_or_else(|| anyhow::anyhow!("prepared consent could not be read"))?;
-    file.guide_hash = Some(guide_hash.to_ascii_lowercase());
-    file.lifecycle = ConsentLifecycle::Prepared;
-    write_consent_file(&file)
-}
-
-pub fn activate_prepared_consent(job_id: &str) -> anyhow::Result<()> {
-    let mut file = read_consent_file(job_id)
-        .map_err(|error| anyhow::anyhow!(error.0))?
-        .ok_or_else(|| anyhow::anyhow!("prepared consent is not available"))?;
-    if file.lifecycle != ConsentLifecycle::Prepared || file.guide_hash.is_none() {
-        anyhow::bail!("prepared consent is invalid")
-    }
-    file.version = CONSENT_VERSION;
-    file.lifecycle = ConsentLifecycle::Active;
-    write_consent_file(&file)
-}
-
-pub fn abort_prepared_consent(job_id: &str) {
-    let Ok(Some(mut file)) = read_consent_file(job_id) else {
-        return;
-    };
-    if file.lifecycle == ConsentLifecycle::Prepared {
-        file.lifecycle = ConsentLifecycle::Aborted;
-        let _ = write_consent_file(&file);
-    }
-}
-
-/// Update only the Trade Kit environment on an existing live consent record.
-/// This is used when an older policy first reaches a Trade Kit delivery: the
-/// user's one-time environment choice must not rewrite amount, cap, quote,
-/// mode, or expiry.
-pub fn write_trade_environment(
-    job_id: &str,
-    trade_environment: TradeEnvironment,
-) -> anyhow::Result<ConsentFile> {
-    if !trade_environment.is_explicit() {
-        anyhow::bail!("trade environment must be live or demo");
-    }
-    let mut file = load_consent(job_id)
-        .map_err(|error| anyhow::anyhow!(error.0))?
-        .ok_or_else(|| anyhow::anyhow!("no live consent"))?;
-    file.version = CONSENT_VERSION;
-    file.trade_environment = Some(trade_environment);
-    write_consent_file(&file)?;
-    Ok(file)
-}
-
-/// Partially update user-confirmed Trade Kit execution settings without
-/// rewriting mode, amount, cap, quote, timestamps, or expiry.
-pub fn write_trade_settings(
-    job_id: &str,
-    trade_environment: Option<TradeEnvironment>,
-    margin_mode: Option<MarginMode>,
-    order_policy: Option<OrderPolicy>,
-    auth_mode: Option<TradeKitAuthMode>,
-) -> anyhow::Result<ConsentFile> {
-    write_trade_settings_with_dynamic(
-        job_id,
-        trade_environment,
-        margin_mode,
-        order_policy,
-        auth_mode,
-        None,
-    )
-}
-
-pub fn write_trade_settings_with_dynamic(
-    job_id: &str,
-    trade_environment: Option<TradeEnvironment>,
-    margin_mode: Option<MarginMode>,
-    order_policy: Option<OrderPolicy>,
-    auth_mode: Option<TradeKitAuthMode>,
-    dynamic_updates: Option<&DynamicConsentSettings>,
-) -> anyhow::Result<ConsentFile> {
-    if trade_environment.is_none()
-        && margin_mode.is_none()
-        && order_policy.is_none()
-        && auth_mode.is_none()
-        && dynamic_updates.is_none_or(DynamicConsentSettings::is_empty)
-    {
-        anyhow::bail!("at least one consent setting is required");
-    }
-    if trade_environment.is_some_and(|environment| !environment.is_explicit()) {
-        anyhow::bail!("trade environment must be live or demo");
-    }
-    let mut file = load_consent(job_id)
-        .map_err(|error| anyhow::anyhow!(error.0))?
-        .ok_or_else(|| anyhow::anyhow!("no live consent"))?;
-    file.version = CONSENT_VERSION;
-    if let Some(value) = trade_environment {
-        file.trade_environment = Some(value);
-    }
-    if let Some(value) = margin_mode {
-        file.margin_mode = Some(value);
-    }
-    if let Some(value) = order_policy {
-        file.order_policy = Some(value);
-    }
-    if let Some(value) = auth_mode {
-        file.auth_mode = Some(value);
-    }
-    if let Some(updates) = dynamic_updates {
-        validate_dynamic_setting_updates(updates)?;
-        merge_dynamic_settings(&mut file.dynamic_settings, updates);
-        validate_dynamic_settings(&file.dynamic_settings)?;
-    }
-    validate_amount_policy(file.trade_amount_u.as_deref(), &file.dynamic_settings)?;
-    if !persisted_required_fields_are_complete(&file) {
-        anyhow::bail!("requiredFields contains a setting without a confirmed value");
-    }
-    write_consent_file(&file)?;
-    Ok(file)
 }
 
 fn delivery_id_is_safe(delivery_id: &str) -> bool {
@@ -1986,70 +1333,36 @@ pub fn clear_pending_delivery(job_id: &str, delivery_id: &str) {
         clear_pending_signal(job_id);
     }
 }
-/// Pause auto copy-trade for this job: delete the consent record so `evaluate_consent`
-/// falls back to `FirstTime`. Later signals are saved and reported as not executed until
-/// the user explicitly restores or updates the policy. Best-effort (already-absent is
-/// fine). Grant file + pending signal are cleared by the caller.
-pub fn clear_consent(job_id: &str) {
-    // `consent_path` self-validates job_id, so an unsafe path such as
-    // `../../x` yields `Err` here and no `remove_file` is ever attempted.
-    if let Ok(path) = consent_path(job_id) {
-        let _ = std::fs::remove_file(path);
-    }
-    if let Ok(path) = legacy_consent_path(job_id) {
-        let _ = std::fs::remove_file(path);
-    }
-}
-
-// ── Plugin-install approval (per job + plugin) ──────────────────────────────
-//
-// A copy-trade command that needs a plugin (e.g. `polymarket-plugin`) must NOT be
-// silently installed inside the headless sub session: compliance requires the first
-// install to be user-confirmed, and a sub-side `okx-dapp-discovery` install prompt is
-// invisible to the human. Instead the pipeline defers with a plugin-install decision;
-// once the user approves and the user session installs the plugin, this marker is
-// written so subsequent signals for the same (job, plugin) execute without re-asking.
-
-/// `<onchainos_home>/autotrade/plugin-approved/<jobId>/<plugin>`.
-fn plugin_approved_path(job_id: &str, plugin: &str) -> Result<PathBuf, ConsentError> {
-    if !job_id_is_safe(job_id) {
-        return Err(ConsentError(CONSENT_UNREADABLE));
-    }
-    let safe_plugin: String = plugin
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
-        .collect();
-    if safe_plugin.is_empty() {
-        return Err(ConsentError(CONSENT_UNREADABLE));
-    }
-    let home = crate::home::onchainos_home().map_err(|_| ConsentError(CONSENT_UNREADABLE))?;
-    Ok(home
-        .join("autotrade")
-        .join("plugin-approved")
-        .join(job_id)
-        .join(safe_plugin))
-}
-
-/// True when the user has approved installing `plugin` for `job_id`.
-pub fn plugin_approved(job_id: &str, plugin: &str) -> bool {
-    plugin_approved_path(job_id, plugin)
-        .map(|p| p.exists())
-        .unwrap_or(false)
-}
-
-/// Record the user's approval to install `plugin` for `job_id` (best-effort marker).
-pub fn write_plugin_approved(job_id: &str, plugin: &str) -> Result<(), ConsentError> {
-    let path = plugin_approved_path(job_id, plugin)?;
-    crate::home::write_secure(&path, b"1").map_err(|_| ConsentError(CONSENT_UNREADABLE))?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn dec(s: &str) -> Decimal {
-        Decimal::parse(s).unwrap()
+    fn parse_settings_fixture(
+        input: Option<&str>,
+        _flag: &str,
+    ) -> anyhow::Result<DynamicConsentSettings> {
+        let settings: DynamicConsentSettings = serde_json::from_str(input.unwrap_or("{}"))?;
+        validate_dynamic_settings(&settings)?;
+        Ok(settings)
+    }
+
+    fn write_historical_fixture(fields: Value) {
+        let mut raw = serde_json::json!({
+            "version": CONSENT_VERSION,
+            "jobId": "job1",
+            "mode": "auto",
+            "capU": "100",
+            "createdAt": now_secs(),
+            "expiresAt": now_secs() + 3600,
+        });
+        raw.as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        crate::home::write_secure(
+            &consent_path("job1").unwrap(),
+            serde_json::to_string_pretty(&raw).unwrap().as_bytes(),
+        )
+        .unwrap();
     }
 
     #[test]
@@ -2094,12 +1407,8 @@ mod tests {
     }
 
     #[test]
-    fn no_record_is_first_time() {
+    fn no_record_snapshot_is_not_set() {
         with_home(|| {
-            assert_eq!(
-                evaluate_consent("job1", Some(&dec("10"))).unwrap(),
-                ConsentDecision::FirstTime
-            );
             assert_eq!(
                 consent_snapshot("job1"),
                 ConsentSnapshot {
@@ -2125,15 +1434,9 @@ mod tests {
     #[test]
     fn snapshot_exposes_only_persisted_policy() {
         with_home(|| {
-            write_consent_with_trade_amount(
-                "job1",
-                ConsentMode::Auto,
-                Some("50"),
-                Some("12.5"),
-                Some("USDC"),
-                3600,
-            )
-            .unwrap();
+            write_historical_fixture(serde_json::json!({
+                "capU": "50", "tradeAmountU": "12.5", "quoteToken": "usdc"
+            }));
 
             let snapshot = consent_snapshot("job1");
             assert_eq!(snapshot.status, ConsentSnapshotStatus::Active);
@@ -2152,27 +1455,18 @@ mod tests {
     #[test]
     fn stable_settings_remain_flat_and_extra_reaches_the_snapshot() {
         with_home(|| {
-            let settings = parse_dynamic_settings_json(
+            let settings = parse_settings_fixture(
                 Some(
                     r#"{"leverageMode":"fixed","leverage":"2","mevProtection":true,"slippage":"0.5","extra":{"maxConcurrentPositions":{"label":"Maximum concurrent positions","type":"integer","value":3}}}"#,
                 ),
                 "--settings-json",
             )
             .unwrap();
-            write_consent_policy_with_dynamic_settings(
-                "job1",
-                ConsentMode::Auto,
-                Some("50"),
-                Some("12.5"),
-                Some("USDC"),
-                None,
-                None,
-                None,
-                None,
-                Some(&settings),
-                3600,
-            )
-            .unwrap();
+            let mut fields = serde_json::to_value(&settings).unwrap();
+            fields["capU"] = serde_json::json!("50");
+            fields["tradeAmountU"] = serde_json::json!("12.5");
+            fields["quoteToken"] = serde_json::json!("usdc");
+            write_historical_fixture(fields);
 
             let snapshot_json = serde_json::to_value(consent_snapshot("job1")).unwrap();
             assert_eq!(snapshot_json["leverage"], serde_json::json!("2"));
@@ -2185,7 +1479,7 @@ mod tests {
             assert!(snapshot_json.get("dynamicSettings").is_none());
 
             let raw = std::fs::read_to_string(consent_path("job1").unwrap()).unwrap();
-            let persisted: Value = guide::parse_markdown("consent", &raw).unwrap();
+            let persisted: Value = serde_json::from_str(&raw).unwrap();
             assert_eq!(persisted["leverage"], serde_json::json!("2"));
             assert_eq!(
                 persisted["extra"]["maxConcurrentPositions"]["type"],
@@ -2203,10 +1497,10 @@ mod tests {
             r#"{"extra":{"foo":{"label":"Foo","type":"integer"}}}"#,
             r#"{"extra":{"foo":{"label":"Foo","type":"integer","value":"1"}}}"#,
         ] {
-            assert!(parse_dynamic_settings_json(Some(raw), "--settings-json").is_err());
+            assert!(parse_settings_fixture(Some(raw), "--settings-json").is_err());
         }
 
-        let settings = parse_dynamic_settings_json(
+        let settings = parse_settings_fixture(
             Some(
                 r#"{"extra":{"orderUrgency":{"label":"Order urgency","type":"enum","value":"fast","description":null,"unit":null,"constraints":null,"options":["normal","fast"],"appliesWhen":{"venue":"hyperliquid","operation":["open","close"]},"confirmedAt":1787900000}}}"#,
             ),
@@ -2215,7 +1509,7 @@ mod tests {
         .unwrap();
         assert!(dynamic_setting_present(&settings, "extra.orderUrgency"));
 
-        let precise_identifier = parse_dynamic_settings_json(
+        let precise_identifier = parse_settings_fixture(
             Some(
                 r#"{"extra":{"strategyInstanceId":{"label":"Strategy instance ID","type":"string","value":"90071992547409931234567890"}}}"#,
             ),
@@ -2226,52 +1520,6 @@ mod tests {
             precise_identifier["extra"]["strategyInstanceId"]["value"],
             serde_json::json!("90071992547409931234567890")
         );
-    }
-
-    #[test]
-    fn extra_updates_merge_without_dropping_existing_fields() {
-        with_home(|| {
-            let first = parse_dynamic_settings_json(
-                Some(
-                    r#"{"extra":{"maxConcurrentPositions":{"label":"Maximum concurrent positions","type":"integer","value":3}}}"#,
-                ),
-                "--settings-json",
-            )
-            .unwrap();
-            write_consent_policy_with_dynamic_settings(
-                "job1",
-                ConsentMode::Manual,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(&first),
-                3600,
-            )
-            .unwrap();
-            let second = parse_dynamic_settings_json(
-                Some(
-                    r#"{"extra":{"orderUrgency":{"label":"Order urgency","type":"enum","value":"fast","options":["normal","fast"]}}}"#,
-                ),
-                "--settings-json",
-            )
-            .unwrap();
-            write_trade_settings_with_dynamic("job1", None, None, None, None, Some(&second))
-                .unwrap();
-
-            let stored = load_consent("job1").unwrap().unwrap();
-            assert!(dynamic_setting_present(
-                &stored.dynamic_settings,
-                "extra.maxConcurrentPositions"
-            ));
-            assert!(dynamic_setting_present(
-                &stored.dynamic_settings,
-                "extra.orderUrgency"
-            ));
-        });
     }
 
     #[test]
@@ -2291,7 +1539,12 @@ mod tests {
             )
             .unwrap();
 
+            let before = std::fs::read(consent_path("job1").unwrap()).unwrap();
             let stored = load_consent("job1").unwrap().unwrap();
+            assert_eq!(
+                std::fs::read(consent_path("job1").unwrap()).unwrap(),
+                before
+            );
             assert_eq!(stored.version, 5);
             assert_eq!(
                 stored.dynamic_settings["extra"]["legacyRiskBucket"],
@@ -2306,9 +1559,9 @@ mod tests {
     }
 
     #[test]
-    fn required_fields_and_guide_hash_are_validated_and_persisted() {
+    fn historical_required_fields_and_guide_hash_reach_snapshot() {
         with_home(|| {
-            let settings = parse_dynamic_settings_json(
+            let settings = parse_settings_fixture(
                 Some(
                     r#"{"requiredFields":["tradeAmountMode","tradeAmountBasis","extra.maxConcurrentPositions"],"tradeAmountMode":"fixed_amount","tradeAmountBasis":"margin","extra":{"maxConcurrentPositions":{"label":"Maximum concurrent positions","type":"integer","value":3}}}"#,
                 ),
@@ -2316,22 +1569,10 @@ mod tests {
             )
             .unwrap();
             let guide_hash = "a".repeat(64);
-            write_prepared_consent_policy_with_dynamic_settings(
-                "job1",
-                ConsentMode::Auto,
-                Some("100"),
-                Some("10"),
-                Some("USDT"),
-                None,
-                None,
-                None,
-                None,
-                Some(&settings),
-                &guide_hash,
-                3600,
-            )
-            .unwrap();
-            activate_prepared_consent("job1").unwrap();
+            let mut fields = serde_json::to_value(&settings).unwrap();
+            fields["guideHash"] = serde_json::json!(&guide_hash);
+            fields["tradeAmountU"] = serde_json::json!("10");
+            write_historical_fixture(fields);
             let snapshot = serde_json::to_value(consent_snapshot("job1")).unwrap();
             assert_eq!(snapshot["requiredFields"][0], "tradeAmountMode");
             assert_eq!(snapshot["requiredFields"][1], "tradeAmountBasis");
@@ -2347,13 +1588,13 @@ mod tests {
             r#"{"apiKey":"secret"}"#,
             r#"{"createdAt":1}"#,
         ] {
-            assert!(parse_dynamic_settings_json(Some(raw), "--settings-json").is_err());
+            assert!(parse_settings_fixture(Some(raw), "--settings-json").is_err());
         }
     }
 
     #[test]
     fn canonical_percentage_and_risk_overrides_are_validated() {
-        let settings = parse_dynamic_settings_json(
+        let settings = parse_settings_fixture(
             Some(
                 r#"{"tradeAmountMode":"available_balance_ratio","tradeAmountRatio":"0.125","takeProfitRatio":"20","stopLossRatio":"5"}"#,
             ),
@@ -2371,173 +1612,21 @@ mod tests {
         );
 
         let missing_type =
-            parse_dynamic_settings_json(Some(r#"{"tradeAmountRatio":"0.25"}"#), "--settings-json")
+            parse_settings_fixture(Some(r#"{"tradeAmountRatio":"0.25"}"#), "--settings-json")
                 .unwrap();
         assert!(validate_amount_policy(None, &missing_type).is_err());
-        assert!(parse_dynamic_settings_json(
+        assert!(parse_settings_fixture(
             Some(r#"{"tradeAmountMode":"available_balance_ratio","tradeAmountRatio":"1.01"}"#),
             "--settings-json",
         )
         .is_err());
         assert!(
-            parse_dynamic_settings_json(Some(r#"{"takeProfitRatio":"0"}"#), "--settings-json",)
-                .is_err()
+            parse_settings_fixture(Some(r#"{"takeProfitRatio":"0"}"#), "--settings-json",).is_err()
         );
     }
 
     #[test]
-    fn null_dynamic_setting_removes_an_existing_value() {
-        with_home(|| {
-            let initial = parse_dynamic_settings_json(
-                Some(r#"{"leverageMode":"fixed","leverage":"2","slippage":"0.5"}"#),
-                "--settings-json",
-            )
-            .unwrap();
-            write_consent_policy_with_dynamic_settings(
-                "job1",
-                ConsentMode::Manual,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(&initial),
-                3600,
-            )
-            .unwrap();
-            let removal =
-                parse_dynamic_settings_json(Some(r#"{"slippage":null}"#), "--settings-json")
-                    .unwrap();
-            write_trade_settings_with_dynamic("job1", None, None, None, None, Some(&removal))
-                .unwrap();
-
-            let stored = load_consent("job1").unwrap().unwrap();
-            assert!(!stored.dynamic_settings.contains_key("slippage"));
-            assert_eq!(stored.dynamic_settings["leverage"], serde_json::json!("2"));
-        });
-    }
-
-    #[test]
-    fn null_extra_entry_removes_only_the_named_dynamic_field() {
-        with_home(|| {
-            let initial = parse_dynamic_settings_json(
-                Some(
-                    r#"{"extra":{"maxConcurrentPositions":{"label":"Maximum concurrent positions","type":"integer","value":3},"orderUrgency":{"label":"Order urgency","type":"enum","value":"fast","options":["normal","fast"]}}}"#,
-                ),
-                "--settings-json",
-            )
-            .unwrap();
-            write_consent_policy_with_dynamic_settings(
-                "job1",
-                ConsentMode::Manual,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(&initial),
-                3600,
-            )
-            .unwrap();
-
-            let removal = parse_dynamic_settings_json(
-                Some(r#"{"extra":{"orderUrgency":null}}"#),
-                "--settings-json",
-            )
-            .unwrap();
-            write_trade_settings_with_dynamic("job1", None, None, None, None, Some(&removal))
-                .unwrap();
-
-            let stored = load_consent("job1").unwrap().unwrap();
-            assert!(dynamic_setting_present(
-                &stored.dynamic_settings,
-                "extra.maxConcurrentPositions"
-            ));
-            assert!(!dynamic_setting_present(
-                &stored.dynamic_settings,
-                "extra.orderUrgency"
-            ));
-        });
-    }
-
-    #[test]
-    fn trade_environment_upgrade_preserves_existing_policy_and_snapshot_exposes_it() {
-        with_home(|| {
-            write_consent_with_trade_amount(
-                "job1",
-                ConsentMode::Auto,
-                Some("50"),
-                Some("12.5"),
-                Some("USDC"),
-                3600,
-            )
-            .unwrap();
-            let before = load_consent("job1").unwrap().unwrap();
-
-            let upgraded = write_trade_environment("job1", TradeEnvironment::Demo).unwrap();
-            assert_eq!(upgraded.version, CONSENT_VERSION);
-            assert_eq!(upgraded.mode, before.mode);
-            assert_eq!(upgraded.cap_u, before.cap_u);
-            assert_eq!(upgraded.trade_amount_u, before.trade_amount_u);
-            assert_eq!(upgraded.quote_token, before.quote_token);
-            assert_eq!(upgraded.created_at, before.created_at);
-            assert_eq!(upgraded.expires_at, before.expires_at);
-            assert_eq!(upgraded.trade_environment, Some(TradeEnvironment::Demo));
-            assert_eq!(
-                consent_snapshot("job1").trade_environment,
-                Some(TradeEnvironment::Demo)
-            );
-
-            write_consent("job1", ConsentMode::Auto, Some("75"), None, 1800).unwrap();
-            let rewritten = load_consent("job1").unwrap().unwrap();
-            assert_eq!(rewritten.cap_u.as_deref(), Some("75"));
-            assert_eq!(rewritten.trade_environment, Some(TradeEnvironment::Demo));
-        });
-    }
-
-    #[test]
-    fn trade_settings_update_preserves_policy_and_snapshot_exposes_all_settings() {
-        with_home(|| {
-            write_consent_with_trade_amount(
-                "job1",
-                ConsentMode::Auto,
-                Some("50"),
-                Some("12.5"),
-                Some("USDC"),
-                3600,
-            )
-            .unwrap();
-            let before = load_consent("job1").unwrap().unwrap();
-
-            let updated = write_trade_settings(
-                "job1",
-                Some(TradeEnvironment::Live),
-                Some(MarginMode::Cross),
-                Some(OrderPolicy::SignalPriceLimit),
-                Some(TradeKitAuthMode::OAuth),
-            )
-            .unwrap();
-            assert_eq!(updated.mode, before.mode);
-            assert_eq!(updated.cap_u, before.cap_u);
-            assert_eq!(updated.trade_amount_u, before.trade_amount_u);
-            assert_eq!(updated.quote_token, before.quote_token);
-            assert_eq!(updated.created_at, before.created_at);
-            assert_eq!(updated.expires_at, before.expires_at);
-
-            let snapshot = consent_snapshot("job1");
-            assert_eq!(snapshot.trade_environment, Some(TradeEnvironment::Live));
-            assert_eq!(snapshot.margin_mode, Some(MarginMode::Cross));
-            assert_eq!(snapshot.order_policy, Some(OrderPolicy::SignalPriceLimit));
-            assert_eq!(snapshot.auth_mode, Some(TradeKitAuthMode::OAuth));
-        });
-    }
-
-    #[test]
-    fn legacy_consent_without_auth_mode_is_readable_and_can_be_upgraded() {
+    fn legacy_consent_without_auth_mode_is_readable() {
         with_home(|| {
             let path = consent_path("job1").unwrap();
             let now = now_secs();
@@ -2563,15 +1652,6 @@ mod tests {
             let legacy_snapshot = consent_snapshot("job1");
             assert_eq!(legacy_snapshot.version, Some(3));
             assert_eq!(legacy_snapshot.auth_mode, None);
-
-            let upgraded =
-                write_trade_settings("job1", None, None, None, Some(TradeKitAuthMode::OAuth))
-                    .unwrap();
-            assert_eq!(upgraded.version, CONSENT_VERSION);
-            assert_eq!(upgraded.auth_mode, Some(TradeKitAuthMode::OAuth));
-            assert_eq!(upgraded.trade_environment, Some(TradeEnvironment::Live));
-            assert_eq!(upgraded.margin_mode, Some(MarginMode::Cross));
-            assert_eq!(upgraded.order_policy, Some(OrderPolicy::Market));
         });
     }
 
@@ -2588,28 +1668,7 @@ mod tests {
     }
 
     #[test]
-    fn quote_preference_defaults_persists_and_survives_cap_rewrite() {
-        with_home(|| {
-            // No record ⇒ the default (PRD denominates in USDT).
-            assert_eq!(quote_token("job1"), "usdt");
-            // Explicit choice is stored, case-normalized.
-            write_consent("job1", ConsentMode::Auto, Some("50"), Some("USDC"), 3600).unwrap();
-            assert_eq!(quote_token("job1"), "usdc");
-            // Over-cap raise re-writes the record WITHOUT --quote ⇒ choice survives.
-            write_consent("job1", ConsentMode::Auto, Some("200"), None, 3600).unwrap();
-            assert_eq!(quote_token("job1"), "usdc");
-            // Whitelist: arbitrary tokens can't bend the cap semantics.
-            assert!(
-                write_consent("job1", ConsentMode::Auto, Some("50"), Some("dai"), 3600).is_err()
-            );
-            // Manual (B) can carry a preference too.
-            write_consent("job1", ConsentMode::Manual, None, Some("usdt"), 3600).unwrap();
-            assert_eq!(quote_token("job1"), "usdt");
-        });
-    }
-
-    #[test]
-    fn trade_amount_is_optional_backward_compatible_and_survives_legacy_rewrite() {
+    fn trade_amount_is_optional_backward_compatible() {
         with_home(|| {
             // A v1 file written before tradeAmountU existed remains readable.
             let created_at = now_secs();
@@ -2624,57 +1683,6 @@ mod tests {
             let path = consent_path("job1").unwrap();
             crate::home::write_secure(&path, legacy.to_string().as_bytes()).unwrap();
             assert_eq!(load_consent("job1").unwrap().unwrap().trade_amount_u, None);
-
-            write_consent_with_trade_amount(
-                "job1",
-                ConsentMode::Auto,
-                Some("50"),
-                Some("12.5"),
-                None,
-                3600,
-            )
-            .unwrap();
-            assert_eq!(
-                load_consent("job1")
-                    .unwrap()
-                    .unwrap()
-                    .trade_amount_u
-                    .as_deref(),
-                Some("12.5")
-            );
-
-            // Existing callers use write_consent (no amount argument). A cap-only
-            // rewrite must preserve the fixed amount rather than erasing it.
-            write_consent("job1", ConsentMode::Auto, Some("100"), None, 3600).unwrap();
-            let saved = load_consent("job1").unwrap().unwrap();
-            assert_eq!(saved.cap_u.as_deref(), Some("100"));
-            assert_eq!(saved.trade_amount_u.as_deref(), Some("12.5"));
-        });
-    }
-
-    #[test]
-    fn write_consent_validates_fixed_trade_amount() {
-        with_home(|| {
-            for invalid in ["", "abc", "0"] {
-                assert!(write_consent_with_trade_amount(
-                    "job1",
-                    ConsentMode::Auto,
-                    Some("50"),
-                    Some(invalid),
-                    None,
-                    3600,
-                )
-                .is_err());
-            }
-            assert!(write_consent_with_trade_amount(
-                "job1",
-                ConsentMode::Auto,
-                Some("50"),
-                Some("0.01"),
-                None,
-                3600,
-            )
-            .is_ok());
         });
     }
 
@@ -2808,126 +1816,44 @@ mod tests {
     }
 
     #[test]
-    fn decline_maps_to_declined_decision() {
+    fn prepared_and_aborted_historical_records_remain_inactive_and_unchanged() {
         with_home(|| {
-            // A Decline record maps to ConsentDecision::Declined; the delivery
-            // pipeline saves the artifact and reports a terminal skip.
-            write_consent("job1", ConsentMode::Decline, None, None, 3600).unwrap();
-            assert_eq!(
-                evaluate_consent("job1", None).unwrap(),
-                ConsentDecision::Declined
-            );
+            for lifecycle in ["prepared", "aborted"] {
+                write_historical_fixture(serde_json::json!({"lifecycle": lifecycle}));
+                let path = consent_path("job1").unwrap();
+                let before = std::fs::read(&path).unwrap();
+                assert!(load_consent("job1").unwrap().is_none());
+                assert_eq!(
+                    consent_snapshot("job1").status,
+                    ConsentSnapshotStatus::NotSet
+                );
+                assert_eq!(std::fs::read(&path).unwrap(), before);
+            }
         });
     }
 
     #[test]
-    fn manual_surfaces_command() {
+    fn unsafe_historical_record_reads_preserve_existing_files() {
         with_home(|| {
-            write_consent("job1", ConsentMode::Manual, None, None, 3600).unwrap();
+            write_historical_fixture(serde_json::json!({}));
+            let path = consent_path("job1").unwrap();
+            let before = std::fs::read(&path).unwrap();
             assert_eq!(
-                evaluate_consent("job1", Some(&dec("10"))).unwrap(),
-                ConsentDecision::Manual
+                load_consent("../../job1").unwrap_err(),
+                ConsentError(CONSENT_UNREADABLE)
             );
+            assert_eq!(std::fs::read(&path).unwrap(), before);
         });
     }
 
     #[test]
-    fn clear_consent_pauses_to_unconfigured_state() {
+    fn expired_record_is_not_active() {
         with_home(|| {
-            // Auto authorized within cap → auto-executes.
-            write_consent("job1", ConsentMode::Auto, Some("10"), None, 3600).unwrap();
-            assert_eq!(
-                evaluate_consent("job1", Some(&dec("5"))).unwrap(),
-                ConsentDecision::AutoAllow
-            );
-            // Pause ("暂停自动跟单"): clearing the consent record reverts to
-            // FirstTime, which the delivery pipeline handles as a saved skip.
-            clear_consent("job1");
+            write_historical_fixture(serde_json::json!({"expiresAt": 1}));
             assert!(load_consent("job1").unwrap().is_none());
             assert_eq!(
-                evaluate_consent("job1", Some(&dec("5"))).unwrap(),
-                ConsentDecision::FirstTime
-            );
-        });
-    }
-
-    /// A direct `clear_consent("../../x")` must delete nothing. Both the current
-    /// Markdown path and the legacy JSON path reject the unsafe id before any
-    /// `remove_file`; this does not rely on the outer Pause command guard.
-    ///
-    /// The sentinel is placed at the EXACT target a vulnerable (guard-removed)
-    /// path builders would resolve to for `job_id = "../../consent_sentinel"`.
-    #[test]
-    fn clear_consent_traversal_deletes_nothing() {
-        with_home(|| {
-            let home = crate::home::onchainos_home().unwrap();
-            // Legitimate current and legacy consent artefacts inside the root.
-            let consent_dir = home.join("autotrade").join("consent");
-            std::fs::create_dir_all(&consent_dir).unwrap();
-            let legit_md = consent_dir.join("legit.md");
-            let legit_json = consent_dir.join("legit.json");
-            std::fs::write(&legit_md, "DO_NOT_TOUCH").unwrap();
-            std::fs::write(&legit_json, "DO_NOT_TOUCH").unwrap();
-            let sentinel_md = home.join("consent_sentinel.md");
-            let sentinel_json = home.join("consent_sentinel.json");
-            std::fs::write(&sentinel_md, "DO_NOT_TOUCH").unwrap();
-            std::fs::write(&sentinel_json, "DO_NOT_TOUCH").unwrap();
-
-            // Direct call with an unsafe, path-shaped jobId: no-op, no panic.
-            clear_consent("../../consent_sentinel");
-            clear_consent("../../x");
-
-            for path in [&legit_md, &legit_json, &sentinel_md, &sentinel_json] {
-                assert_eq!(
-                    std::fs::read_to_string(path).unwrap(),
-                    "DO_NOT_TOUCH",
-                    "consent path must be byte-for-byte unchanged: {}",
-                    path.display()
-                );
-            }
-            let _ = std::fs::remove_file(&sentinel_md);
-            let _ = std::fs::remove_file(&sentinel_json);
-        });
-    }
-
-    #[test]
-    fn auto_within_cap_allows_and_over_cap_reasks() {
-        with_home(|| {
-            write_consent("job1", ConsentMode::Auto, Some("100"), None, 3600).unwrap();
-            // buy within cap ⇒ allow (boundary inclusive)
-            assert_eq!(
-                evaluate_consent("job1", Some(&dec("100"))).unwrap(),
-                ConsentDecision::AutoAllow
-            );
-            // buy over cap ⇒ re-ask
-            assert_eq!(
-                evaluate_consent("job1", Some(&dec("100.01"))).unwrap(),
-                ConsentDecision::AutoOverCap
-            );
-            // sell (no buy amount) ⇒ always allowed under Auto
-            assert_eq!(
-                evaluate_consent("job1", None).unwrap(),
-                ConsentDecision::AutoAllow
-            );
-        });
-    }
-
-    #[test]
-    fn expired_record_is_first_time() {
-        with_home(|| {
-            write_consent("job1", ConsentMode::Auto, Some("100"), None, 1).unwrap();
-            // Force expiry into the past.
-            let path = consent_path("job1").unwrap();
-            let mut file: ConsentFile = guide::parse_markdown(
-                "consent",
-                &std::fs::read_to_string(&path).unwrap(),
-            )
-            .unwrap();
-            file.expires_at = 1;
-            std::fs::write(&path, serde_json::to_string(&file).unwrap()).unwrap();
-            assert_eq!(
-                evaluate_consent("job1", Some(&dec("10"))).unwrap(),
-                ConsentDecision::FirstTime
+                consent_snapshot("job1").status,
+                ConsentSnapshotStatus::NotSet
             );
         });
     }
@@ -2935,13 +1861,10 @@ mod tests {
     #[test]
     fn version_too_new_and_job_mismatch_fail_closed() {
         with_home(|| {
-            write_consent("job1", ConsentMode::Auto, Some("100"), None, 3600).unwrap();
+            write_historical_fixture(serde_json::json!({}));
             let path = consent_path("job1").unwrap();
-            let good: ConsentFile = guide::parse_markdown(
-                "consent",
-                &std::fs::read_to_string(&path).unwrap(),
-            )
-            .unwrap();
+            let good: ConsentFile =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
 
             let mut newer = good.clone();
             newer.version = CONSENT_VERSION + 1;
@@ -2966,35 +1889,6 @@ mod tests {
                 load_consent("job1").unwrap_err(),
                 ConsentError(CONSENT_JOB_MISMATCH)
             );
-        });
-    }
-
-    #[test]
-    fn write_consent_validates_cap_and_mode() {
-        with_home(|| {
-            // Auto permits no cap; a supplied cap must be positive and parseable.
-            assert!(write_consent("job1", ConsentMode::Auto, None, None, 3600).is_ok());
-            assert!(write_consent("job1", ConsentMode::Auto, Some("abc"), None, 3600).is_err());
-            assert!(write_consent("job1", ConsentMode::Auto, Some("0"), None, 3600).is_err());
-            assert!(write_consent("job1", ConsentMode::Auto, Some("50"), None, 3600).is_ok());
-            // Manual / Decline must NOT carry a cap.
-            assert!(write_consent("job1", ConsentMode::Manual, Some("50"), None, 3600).is_err());
-            assert!(write_consent("job1", ConsentMode::Manual, None, None, 3600).is_ok());
-            assert!(write_consent("job1", ConsentMode::Decline, None, None, 3600).is_ok());
-            // ttl must be > 0.
-            assert!(write_consent("job1", ConsentMode::Decline, None, None, 0).is_err());
-        });
-    }
-
-    #[test]
-    fn plugin_approved_marker_is_per_job_and_plugin() {
-        with_home(|| {
-            assert!(!plugin_approved("job1", "polymarket-plugin"));
-            write_plugin_approved("job1", "polymarket-plugin").unwrap();
-            assert!(plugin_approved("job1", "polymarket-plugin"));
-            // Independent per (job, plugin): a different plugin or job is NOT approved.
-            assert!(!plugin_approved("job1", "hyperliquid-plugin"));
-            assert!(!plugin_approved("job2", "polymarket-plugin"));
         });
     }
 }

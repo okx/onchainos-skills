@@ -143,14 +143,15 @@ Do not modify, decode, encode, truncate, or regenerate it. Apply the same rules 
 
 ### Select a service
 
-Use the selected Service's numeric `sid` and its owning `asp.aspAgentId`
-internally. **NEVER** show `sid`.
+Retain the selected Service record from `services[]` for preparation. Keep its
+service identifier internal. **NEVER** show the identifier.
 
 **MUST** stop. Only after explicit confirmation or selection in a subsequent
 User message, route by the selected Service's `serviceType`:
 
 - `A2A`: pass its numeric `sid` to
   [`../a2a/user/create-prepare.md`](../a2a/user/create-prepare.md).
-- `A2MCP`: pass its `id` field as the numeric `sid`, and its `asp.aspAgentId`, to
+- `A2MCP`: pass the selected record's `id` value as `--sid` and its
+  `asp.aspAgentId` value as `--asp-agent-id` to
   [`../a2mcp/handoff.md`](../a2mcp/handoff.md) for explicit MCP preparation.
 - Missing or unsupported type: stop; do not guess a preparation path.

@@ -878,7 +878,7 @@ fn autotrade_guide_consent_update_requires_existing_active_consent() {
     assert_error_contains(
         &output,
         &[
-            "consent 文件没了，请根据 Guide 文件询问用户配置参数",
+            "The consent file is missing. Ask the user for the configuration parameters based on the Guide file",
             "autotrade-guide-consent-new",
         ],
     );
@@ -1074,59 +1074,6 @@ fn autotrade_guide_consent_update_rejects_sensitive_values() {
         &output,
         &["credentials must not be stored in Guide Consent", "apiKey"],
     );
-}
-
-#[test]
-fn autotrade_consent_request_suppresses_mode_card_for_auto_policy() {
-    let (_home, dir) = fresh_home("cli_agent_autotrade_consent_request_existing_policy");
-
-    for job_id in ["job_auto"] {
-        let context_dir = dir.join("autotrade/delivery-context").join(job_id);
-        std::fs::create_dir_all(&context_dir).unwrap();
-        std::fs::write(
-            context_dir.join("msg:delivery-1.json"),
-            serde_json::to_vec_pretty(&serde_json::json!({
-                "version": 2,
-                "jobId": job_id,
-                "agentId": "8315",
-                "providerAgentId": "8779",
-                "deliveryId": "msg:delivery-1",
-                "savedPath": "/tmp/legacy-signal.txt",
-                "deliverableType": "spot",
-                "receivedAtMs": 1,
-                "executionPath": "legacy_wrapper"
-            }))
-            .unwrap(),
-        )
-        .unwrap();
-
-        let mut request = onchainos();
-        scrubbed(&mut request, &dir);
-        let output = request
-            .args([
-                "agent",
-                "autotrade-consent-request",
-                "--job-id",
-                job_id,
-                "--agent-id",
-                "8315",
-                "--delivery-id",
-                "msg:delivery-1",
-                "--signal-type",
-                "spot",
-            ])
-            .output()
-            .expect("request first-time consent with an existing policy");
-        let data = common::assert_ok_and_extract_data(&output);
-
-        assert_eq!(data["decision"], false);
-        assert_eq!(data["decisionPushed"], false);
-        assert_eq!(data["status"], "skipped");
-        assert_eq!(data["reason"], "guide_execution_unavailable");
-        assert_eq!(data["jobId"], job_id);
-        assert_eq!(data["deliveryId"], "msg:delivery-1");
-        assert_eq!(data["terminal"], true);
-    }
 }
 
 #[test]

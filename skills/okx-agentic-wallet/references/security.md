@@ -23,7 +23,13 @@ Token risk / honeypot detection, DApp/URL phishing detection, transaction pre-ex
 
 The risk result is valid even if simulation fails (`simulator.revertReason` may hold the reason). A populated `warnings` field means the scan completed but data may be incomplete — still present available risk info. On a **successful** response, an empty `action` means only that no risk was detected within the checks performed; on a failed call, apply the fail-safe principle.
 
-**token-scan**: pass `--trade-direction buy|sell` when the scan is part of a trade — the CLI then classifies each token server-side and returns the verdict as fields, so **MUST**: read them directly and **NEVER**: recompute the verdict from raw `riskLevel` client-side (the riskLevel×direction matrix lives in the CLI now; a hand-derived copy drifts from it). Each token carries `normalizedRiskLevel` (`CRITICAL` / `HIGH` / `MEDIUM` / `LOW`), `action`, and `isNative`; the top level carries `combinedAction` (strictest `action` across all non-native tokens) and `tradeDirection`. Respond to the `action` enum (severity `block` > `pause` > `warn` > `safe`):
+**token-scan**:
+
+- Pass `--trade-direction buy|sell` when the scan is part of a trade.
+- Read the CLI verdict fields directly. Do not recompute a verdict from raw `riskLevel`. The CLI owns the risk-level and direction matrix, so a hand-derived copy can drift.
+- For each token, read `normalizedRiskLevel` (`CRITICAL` / `HIGH` / `MEDIUM` / `LOW`), `action`, and `isNative`.
+- Read the top-level `combinedAction`, which is the strictest action across non-native tokens, and `tradeDirection`.
+- Respond to `action` in severity order: `block` > `pause` > `warn` > `safe`.
 
 | `action` | Respond |
 |---|---|
@@ -32,13 +38,23 @@ The risk result is valid even if simulation fails (`simulator.revertReason` may 
 | `warn` | Show the risk as an info notice; continue (buy) or allow (sell). |
 | `safe` | Report the scope-limited no-risk wording above, then continue as the matched flow allows. |
 
-Buy is stricter than sell, but that mapping is the CLI's — do not re-derive it. Omit `--trade-direction` for a standalone scan (no trade context): the CLI returns the raw backend array with no `action` field and you present all triggered labels without buy/sell logic. Show only the overall `normalizedRiskLevel` (never individual label levels), listing triggered labels without level prefixes. `isChainSupported: false` → skip with a warning, do not block. In swap context, a token-scan API failure auto-continues with a warning (overrides the general fail-safe to avoid blocking time-sensitive trades); standalone, follow the general fail-safe. Missing / `null` / unrecognized `riskLevel` normalizes to HIGH (the CLI does this).
+- Do not derive the buy-versus-sell mapping. The CLI owns it.
+- For a standalone scan with no trade context, omit `--trade-direction`. The CLI returns the raw backend array without `action`. Show all triggered labels without buy or sell logic.
+- Show only the overall `normalizedRiskLevel`. Do not show a level for each triggered label.
+- If `isChainSupported: false`, skip the scan with a warning. Do not block the flow.
+- In swap context, continue after a token-scan API failure and show a warning. This exception avoids blocking a time-sensitive trade. For a standalone scan, follow the general fail-safe.
+- The CLI normalizes a missing, `null`, or unrecognized `riskLevel` to HIGH.
 
 ## Flow
 
 ### token-scan Flow
 
-Set `--trade-direction` from the intent: **buy** = the token being received (`--to` in a swap), **sell** = the token being spent (`--from`), **standalone** (no swap context) = omit the flag and present all triggered labels with no buy/sell logic. When scanning a swap pair, pass every token in one `--tokens` call and read the CLI's `combinedAction` for the pair verdict — it already takes the strictest `action` across non-native tokens and skips native ones, so do not reduce it yourself.
+- Set `--trade-direction` from the intent:
+  - **buy**: The token received by the user (`--to` in a swap).
+  - **sell**: The token spent by the user (`--from` in a swap).
+  - **standalone**: Omit the flag. Show all triggered labels without buy or sell logic.
+- When scanning a swap pair, pass every token in one `--tokens` call.
+- Read the CLI `combinedAction` as the pair verdict. It already uses the strictest non-native-token action and skips native tokens. Do not reduce it again.
 
 Recommended: fetch holdings first (display to the user), then scan with `--tokens`:
 - **Logged-in wallet (own address)**: `wallet balance [--chain <chain>]` → extract non-native ERC-20/SPL tokens → `security token-scan --tokens "<chainIndex>:<addr>,..."`.

@@ -6,13 +6,12 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { assertLocalA2a, installLocalA2a, prepareLocalA2a } from "./a2a.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "../..");
 const codexDir = path.join(repoRoot, ".codex");
 const binDir = path.join(codexDir, "bin");
-const a2aInstallDir = path.join(codexDir, "a2a");
-const localA2a = path.join(a2aInstallDir, "node_modules", ".bin", "okx-a2a");
 const projectSkillsDir = path.join(repoRoot, ".agents", "skills");
 const codexConfig = path.join(codexDir, "config.toml");
 const codexProfileMarker = path.join(codexDir, "profile-name");
@@ -173,24 +172,6 @@ function findExecutableOutsideProject(name) {
 function linkFile(source, target) {
   if (fs.existsSync(target) || fs.lstatSync(target, { throwIfNoEntry: false })) fs.unlinkSync(target);
   fs.symlinkSync(source, target);
-}
-
-function ensureLocalA2a() {
-  if (fs.existsSync(localA2a)) return localA2a;
-
-  ensureDir(a2aInstallDir);
-  const result = spawnSync("npm", [
-    "install",
-    "--prefix", a2aInstallDir,
-    "--no-save",
-    "--package-lock=false",
-    "@okxweb3/a2a-node@latest",
-  ], { cwd: repoRoot, stdio: "inherit" });
-  if (result.error) fail(`failed to install local okx-a2a: ${result.error.message}`);
-  if (result.status !== 0 || !fs.existsSync(localA2a)) {
-    fail(`failed to install local okx-a2a (exit code ${result.status ?? 1})`);
-  }
-  return localA2a;
 }
 
 function linuxA2aLink() {
@@ -401,7 +382,7 @@ function init() {
   ensureDir(binDir);
   for (const dir of ["build/cargo-home", "build/cargo-target", "runtime/onchainos", "runtime/a2a", "runtime/a2a-spool", "runtime/tmp"]) ensureDir(path.join(codexDir, dir));
 
-  const a2a = ensureLocalA2a();
+  const a2a = installLocalA2a(repoRoot);
   linkFile(path.join(scriptDir, "onchainos.sh"), path.join(binDir, "onchainos"));
   linkFile(path.join(scriptDir, "okx-a2a.sh"), path.join(binDir, "okx-a2a"));
   linkFile(a2a, path.join(binDir, "okx-a2a.real"));
@@ -410,14 +391,9 @@ function init() {
   updateCodexPath();
   const profile = ensureCodexProfile();
   const skills = refreshSkills();
-  const doctorArgs = a2aDaemonIsRunning()
-    ? ["doctor", "--non-interactive"]
-    : ["doctor", "--fix", "--non-interactive"];
-  const a2aDoctor = runA2a(doctorArgs);
-  if (a2aDoctor?.error) fail(`failed to run okx-a2a doctor: ${a2aDoctor.error.message}`);
-  if (a2aDoctor?.status !== 0) fail(`okx-a2a doctor failed with exit code ${a2aDoctor?.status ?? 1}`);
 
   console.log("Initialized project-local OnchainOS development.");
+  console.log("Run npm run build to compile the CLI and start/verify project-local A2A.");
   console.log(`  CLI:    ${path.join(binDir, "onchainos")}`);
   console.log(`  A2A:    ${path.join(binDir, "okx-a2a")} -> ${a2a}`);
   console.log(`  Codex:  -C ${repoRoot} -p ${profile.profile} --disable shell_snapshot`);
@@ -428,9 +404,11 @@ function init() {
 }
 
 function build() {
+  assertLocalA2a(repoRoot);
   const result = spawnSync("bash", [path.join(scriptDir, "build-onchainos.sh")], { cwd: repoRoot, stdio: "inherit" });
   if (result.error) fail(`failed to start CLI build: ${result.error.message}`);
   if (result.status !== 0) process.exit(result.status ?? 1);
+  prepareLocalA2a(repoRoot);
 }
 
 function doctor() {
@@ -471,17 +449,6 @@ function runA2a(args, quiet = false) {
   const wrapper = path.join(binDir, "okx-a2a");
   if (!fs.existsSync(wrapper)) { if (!quiet) fail("A2A wrapper is missing; run npm run setup"); return; }
   return spawnSync(wrapper, args, { cwd: repoRoot, stdio: quiet ? "ignore" : "inherit" });
-}
-
-function a2aDaemonIsRunning() {
-  const wrapper = path.join(binDir, "okx-a2a");
-  if (!fs.existsSync(wrapper)) return false;
-  const result = spawnSync(wrapper, ["daemon", "status"], {
-    cwd: repoRoot,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  return result.status === 0 && /^running\b/m.test(`${result.stdout}\n${result.stderr}`);
 }
 
 function stop() {
