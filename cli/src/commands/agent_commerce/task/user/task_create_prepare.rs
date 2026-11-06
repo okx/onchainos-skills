@@ -13,7 +13,6 @@ use super::{asp_ops, create};
 const PHASE_LOGIN_VALIDATION: &str = "login_validation";
 const PHASE_IDENTITY_VALIDATION: &str = "identity_validation";
 const PHASE_SERVICE_VALIDATION: &str = "service_validation";
-const PHASE_PAYMENT_VALIDATION: &str = "payment_validation";
 const PHASE_SUBSCRIPTION_VALIDATION: &str = "subscription_validation";
 const PHASE_CREATION: &str = "creation";
 
@@ -192,6 +191,7 @@ fn decimal(value: Option<&Value>, field: &str) -> Result<Option<f64>> {
     Ok(Some(parsed))
 }
 
+#[cfg(test)]
 fn effective_fee(service: &Value) -> Result<f64> {
     if service.get("supportSubscription").and_then(Value::as_bool) == Some(true) {
         return decimal(
@@ -224,6 +224,53 @@ fn trial_available(service: &Value) -> bool {
     supports_trial && has_positive_trial
 }
 
+fn skip_prepare_balance(service: &Value, zero: bool, funding_recovery: bool) -> bool {
+    zero || (!funding_recovery && trial_available(service))
+}
+
+fn resolve_recovery_tokens(
+    funding_token_symbol: Option<&str>,
+    payment_token_symbol: Option<&str>,
+) -> Result<(
+    Option<common::payment_token::PaymentToken>,
+    Option<common::payment_token::PaymentToken>,
+)> {
+    let payment_constraint = common::payment_token::constraint(
+        common::XLAYER_CHAIN_ID as u64,
+        payment_token_symbol.unwrap_or(""),
+        "",
+    )?;
+    let funding_target = common::payment_token::constraint(
+        common::XLAYER_CHAIN_ID as u64,
+        funding_token_symbol.unwrap_or(""),
+        "",
+    )?;
+    if payment_constraint
+        .is_some_and(|payment| funding_target.is_some_and(|funding| payment != funding))
+    {
+        bail!("--funding-token-symbol must match --payment-token-symbol during explicit-token recovery");
+    }
+    Ok((funding_target.or(payment_constraint), payment_constraint))
+}
+
+fn recovery_payload(
+    sid: &str,
+    selected_token: Option<common::payment_token::PaymentToken>,
+    payment_constraint: Option<common::payment_token::PaymentToken>,
+) -> Value {
+    let Some(selected_token) = selected_token else {
+        return json!({});
+    };
+    let mut context = json!({
+        "sid": sid.trim(), "fundingTokenSymbol": selected_token.symbol,
+    });
+    if let Some(token) = payment_constraint {
+        context["paymentTokenSymbol"] = json!(token.symbol);
+        context["serviceTokenAddress"] = json!(token.address);
+    }
+    json!({"resumeContext": context})
+}
+
 /// Pre-computed Trial copy for the subscription creation confirmation card
 /// (FR-1-R1/R2/R3). `None` for any non-subscription service, so the field is
 /// simply absent in every other context — the Skill layer only ever renders
@@ -243,7 +290,7 @@ fn trial_display(service: &Value) -> Option<String> {
         );
     }
     let fee_amount = scalar_display(info.get("feeAmount")?)?;
-    let fee_token_symbol = service.get("feeTokenSymbol")?.as_str()?;
+    let fee_token_symbol = "USD";
     Some(format!(
         "3-day free trial. After the trial ends, the first-period fee of {fee_amount} {fee_token_symbol} will be charged automatically."
     ))
@@ -280,10 +327,10 @@ fn creation_confirmation(service: &Value) -> Option<String> {
         _ => return None,
     };
     let amount = scalar_display(amount)?;
-    if !is_subscription && is_zero {
+    if is_zero {
         return Some("This task requires no payment. To create it, reply “Confirm”.".to_string());
     }
-    let token_symbol = service.get("feeTokenSymbol")?.as_str()?;
+    let token_symbol = "USD";
     if is_subscription && trial_available(service) {
         Some(format!(
             "After you confirm, the subscription task will be created. The free trial starts after the ASP accepts the task. When the trial ends, the first-period fee of {amount} {token_symbol} will be deducted. If you do not wish to continue, cancel the subscription before the charge. To continue, reply “Confirm”."
@@ -315,7 +362,12 @@ fn normalize_service(mut service: Value) -> Value {
 pub(crate) async fn handle_task_create_prepare(
     client: &mut TaskApiClient,
     sid: &str,
+    funding_token_symbol: Option<&str>,
+    payment_token_symbol: Option<&str>,
 ) -> Result<()> {
+    let (selected_token, payment_constraint) =
+        resolve_recovery_tokens(funding_token_symbol, payment_token_symbol)?;
+    let recovery = recovery_payload(sid, selected_token, payment_constraint);
     if cfg!(feature = "debug-log") {
         eprintln!("[DEBUG] a2a subscription flow start");
     }
@@ -328,7 +380,7 @@ pub(crate) async fn handle_task_create_prepare(
             "blocked",
             "login_required",
             next_action("login", true),
-            json!({}),
+            recovery.clone(),
         );
         return Ok(());
     }
@@ -341,7 +393,7 @@ pub(crate) async fn handle_task_create_prepare(
                 "blocked",
                 "user_identity_required",
                 next_action("register_user_agent", true),
-                json!({}),
+                recovery.clone(),
             );
             return Ok(());
         }
@@ -368,6 +420,9 @@ pub(crate) async fn handle_task_create_prepare(
     }
 
     let mut service = normalize_service(service);
+    if payment_constraint.is_some() {
+        service["resumeContext"] = recovery["resumeContext"].clone();
+    }
     if let Some(display) = trial_display(&service) {
         service["trialDisplay"] = Value::String(display);
     }
@@ -402,8 +457,22 @@ pub(crate) async fn handle_task_create_prepare(
         return Ok(());
     }
 
-    let required = effective_fee(&service)?;
-    if trial_available(&service) || required == 0.0 {
+    let amount = if service["supportSubscription"].as_bool() == Some(true) {
+        service
+            .get("subscriptionInfo")
+            .and_then(|info| info.get("feeAmount"))
+    } else {
+        service.get("feeAmount")
+    }
+    .and_then(scalar_display)
+    .ok_or_else(|| anyhow!("selected Service has no valid fee"))?;
+    create::validate_decimal_amount(&amount, "feeAmount")?;
+    let zero = crate::funding::readable_shortfall(&amount, "0").as_deref() == Some("0");
+    service["quoteAmount"] = json!(amount);
+    service["quoteCurrency"] = json!("USD");
+    service["paymentOrder"] = json!(["USDC", "USDG", "USDT"]);
+    // Ordinary trial prepare remains ready. Recovery always reads fresh balances.
+    if skip_prepare_balance(&service, zero, selected_token.is_some()) {
         emit(
             PHASE_CREATION,
             "ready",
@@ -413,53 +482,94 @@ pub(crate) async fn handle_task_create_prepare(
         );
         return Ok(());
     }
-
-    let currency = required_service_string(&service, "feeTokenSymbol")?;
-    match common::ensure_sufficient_balance(required, &currency).await {
-        Ok(()) => {
-            emit(
-                PHASE_CREATION,
-                "ready",
-                "all_checks_passed",
-                next_action("open_create_playbook", true),
-                service,
-            );
-            Ok(())
-        }
-        Err(error) => {
-            let Some(insufficient) = error
-                .downcast_ref::<common::deposit_qr::InsufficientBalanceError>()
-                .cloned()
-            else {
-                return Err(error).context("failed to check the selected Service balance");
-            };
-            let deposit = common::deposit_qr::resolve_current_deposit_info(&user_agent_id)
-                .await
-                .ok_or_else(|| anyhow!("failed to resolve the funding address"))?;
-            let fee_token = required_service_string(&service, "feeToken")?;
-            let result = crate::funding::build_funding_bundle_for_address(
-                "",
-                &deposit.chain_index,
-                &deposit.address,
-                crate::funding::FundingBlockedInput {
-                    asset: &insufficient.currency,
-                    token_address: &fee_token,
-                    required: &insufficient.required,
-                    balance: Some(&insufficient.available),
-                    operation: Some(crate::funding::FUNDING_OPERATION_TASK_CREATION),
-                    error_code: None,
-                    error_message: None,
-                },
-            )?;
-            crate::output::success(result);
-            Ok(())
-        }
+    let (account_id, address) =
+        super::super::signing::resolve_wallet_by_agent_id(&user_agent_id).await?;
+    let selection = common::payment_token::select(
+        &amount,
+        &account_id,
+        &address,
+        selected_token,
+        selected_token.is_some(),
+    )
+    .await?;
+    if let Some(token) = selection.token {
+        service["paymentTokenSymbol"] = json!(token.symbol);
+        service["paymentTokenAddress"] = json!(token.address);
+        service["paymentWalletAddress"] = json!(address);
+        emit(
+            PHASE_CREATION,
+            "ready",
+            "all_checks_passed",
+            next_action("open_create_playbook", true),
+            service,
+        );
+    } else {
+        crate::output::success(common::payment_token::funding_result(
+            &selection,
+            &address,
+            &service,
+            selected_sid,
+            selected_token,
+            payment_constraint,
+        )?);
     }
+    Ok(())
+}
+
+pub(crate) async fn service_recovery_context(
+    user_agent_id: &str,
+    provider_agent_id: &str,
+    service_id: &str,
+) -> Result<(Value, String)> {
+    let sid = super::create_subscribe::resolve_service_sid(provider_agent_id, service_id).await?;
+    let service = normalize_service(fetch_service_detail(user_agent_id, &sid).await?);
+    if required_service_string(&service, "serviceId")? != service_id {
+        bail!("recovery Service differs from the selected Service");
+    }
+    if required_service_string(&service, "providerAgentId")? != provider_agent_id {
+        bail!("recovery provider differs from the selected provider");
+    }
+    if !required_service_string(&service, "serviceType")?.eq_ignore_ascii_case("A2A") {
+        bail!("funding recovery requires an A2A Service");
+    }
+    Ok((service, sid))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auth_recovery_keeps_explicit_currency_without_pinning_funding_only_choices() {
+        let token = common::payment_token::TOKENS[1];
+        let recovery = recovery_payload("123", Some(token), Some(token));
+        for (phase, reason) in [
+            (PHASE_LOGIN_VALIDATION, "login_required"),
+            (PHASE_IDENTITY_VALIDATION, "user_identity_required"),
+        ] {
+            let result = decision_with_payload(
+                phase,
+                "blocked",
+                reason,
+                next_action("stop", true),
+                recovery.clone(),
+            );
+            let context = &result["payload"]["resumeContext"];
+            assert_eq!(context["sid"], "123");
+            assert_eq!(context["fundingTokenSymbol"], "USDG");
+            assert_eq!(context["paymentTokenSymbol"], "USDG");
+            assert_eq!(context["serviceTokenAddress"], token.address);
+        }
+        let funding_only = recovery_payload("123", Some(token), None);
+        assert_eq!(funding_only["resumeContext"]["fundingTokenSymbol"], "USDG");
+        assert!(funding_only["resumeContext"]
+            .get("paymentTokenSymbol")
+            .is_none());
+        assert!(funding_only["resumeContext"]
+            .get("serviceTokenAddress")
+            .is_none());
+        assert_eq!(recovery_payload("123", None, None), json!({}));
+    }
 
     fn subscription_service(support_trial: bool, free_trial: Value) -> Value {
         json!({
@@ -478,6 +588,44 @@ mod tests {
         assert!(!trial_available(&subscription_service(true, json!(0))));
         assert!(!trial_available(&subscription_service(true, Value::Null)));
         assert!(!trial_available(&subscription_service(false, json!(7))));
+    }
+
+    #[test]
+    fn funding_recovery_rechecks_even_when_ordinary_trial_prepare_is_ready() {
+        let service = subscription_service(true, json!(72));
+        assert!(skip_prepare_balance(&service, false, false));
+        assert!(!skip_prepare_balance(&service, false, true));
+        assert!(skip_prepare_balance(&service, true, true));
+        assert!(!skip_prepare_balance(
+            &subscription_service(false, json!(0)),
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn explicit_payment_constraint_pins_recovery_funding_target() {
+        let (selected, constraint) =
+            resolve_recovery_tokens(None, None).expect("automatic token selection");
+        assert_eq!(selected, None);
+        assert_eq!(constraint, None);
+
+        let (selected, constraint) = resolve_recovery_tokens(Some("USDG"), None)
+            .expect("funding choice without an explicit payment constraint");
+        assert_eq!(selected, Some(common::payment_token::TOKENS[1]));
+        assert_eq!(constraint, None);
+
+        let (selected, constraint) =
+            resolve_recovery_tokens(None, Some("USDG")).expect("valid payment constraint");
+        assert_eq!(selected, Some(common::payment_token::TOKENS[1]));
+        assert_eq!(constraint, selected);
+
+        let (selected, constraint) = resolve_recovery_tokens(Some("USDG"), Some("USDG"))
+            .expect("matching funding and payment tokens");
+        assert_eq!(selected, Some(common::payment_token::TOKENS[1]));
+        assert_eq!(constraint, selected);
+
+        assert!(resolve_recovery_tokens(Some("USDC"), Some("USDG")).is_err());
     }
 
     #[test]
@@ -502,7 +650,7 @@ mod tests {
             assert_eq!(
                 creation_confirmation(&service),
                 Some(format!(
-                    "After you confirm creation, the task fee of {display} USDC will be deducted. To continue, reply “Confirm”."
+                    "After you confirm creation, the task fee of {display} USD will be deducted. To continue, reply “Confirm”."
                 ))
             );
         }
@@ -517,7 +665,7 @@ mod tests {
             service["subscriptionInfo"]["feeAmount"] = json!("10.00");
             assert_eq!(
                 creation_confirmation(&service).as_deref(),
-                Some("After you confirm, the subscription task will be created. The free trial starts after the ASP accepts the task. When the trial ends, the first-period fee of 10.00 USDT will be deducted. If you do not wish to continue, cancel the subscription before the charge. To continue, reply “Confirm”.")
+                Some("After you confirm, the subscription task will be created. The free trial starts after the ASP accepts the task. When the trial ends, the first-period fee of 10.00 USD will be deducted. If you do not wish to continue, cancel the subscription before the charge. To continue, reply “Confirm”.")
             );
         }
     }
@@ -536,7 +684,7 @@ mod tests {
             service["subscriptionInfo"]["feeAmount"] = json!("0.0100");
             assert_eq!(
                 creation_confirmation(&service).as_deref(),
-                Some("After you confirm, the first-period subscription fee of 0.0100 USDC will be deducted. To continue, reply “Confirm”.")
+                Some("After you confirm, the first-period subscription fee of 0.0100 USD will be deducted. To continue, reply “Confirm”.")
             );
         }
         let service = json!({
@@ -546,7 +694,7 @@ mod tests {
         });
         assert_eq!(
             creation_confirmation(&service).as_deref(),
-            Some("After you confirm, the first-period subscription fee of 0 USDT will be deducted. To continue, reply “Confirm”.")
+            Some("This task requires no payment. To create it, reply “Confirm”.")
         );
     }
 
@@ -568,8 +716,6 @@ mod tests {
         for service in [
             json!({}),
             json!({"feeAmount": "invalid", "feeTokenSymbol": "USDT"}),
-            json!({"feeAmount": 10}),
-            json!({"supportSubscription": true, "subscriptionInfo": {"feeAmount": 10}}),
         ] {
             assert_eq!(creation_confirmation(&service), None);
         }
@@ -582,6 +728,21 @@ mod tests {
             trial_display(&json!({"supportSubscription": false, "subscriptionInfo": null})),
             None
         );
+    }
+
+    #[test]
+    fn quotes_and_trial_copy_do_not_depend_on_listing_token_fields() {
+        let mut service = json!({"feeAmount": "10.00"});
+        assert!(creation_confirmation(&service)
+            .unwrap()
+            .contains("10.00 USD"));
+        service["supportSubscription"] = json!(true);
+        service["subscriptionInfo"] =
+            json!({"feeAmount": "10.00", "freeTrial": 72, "supportTrial": true});
+        assert!(creation_confirmation(&service)
+            .unwrap()
+            .contains("10.00 USD"));
+        assert!(trial_display(&service).unwrap().contains("10.00 USD"));
     }
 
     #[test]
@@ -620,7 +781,7 @@ mod tests {
         assert_eq!(
             trial_display(&service),
             Some(
-                "3-day free trial. After the trial ends, the first-period fee of 10.00 USDT will be charged automatically."
+                "3-day free trial. After the trial ends, the first-period fee of 10.00 USD will be charged automatically."
                     .to_string()
             )
         );

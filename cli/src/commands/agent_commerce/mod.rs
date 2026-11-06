@@ -117,7 +117,8 @@ pub enum AgentCommand {
         description_summary: Option<String>,
         #[arg(long = "provider-agent-id")]
         provider_agent_id: String,
-        #[arg(long = "payment-token-symbol")]
+        /// Omit to select USDC, USDG, then USDT by sufficient balance.
+        #[arg(long = "payment-token-symbol", default_value = "")]
         payment_token_symbol: String,
         #[arg(long = "payment-token-amount")]
         payment_token_amount: String,
@@ -128,7 +129,8 @@ pub enum AgentCommand {
         service_id: String,
         #[arg(long = "service-params", default_value = "{}")]
         service_params: String,
-        #[arg(long = "service-token-address")]
+        /// Optional explicit payment token constraint on X Layer.
+        #[arg(long = "service-token-address", default_value = "")]
         service_token_address: String,
         #[arg(long = "service-token-amount")]
         service_token_amount: String,
@@ -160,7 +162,8 @@ pub enum AgentCommand {
         service_params: String,
         #[arg(long = "service-token-amount")]
         service_token_amount: String,
-        #[arg(long = "service-token-address")]
+        /// Optional explicit payment token constraint on X Layer.
+        #[arg(long = "service-token-address", default_value = "")]
         service_token_address: String,
         #[arg(long = "auto-renew")]
         auto_renew: String,

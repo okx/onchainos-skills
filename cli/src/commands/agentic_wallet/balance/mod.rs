@@ -995,10 +995,7 @@ pub struct TokenMetadata {
 /// Query authoritative token metadata for an exact `(chainIndex,
 /// tokenAddress)` pair. Funding adapters use this only when a zero holding is
 /// absent from the balance list or a raw minimal-unit amount must be rendered.
-pub async fn query_token_metadata(
-    chain_index: &str,
-    token_address: &str,
-) -> Result<TokenMetadata> {
+pub async fn query_token_metadata(chain_index: &str, token_address: &str) -> Result<TokenMetadata> {
     let access_token = ensure_tokens_refreshed().await?;
     let chain_index_number = chain_index
         .parse::<u64>()
@@ -1008,7 +1005,10 @@ pub async fn query_token_metadata(
         .get_token_info(&access_token, chain_index_number, token_address)
         .await
         .map_err(format_api_error)?;
-    let item = info.as_array().and_then(|items| items.first()).unwrap_or(&info);
+    let item = info
+        .as_array()
+        .and_then(|items| items.first())
+        .unwrap_or(&info);
     let decimals = item
         .get("decimals")
         .and_then(value_as_u32)
@@ -1127,12 +1127,36 @@ pub async fn query_token_readable(
     chain_index: &str,
     token_address: &str,
 ) -> Result<Option<MatchedToken>> {
+    query_token_readable_in_context(None, chain_index, token_address).await
+}
+
+/// Use the Agent payment account, even when another account is active.
+pub async fn query_token_readable_for_account(
+    account_id: &str,
+    address: &str,
+    chain_index: &str,
+    token_address: &str,
+) -> Result<Option<MatchedToken>> {
+    query_token_readable_in_context(Some((account_id, address)), chain_index, token_address).await
+}
+
+async fn query_token_readable_in_context(
+    payment_wallet: Option<(&str, &str)>,
+    chain_index: &str,
+    token_address: &str,
+) -> Result<Option<MatchedToken>> {
     let access_token = ensure_tokens_refreshed().await?;
     let mut wallets = wallet_store::load_wallets()?
         .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
     let mut client = WalletApiClient::new()?;
     ensure_wallet_accounts_fresh(&mut client, &access_token, &mut wallets, false).await?;
-    let account_id = resolve_active_account_id(&wallets)?;
+    let account_id = match payment_wallet {
+        Some((account_id, address)) => {
+            validate_payment_wallet(&wallets, account_id, address, chain_index)?;
+            account_id.to_string()
+        }
+        None => resolve_active_account_id(&wallets)?,
+    };
 
     let query_refs: Vec<(&str, &str)> =
         vec![("accountId", account_id.as_str()), ("chains", chain_index)];
@@ -1140,8 +1164,71 @@ pub async fn query_token_readable(
         .balance_single(&access_token, &query_refs)
         .await
         .map_err(format_api_error)?;
+    if payment_wallet.is_some() {
+        validate_payment_balance_response(&data, &account_id, chain_index, token_address)?;
+    }
     project_token_fields(&mut data);
     Ok(match_readable_token(&data, chain_index, token_address))
+}
+
+fn validate_payment_wallet(
+    wallets: &WalletsJson,
+    account_id: &str,
+    address: &str,
+    chain_index: &str,
+) -> Result<()> {
+    let matches = wallets.accounts_map.get(account_id).is_some_and(|account| {
+        account.address_list.iter().any(|entry| {
+            entry.chain_index == chain_index && entry.address.eq_ignore_ascii_case(address)
+        })
+    });
+    if !matches {
+        bail!("Agent payment wallet context differs from the wallet account; restore the correct wallet context");
+    }
+    Ok(())
+}
+
+fn validate_payment_balance_response(
+    data: &Value,
+    account_id: &str,
+    chain_index: &str,
+    token_address: &str,
+) -> Result<()> {
+    let groups = data
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_else(|| std::slice::from_ref(data));
+    for group in groups {
+        if let Some(id) = group.get("accountId") {
+            if id.as_str() != Some(account_id) {
+                bail!("balance response belongs to another payment account");
+            }
+        }
+        let tokens = group
+            .get("tokenAssets")
+            .or_else(|| group.get("assets"))
+            .and_then(Value::as_array)
+            .ok_or_else(|| anyhow::anyhow!("invalid payment balance response"))?;
+        for token in tokens {
+            if token_chain_index(token) == chain_index
+                && token["tokenAddress"]
+                    .as_str()
+                    .is_some_and(|a| a.eq_ignore_ascii_case(token_address))
+            {
+                let amount = token["balance"]
+                    .as_str()
+                    .map(str::to_string)
+                    .or_else(|| token["balance"].as_number().map(ToString::to_string))
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("matching payment holding has no valid balance")
+                    })?;
+                if crate::funding::readable_shortfall(&amount, "0").is_none() {
+                    bail!("invalid payment holding balance");
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────
@@ -1152,6 +1239,42 @@ mod tests {
 
     use super::*;
     use crate::wallet_store::{AccountMapEntry, AddressInfo, WalletsJson};
+
+    #[test]
+    fn a2a_payment_wallet_can_differ_from_active_account_without_switching() {
+        let wallets: WalletsJson = serde_json::from_value(json!({
+            "selectedAccountId": "active", "accountsMap": {
+                "agent": {"addressList": [{"address": "0xAGENT", "chainIndex": "196"}]},
+                "active": {"addressList": [{"address": "0xACTIVE", "chainIndex": "196"}]}
+            }
+        }))
+        .unwrap();
+        assert!(validate_payment_wallet(&wallets, "agent", "0xagent", "196").is_ok());
+        assert!(validate_payment_wallet(&wallets, "active", "0xagent", "196").is_err());
+        assert!(validate_payment_wallet(&wallets, "agent", "0xagent", "1").is_err());
+        assert_eq!(wallets.selected_account_id, "active");
+    }
+
+    #[test]
+    fn a2a_payment_balance_distinguishes_absence_invalid_data_and_wrong_account() {
+        let address = "0xB6CEceAB302E2E4948951eE7843FC24E92933061";
+        let absent = json!([{"accountId": "agent", "tokenAssets": []}]);
+        validate_payment_balance_response(&absent, "agent", "196", address).unwrap();
+        assert_eq!(match_readable_token(&absent, "196", address), None);
+        let mut data = json!([{"accountId": "agent", "tokenAssets": [
+            {"chainIndex": "1", "tokenAddress": address, "balance": "100"},
+            {"chainIndex": "196", "tokenAddress": address.to_lowercase(), "balance": "10", "decimal": "6"}
+        ]}]);
+        validate_payment_balance_response(&data, "agent", "196", address).unwrap();
+        assert_eq!(
+            match_readable_token(&data, "196", address).unwrap().balance,
+            "10"
+        );
+        data[0]["tokenAssets"][1]["balance"] = Value::Null;
+        assert!(validate_payment_balance_response(&data, "agent", "196", address).is_err());
+        assert!(validate_payment_balance_response(&absent, "active", "196", address).is_err());
+        assert!(validate_payment_balance_response(&json!({}), "agent", "196", address).is_err());
+    }
 
     fn make_balance_group(tokens: &[(&str, &str, &str)]) -> Value {
         let assets: Vec<Value> = tokens

@@ -464,12 +464,8 @@ pub async fn pay(p: PayParams) -> Result<PayOutput> {
         // original hard-failure path (§3.2 — no partial scene); every other
         // errorReason is unchanged (§11.1).
         if reason == "insufficient_balance" {
-            if let Some(value) = build_a2a_insufficient_balance_scene(
-                &chain_index,
-                &currency,
-                &amount,
-            )
-            .await
+            if let Some(value) =
+                build_a2a_insufficient_balance_scene(&chain_index, &currency, &amount).await
             {
                 return Err(output::CliFundingBlocked { data: value }.into());
             }
@@ -554,21 +550,14 @@ async fn build_a2a_insufficient_balance_scene(
             }
         }
     }
-    let required =
-        crate::commands::agentic_wallet::shared::common::amount::minimal_to_readable(
-            amount,
-            decimals?,
-        )
-        .ok()?;
+    let required = crate::commands::agentic_wallet::shared::common::amount::minimal_to_readable(
+        amount, decimals?,
+    )
+    .ok()?;
     let asset_symbol = asset_symbol.unwrap_or_else(|| currency.to_string());
     build_funding_bundle(
         chain_index,
-        a2a_funding_input(
-            currency,
-            &asset_symbol,
-            &required,
-            balance.as_deref(),
-        ),
+        a2a_funding_input(currency, &asset_symbol, &required, balance.as_deref()),
     )
     .await
     .ok()
@@ -634,6 +623,16 @@ pub struct EscrowAuthorization {
 /// authorization. No payment-server I/O — caller delivers the signature on-chain
 /// or to the seller.
 pub async fn sign_escrow(p: SignEscrowParams) -> Result<SignEscrowOutput> {
+    let (chain_index, address) = resolve_buyer_wallet(p.chain_id).await?;
+    sign_escrow_for_wallet(p, &chain_index, &address).await
+}
+
+/// Sign for the already resolved Agent payment wallet; do not consult the active account.
+pub(crate) async fn sign_escrow_for_wallet(
+    p: SignEscrowParams,
+    chain_index: &str,
+    from_addr_str: &str,
+) -> Result<SignEscrowOutput> {
     for (label, v) in [
         ("provider", p.provider.as_str()),
         ("receiver", p.receiver.as_str()),
@@ -648,7 +647,15 @@ pub async fn sign_escrow(p: SignEscrowParams) -> Result<SignEscrowOutput> {
     let mut wallet_client = WalletApiClient::new()?;
     let access_token = ensure_tokens_refreshed().await?;
 
-    let (chain_index, from_addr_str) = resolve_buyer_wallet(p.chain_id).await?;
+    let wallets = wallet_store::load_wallets()?.ok_or_else(|| anyhow!(ERR_NOT_LOGGED_IN))?;
+    let matches = wallets.accounts_map.values().any(|account| {
+        account.address_list.iter().any(|entry| {
+            entry.chain_index == chain_index && entry.address.eq_ignore_ascii_case(from_addr_str)
+        })
+    });
+    if !matches {
+        bail!("escrow payment wallet context differs");
+    }
 
     let valid_after = 0u64;
     let valid_before: u64 = chrono::DateTime::parse_from_rfc3339(&p.expired_at)
@@ -691,8 +698,8 @@ pub async fn sign_escrow(p: SignEscrowParams) -> Result<SignEscrowOutput> {
     let signature_hex = tee_sign_eip3009(
         &mut wallet_client,
         &access_token,
-        &chain_index,
-        &from_addr_str,
+        chain_index,
+        from_addr_str,
         &p.escrow_contract,
         &p.amount,
         valid_after,
@@ -709,7 +716,7 @@ pub async fn sign_escrow(p: SignEscrowParams) -> Result<SignEscrowOutput> {
         signature: signature_hex,
         authorization: EscrowAuthorization {
             r#type: "ReceiveWithAuthorization".to_string(),
-            from: from_addr_str,
+            from: from_addr_str.to_string(),
             to: p.escrow_contract,
             value: p.amount,
             valid_after: valid_after.to_string(),
@@ -1117,7 +1124,10 @@ mod tests {
 
         // Consumable scene flags projected from the FundingTarget (§2.5): X Layer
         // (196) is both same-network-required and gas-free.
-        assert_eq!(data["fundingTarget"]["sameNetworkRequired"], serde_json::json!(true));
+        assert_eq!(
+            data["fundingTarget"]["sameNetworkRequired"],
+            serde_json::json!(true)
+        );
         assert_eq!(data["fundingTarget"]["gasFree"], serde_json::json!(true));
 
         // Full Common QR field set embedded (camelCase, terminal-unicode mode).

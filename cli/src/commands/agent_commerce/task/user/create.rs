@@ -112,13 +112,17 @@ impl CreateTaskParams {
         if self.service_id.trim().is_empty() {
             bail!("--service-id is required; use the confirmed Service result unchanged");
         }
-        if self.service_token_address.trim().is_empty() {
-            bail!("--service-token-address must not be empty");
-        }
+
         serde_json::from_str::<serde_json::Value>(&self.service_params)
             .map_err(|e| anyhow::anyhow!("--service-params must be valid JSON: {e}"))?;
 
-        let token_symbol = normalize_currency(&self.payment_token_symbol)?;
+        let token_symbol = common::payment_token::constraint(
+            self.chain_id,
+            &self.payment_token_symbol,
+            &self.service_token_address,
+        )?
+        .map(|token| token.symbol.to_string())
+        .unwrap_or_default();
         validate_decimal_amount(&self.payment_token_amount, "payment-token-amount")?;
         validate_decimal_amount(&self.service_token_amount, "service-token-amount")?;
         if self.chain_id != XLAYER_CHAIN_ID as u64 {
@@ -148,7 +152,7 @@ impl CreateTaskParams {
     }
 }
 
-fn validate_decimal_amount(value: &str, flag: &str) -> Result<()> {
+pub(crate) fn validate_decimal_amount(value: &str, flag: &str) -> Result<()> {
     let value = value.trim();
     if value.is_empty() || value.starts_with(['-', '+']) {
         bail!("--{flag} must be a non-negative decimal string");
@@ -194,16 +198,7 @@ fn prepare_guide_consent(
 // ─── Validation helpers ─────────────────────────────────────────────────
 
 pub fn normalize_currency(currency: &str) -> Result<String> {
-    let normalized: String = currency
-        .chars()
-        .map(|character| if character == '₮' { 'T' } else { character })
-        .collect::<String>()
-        .to_uppercase();
-    match normalized.as_str() {
-        "USDT" | "USDT0" => Ok("USDT".to_string()),
-        "USDG" => Ok("USDG".to_string()),
-        _ => bail!("unsupported token: {currency}; only USDT (USD₮0) and USDG are supported"),
-    }
+    common::payment_token::normalize_symbol(currency)
 }
 
 pub fn validate_budget(budget: f64) -> Result<()> {
@@ -269,42 +264,49 @@ pub async fn handle_create(client: &mut TaskApiClient, params: CreateTaskParams)
         eprintln!("[task-create] user identity check passed (agentId: {user_agent_id})");
     }
 
-    // Repeat the prepare-time balance check immediately before the V2
-    // create-and-fund write boundary. A typed shortfall returns the shared
-    // Funding contract without creating or broadcasting the task.
-    let required = params
-        .payment_token_amount
-        .parse::<f64>()
-        .context("--payment-token-amount is outside the supported numeric range")?;
-    if let Err(error) = common::ensure_sufficient_balance(required, &validated.token_symbol).await {
-        if let Some(insufficient) =
-            error.downcast_ref::<common::deposit_qr::InsufficientBalanceError>()
-        {
-            let deposit = common::deposit_qr::resolve_current_deposit_info(&user_agent_id)
-                .await
-                .ok_or_else(|| anyhow::anyhow!("failed to resolve the funding address"))?;
-            crate::output::success(build_task_creation_funding_result(
-                insufficient,
-                &deposit,
-                &params.service_token_address,
-            )?);
-            return Ok(());
-        }
-    }
-
     let (account_id, address) = signing::resolve_wallet_by_agent_id(&user_agent_id).await?;
+    let constrained = common::payment_token::constraint(
+        params.chain_id,
+        &validated.token_symbol,
+        &params.service_token_address,
+    )?;
+    let selection = common::payment_token::select(
+        &params.payment_token_amount,
+        &account_id,
+        &address,
+        constrained,
+        false,
+    )
+    .await?;
+    let Some(token) = selection.token else {
+        let (service, sid) = super::task_create_prepare::service_recovery_context(
+            &user_agent_id,
+            &params.provider_agent_id,
+            &params.service_id,
+        )
+        .await?;
+        crate::output::success(common::payment_token::funding_result(
+            &selection,
+            &address,
+            &service,
+            &sid,
+            constrained,
+            constrained,
+        )?);
+        return Ok(());
+    };
     let receipt = super::v2::execute(
         client,
         super::v2::CreateAndFundInput {
             title: &validated.title,
             description: &params.description,
             description_summary: params.description_summary.as_deref(),
-            token_symbol: &validated.token_symbol,
+            token_symbol: token.symbol,
             amount: &params.payment_token_amount,
             provider_agent_id: &params.provider_agent_id,
             service_id: &params.service_id,
             service_params: &params.service_params,
-            service_token_address: &params.service_token_address,
+            service_token_address: token.address,
             service_token_amount: &params.service_token_amount,
             category_code: params.category_code.as_deref(),
             min_credit_score: params.min_credit_score,
@@ -344,7 +346,7 @@ pub async fn handle_create(client: &mut TaskApiClient, params: CreateTaskParams)
         Some(vec![
             format!("jobId={}", receipt.job_id),
             format!("agentId={user_agent_id}"),
-            format!("paymentTokenSymbol={}", validated.token_symbol),
+            format!("paymentTokenSymbol={}", token.symbol),
             format!("paymentTokenAmount={}", params.payment_token_amount),
             format!("designatedProvider={}", params.provider_agent_id),
             "bizType=201".to_string(),
@@ -386,7 +388,8 @@ pub async fn handle_create(client: &mut TaskApiClient, params: CreateTaskParams)
             "bizType": 201,
             "status": "broadcast_submitted",
             "providerAgentId": params.provider_agent_id,
-            "paymentTokenSymbol": validated.token_symbol,
+            "paymentTokenSymbol": token.symbol,
+            "paymentTokenAddress": token.address,
             "paymentTokenAmount": params.payment_token_amount,
             "runtimeBound": true,
             "initialLifecycle": {
@@ -400,27 +403,6 @@ pub async fn handle_create(client: &mut TaskApiClient, params: CreateTaskParams)
         }
     }));
     Ok(())
-}
-
-pub(super) fn build_task_creation_funding_result(
-    insufficient: &common::deposit_qr::InsufficientBalanceError,
-    deposit: &common::deposit_qr::DepositInfo,
-    token_address: &str,
-) -> Result<serde_json::Value> {
-    crate::funding::build_funding_bundle_for_address(
-        "",
-        &deposit.chain_index,
-        &deposit.address,
-        crate::funding::FundingBlockedInput {
-            asset: &insufficient.currency,
-            token_address,
-            required: &insufficient.required,
-            balance: Some(&insufficient.available),
-            operation: Some(crate::funding::FUNDING_OPERATION_TASK_CREATION),
-            error_code: None,
-            error_message: None,
-        },
-    )
 }
 
 fn validate_title(title: &str) -> Result<()> {
@@ -528,7 +510,7 @@ mod tests {
             attachments: None,
             service_id: "svc-1".to_string(),
             service_params: "{}".to_string(),
-            service_token_address: "0xtoken".to_string(),
+            service_token_address: common::payment_token::TOKENS[2].address.to_string(),
             service_token_amount: "10.25".to_string(),
             category_code: Some("FINANCE".to_string()),
             min_credit_score: Some(0.5),
@@ -562,31 +544,5 @@ mod tests {
         assert!(value.validate().is_err());
         value.title = "任".repeat(MAX_TITLE_CHARS);
         assert!(value.validate().is_ok());
-    }
-
-    #[test]
-    fn task_create_funding_block_uses_common_funding_contract() {
-        let insufficient = common::deposit_qr::InsufficientBalanceError::new(
-            "insufficient".to_string(),
-            "USDT",
-            0.01,
-            0.0,
-        );
-        let deposit = common::deposit_qr::deposit_info_for_address(
-            "0x1234567890abcdef1234567890abcdef12345678",
-        );
-        let result = build_task_creation_funding_result(
-            &insufficient,
-            &deposit,
-            "0x779ded0c9e1022225f8e0630b35a9b54be713736",
-        )
-        .expect("common Funding result");
-        assert_eq!(result["phase"], "funding_required");
-        assert_eq!(result["decision"], "blocked");
-        assert_eq!(result["reason"], "insufficient_balance");
-        assert_eq!(result["nextAction"], serde_json::json!([]));
-        assert_eq!(result["payload"]["operation"], "task_creation");
-        assert_eq!(result["payload"]["fundingNeed"]["required"], "0.01");
-        assert!(result["payload"]["qr"].is_object());
     }
 }

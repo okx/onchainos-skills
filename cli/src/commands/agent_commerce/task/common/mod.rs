@@ -249,10 +249,8 @@ impl PreFetchedTaskContext {
                 })
             })
         };
-        let expire_time = deadline::first_timestamp(
-            v,
-            &["rejectWindowEndsAt", "responseDeadline", "expireTime"],
-        );
+        let expire_time =
+            deadline::first_timestamp(v, &["rejectWindowEndsAt", "responseDeadline", "expireTime"]);
         let review_expire_time = deadline::review_deadline_from_detail(v);
         Self {
             title: v["title"].as_str().unwrap_or("").to_string(),
@@ -263,7 +261,7 @@ impl PreFetchedTaskContext {
             trial_type: v["trialType"]
                 .as_i64()
                 .or_else(|| v["trialType"].as_str().and_then(|value| value.parse().ok())),
-            token_symbol: string(&["tokenSymbol", "paymentTokenSymbol"])
+            token_symbol: string(&["paymentTokenSymbol", "tokenSymbol"])
                 .unwrap_or_else(|| "?".to_string()),
             token_amount: string(&["paymentTokenAmount", "tokenAmount"]).unwrap_or_default(),
             payment_mode: v["paymentMode"].as_i64().or_else(|| {
@@ -703,11 +701,11 @@ async fn spawn_service_list_filtered(
 /// single entry matching `service_id`. Returns:
 /// - `Ok(Some(entry))` — service-list fetched, entry found
 /// - `Ok(None)`         — service-list fetched, but no entry has this serviceId
-///                        (e.g. User Agent designated a stale / unregistered serviceId)
+///   (e.g. User Agent designated a stale / unregistered serviceId)
 /// - `Err(e)`           — service-list fetch failed entirely (subprocess died,
-///                        backend rejected, JSON parse failed). This is an
-///                        operational error, never evidence that the service
-///                        does not match and never a reason to decline a task.
+///   backend rejected, JSON parse failed). This is an
+///   operational error, never evidence that the service
+///   does not match and never a reason to decline a task.
 ///
 /// Response navigation: scans every group's `list` (`data[*].list[*]`, flattened
 /// by the same logic that `designated_route_inner` uses); the first `serviceId`
@@ -1434,6 +1432,20 @@ mod expire_time_tests {
 
     const DAY: i64 = 86_400;
 
+    #[test]
+    fn a2a_payment_snapshot_wins_over_listing_or_legacy_fields() {
+        for token in super::payment_token::TOKENS {
+            let snapshot = PreFetchedTaskContext::from_api_response(&json!({
+                "paymentTokenSymbol": token.symbol, "paymentTokenAddress": token.address,
+                "paymentTokenAmount": "10.000000", "tokenSymbol": "USDT", "tokenAmount": "99",
+                "serviceTokenSymbol": "USD", "serviceTokenAmount": "25"
+            }));
+            assert_eq!(snapshot.token_symbol, token.symbol);
+            assert_eq!(snapshot.token_amount, "10.000000");
+            assert_eq!(snapshot.token_address.as_deref(), Some(token.address));
+        }
+    }
+
     // AC-8: precise `expireTime` (> 0) is carried through verbatim.
     #[test]
     fn precise_expire_time_is_used() {
@@ -1606,3 +1618,4 @@ mod find_service_tests {
         assert!(find_service_in_data(&data, "svc-missing", &to_str).is_none());
     }
 }
+pub mod payment_token;

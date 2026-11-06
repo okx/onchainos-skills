@@ -4,7 +4,7 @@ description: "Operate OKX Onchain OS wallets and execute or inspect on-chain tra
 license: MIT
 metadata:
   author: okx
-  version: "4.6.8"
+  version: "4.6.9"
   homepage: "https://web3.okx.com"
 ---
 

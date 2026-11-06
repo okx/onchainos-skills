@@ -92,6 +92,12 @@ pub struct TaskCreatePrepareArgs {
         required_if_eq("service_type", "A2MCP")
     )]
     pub asp_agent_id: Option<String>,
+    /// Token the user chooses to fund.
+    #[arg(long = "funding-token-symbol", value_parser = ["USDC", "USDG", "USDT"])]
+    pub funding_token_symbol: Option<String>,
+    /// Explicit payment token restriction retained during recovery.
+    #[arg(long = "payment-token-symbol", value_parser = ["USDC", "USDG", "USDT"])]
+    pub payment_token_symbol: Option<String>,
 }
 
 /// Fetch one current marketplace Service for task creation.
@@ -187,7 +193,8 @@ pub enum TaskCommand {
         description_summary: Option<String>,
         #[arg(long = "provider-agent-id")]
         provider_agent_id: String,
-        #[arg(long = "payment-token-symbol")]
+        /// Omit to select USDC, USDG, then USDT by sufficient balance.
+        #[arg(long = "payment-token-symbol", default_value = "")]
         payment_token_symbol: String,
         #[arg(long = "payment-token-amount")]
         payment_token_amount: String,
@@ -198,7 +205,8 @@ pub enum TaskCommand {
         service_id: String,
         #[arg(long = "service-params", default_value = "{}")]
         service_params: String,
-        #[arg(long = "service-token-address")]
+        /// Optional explicit payment token constraint on X Layer.
+        #[arg(long = "service-token-address", default_value = "")]
         service_token_address: String,
         #[arg(long = "service-token-amount")]
         service_token_amount: String,
@@ -231,7 +239,8 @@ pub enum TaskCommand {
         #[arg(long = "service-token-amount")]
         service_token_amount: String,
         /// Token contract address
-        #[arg(long = "service-token-address")]
+        /// Optional explicit payment token constraint on X Layer.
+        #[arg(long = "service-token-address", default_value = "")]
         service_token_address: String,
         /// Auto-renew: 0/false=off, 1/true=on
         #[arg(long = "auto-renew")]
@@ -1808,9 +1817,21 @@ pub async fn run_task(cmd: TaskCommand, _ctx: &Context) -> Result<()> {
         }
         TaskCommand::TaskCreatePrepare(args) => match args.service_type {
             PrepareServiceType::A2a => {
-                task_create_prepare::handle_task_create_prepare(&mut client, &args.sid).await
+                task_create_prepare::handle_task_create_prepare(
+                    &mut client,
+                    &args.sid,
+                    args.funding_token_symbol.as_deref(),
+                    args.payment_token_symbol.as_deref(),
+                )
+                .await
             }
             PrepareServiceType::A2mcp => {
+                if args.funding_token_symbol.is_some() {
+                    anyhow::bail!("--funding-token-symbol is only supported for A2A");
+                }
+                if args.payment_token_symbol.is_some() {
+                    anyhow::bail!("--payment-token-symbol is only supported for A2A");
+                }
                 let asp_agent_id = args
                     .asp_agent_id
                     .as_deref()

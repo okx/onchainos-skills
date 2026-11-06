@@ -690,6 +690,7 @@ fn subscription_phase(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn subscription_template_number(
     status: Option<i64>,
     trial_type: Option<i64>,
@@ -828,9 +829,9 @@ fn subscription_next_action(
     let amount = detail_string(
         detail,
         &[
-            "serviceTokenAmount",
-            "tokenAmount",
             "paymentTokenAmount",
+            "tokenAmount",
+            "serviceTokenAmount",
             "refundAmount",
         ],
     )
@@ -838,9 +839,9 @@ fn subscription_next_action(
     let token = detail_string(
         detail,
         &[
-            "serviceTokenSymbol",
-            "tokenSymbol",
             "paymentTokenSymbol",
+            "tokenSymbol",
+            "serviceTokenSymbol",
             "refundTokenSymbol",
         ],
     )
@@ -890,7 +891,7 @@ fn subscription_next_action(
             "The current service remains available until {} and will then end automatically. Enable auto-renewal before expiry to continue.",
             time(milestones.current_period_ends_at.as_deref())
         ),
-        Some(6 | 7 | 8) => "No action is required. A supported free-trial entitlement is unaffected; any paid service fee will be returned automatically when applicable.".to_string(),
+        Some(6..=8) => "No action is required. A supported free-trial entitlement is unaffected; any paid service fee will be returned automatically when applicable.".to_string(),
         Some(9) => format!(
             "Charge failure reason: {reason}. The system will not retry automatically. To continue, {next_action}, then subscribe again."
         ),
@@ -2335,9 +2336,7 @@ fn build_display(
             } else {
                 pending_node("asp_execution", "ASP execution")
             };
-            let stage_two = if milestones.accepted_at.is_some() {
-                accepted()
-            } else if execution_started {
+            let stage_two = if milestones.accepted_at.is_some() || execution_started {
                 accepted()
             } else if phase == LifecyclePhase::Expired {
                 node(
@@ -2589,6 +2588,26 @@ fn local_row_belongs_to_user(command: &Value, content: Option<&Value>, expected:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a2a_historical_trial_renewal_and_refund_copy_keeps_payment_snapshot() {
+        for token in super::super::payment_token::TOKENS {
+            let detail = json!({"paymentTokenAmount": "10", "paymentTokenSymbol": token.symbol,
+                "serviceTokenAmount": "99", "serviceTokenSymbol": "USDG"});
+            for template in [3, 4, 15, 17] {
+                let text = subscription_next_action(
+                    Some(template),
+                    LifecyclePhase::ActiveSubscription,
+                    Some(1),
+                    &detail,
+                    &SubscriptionMilestones::default(),
+                    &[],
+                );
+                assert!(text.contains(&format!("10 {}", token.symbol)), "{text}");
+                assert!(!text.contains("99 USDG"));
+            }
+        }
+    }
     use serde_json::json;
 
     fn message(id: &str, content: Value, sent_at: &str) -> HistoryMessage {

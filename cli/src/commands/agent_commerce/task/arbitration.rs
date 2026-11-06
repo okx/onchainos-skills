@@ -1128,7 +1128,7 @@ pub(crate) fn build_detail_result(
         .or_else(|| {
             scalar_string(Some(&value_from_keys(
                 supplement,
-                &["tokenAmount", "serviceTokenAmount"],
+                &["paymentTokenAmount", "tokenAmount", "serviceTokenAmount"],
             )))
         });
     let token_symbol = arbitration
@@ -1136,7 +1136,7 @@ pub(crate) fn build_detail_result(
         .or_else(|| {
             scalar_string(Some(&value_from_keys(
                 supplement,
-                &["tokenSymbol", "paymentTokenSymbol"],
+                &["paymentTokenSymbol", "tokenSymbol", "serviceTokenSymbol"],
             )))
         });
     let buyer_reason = evidence
@@ -1591,6 +1591,29 @@ mod tests {
             result["payload"]["buyerReason"],
             "The output missed the requested scope"
         );
+    }
+
+    #[test]
+    fn arbitration_detail_prefers_actual_payment_snapshot_over_service_price() {
+        let result = build_detail_result(
+            "job-1",
+            &json!({
+                "status": 4,
+                "paymentTokenAmount": "10",
+                "paymentTokenSymbol": "USDG",
+                "tokenAmount": "8",
+                "tokenSymbol": "USDT",
+                "serviceTokenAmount": "99",
+                "serviceTokenSymbol": "USDC"
+            }),
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(result["payload"]["amount"], "10");
+        assert_eq!(result["payload"]["tokenSymbol"], "USDG");
+        assert_eq!(result["payload"]["requestedRefund"], "10 USDG");
     }
 
     #[test]
