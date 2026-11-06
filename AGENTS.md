@@ -51,6 +51,19 @@ or to both.
 | Skill development | `SKILL.md`, `references/**`, `_shared/**`, routing tables, Skill rules (including how Skills describe CLI commands), and the page templates in [`templates/`](templates/) | [`rules/skill-rules.md`](rules/skill-rules.md) and [`templates/README.md`](templates/README.md) |
 | CLI development | CLI behavior under `cli/` and the CLI input/output rules (readable flag names, shared parsing helpers, JSON output) | [`rules/cli-io-rules.md`](rules/cli-io-rules.md) |
 
+## User-facing interaction
+
+When using `AskUserQuestion`, ask only for information needed to continue;
+state the decision and why it matters, offer clear mutually exclusive options
+with a default when possible, and never repeat information already known.
+
+Write like a person in a chat thread. Keep casual conversation and
+straightforward answers short. Give more depth when the user or task needs it.
+
+Focus user-facing updates on results, not internal tools or process. Report
+errors in plain language without obscuring the actual outcome. Hand over
+completed files or links in the same message.
+
 ## Skill development
 
 When you create or modify a Skill file (`SKILL.md`, a Router / Business-Policy /

@@ -135,7 +135,7 @@ Rules:
 1. Render confirmed services in collection order, numbered consecutively from 1. Hide type-specific columns when inapplicable.
 2. Show `serviceName` and `serviceDescription` verbatim. Do not rewrite or translate them.
 3. Show `serviceType` only as `A2A` or `A2MCP`.
-4. Show a zero price as `Free`, without a currency or billing period. Otherwise, show `N USDT / call` or `N USDT / month`, based on the confirmed billing model.
+4. Show a zero price as `Free`, without a currency or billing period. Otherwise, show `N USD / call` or `N USD / month`, based on the confirmed billing model.
 5. A2A NEVER renders `Endpoint`; show `freeTrial: "72"` as `3 days`, otherwise `—`; show non-blank `serviceGuide` verbatim, otherwise `—`.
 6. A2MCP preserves the complete HTTPS `endpoint` and NEVER renders `Free trial` or `Service Guide`.
 7. If any confirmed service is `A2MCP`, localize and append once: `Want to view method, inputSchema, or reqExample? Tell me which service.`

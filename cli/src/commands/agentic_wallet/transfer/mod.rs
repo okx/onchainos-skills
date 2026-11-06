@@ -641,7 +641,7 @@ pub(super) async fn sign_and_broadcast(
         }
         Some(trace_headers_broadcast.as_slice())
     };
-    let broadcast_resp = client
+    let broadcast_resp = match client
         .broadcast_transaction(
             &access_token,
             &account_id,
@@ -649,9 +649,26 @@ pub(super) async fn sign_and_broadcast(
             &addr_info.chain_index,
             &extra_data_str,
             trace_ref_broadcast,
+            None,
         )
         .await
-        .map_err(|e| handle_confirming_error(e, force))?;
+    {
+        Ok(resp) => resp,
+        // Approval email double confirmation. `--force` does not skip it: the
+        // paused broadcast is replayed unchanged only after the code is verified.
+        Err(e) if super::approval_code::is_verification_required(&e) => {
+            let pending = super::approval_code::PendingApproval::broadcast(
+                &account_id,
+                &addr_info.address,
+                &addr_info.chain_index,
+                unsigned.raw.clone(),
+                &extra_data_str,
+                cached_tid.clone(),
+            );
+            return Err(super::approval_code::start(&mut client, &access_token, pending).await);
+        }
+        Err(e) => return Err(handle_confirming_error(e, force)),
+    };
 
     // Clear cached swap trace ID after successful broadcast (contract calls only)
     if is_contract_call {
@@ -1014,6 +1031,7 @@ pub async fn batch_sign_and_broadcast(
                 &elem.address,
                 &elem.chain_index,
                 &elem.extra_data,
+                None,
                 None,
             )
             .await

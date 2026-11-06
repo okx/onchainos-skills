@@ -239,7 +239,7 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
         .subscription
         .retain(|t| !(t.interval.is_empty() && t.fee.is_empty()));
 
-    // Fee is a PLAIN NUMBER only — USDT is the implicit, only currency. A
+    // Fee is a PLAIN NUMBER only — USD is the implicit, only currency. A
     // currency token / symbol / any extra text is rejected (validate-listing
     // surfaces the same rule as a P1 finding; create/update bypass validate so
     // we enforce it here too). The single-purchase `fee` and every
@@ -287,7 +287,7 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
                     );
                 }
                 if !is_plain_number(&tier.fee, 2) {
-                    bail!("invalid subscription fee in --service: must be a plain number with up to 2 decimal places (USDT is the default currency)");
+                    bail!("invalid subscription fee in --service: must be a plain number with up to 2 decimal places (USD is the default currency)");
                 }
                 // FE-PRICE-02: a subscription tier price must be > 0. This runs
                 // AFTER `is_plain_number` so `is_zero_value`'s precondition (a
@@ -305,7 +305,7 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
             // A real single price must be a plain number; an empty `fee` (the
             // subscription model) is exempt (it is not a price).
             if has_single_fee && !is_plain_number(&service.fee, 2) {
-                bail!("invalid fee in --service for A2A: must be a plain number with up to 2 decimal places (USDT is the default currency)");
+                bail!("invalid fee in --service for A2A: must be a plain number with up to 2 decimal places (USD is the default currency)");
             }
             // An empty `fee` is the explicit "no single price" marker (the
             // subscription model); it is forwarded verbatim as `""`. The CLI
@@ -333,7 +333,7 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
                 bail!("missing required field in --service for A2MCP: fee");
             }
             if !is_plain_number(&service.fee, 6) {
-                bail!("invalid fee in --service for A2MCP: must be a plain number with up to 6 decimal places (USDT is the default currency)");
+                bail!("invalid fee in --service for A2MCP: must be a plain number with up to 6 decimal places (USD is the default currency)");
             }
             if service.endpoint.is_none() {
                 bail!("missing required field in --service for A2MCP: endpoint");
@@ -978,8 +978,8 @@ fn first_fee(map: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<Stri
 }
 
 /// Format an A2A service's `subscription` tiers for display. Each tier renders
-/// as `<fee> USDT / month` (only the `month` interval is supported today; any other
-/// interval is appended verbatim as `<fee> USDT / <interval>`). Reads
+/// as `<fee> USD / month` (only the `month` interval is supported today; any other
+/// interval is appended verbatim as `<fee> USD / <interval>`). Reads
 /// tolerantly (string or number fee, camel/Pascal keys). Empty / absent
 /// subscription → empty Vec. A non-empty result means the service is
 /// subscription-priced (its single-purchase `fee` is empty by contract).
@@ -1002,7 +1002,7 @@ fn format_subscription_tiers(map: &serde_json::Map<String, Value>) -> Vec<String
             } else {
                 interval.to_string()
             };
-            Some(format!("{fee} USDT / {period}"))
+            Some(format!("{fee} USD / {period}"))
         })
         .collect()
 }
@@ -1056,7 +1056,7 @@ fn unpriced_fee_label(is_a2mcp: bool) -> String {
 /// Format a single ASP service into its card value string for
 /// references/identity/profile.md §Detail for explicit Agent IDs.
 /// A subscription-priced A2A service shows its monthly tier(s) in the fee slot
-/// (`<N> USDT / month`) instead of a single-purchase price.
+/// (`<N> USD / month`) instead of a single-purchase price.
 /// `Type` maps `A2MCP`→"API service" / `A2A`→"agent-to-agent" (verbatim
 /// otherwise); A2A omits the endpoint from the value string. Returns `None`
 /// when there is no service name to anchor the row.
@@ -1076,7 +1076,7 @@ fn format_service_value(service: &Value) -> Option<String> {
     let is_a2mcp = raw_type.eq_ignore_ascii_case("A2MCP");
 
     // Subscription-priced A2A → show the monthly tier(s) in the fee slot;
-    // otherwise a single-purchase price (`<N> USDT`), or — when unpriced — `—`
+    // otherwise a single-purchase price (`<N> USD`), or — when unpriced — `—`
     // for an A2MCP (missing required fee) / `free` for other types.
     let subscription = format_subscription_tiers(s);
     let fee = first_fee(s, &["fee", "Fee", "feeAmount"]);
@@ -1084,7 +1084,7 @@ fn format_service_value(service: &Value) -> Option<String> {
         subscription.join(", ")
     } else {
         match fee.as_deref() {
-            Some(f) => format!("{f} USDT"),
+            Some(f) => format!("{f} USD"),
             None => unpriced_fee_label(is_a2mcp),
         }
     };
@@ -1537,9 +1537,9 @@ pub(super) fn build_search_table(v: &Value) -> Value {
 // service-list returns PascalCase keys
 // (`ServiceName` / `ServiceType` / `Fee` / `Endpoint`); we read tolerantly.
 // Type: display the canonical service type (`A2MCP` or `A2A`) verbatim.
-// Fee: `<n> USDT`; subscription-priced A2A → `—`; unpriced A2MCP → `—`, other
+// Fee: `<n> USD`; subscription-priced A2A → `—`; unpriced A2MCP → `—`, other
 // unpriced → `free`. Subscription: each
-// monthly tier `<n> USDT / month`, or `—` when there is none (or A2MCP). Free
+// monthly tier `<n> USD / month`, or `—` when there is none (or A2MCP). Free
 // trial: `<n> days`/`hours` when a subscription trial is set, else `—` (single
 // fee / A2MCP never have one). Endpoint stays in source data, never in list cells.
 // Description: truncated for the discovery Service list (≤ 80 chars).
@@ -1557,7 +1557,7 @@ fn build_service_cells(index: usize, service: &Value) -> Option<Vec<Value>> {
     let is_a2mcp = raw_type.eq_ignore_ascii_case("A2MCP");
 
     // Fee: subscription-priced A2A → `—` (price lives in the Subscription
-    // column); an explicit 0 and any other single price → `<n> USDT`; unpriced →
+    // column); an explicit 0 and any other single price → `<n> USD`; unpriced →
     // `—` for an A2MCP (missing required fee) / `free` for other types.
     let subscription = format_subscription_tiers(s);
     let fee = first_fee(s, &["fee", "Fee", "feeAmount"]);
@@ -1565,12 +1565,12 @@ fn build_service_cells(index: usize, service: &Value) -> Option<Vec<Value>> {
         "—".to_string()
     } else {
         match fee.as_deref() {
-            Some(f) => format!("{f} USDT"),
+            Some(f) => format!("{f} USD"),
             None => unpriced_fee_label(is_a2mcp),
         }
     };
 
-    // Subscription: each monthly tier → `<n> USDT / month`; empty (or A2MCP) → `—`.
+    // Subscription: each monthly tier → `<n> USD / month`; empty (or A2MCP) → `—`.
     let subscription_str = if subscription.is_empty() {
         "—".to_string()
     } else {

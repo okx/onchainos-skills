@@ -61,6 +61,140 @@ mod tests {
     use super::*;
 
     #[test]
+    fn security_policy_reports_actual_values() {
+        let policy = json!({
+            "singleTxLimit": "100", "singleTxFlag": true,
+            "dailyTransferTxLimit": "200", "dailyTransferTxFlag": true, "dailyTransferTxUsed": "50",
+            "dailyTradeTxLimit": "300", "dailyTradeTxFlag": false, "dailyTradeTxUsed": "0",
+            "doubleConfirmation": false
+        });
+        let whitelist =
+            json!({ "addresses": [{ "address": "0x1", "name": "" }], "whiteFlag": true });
+        let out = build_security_policy(Some(policy), Some(whitelist));
+        assert_eq!(out["status"], "available");
+        assert_eq!(out["singleTxLimit"], "100");
+        assert_eq!(out["dailyTransferTxLimit"], "200");
+        assert_eq!(out["dailyTransferTxUsed"], "50");
+        // Flag off ⇒ not configured, even with a stored limit.
+        assert!(out["dailyTradeTxLimit"].is_null());
+        // A user's explicit "off" is reported as off, never as on.
+        assert_eq!(out["doubleConfirmation"], false);
+        assert_eq!(
+            out["whitelist"],
+            json!({ "enabled": true, "addressCount": 1 })
+        );
+    }
+
+    #[test]
+    fn security_policy_unset_values_stay_null_and_are_not_guessed() {
+        let policy = json!({
+            "singleTxLimit": "", "singleTxFlag": true,
+            "dailyTransferTxLimit": "0", "dailyTransferTxFlag": false,
+            "dailyTradeTxFlag": false, "doubleConfirmation": true
+        });
+        let out = build_security_policy(Some(policy), Some(serde_json::Value::Null));
+        assert_eq!(out["status"], "available");
+        assert!(out["singleTxLimit"].is_null());
+        assert!(out["dailyTransferTxLimit"].is_null());
+        assert!(out["dailyTradeTxLimit"].is_null());
+        assert_eq!(out["doubleConfirmation"], true);
+        assert_eq!(
+            out["whitelist"],
+            json!({ "enabled": false, "addressCount": 0 })
+        );
+    }
+
+    #[test]
+    fn security_policy_query_failure_is_unavailable_not_default() {
+        let out = build_security_policy(None, Some(json!({ "whiteFlag": true })));
+        assert_eq!(out, json!({ "status": "unavailable" }));
+        let out = build_security_policy(Some(json!("bad")), None);
+        assert_eq!(out, json!({ "status": "unavailable" }));
+    }
+
+    #[test]
+    fn security_policy_empty_success_is_available_with_unset_values() {
+        let out =
+            build_security_policy(Some(serde_json::Value::Null), Some(serde_json::Value::Null));
+        assert_eq!(out["status"], "available");
+        assert!(out["singleTxLimit"].is_null());
+        assert!(out["doubleConfirmation"].is_null());
+        assert_eq!(
+            out["whitelist"],
+            json!({ "enabled": false, "addressCount": 0 })
+        );
+    }
+
+    fn flags_off() -> serde_json::Value {
+        json!({
+            "singleTxFlag": false,
+            "dailyTransferTxFlag": false,
+            "dailyTradeTxFlag": false,
+            "doubleConfirmation": false
+        })
+    }
+
+    #[test]
+    fn policy_record_without_limit_flags_is_unavailable() {
+        for record in [
+            json!({}),
+            json!({ "doubleConfirmation": true }),
+            json!({ "singleTxFlag": true, "dailyTransferTxFlag": false }),
+            json!({ "singleTxFlag": "true", "dailyTransferTxFlag": false, "dailyTradeTxFlag": false }),
+        ] {
+            assert_eq!(
+                build_security_policy(Some(record), Some(serde_json::Value::Null)),
+                json!({ "status": "unavailable" })
+            );
+        }
+        // doubleConfirmation is required too.
+        let mut no_double = flags_off();
+        no_double
+            .as_object_mut()
+            .unwrap()
+            .remove("doubleConfirmation");
+        assert_eq!(
+            build_security_policy(Some(no_double), Some(serde_json::Value::Null)),
+            json!({ "status": "unavailable" })
+        );
+        let out = build_security_policy(Some(flags_off()), Some(serde_json::Value::Null));
+        assert_eq!(out["status"], "available");
+        assert_eq!(out["doubleConfirmation"], false);
+    }
+
+    #[test]
+    fn query_item_accepts_arrays_and_rejects_other_shapes() {
+        assert_eq!(
+            query_item(&json!([{ "a": 1 }]), "p").unwrap(),
+            json!({ "a": 1 })
+        );
+        assert_eq!(
+            query_item(&json!([]), "p").unwrap(),
+            serde_json::Value::Null
+        );
+        for odd in [json!({ "a": 1 }), json!(null), json!("x")] {
+            assert!(query_item(&odd, "p").is_err());
+        }
+    }
+
+    #[test]
+    fn whitelist_without_white_flag_is_unknown_not_off() {
+        let out = build_security_policy(Some(flags_off()), Some(json!({ "addresses": [] })));
+        assert_eq!(out["status"], "available");
+        assert!(out["whitelist"].is_null());
+    }
+
+    #[test]
+    fn security_policy_whitelist_failure_keeps_policy_and_marks_whitelist_unknown() {
+        let mut policy = flags_off();
+        policy["doubleConfirmation"] = json!(true);
+        let out = build_security_policy(Some(policy), None);
+        assert_eq!(out["status"], "available");
+        assert_eq!(out["doubleConfirmation"], true);
+        assert!(out["whitelist"].is_null());
+    }
+
+    #[test]
     fn logged_in_wallet_status_summary_has_no_subscription_or_device_snapshot() {
         let wallets = WalletsJson {
             email: "buyer@example.com".to_string(),
@@ -393,6 +527,130 @@ async fn query_policy(account_id: &str) -> Result<serde_json::Value> {
         .and_then(|arr| arr.first().cloned())
         .unwrap_or(serde_json::Value::Null);
     Ok(first)
+}
+
+// ── security policy (login summary) ──────────────────────────────────
+
+/// Upper bound for each login-time policy query, so a slow policy service
+/// never delays or fails the login result.
+const SECURITY_POLICY_TIMEOUT_SECS: u64 = 5;
+
+/// Query the effective security policy and whitelist for `account_id` and
+/// build the `securityPolicy` object of the login summary. Read-only: the CLI
+/// never writes defaults here; the server initializes them.
+pub(super) async fn fetch_security_policy(
+    access_token: &str,
+    account_id: &str,
+) -> serde_json::Value {
+    let timeout = std::time::Duration::from_secs(SECURITY_POLICY_TIMEOUT_SECS);
+    let query = |path: &'static str| async move {
+        let mut client = WalletApiClient::new()?;
+        let data = tokio::time::timeout(
+            timeout,
+            client.get_authed(path, access_token, &[("accountId", account_id)]),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("{path} timed out"))??;
+        query_item(&data, path)
+    };
+    let (policy, whitelist) = tokio::join!(
+        query("/priapi/v5/wallet/agentic/policy/query"),
+        query("/priapi/v5/wallet/agentic/white/query"),
+    );
+    if cfg!(feature = "debug-log") {
+        if let Err(e) = &policy {
+            eprintln!("[DEBUG][login] security policy query failed: {e:#}");
+        }
+        if let Err(e) = &whitelist {
+            eprintln!("[DEBUG][login] whitelist query failed: {e:#}");
+        }
+    }
+    build_security_policy(policy.ok(), whitelist.ok())
+}
+
+/// First item of a policy query response. An empty array is a valid "no
+/// record"; any other shape is an unrecognized response and counts as a
+/// failed query, so it is shown as unavailable instead of "not configured".
+fn query_item(data: &serde_json::Value, path: &str) -> Result<serde_json::Value> {
+    match data.as_array() {
+        Some(items) => Ok(items.first().cloned().unwrap_or(serde_json::Value::Null)),
+        None => Err(anyhow::anyhow!("{path}: unexpected response shape")),
+    }
+}
+
+/// A limit counts as configured only when its flag is on and the limit is a
+/// non-empty value (the backend uses `""` for "no limit").
+fn configured_limit(policy: &serde_json::Value, limit: &str, flag: &str) -> serde_json::Value {
+    let enabled = policy[flag].as_bool() == Some(true);
+    let value = match &policy[limit] {
+        serde_json::Value::String(s) if !s.trim().is_empty() => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    };
+    match (enabled, value) {
+        (true, Some(value)) => json!(value),
+        _ => serde_json::Value::Null,
+    }
+}
+
+/// Boolean flags every policy record carries (the backend returns `false`
+/// when nothing is set).
+const POLICY_LIMIT_FLAGS: [&str; 4] = [
+    "singleTxFlag",
+    "dailyTransferTxFlag",
+    "dailyTradeTxFlag",
+    "doubleConfirmation",
+];
+
+fn has_limit_flags(policy: &serde_json::Value) -> bool {
+    POLICY_LIMIT_FLAGS
+        .iter()
+        .all(|flag| policy[*flag].is_boolean())
+}
+
+/// Build `securityPolicy` from the raw `policy/query` and `white/query` items.
+/// `None` means the query failed; `Some(Null)` means it succeeded with no
+/// record, so every value is unset. A record without the boolean flags is
+/// unrecognized and counts as unavailable. Unknown values stay `null`;
+/// nothing is guessed.
+fn build_security_policy(
+    policy: Option<serde_json::Value>,
+    whitelist: Option<serde_json::Value>,
+) -> serde_json::Value {
+    let policy = match policy {
+        Some(serde_json::Value::Null) => json!({}),
+        Some(p) if p.is_object() && has_limit_flags(&p) => p,
+        _ => return json!({ "status": "unavailable" }),
+    };
+    let used = |field: &str| match &policy[field] {
+        serde_json::Value::String(s) if !s.is_empty() => json!(s),
+        serde_json::Value::Number(n) => json!(n.to_string()),
+        _ => serde_json::Value::Null,
+    };
+    let whitelist = match whitelist {
+        // `whiteFlag` must be a boolean; a missing or odd value means the
+        // state is unknown, never "off".
+        Some(w) if w.is_object() => match w["whiteFlag"].as_bool() {
+            Some(enabled) => json!({
+                "enabled": enabled,
+                "addressCount": w["addresses"].as_array().map(Vec::len).unwrap_or(0),
+            }),
+            None => serde_json::Value::Null,
+        },
+        // A successful query with no record means no whitelist is set.
+        Some(serde_json::Value::Null) => json!({ "enabled": false, "addressCount": 0 }),
+        _ => serde_json::Value::Null,
+    };
+    json!({
+        "status": "available",
+        "singleTxLimit": configured_limit(&policy, "singleTxLimit", "singleTxFlag"),
+        "dailyTransferTxLimit": configured_limit(&policy, "dailyTransferTxLimit", "dailyTransferTxFlag"),
+        "dailyTransferTxUsed": used("dailyTransferTxUsed"),
+        "dailyTradeTxLimit": configured_limit(&policy, "dailyTradeTxLimit", "dailyTradeTxFlag"),
+        "dailyTradeTxUsed": used("dailyTradeTxUsed"),
+        "doubleConfirmation": policy["doubleConfirmation"].as_bool(),
+        "whitelist": whitelist,
+    })
 }
 
 // ── resolve_active_account_id ─────────────────────────────────────────

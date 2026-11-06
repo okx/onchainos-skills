@@ -219,7 +219,7 @@ fn subscription_interval_month_is_case_insensitive_no_p4() {
 #[test]
 fn subscription_tier_fee_not_plain_number_fails_p5() {
     // An A2A tier fee follows the SAME contract as its single-purchase fee
-    // (plain number, USDT implied, ≤2 decimals) — but a violation is P5 on the
+    // (plain number, USD implied, ≤2 decimals) — but a violation is P5 on the
     // subscription field, never P1 on the fee field (`fee` is legitimately empty
     // on a subscription-priced service, which is exactly why the codes differ).
     // Covers: currency token, negotiation wording, 7 decimals. An EMPTY tier fee
@@ -418,7 +418,7 @@ fn empty_tier_fee_emits_only_price_empty_in_order() {
 
 #[test]
 fn fee_with_currency_token_fails_p1() {
-    // Fee must be a plain number — USDT is implicit. Any currency token (even a
+    // Fee must be a plain number — USD is implicit. Any currency token (even a
     // valid one) makes the fee non-numeric → P1. (The old USDT/USDG currency
     // check, P2, has been removed.)
     for fee in &["5 ETH", "5 USDT", "5 USDG"] {
@@ -674,7 +674,7 @@ fn a2mcp_fee_keeps_six_decimal_precision() {
 #[test]
 fn fee_with_currency_suffix_fails_p1() {
     // A currency token attached to the number (with or without a space) is no
-    // longer accepted — the fee must be a plain number, USDT implicit.
+    // longer accepted — the fee must be a plain number, USD implicit.
     for fee in &["1USDT", "1.5USDG", "10USDT", "0USDG"] {
         let service = svc(
             "Some Service",

@@ -441,6 +441,7 @@ pub(super) async fn gs_do_broadcast(
             &addr_info.chain_index,
             &extra_data_str,
             None,
+            None,
         )
         .await
         .map_err(|e| handle_confirming_error(e, force))?;

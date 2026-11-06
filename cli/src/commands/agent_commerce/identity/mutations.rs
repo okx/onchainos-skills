@@ -7,9 +7,10 @@
 //! - `agent xmtp-sign`  → pre-transaction/sign-msg (no broadcast)
 //!
 //! Each `*_impl` builds the request body / multipart, posts, and (for
-//! broadcast-bearing commands) threads into `signing::sign_and_broadcast_agent_transaction`.
-//! Shared helpers live in `utils.rs`; wire signing + Erc8004Payload assembly
-//! lives in `signing.rs`.
+//! broadcast-bearing commands) calls the thin identity adapter in `broadcast.rs`.
+//! Shared helpers live in `utils.rs`; identity signing-session and ERC-8004
+//! overlay helpers live in `signing.rs`. Transaction signing and `extraData`
+//! assembly live in the shared agentic-wallet broadcast pipeline.
 
 use std::fs;
 use std::time::Duration;
@@ -37,10 +38,11 @@ use super::args::{
     ActivateArgs, AgentStatusArgs, ConsentArgs, CreateArgs, FeedbackSubmitArgs, PrecheckArgs,
     UpdateArgs, UploadArgs, XmtpSignArgs,
 };
+use super::broadcast::sign_and_broadcast_agent_transaction;
 use super::models::{AgentCard, XLAYER_CHAIN_INDEX, XLAYER_CHAIN_INDEX_NUM};
 use super::signing::{
     build_erc8004_overlay, load_agent_signing_session, load_session_cert, load_signing_seed,
-    sign_and_broadcast_agent_transaction, sign_key_uuid,
+    sign_key_uuid,
 };
 use super::socket::{open_identity_subscription, IdentitySubscription};
 use super::utils::{
