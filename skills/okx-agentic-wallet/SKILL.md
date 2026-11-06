@@ -4,7 +4,7 @@ description: "Operate OKX Onchain OS wallets and execute or inspect on-chain tra
 license: MIT
 metadata:
   author: okx
-  version: "4.6.7"
+  version: "4.6.8"
   homepage: "https://web3.okx.com"
 ---
 
@@ -30,6 +30,7 @@ Match the user intent to its owning module Reference.
 | Call a contract (approve / deposit / withdraw / custom function), including a SUI PTB | [wallet](references/wallet.md) |
 | Transaction history / tx detail / order status; sign a message (personalSign / EIP-712) | [wallet](references/wallet.md) |
 | Policy / spending limit / whitelist; export wallet / mnemonic; MEV protection for a contract-call; third-party Solana plugin write pre-flight | [wallet](references/wallet.md) |
+| A token approval paused for email verification (`scene=approval_code_sent` or an `approval_*` error); the user gives, resends, or cancels an approval verification code | [approval-verification](references/approval-verification.md) |
 | Apple-login wallet differs from the OKX Wallet App / "missing" balance; rename a wallet or account; how transaction signing works (TEE) | [account-faq](references/account-faq.md) |
 | Pay gas with a stablecoin on Solana; enable / disable / change default gas token / status; a `send` / `contract-call` returns `gasStationUsed` or a Gas Station Confirming; Gas Station FAQ / "check order" | [gas-station](references/gas-station.md) |
 | Swap / trade / buy / sell / convert tokens; quote; best route; calldata-only swap; liquidity sources; ERC-20 approval for a DEX | [swap](references/swap.md) |
@@ -82,6 +83,8 @@ Some state-changing commands return **confirming** (exit code **2**) when the ba
 1. **Display** `message` and ask for confirmation.
 2. **Confirms** → immediately follow `next` (usually: re-run the same command with `--force` appended). For `wallet send`, do not query `wallet balance` between confirmation and the re-run; the server validates balances and gas.
 3. **Declines** → do NOT proceed; tell the user it was cancelled.
+
+Exception: `scene=approval_code_sent` asks for an email code, not for `--force`. Follow [approval-verification](references/approval-verification.md).
 
 Never pass `--force` on the FIRST invocation of a state-changing command. Add `--force` only after all of: (1) you ran the command once without it, (2) the CLI returned a Confirming response (exit code 2, `"confirming": true`), (3) you displayed `message` and the user explicitly confirmed.
 

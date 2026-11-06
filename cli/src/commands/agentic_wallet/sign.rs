@@ -3,6 +3,7 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use serde_json::{json, Value};
 use zeroize::Zeroize;
 
+use crate::commands::agentic_wallet::approval_code::{self, PendingApproval};
 use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_error};
 use crate::commands::agentic_wallet::common::handle_confirming_error;
 use crate::{keyring_store, output, wallet_api::WalletApiClient, wallet_store};
@@ -44,8 +45,9 @@ pub(super) async fn cmd_sign_message(
 
 // ── shared: resolve chain + address ──────────────────────────────────
 
-/// Resolve realChainIndex → (chainIndex string, chainName), then resolve from address.
-async fn resolve_chain_and_address(chain: &str, from: &str) -> Result<(String, String)> {
+/// Resolve realChainIndex → chainIndex string, then resolve the from address.
+/// Returns `(chainIndex, fromAddress, accountId)`.
+async fn resolve_chain_and_address(chain: &str, from: &str) -> Result<(String, String, String)> {
     let chain_entry = super::chain::get_chain_by_real_chain_index(chain)
         .await?
         .ok_or_else(|| anyhow::anyhow!("unsupported chain: {chain}"))?;
@@ -67,7 +69,8 @@ async fn resolve_chain_and_address(chain: &str, from: &str) -> Result<(String, S
 
     let wallets = wallet_store::load_wallets()?
         .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
-    let (_acct_id, addr_info) = super::transfer::resolve_address(&wallets, Some(from), chain_name)?;
+    let (account_id, addr_info) =
+        super::transfer::resolve_address(&wallets, Some(from), chain_name)?;
 
     if cfg!(feature = "debug-log") {
         eprintln!(
@@ -76,7 +79,7 @@ async fn resolve_chain_and_address(chain: &str, from: &str) -> Result<(String, S
         );
     }
 
-    Ok((chain_index, addr_info.address))
+    Ok((chain_index, addr_info.address, account_id))
 }
 
 // ── personalSign ─────────────────────────────────────────────────────
@@ -95,7 +98,7 @@ async fn personal_sign(message: &str, chain: &str, from: &str, force: bool) -> R
         eprintln!("[DEBUG][personal_sign] Step 1: access_token refreshed OK");
     }
 
-    let (chain_index, from_address) = resolve_chain_and_address(chain, from).await?;
+    let (chain_index, from_address, _account_id) = resolve_chain_and_address(chain, from).await?;
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][personal_sign] Step 2: chain_index={}, from_address={}",
@@ -211,18 +214,18 @@ async fn personal_sign(message: &str, chain: &str, from: &str, force: bool) -> R
 
 // ── eip712 ───────────────────────────────────────────────────────────
 
-/// EIP-712 签名核心逻辑，返回 ECDSA 签名 hex。
+/// Build the EIP-712 `sign-msg` request body.
 ///
-/// 流程：gen-msg-hash → Ed25519 签 msgHash → sign-msg → 返回最终签名。
-/// 供 CLI `wallet sign --type eip712` 和 task 双签流程共用。
-pub(crate) async fn eip712_sign_raw(
+/// Flow: gen-msg-hash → Ed25519 session signature over msgHash → body. The
+/// body is kept unchanged so an approval email verification can replay it.
+async fn build_eip712_sign_body(
+    client: &mut WalletApiClient,
+    access_token: &str,
     typed_data: &Value,
     chain_index: &str,
     from_address: &str,
-) -> Result<String> {
-    let access_token = ensure_tokens_refreshed().await?;
-    let mut client = WalletApiClient::new()?;
-
+    skip_warning: bool,
+) -> Result<Value> {
     // Step 1: gen-msg-hash
     let gen_hash_body = json!({
         "chainIndex": chain_index,
@@ -241,7 +244,7 @@ pub(crate) async fn eip712_sign_raw(
     let hash_resp = client
         .post_authed(
             "/priapi/v5/wallet/agentic/pre-transaction/gen-msg-hash",
-            &access_token,
+            access_token,
             &gen_hash_body,
         )
         .await
@@ -268,8 +271,8 @@ pub(crate) async fn eip712_sign_raw(
     let session_signature = crate::crypto::ed25519_sign_hex(msg_hash, &signing_seed_b64)?;
     signing_seed_b64.zeroize();
 
-    // Step 3: sign-msg API
-    let sign_body = json!({
+    // Step 3: sign-msg body
+    let mut sign_body = json!({
         "chainIndex": chain_index,
         "from": from_address,
         "sessionCert": session_cert,
@@ -279,6 +282,34 @@ pub(crate) async fn eip712_sign_raw(
             "sessionSignature": session_signature,
         }]
     });
+    if skip_warning {
+        sign_body["skipWarning"] = json!(true);
+    }
+    Ok(sign_body)
+}
+
+/// EIP-712 签名核心逻辑，返回 ECDSA 签名 hex。
+///
+/// 流程：gen-msg-hash → Ed25519 签 msgHash → sign-msg → 返回最终签名。
+/// 供 task 双签流程等内部调用方使用。内部路径不支持授权邮箱验证：
+/// 后端返回 40030 时明确报错并停止。
+pub(crate) async fn eip712_sign_raw(
+    typed_data: &Value,
+    chain_index: &str,
+    from_address: &str,
+) -> Result<String> {
+    let access_token = ensure_tokens_refreshed().await?;
+    let mut client = WalletApiClient::new()?;
+
+    let sign_body = build_eip712_sign_body(
+        &mut client,
+        &access_token,
+        typed_data,
+        chain_index,
+        from_address,
+        false,
+    )
+    .await?;
     if cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][eip712_sign] sign-msg body={}",
@@ -293,6 +324,7 @@ pub(crate) async fn eip712_sign_raw(
             &sign_body,
         )
         .await
+        .map_err(approval_code::reject_unsupported)
         .context("sign-msg failed")?;
 
     let signature = data[0]["signature"]
@@ -303,6 +335,10 @@ pub(crate) async fn eip712_sign_raw(
     Ok(signature)
 }
 
+/// onchainos wallet sign-message --type eip712
+///
+/// `force` adds `skipWarning` for backend risk warnings only. It never skips
+/// the approval email verification: a `40030` always enters that flow.
 async fn eip712_sign(message: &str, chain: &str, from: &str, force: bool) -> Result<()> {
     let chain: &str = &crate::chains::resolve_chain(chain);
     if chain == "501" {
@@ -312,76 +348,45 @@ async fn eip712_sign(message: &str, chain: &str, from: &str, force: bool) -> Res
     let parsed_message: Value =
         serde_json::from_str(message).context("--message must be valid JSON for eip712")?;
 
-    let (chain_index, from_address) = resolve_chain_and_address(chain, from).await?;
+    let (chain_index, from_address, account_id) = resolve_chain_and_address(chain, from).await?;
 
-    if force {
-        // force 模式：走独立的 sign-msg 调用以支持 skipWarning
-        let access_token = ensure_tokens_refreshed().await?;
-        let mut client = WalletApiClient::new()?;
+    let access_token = ensure_tokens_refreshed().await?;
+    let mut client = WalletApiClient::new()?;
+    let sign_body = build_eip712_sign_body(
+        &mut client,
+        &access_token,
+        &parsed_message,
+        &chain_index,
+        &from_address,
+        force,
+    )
+    .await?;
 
-        let gen_hash_body = json!({
-            "chainIndex": chain_index,
-            "payload": [{
-                "msgType": "eip712",
-                "message": parsed_message,
-            }]
-        });
-        let hash_resp = client
-            .post_authed(
-                "/priapi/v5/wallet/agentic/pre-transaction/gen-msg-hash",
-                &access_token,
-                &gen_hash_body,
-            )
-            .await
-            .map_err(format_api_error)
-            .context("gen-msg-hash failed")?;
+    let data = match client
+        .post_authed(
+            "/priapi/v5/wallet/agentic/pre-transaction/sign-msg",
+            &access_token,
+            &sign_body,
+        )
+        .await
+    {
+        Ok(data) => data,
+        Err(e) if approval_code::is_verification_required(&e) => {
+            let pending = PendingApproval::sign_message(
+                &account_id,
+                &from_address,
+                &chain_index,
+                parsed_message,
+                sign_body,
+            );
+            return Err(approval_code::start(&mut client, &access_token, pending).await);
+        }
+        // 81362 (backend risk warning) without --force becomes a confirming
+        // result, like personal sign.
+        Err(e) => return Err(handle_confirming_error(e, force)),
+    };
 
-        let msg_hash = hash_resp[0]["msgHash"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("missing msgHash in gen-msg-hash response"))?;
-
-        let session = wallet_store::load_session()?
-            .ok_or_else(|| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
-        let session_cert = &session.session_cert;
-        let encrypted_session_sk = &session.encrypted_session_sk;
-        let session_key = keyring_store::get("session_key")
-            .map_err(|_| anyhow::anyhow!(super::common::ERR_NOT_LOGGED_IN))?;
-
-        let mut signing_seed =
-            crate::crypto::hpke_decrypt_session_sk(encrypted_session_sk, &session_key)?;
-        let mut signing_seed_b64 = B64.encode(signing_seed.as_slice());
-        signing_seed.zeroize();
-
-        let session_signature = crate::crypto::ed25519_sign_hex(msg_hash, &signing_seed_b64)?;
-        signing_seed_b64.zeroize();
-
-        let mut sign_body = json!({
-            "chainIndex": chain_index,
-            "from": from_address,
-            "sessionCert": session_cert,
-            "payload": [{
-                "signType": "eip712",
-                "message": parsed_message,
-                "sessionSignature": session_signature,
-            }]
-        });
-        sign_body["skipWarning"] = json!(true);
-
-        let data = client
-            .post_authed(
-                "/priapi/v5/wallet/agentic/pre-transaction/sign-msg",
-                &access_token,
-                &sign_body,
-            )
-            .await
-            .map_err(|e| handle_confirming_error(e, force))?;
-
-        return output_sign_result(&data, chain, &from_address);
-    }
-
-    let signature = eip712_sign_raw(&parsed_message, &chain_index, &from_address).await?;
-    output::success(json!({ "signature": signature }));
-    Ok(())
+    output_sign_result(&data, chain, &from_address)
 }
 
 // ── EIP-7702 signing ────────────────────────────────────────────────
@@ -422,15 +427,22 @@ fn encode_message_value(message: &str, chain: &str) -> String {
     }
 }
 
-fn output_sign_result(data: &Value, chain: &str, from_address: &str) -> Result<()> {
+/// Extract `data[0].signature` from a sign-msg response.
+pub(super) fn extract_signature(data: &Value) -> Result<String> {
     let item = data
         .as_array()
         .and_then(|arr| arr.first())
         .ok_or_else(|| anyhow::anyhow!("sign-msg: empty response data"))?;
 
-    let signature = item["signature"]
+    item["signature"]
         .as_str()
-        .ok_or_else(|| anyhow::anyhow!("missing signature in sign-msg response"))?;
+        .map(str::to_string)
+        .ok_or_else(|| anyhow::anyhow!("missing signature in sign-msg response"))
+}
+
+fn output_sign_result(data: &Value, chain: &str, from_address: &str) -> Result<()> {
+    let signature = extract_signature(data)?;
+    let signature = signature.as_str();
 
     if chain == "501" {
         // Solana: convert hex signature to base58, include publicKey

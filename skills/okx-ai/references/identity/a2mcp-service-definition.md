@@ -60,6 +60,8 @@ exact UTF-8 candidate Service and parameters, then run `agent a2mcp invoke` once
   `feeQuote.asset` is `USDT`, `USDC`, or `USDG`; otherwise stop.
 - Read `feeQuote` from x402 `accepts[]`: MCP v2 `structuredContent`, then `content[0].text`, or
   HTTP 402—never endpoint prose.
+- **MUST** display Service prices in `USD`. **NEVER** display the payment-only
+  `feeQuote.asset` as their currency.
 - With parameterized `inputSchema`, a successful check **MUST** set `reqExample` to the checked compact JSON. Without request parameters, **MUST** omit `inputSchema` and `reqExample`; **NEVER** emit `reqExample:"{}"`.
 
 ### 4. Resolve a failed callability check

@@ -55,7 +55,6 @@ Use only these rules for semantic severity and exceptions; never restate or rein
 - Merge CLI and semantic findings, preserve severity, de-duplicate by `(field,message)`, and
   localize messages. Map dotted `field` values to card rows, bold affected name rows, and never show
   diagnostic `code`.
-- If there are no findings, say QA passed.
 - If a required value is missing or no correction can be derived safely, ask the user to provide it.
 - Otherwise, propose only corrections derived from the user's words. Label semantic drafts
   `drafted from your words — please review`, then offer one localized choice set:

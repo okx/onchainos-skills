@@ -29,6 +29,7 @@ macro_rules! debug_log {
 }
 
 mod args;
+mod broadcast;
 mod mcp_tool_list;
 mod models;
 mod mutations;

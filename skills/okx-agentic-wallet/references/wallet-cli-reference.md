@@ -28,7 +28,13 @@ onchainos wallet login [--phase init|open|poll] [--url <url>] [--session-id <id>
   same URL when `opened=false`.
 - `--phase open` → launches `--url` and returns `opened:true|false`. Polling is
   performed by `--phase poll`.
-- `--phase poll` → polls the login result every 2 seconds, then persists the authenticated session, sends one best-effort device-registration heartbeat (`chainIndex=196`), and returns `accountId`, `accountName`, `loginType`, `isNew`, addresses, `totalValueUsd` (true `isNew` → new user; trigger the Policy Settings template — see [portal-actions.md](wallet-portal-actions.md)). Only when a non-empty User `agenticId` is resolved may it query subscriptions/devices and return the best-effort `postLoginSubscriptions: { subscriptions, devices }` snapshot. The field is omitted when `agenticId` is unavailable or the lookup is empty/error/timeout, and `devices` is null when only the device lookup fails. A heartbeat failure never turns a successful login into a failed login.
+- `--phase poll` → polls the login result every 2 seconds, then persists the authenticated session, sends one best-effort device-registration heartbeat (`chainIndex=196`), and returns `accountId`, `accountName`, `loginType`, `isNew`, addresses, `totalValueUsd` (true `isNew` → new user; trigger the Policy Settings template — see [portal-actions.md](wallet-portal-actions.md)). Only when a non-empty User `agenticId` is resolved may it query subscriptions/devices and return the best-effort `postLoginSubscriptions: { subscriptions, devices }` snapshot. The field is omitted when `agenticId` is unavailable or the lookup is empty/error/timeout, and `devices` is null when only the device lookup fails. A heartbeat failure never turns a successful login into a failed login. It also returns `securityPolicy` (see below).
+- `securityPolicy` → the effective security policy, read-only (the CLI never writes defaults):
+  - `status`: `available` or `unavailable`. `unavailable` means the policy query failed or returned data the CLI cannot recognize (for example a record without the boolean flags); no other field is present. A failed query never fails the login.
+  - `singleTxLimit`, `dailyTransferTxLimit`, `dailyTradeTxLimit`: the limit in USD, or `null` when it is not configured.
+  - `dailyTransferTxUsed`, `dailyTradeTxUsed`: amount used today, or `null`.
+  - `doubleConfirmation`: `true` or `false`. It is `null` only when the account has no policy record yet.
+  - `whitelist`: `{ enabled, addressCount }`, or `null` when the whitelist query failed.
 - `status` → returns wallet/account/policy state only. It never queries or returns subscriptions/devices; the hidden legacy `--include-subscriptions` flag remains an accepted no-op for compatibility.
 
 ### `wallet add`
@@ -316,3 +322,46 @@ onchainos wallet sign-message --chain <chain> --from <address> --message <messag
 | `--force` | No | Re-run after a confirmed Confirming response. |
 
 Returns `signature` (hex on EVM; base58 on Solana, plus `publicKey`).
+
+For `--type eip712`, a Permit / Permit2 approval can return `confirming` with `scene=approval_code_sent`. `wallet contract-call` does the same for `approve` and `increaseAllowance`. Handling: [approval-verification.md](approval-verification.md).
+
+---
+
+### `wallet approval-code`
+
+Finish a token approval that the backend paused for email verification (`scene=approval_code_sent`). The CLI keeps one paused request for up to 30 minutes.
+
+- It is bound to the account that owns the signing address and to the current login session. Switching the active account does not cancel it.
+- It stops being usable after a new login, a logout, `cancel`, expiry, or a new paused approval, or when that address no longer belongs to that account.
+
+#### Syntax
+
+```bash
+onchainos wallet approval-code verify --verification-code <code>
+onchainos wallet approval-code resend
+onchainos wallet approval-code cancel
+```
+
+#### Parameters
+
+| Param | Required | Description |
+|---|---|---|
+| `--verification-code` | For `verify` | The 6-digit code from the bound email. It is redacted in the audit log. |
+
+#### Return Fields
+
+| Subcommand | Result |
+|---|---|
+| `verify` | Checks the code. Only on success, replays the original request once, unchanged. Broadcast: `{ operation: "broadcast", txHash, orderId }`. Signature: `{ operation: "signMessage", signature }`; nothing is broadcast. |
+| `resend` | `confirming` with `scene=approval_code_sent` when a new code was sent. |
+| `cancel` | `{ cancelled }`: `true` when a paused approval was dropped. Nothing is executed. |
+
+#### Error Handling
+
+Approval verification errors carry an `errorCode` that starts with `approval_`. Each error's `message` says whether the paused approval is kept and what to do next; `nextSteps` lists the allowed commands. Handling: [approval-verification.md](approval-verification.md).
+
+| Field | Meaning |
+|---|---|
+| `errorCode` | Machine-readable reason. |
+| `data.backendCode`, `data.backendMessage` | Backend reason, when the backend returned one. |
+| `data.reason` | Transport failure (for example HTTP 404 or a network error) when a code request fails without a backend code. |

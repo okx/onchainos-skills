@@ -354,10 +354,10 @@ fn build_agent_card_asp_full_ordered_with_services_and_rating() {
             ("Profile photo", "https://cdn.example.com/a.png"),
             (
                 "Service 1",
-                "TVL Query — API service, 10 USDT, https://api.example.com/mcp"
+                "TVL Query — API service, 10 USD, https://api.example.com/mcp"
             ),
             ("Service 2", "Yield Check — agent-to-agent, free"),
-            ("Service 3", "Whale Alert — agent-to-agent, 5 USDT"),
+            ("Service 3", "Whale Alert — agent-to-agent, 5 USD"),
             ("Rating", "★ 4.6 (18 reviews)"),
         ]
     );
@@ -789,7 +789,7 @@ fn build_service_cells_a2mcp_pascalcase() {
             ("#".to_string(), "1".to_string()),
             ("Name".to_string(), "TVL Query".to_string()),
             ("Type".to_string(), "A2MCP".to_string()),
-            ("Fee".to_string(), "10 USDT".to_string()),
+            ("Fee".to_string(), "10 USD".to_string()),
             ("Subscription".to_string(), "—".to_string()),
             ("Free trial".to_string(), "—".to_string()),
             (
@@ -840,7 +840,7 @@ fn build_service_cells_a2a_single_fee() {
     let cells = build_service_cells(3, &svc).expect("cells");
     let pairs = cell_pairs(&Value::Array(cells));
     // Single-priced A2A: Fee shows the number, Subscription is `—`.
-    assert_eq!(pairs[3], ("Fee".to_string(), "5 USDT".to_string()));
+    assert_eq!(pairs[3], ("Fee".to_string(), "5 USD".to_string()));
     assert_eq!(pairs[4], ("Subscription".to_string(), "—".to_string()));
     // A single-fee A2A never has a free trial.
     assert_eq!(pairs[5], ("Free trial".to_string(), "—".to_string()));
@@ -851,7 +851,7 @@ fn build_service_cells_a2a_single_fee() {
 #[test]
 fn build_service_cells_a2a_subscription() {
     // Subscription-priced A2A: empty single fee + a monthly tier. Fee → `—`,
-    // Subscription → `<n> USDT / month`. Never "negotiable".
+    // Subscription → `<n> USD / month`. Never "negotiable".
     let svc = json!({
         "ServiceName": "Loop Helper",
         "ServiceType": "A2A",
@@ -864,7 +864,7 @@ fn build_service_cells_a2a_subscription() {
     assert_eq!(pairs[3], ("Fee".to_string(), "—".to_string()));
     assert_eq!(
         pairs[4],
-        ("Subscription".to_string(), "10 USDT / month".to_string())
+        ("Subscription".to_string(), "10 USD / month".to_string())
     );
     // No freeTrial in this fixture → `—`.
     assert_eq!(pairs[5], ("Free trial".to_string(), "—".to_string()));
@@ -903,7 +903,7 @@ fn build_service_cells_a2a_subscription_with_free_trial() {
     let pairs = cell_pairs(&Value::Array(cells));
     assert_eq!(
         pairs[4],
-        ("Subscription".to_string(), "10 USDT / month".to_string())
+        ("Subscription".to_string(), "10 USD / month".to_string())
     );
     assert_eq!(pairs[5], ("Free trial".to_string(), "3 days".to_string()));
 }
@@ -952,7 +952,7 @@ fn build_service_cells_orphan_free_trial_without_subscription_renders_dash() {
     });
     let cells = build_service_cells(3, &svc).expect("cells");
     let pairs = cell_pairs(&Value::Array(cells));
-    assert_eq!(pairs[3], ("Fee".to_string(), "5 USDT".to_string()));
+    assert_eq!(pairs[3], ("Fee".to_string(), "5 USD".to_string()));
     assert_eq!(pairs[4], ("Subscription".to_string(), "—".to_string()));
     assert_eq!(pairs[5], ("Free trial".to_string(), "—".to_string()));
 }
@@ -968,7 +968,7 @@ fn format_service_value_orphan_free_trial_without_subscription_omitted() {
         "freeTrial": "72",
     });
     let value = format_service_value(&svc).unwrap();
-    assert_eq!(value, "Whale Alert — agent-to-agent, 5 USDT");
+    assert_eq!(value, "Whale Alert — agent-to-agent, 5 USD");
 }
 
 #[test]
@@ -984,7 +984,7 @@ fn format_service_value_a2a_subscription_with_free_trial() {
     let value = format_service_value(&svc).unwrap();
     assert_eq!(
         value,
-        "Loop Helper — agent-to-agent, 10 USDT / month, 3 days free trial"
+        "Loop Helper — agent-to-agent, 10 USD / month, 3 days free trial"
     );
 }
 
@@ -1080,7 +1080,7 @@ fn build_service_cells_new_fields_missing_render_dash() {
             ("#".to_string(), "1".to_string()),
             ("Name".to_string(), "TVL Query".to_string()),
             ("Type".to_string(), "A2MCP".to_string()),
-            ("Fee".to_string(), "10 USDT".to_string()),
+            ("Fee".to_string(), "10 USD".to_string()),
             ("Subscription".to_string(), "—".to_string()),
             ("Free trial".to_string(), "—".to_string()),
             (
@@ -2518,7 +2518,7 @@ fn format_top_service_a2a_subscription_renders_monthly() {
         "subscription": [{ "interval": "month", "fee": "10" }],
     });
     let result = format_top_service(&svc).unwrap();
-    assert_eq!(result, "Sub (agent-to-agent, 10 USDT / month)");
+    assert_eq!(result, "Sub (agent-to-agent, 10 USD / month)");
 }
 
 #[test]
@@ -2536,14 +2536,14 @@ fn format_top_service_a2a_zero_fee_renders_zero_usdt() {
 }
 
 #[test]
-fn build_service_cells_a2a_zero_fee_renders_zero_usdt() {
+fn build_service_cells_a2a_zero_fee_renders_zero_usd() {
     for fee in &["0", "0.0", "0.00"] {
         let svc = json!({ "ServiceName": "S", "ServiceType": "A2A", "Fee": fee });
         let cells = build_service_cells(1, &svc).expect("cells");
         let pairs = cell_pairs(&Value::Array(cells));
         assert_eq!(
             pairs[3],
-            ("Fee".to_string(), format!("{fee} USDT")),
+            ("Fee".to_string(), format!("{fee} USD")),
             "fee={fee} failed"
         );
     }

@@ -44,9 +44,10 @@ Run `wallet balance`, `wallet send`, `wallet contract-call`, `wallet history`, a
       choose either a new poll with the same id or a new `--phase init` session.
 2. **After login — post-login display (fixed order).** After a successful `poll`, run `wallet status`, then render these blocks in **this exact order**, **omitting any block whose data is absent** — never fabricate a value and never issue an extra CLI call to fill a gap:
    1. **Wallet info** — the Account Info template (below), from the `poll` response.
-   2. **Product intro** — On OKX.AI, you can search for a service to help you, swap tokens, or explore DApps.
-   3. **Policy** — output the Policy Settings template ([portal-actions.md](wallet-portal-actions.md)) **only when `data.isNew == true`**; when `false`, skip it. `isNew == true` means a **first-ever** user — an existing user adding another account keeps `isNew == false` (the value comes from the wallet backend, not from client logic).
-   4. **Subscription** — when `data.postLoginSubscriptions.activeSubscriptionCount` is a positive integer, render:
+   2. **Security policy** — the Security Policy template (below), from `data.securityPolicy` in the `poll` response.
+   3. **Product intro** — On OKX.AI, you can search for a service to help you, swap tokens, or explore DApps.
+   4. **Policy** — output the Policy Settings template ([portal-actions.md](wallet-portal-actions.md)) **only when `data.isNew == true`**; when `false`, skip it. `isNew == true` means a **first-ever** user — an existing user adding another account keeps `isNew == false` (the value comes from the wallet backend, not from client logic).
+   5. **Subscription** — when `data.postLoginSubscriptions.activeSubscriptionCount` is a positive integer, render:
 
    > You have {activeSubscriptionCount} active subscription tasks.
    > Reply `1` to view your subscription list.
@@ -60,6 +61,32 @@ Run `wallet balance`, `wallet send`, `wallet contract-call`, `wallet history`, a
    Behind the scenes the CLI always sends the best-effort device-registration heartbeat before returning. When it resolves a non-empty User `agenticId`, it independently queries subscriptions and includes `activeSubscriptionCount` only when the count is positive. Login does not query or update device routing.
 
 Login creates the first account automatically — never call `wallet add` for it. Use `wallet add` only when already logged in and the user explicitly wants another account (then output the Policy Settings template, see [portal-actions.md](wallet-portal-actions.md)).
+
+### Template: Security Policy (login success)
+
+Render from `data.securityPolicy` of the `poll` response, after the Account Info block. Translate the template to the user's language.
+
+> **Security Policy**
+> - Per-transaction limit: {singleTxLimit}
+> - Daily transfer limit: {dailyTransferTxLimit}
+> - Daily trade limit: {dailyTradeTxLimit}
+> - Approval verification: {doubleConfirmation}
+> - Address whitelist: {whitelist}
+>
+> {policy_settings_line}
+
+`{policy_settings_line}` is this fixed line (translate the text, keep the link):
+
+> To change your security settings, go to [Agentic Wallet Policy settings](https://web3.okx.com/zh-hans/portfolio/agentic-wallet-policy?tab=limit).
+
+Keep the link as Markdown link text; never write the bare URL in the sentence.
+
+Field rules:
+- Show a limit as `${value}`; when it is `null`, show "Not configured".
+- `{doubleConfirmation}`: `true` → "On", `false` → "Off", `null` → "Not configured".
+- `{whitelist}`: `enabled: true` → "On ({addressCount} addresses)"; `enabled: false` → "Not configured"; `whitelist: null` → "Temporarily unavailable".
+- When `status` is `unavailable`, replace the list with one line: "Security policy is temporarily unavailable." Keep `{policy_settings_line}`. The login itself still succeeded.
+- **NEVER**: fill in a default limit, claim a policy is active when its value is `null`, or run another command to fill a gap. The values come from the backend, and a guess could make the user trust protection that does not exist.
 
 ### Template: Account Info (login success)
 

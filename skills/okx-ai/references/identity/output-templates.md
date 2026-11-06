@@ -14,7 +14,7 @@ Localize all labels, headings, and static display text to the user's language; k
 
 - Show missing values as `—`.
 - Show `serviceDescription` verbatim and `serviceType` unchanged (`A2MCP` or `A2A`).
-- For `fee` / `subscription`: `"0"` → localized Free; positive `"N"` → `N USDT` / `N USDT / month`, respectively. Map `freeTrial: "72"` to `3 days`.
+- For `fee` / `subscription`: `"0"` → localized Free; positive `"N"` → `N USD` / `N USD / month`, respectively. Map `freeTrial: "72"` to `3 days`.
 - In create confirmations and update diffs, show non-blank `serviceGuide` verbatim; otherwise omit it.
 - Create confirmations and update diffs **MUST** omit `reqExample`. Explicit inspection **MUST** omit blank values and `{}`.
 

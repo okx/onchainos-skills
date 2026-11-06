@@ -66,7 +66,7 @@ pub struct CreateArgs {
     ///                          characters count as 2, Latin/half-width as 1).
     ///   • serviceType        — `A2A` (agent-to-agent) or `A2MCP` (API service).
     ///   • fee                — single-purchase price. A plain number as a JSON
-    ///                          string ("10"), USDT implied. A2A allows ≤2
+    ///                          string ("10"), USD implied. A2A allows ≤2
     ///                          decimals; A2MCP allows ≤6 decimals. An
     ///                          EMPTY string ("") means "no single price"
     ///                          (subscription-priced A2A) and is forwarded
@@ -172,7 +172,7 @@ pub struct UpdateArgs {
     /// East-Asian display width, with
     /// CJK/full-width characters counting as 2 and Latin/half-width as 1),
     /// `serviceType` (`A2A` | `A2MCP`),
-    /// `fee` (single-purchase price — plain number, USDT implied; ≤2 decimals
+    /// `fee` (single-purchase price — plain number, USD implied; ≤2 decimals
     /// for A2A and ≤6 decimals for A2MCP),
     /// `subscription` (A2A only — array of `{interval, fee}`, `interval`
     /// limited to `"month"`, with a plain-number `fee` of ≤2 decimals),

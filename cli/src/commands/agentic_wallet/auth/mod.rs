@@ -707,6 +707,8 @@ async fn complete_login(
     let login_type = resp.login_info.login_type.clone();
 
     save_verify_result(client, &resp, session_private_key, &email).await?;
+    // A new session invalidates any approval paused for email verification.
+    super::approval_code::clear_pending();
 
     let post_login_deadline =
         tokio::time::Instant::now() + Duration::from_secs(POST_LOGIN_SETUP_TIMEOUT_SECS);
@@ -745,6 +747,12 @@ async fn complete_login(
         obj.insert("loginType".to_string(), json!(login_type));
         obj.insert("email".to_string(), json!(email));
         obj.insert("isNew".to_string(), json!(resp.is_new));
+        // Effective security policy, shown after account info and addresses.
+        // A failed query yields `status: unavailable` and never fails the login.
+        obj.insert(
+            "securityPolicy".to_string(),
+            super::account::fetch_security_policy(&resp.access_token, &resp.account_id).await,
+        );
     }
 
     // Program-level post-condition: empty/error stays absent (zero-disturb); a

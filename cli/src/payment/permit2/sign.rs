@@ -250,6 +250,8 @@ pub(crate) async fn tee_sign_eip712(
             &sign_body,
         )
         .await
+        // x402 has no approval email-verification flow: stop explicitly on 40030.
+        .map_err(crate::commands::agentic_wallet::approval_code::reject_unsupported)
         .map_err(format_api_error)
         .context("permit2 sign-msg failed")?;
     sign_resp[0]["signature"]

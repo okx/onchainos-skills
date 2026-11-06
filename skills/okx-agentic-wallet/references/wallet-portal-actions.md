@@ -31,6 +31,7 @@ Policy **only** includes the following rules. Do NOT invent or mention any rules
 | Daily transfer limit | Max USD amount for transfers per day (resets at UTC 0:00) | `dailyTransferTxLimit` / `dailyTransferTxFlag` / `dailyTransferTxUsed` |
 | Daily trade limit | Max USD amount for trades (swaps) per day (resets at UTC 0:00) | `dailyTradeTxLimit` / `dailyTradeTxFlag` / `dailyTradeTxUsed` |
 | Transfer whitelist | Only allow transfers to pre-approved addresses | Configured on Web portal only |
+| Approval verification | On/off switch for email-code confirmation of token approvals. Email accounts only. | `doubleConfirmation` |
 
 ## Flow
 

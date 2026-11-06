@@ -1,16 +1,10 @@
-//! Signing helpers for identity mutations and the thin broadcast wrapper
-//! that delegates to `agentic_wallet::broadcast::broadcast_unsigned`. The
-//! only identity-specific behaviour at broadcast time is the optional
-//! `erc8004Msg` overlay; everything else (msgForSign / extraData / 81362
-//! handling) is shared with wallet transfer.
+//! Signing helpers for identity mutations.
 
 use anyhow::{anyhow, bail, Result};
 use base64::Engine;
 use serde_json::{json, Map, Value};
 
-use crate::commands::agentic_wallet::broadcast::{broadcast_unsigned, BroadcastCtx};
 use crate::keyring_store;
-use crate::wallet_api::UnsignedInfoResponse;
 use crate::wallet_store::{self, AddressInfo, WalletsJson};
 
 use super::models::{XLAYER_CHAIN_INDEX, XLAYER_CHAIN_NAME};
@@ -149,28 +143,4 @@ pub(super) fn build_erc8004_overlay(fields: &[(&str, &str)]) -> Option<Map<Strin
     let mut overlay = Map::new();
     overlay.insert("erc8004Msg".into(), Value::Object(inner));
     Some(overlay)
-}
-
-// ─── Broadcast ────────────────────────────────────────────────────────────
-
-pub(super) async fn sign_and_broadcast_agent_transaction(
-    access_token: &str,
-    unsigned: &UnsignedInfoResponse,
-    extra_data_overlay: Option<Map<String, Value>>,
-    session: &AgentSigningSession,
-) -> Result<String> {
-    broadcast_unsigned(BroadcastCtx {
-        access_token,
-        account_id: &session.account_id,
-        addr_info: &session.addr_info,
-        session_cert: &session.session_cert,
-        signing_seed: &session.signing_seed,
-        unsigned,
-        is_contract_call: true,
-        mev_protection: false,
-        force: false,
-        extra_data_overlay,
-        trace_headers: None,
-    })
-    .await
 }

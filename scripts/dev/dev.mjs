@@ -17,6 +17,31 @@ const codexConfig = path.join(codexDir, "config.toml");
 const codexProfileMarker = path.join(codexDir, "profile-name");
 const sourceSkillsDir = path.join(repoRoot, "skills");
 const generatedSkillPrefix = "# onchainos-dev generated skill conflict";
+const temporaryDirectoryProbe = `
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+const effectiveDirectory = os.tmpdir();
+let probeError = null;
+try {
+  if (!fs.statSync(effectiveDirectory).isDirectory()) {
+    probeError = "ENOTDIR";
+  } else {
+    fs.accessSync(effectiveDirectory, fs.constants.W_OK);
+    const probeDirectory = fs.mkdtempSync(path.join(effectiveDirectory, "onchainos-tmp-check-"));
+    fs.rmSync(probeDirectory, { recursive: true, force: true });
+  }
+} catch (error) {
+  probeError = error.code || "UNKNOWN";
+}
+
+console.log(JSON.stringify({
+  isSet: Object.hasOwn(process.env, "TMPDIR"),
+  effectiveDirectory,
+  probeError,
+}));
+`;
 
 function fail(message, code = 1) {
   console.error(`error: ${message}`);
@@ -81,6 +106,70 @@ function sameFile(a, b) {
   try { return fs.realpathSync(a) === fs.realpathSync(b); } catch { return false; }
 }
 
+function inspectTemporaryDirectory(directory) {
+  try {
+    if (!fs.statSync(directory).isDirectory()) return { canonicalDirectory: null, probeError: "ENOTDIR" };
+    fs.accessSync(directory, fs.constants.W_OK);
+    const probeDirectory = fs.mkdtempSync(path.join(directory, "onchainos-tmp-check-"));
+    try {
+      return { canonicalDirectory: fs.realpathSync(directory), probeError: null };
+    } finally {
+      fs.rmSync(probeDirectory, { recursive: true, force: true });
+    }
+  } catch (error) {
+    return { canonicalDirectory: null, probeError: error.code || "UNKNOWN" };
+  }
+}
+
+function temporaryDirectoryError(code, context) {
+  if (code === "ENOENT") return `${context} temporary directory does not exist`;
+  if (code === "ENOTDIR") return `${context} temporary path is not a directory`;
+  if (code === "EACCES" || code === "EPERM") return `${context} temporary directory is not writable`;
+  return `${context} temporary directory could not be checked (${code})`;
+}
+
+function checkDevelopmentTemporaryDirectory(configText) {
+  const expectedDirectory = path.join(codexDir, "runtime", "tmp");
+  const errors = [];
+  const configured = section(configText, "shell_environment_policy.set").match(/^TMPDIR\s*=\s*("(?:[^"\\]|\\.)*")\s*(?:#.*)?$/m);
+  let profileDirectory;
+  try { profileDirectory = configured && JSON.parse(configured[1]); } catch {}
+  if (profileDirectory !== expectedDirectory) {
+    errors.push("development profile TMPDIR does not match .codex/runtime/tmp; rerun npm run setup");
+  }
+  const expected = inspectTemporaryDirectory(expectedDirectory);
+  if (expected.probeError) errors.push(temporaryDirectoryError(expected.probeError, "project"));
+  else if ((fs.statSync(expectedDirectory).mode & 0o777) !== 0o700) errors.push("project temporary directory must have mode 0700");
+
+  // Source the actual wrappers but intercept exec before running their consumers.
+  // This checks runtime propagation without starting a daemon or a paid operation.
+  for (const name of ["onchainos", "okx-a2a"]) {
+    const wrapper = path.join(binDir, name);
+    if (!sameFile(wrapper, path.join(scriptDir, `${name}.sh`))) {
+      errors.push(`${name} wrapper does not point to this project's development script`);
+      continue;
+    }
+    const result = spawnSync("bash", ["-c",
+      'exec() { node --input-type=module -e "$probe"; exit $?; }; probe="$2"; source "$1"',
+      "onchainos-doctor-temporary-directory", wrapper, temporaryDirectoryProbe,
+    ], { cwd: repoRoot, encoding: "utf8", env: { PATH: process.env.PATH || "/usr/bin:/bin" } });
+    let probe;
+    try { probe = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1)); } catch {}
+    if (result.error || result.status !== 0 || typeof probe?.effectiveDirectory !== "string") {
+      errors.push(`${name} wrapper temporary directory could not be checked`);
+      continue;
+    }
+    if (probe.probeError) errors.push(temporaryDirectoryError(probe.probeError, name));
+    if (!probe.isSet || probe.effectiveDirectory !== expectedDirectory) {
+      errors.push(`TMPDIR resolves differently between development profile and ${name} wrapper`);
+    }
+  }
+  if (errors.length) return errors.join("; ");
+  console.log("OK: development profile and CLI/A2A wrappers use the same project TMPDIR (0700); Node probe passed.");
+  console.log("Note: this Node probe does not guarantee Rust secure staging or the complete A2A flow. Restart old Codex sessions and daemon; use the project development profile.");
+  return null;
+}
+
 function refreshSkills() {
   ensureDir(projectSkillsDir);
   const globals = globalSkillsByName();
@@ -131,7 +220,9 @@ function stripGeneratedConflictBlocks(text) {
   const output = [];
   for (let i = 0; i < lines.length; i += 1) {
     if (lines[i] !== generatedSkillPrefix) { output.push(lines[i]); continue; }
-    i += 3;
+    if (lines[i + 1] === "[[skills.config]]" && /^path\s*=/.test(lines[i + 2] || "")
+      && /^enabled\s*=\s*false\s*$/.test(lines[i + 3] || "")) i += 3;
+    // Never discard unrelated settings that may follow an old marker.
   }
   return output.join("\n").replace(/\n{3,}/g, "\n\n");
 }
@@ -283,7 +374,7 @@ function dedupePath(entries) {
 }
 
 function updateCodexPath() {
-  let text = fs.existsSync(codexConfig) ? fs.readFileSync(codexConfig, "utf8") : "";
+  let text = stripGeneratedConflictBlocks(fs.existsSync(codexConfig) ? fs.readFileSync(codexConfig, "utf8") : "");
   const currentPath = dedupePath((process.env.PATH || "").split(path.delimiter)
     .filter((entry) => path.resolve(entry) !== path.join(repoRoot, "cli", "target", "debug"))
     .filter((entry) => path.resolve(entry) !== binDir));
@@ -303,6 +394,12 @@ function updateCodexPath() {
     text = replaceInSection(text, "shell_environment_policy.set", /^PATH\s*=.*$/m, `PATH = "${configuredPath}"`);
   } else {
     text = insertInSection(text, "shell_environment_policy.set", `PATH = "${configuredPath}"`);
+  }
+  const temporaryDirectory = JSON.stringify(path.join(codexDir, "runtime", "tmp"));
+  if (/^TMPDIR\s*=/m.test(section(text, "shell_environment_policy.set"))) {
+    text = replaceInSection(text, "shell_environment_policy.set", /^TMPDIR\s*=.*$/m, `TMPDIR = ${temporaryDirectory}`);
+  } else {
+    text = insertInSection(text, "shell_environment_policy.set", `TMPDIR = ${temporaryDirectory}`);
   }
   fs.writeFileSync(codexConfig, `${text.trim()}\n`, { mode: 0o600 });
   chmodPrivate(codexConfig);
@@ -362,19 +459,30 @@ function removeCodexProfile() {
   return true;
 }
 
+function sectionRange(text, name) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const header = new RegExp(`^\\[${escaped}\\][ \t]*(?:\\r?\\n|(?![\\s\\S]))`, "m").exec(text);
+  if (!header) throw new Error(`missing configuration section: ${name}`);
+  const start = header.index + header[0].length;
+  const nextHeader = /^[ \t]*\[/m.exec(text.slice(start));
+  return { start, end: nextHeader ? start + nextHeader.index : text.length };
+}
+
 function section(text, name) {
-  const match = text.match(new RegExp(`^\\[${name.replaceAll(".", "\\.")}\\]\\n([\\s\\S]*?)(?=^\\[|$)`, "m"));
-  return match?.[1] || "";
+  try {
+    const { start, end } = sectionRange(text, name);
+    return text.slice(start, end);
+  } catch { return ""; }
 }
 
 function replaceInSection(text, name, pattern, replacement) {
-  const body = section(text, name);
-  return text.replace(body, body.replace(pattern, replacement));
+  const { start, end } = sectionRange(text, name);
+  return text.slice(0, start) + text.slice(start, end).replace(pattern, replacement) + text.slice(end);
 }
 
 function insertInSection(text, name, line) {
-  const body = section(text, name);
-  return text.replace(body, `${body.trimEnd()}\n${line}\n`);
+  const { start, end } = sectionRange(text, name);
+  return text.slice(0, start) + `${text.slice(start, end).trimEnd()}\n${line}\n` + text.slice(end);
 }
 
 function init() {
@@ -400,6 +508,8 @@ function init() {
   console.log(`  Profile: ${profile.profileFile} -> ${codexConfig}`);
   console.log(`  Skills: linked=${skills.linked.length} global-conflicts-disabled=${skills.conflicts.length}`);
   if (removedLegacyLink) console.log("Replaced the old worktree-specific Linux CLI link with the dispatcher.");
+  console.log("Restart old Codex sessions and the A2A daemon (npm run build); use the project development profile shown above. Other profiles do not receive this TMPDIR.");
+  console.log("Raw delivery envelopes must be created with mode 0600 in the project TMPDIR; the development shell uses umask 077.");
   console.log("Source scripts/dev/codex-shell.sh once in your interactive shell to make bare `codex` add these options from this worktree.");
 }
 
@@ -434,6 +544,9 @@ function doctor() {
     const local = path.join(projectSkillsDir, skill.name);
     if (!sameFile(local, skill.dir)) errors.push(`skill '${skill.name}' is not linked from the current project`);
   }
+
+  const temporaryDirectoryCheckError = checkDevelopmentTemporaryDirectory(configText);
+  if (temporaryDirectoryCheckError) errors.push(temporaryDirectoryCheckError);
 
   console.log(`CLI state:   ${path.join(codexDir, "runtime", "onchainos")}`);
   console.log(`A2A state:   ${path.join(codexDir, "runtime", "a2a")}`);

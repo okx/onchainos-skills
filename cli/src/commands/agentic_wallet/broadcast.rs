@@ -27,6 +27,7 @@ use crate::wallet_store::AddressInfo;
 use super::common::handle_confirming_error;
 
 pub(crate) struct BroadcastCtx<'a> {
+    pub broadcast_endpoint: Option<&'a str>,
     pub access_token: &'a str,
     pub account_id: &'a str,
     pub addr_info: &'a AddressInfo,
@@ -42,6 +43,7 @@ pub(crate) struct BroadcastCtx<'a> {
 
 pub(crate) async fn broadcast_unsigned(ctx: BroadcastCtx<'_>) -> Result<String> {
     let BroadcastCtx {
+        broadcast_endpoint,
         access_token,
         account_id,
         addr_info,
@@ -133,7 +135,7 @@ pub(crate) async fn broadcast_unsigned(ctx: BroadcastCtx<'_>) -> Result<String> 
         }
     }
 
-    if cfg!(feature = "debug-log") {
+    if broadcast_endpoint.is_none() && cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][broadcast_unsigned] extraData={}",
             serde_json::to_string_pretty(&extra_data_obj).unwrap_or_default()
@@ -151,11 +153,12 @@ pub(crate) async fn broadcast_unsigned(ctx: BroadcastCtx<'_>) -> Result<String> 
             &addr_info.chain_index,
             &extra_data_str,
             trace_headers,
+            broadcast_endpoint,
         )
         .await
         .map_err(|e| handle_confirming_error(e, force))?;
 
-    if cfg!(feature = "debug-log") {
+    if broadcast_endpoint.is_none() && cfg!(feature = "debug-log") {
         eprintln!(
             "[DEBUG][broadcast_unsigned] === END SUCCESS: txHash={}",
             broadcast_resp.tx_hash

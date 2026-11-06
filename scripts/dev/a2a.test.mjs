@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +8,7 @@ import { assertLocalA2a, installLocalA2a, prepareLocalA2a } from './a2a.mjs';
 
 const source = path.dirname(fileURLToPath(import.meta.url));
 function fixture(t, { ready = true, exit = 0, restartExit = 0, invalid = false, warming = false, stuck = false } = {}) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'a2a-dev-test-')));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(process.cwd(), '.tmp-a2a-dev-test-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const cli = path.join(root, '.codex/a2a/node_modules/@okxweb3/a2a-node/dist/cli.js');
   const bin = path.join(root, '.codex/bin');
@@ -24,7 +23,7 @@ const fs = require('node:fs');
 fs.appendFileSync(${JSON.stringify(path.join(root, 'calls.jsonl'))}, JSON.stringify({
   args: process.argv.slice(2), cli: process.env.OKX_AGENT_TASK_CLI_PATH,
   home: process.env.OKX_AGENT_TASK_HOME, wallet: process.env.ONCHAINOS_HOME,
-  path: process.env.PATH
+  path: process.env.PATH, tmp: process.env.TMPDIR, umask: process.umask()
 }) + '\\n');
 if (process.argv[2] === 'daemon') process.exit(${restartExit});
 const reportText = ${JSON.stringify(invalid ? 'broken JSON' : JSON.stringify({ ready, cliVersion: 'test', checks: [{ id: 'daemon_running', status: 'pass' }] }))};
@@ -85,7 +84,10 @@ test('restarts with project paths and checks readiness without global repair', t
     assert.equal(call.home, path.join(f.root, '.codex/runtime/a2a'));
     assert.equal(call.wallet, path.join(f.root, '.codex/runtime/onchainos'));
     assert.equal(call.path.split(path.delimiter)[0], path.join(f.root, '.codex/bin'));
+    assert.equal(call.tmp, path.join(f.root, '.codex/runtime/tmp'));
+    assert.equal(call.umask, 0o77);
   }
+  assert.equal(fs.statSync(path.join(f.root, '.codex/runtime/tmp')).mode & 0o777, 0o700);
 });
 
 for (const options of [{ ready: false }, { exit: 1 }, { invalid: true }, { restartExit: 1 }]) {

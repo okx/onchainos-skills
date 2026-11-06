@@ -1,4 +1,5 @@
 pub mod account;
+pub(crate) mod approval_code;
 pub mod auth;
 pub mod balance;
 pub mod broadcast;
@@ -304,6 +305,25 @@ pub enum WalletCommand {
         #[command(subcommand)]
         command: GasStationCommand,
     },
+    /// Finish a token approval paused for email verification (scene `approval_code_sent`)
+    ApprovalCode {
+        #[command(subcommand)]
+        command: ApprovalCodeCommand,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ApprovalCodeCommand {
+    /// Check the email code, then replay the paused approval once, unchanged
+    Verify {
+        /// 6-digit code from the bound email
+        #[arg(long)]
+        verification_code: String,
+    },
+    /// Send a new code for the same paused approval
+    Resend,
+    /// Drop the paused approval without executing it
+    Cancel,
 }
 
 #[derive(Subcommand)]
@@ -1003,5 +1023,12 @@ pub async fn execute(command: WalletCommand) -> Result<()> {
             .await
         }
         WalletCommand::GasStation { command } => gas_station::execute(command).await,
+        WalletCommand::ApprovalCode { command } => match command {
+            ApprovalCodeCommand::Verify { verification_code } => {
+                approval_code::cmd_verify(&verification_code).await
+            }
+            ApprovalCodeCommand::Resend => approval_code::cmd_resend().await,
+            ApprovalCodeCommand::Cancel => approval_code::cmd_cancel().await,
+        },
     }
 }

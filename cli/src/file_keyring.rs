@@ -113,7 +113,7 @@ fn read_system_machine_id() -> String {
     hostname()
 }
 
-fn hostname() -> String {
+pub(crate) fn hostname() -> String {
     // Read hostname directly from /proc (Linux) or via gethostname (other Unix).
     // Avoids spawning a child process and PATH hijacking risk.
     if let Ok(h) = fs::read_to_string("/proc/sys/kernel/hostname") {

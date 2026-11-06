@@ -257,6 +257,8 @@ fn rotate_if_needed(path: &std::path::Path) {
 /// Flags whose next positional value must be fully replaced with `[REDACTED]`.
 const REDACT_FULL: &[&str] = &[
     "--otp",
+    // Approval email verification code (`wallet approval-code verify`).
+    "--verification-code",
     "--signed-tx",
     "--unsigned-tx",
     "--sui-tx-bytes",
@@ -793,6 +795,7 @@ fn wallet_sub(c: &WalletCommand) -> &'static str {
         WalletCommand::ContractCall { .. } => "contract-call",
         WalletCommand::SignMessage { .. } => "sign-message",
         WalletCommand::GasStation { .. } => "gas-station",
+        WalletCommand::ApprovalCode { .. } => "approval-code",
         WalletCommand::ReportPluginInfo { .. } => "report-plugin-info",
     }
 }
@@ -1064,6 +1067,31 @@ mod tests {
             out,
             vec_s(&["onchainos", "wallet", "login", "--otp=[REDACTED]"])
         );
+    }
+
+    #[test]
+    fn redact_approval_verification_code_both_forms() {
+        let args = vec_s(&[
+            "onchainos",
+            "wallet",
+            "approval-code",
+            "verify",
+            "--verification-code",
+            "246810",
+        ]);
+        let out = redact_args(&args);
+        assert_eq!(out[5], "[REDACTED]");
+        assert!(!out.iter().any(|a| a.contains("246810")));
+
+        let args = vec_s(&[
+            "onchainos",
+            "wallet",
+            "approval-code",
+            "verify",
+            "--verification-code=246810",
+        ]);
+        let out = redact_args(&args);
+        assert_eq!(out[4], "--verification-code=[REDACTED]");
     }
 
     #[test]

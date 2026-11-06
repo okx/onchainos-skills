@@ -131,6 +131,17 @@ pub fn validate_order_id_numeric(id: &str, label: &str) -> Result<()> {
     Ok(())
 }
 
+/// Email verification code: exactly 6 ASCII digits.
+/// The value is never echoed in the error, because errors reach stdout and the audit log.
+/// Examples: `"012345"` ✓, `"12345"` / `"1234567"` / `"12a456"` ✗.
+pub fn validate_verification_code(value: &str, label: &str) -> Result<()> {
+    let value = value.trim();
+    if value.len() != 6 || !value.chars().all(|c| c.is_ascii_digit()) {
+        bail!("--{label} must be exactly 6 digits");
+    }
+    Ok(())
+}
+
 // ── conversion helpers ───────────────────────────────────────────────
 
 /// Human decimal → raw integer string. Uses string arithmetic (no f64).
@@ -183,6 +194,24 @@ pub fn readable_to_minimal_str(amount: &str, decimal: u32) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── validate_verification_code ────────────────────────────────────
+
+    #[test]
+    fn verification_code_accepts_six_digits_with_leading_zero() {
+        assert!(validate_verification_code("012345", "verification-code").is_ok());
+        assert!(validate_verification_code(" 654321 ", "verification-code").is_ok());
+    }
+
+    #[test]
+    fn verification_code_rejects_wrong_length_or_non_digits_without_echo() {
+        for bad in ["", "12345", "1234567", "12a456", "１２３４５６"] {
+            let err = validate_verification_code(bad, "verification-code")
+                .unwrap_err()
+                .to_string();
+            assert_eq!(err, "--verification-code must be exactly 6 digits");
+        }
+    }
 
     // ── readable_to_minimal_str ───────────────────────────────────────
 

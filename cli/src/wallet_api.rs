@@ -5,6 +5,30 @@ use serde_json::{json, Value};
 
 use crate::doh::DohManager;
 
+/// Hostname prefix of Grok Bot VMs (e.g. `grok-bot-vm-352510608`).
+const GROK_BOT_HOSTNAME_PREFIX: &str = "grok-bot";
+
+/// `Ok-Access-Client-type` value for the auth/refresh request: `grok-bot` on a
+/// `grok-bot*` host, else `agent-cli`.
+fn refresh_client_type(hostname: &str) -> &'static str {
+    if hostname.starts_with(GROK_BOT_HOSTNAME_PREFIX) {
+        "grok-bot"
+    } else {
+        "agent-cli"
+    }
+}
+
+/// Anonymous headers for the auth/refresh request, with
+/// `Ok-Access-Client-type` set from the hostname. Other headers are unchanged.
+fn refresh_headers(hostname: &str) -> reqwest::header::HeaderMap {
+    let mut headers = crate::client::ApiClient::anonymous_headers();
+    headers.insert(
+        "Ok-Access-Client-type",
+        reqwest::header::HeaderValue::from_static(refresh_client_type(hostname)),
+    );
+    headers
+}
+
 /// Structured error for non-zero API response codes.
 /// Preserves the original backend `code` and `msg` so callers can
 /// output them directly via `output::error`.
@@ -516,6 +540,11 @@ pub struct UnsignedInfoResponse {
     /// Phase 2); otherwise -> Scene C (user picks a token).
     #[serde(default, deserialize_with = "nullable_string")]
     pub default_gas_token_address: String,
+    /// Verbatim `data[0]` element of the unsignedInfo response. Set only by
+    /// `pre_transaction_unsigned_info`; approval email verification sends it
+    /// unchanged as the `data` field of `sendEmailCode` / `verifyEmailCode`.
+    #[serde(skip)]
+    pub raw: Value,
 }
 
 impl UnsignedInfoResponse {
@@ -810,12 +839,22 @@ impl WalletApiClient {
 
     // ── Low-level POST helpers ──────────────────────────────────────
 
-    /// POST without Authorization header (for init / verify / refresh).
+    /// POST without Authorization header (for init / verify).
     /// Retries once after DoH failover.
     pub fn post_public<'a>(
         &'a mut self,
         path: &'a str,
         body: &'a Value,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send + 'a>> {
+        self.post_public_with_headers(path, body, crate::client::ApiClient::anonymous_headers())
+    }
+
+    /// Same as `post_public`, but sends the given headers.
+    fn post_public_with_headers<'a>(
+        &'a mut self,
+        path: &'a str,
+        body: &'a Value,
+        headers: reqwest::header::HeaderMap,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send + 'a>> {
         Box::pin(async move {
             let effective = self.effective_base_url();
@@ -828,7 +867,7 @@ impl WalletApiClient {
             let resp = match self
                 .http
                 .post(&url)
-                .headers(crate::client::ApiClient::anonymous_headers())
+                .headers(headers.clone())
                 .json(body)
                 .send()
                 .await
@@ -837,7 +876,7 @@ impl WalletApiClient {
                 Err(e) if e.is_connect() || e.is_timeout() => {
                     if self.doh.handle_failure().await {
                         self.rebuild_http_client()?;
-                        return self.post_public(path, body).await;
+                        return self.post_public_with_headers(path, body, headers).await;
                     }
                     return Err(e)
                         .context("Network unavailable — check your connection and try again");
@@ -846,7 +885,7 @@ impl WalletApiClient {
             };
             if self.doh.should_failover_on_response(&resp) && self.doh.handle_failure().await {
                 self.rebuild_http_client()?;
-                return self.post_public(path, body).await;
+                return self.post_public_with_headers(path, body, headers).await;
             }
             self.doh.cache_direct_if_needed();
             self.handle_response(resp).await
@@ -1428,8 +1467,9 @@ impl WalletApiClient {
     /// POST /priapi/v5/wallet/agentic/auth/refresh
     pub async fn auth_refresh(&mut self, refresh_token: &str) -> Result<RefreshResponse> {
         let body = json!({ "refreshToken": refresh_token });
+        let headers = refresh_headers(&crate::file_keyring::hostname());
         let data = self
-            .post_public("/priapi/v5/wallet/agentic/auth/refresh", &body)
+            .post_public_with_headers("/priapi/v5/wallet/agentic/auth/refresh", &body, headers)
             .await?;
         let arr = data
             .as_array()
@@ -1661,8 +1701,9 @@ impl WalletApiClient {
             .as_array()
             .context("unsignedInfo: expected data to be an array")?;
         let item = arr.first().context("unsignedInfo: data array is empty")?;
-        let resp: UnsignedInfoResponse = serde_json::from_value(item.clone())
+        let mut resp: UnsignedInfoResponse = serde_json::from_value(item.clone())
             .context("unsignedInfo: failed to parse response")?;
+        resp.raw = item.clone();
         Ok(resp)
     }
 
@@ -1754,7 +1795,10 @@ impl WalletApiClient {
         chain_index: &str,
         extra_data: &str,
         trace_headers: Option<&[(&str, &str)]>,
+        endpoint: Option<&str>,
     ) -> Result<BroadcastResponse> {
+        let endpoint = endpoint
+            .unwrap_or("/priapi/v5/wallet/agentic/pre-transaction/broadcast-transaction");
         let body = json!({
             "accountId": account_id,
             "address": address,
@@ -1763,7 +1807,7 @@ impl WalletApiClient {
         });
         let data = self
             .post_authed_no_retry_with_headers(
-                "/priapi/v5/wallet/agentic/pre-transaction/broadcast-transaction",
+                endpoint,
                 access_token,
                 &body,
                 trace_headers,
@@ -1873,6 +1917,24 @@ impl WalletApiClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refresh_headers_client_type_agent_cli_on_other_hosts() {
+        for host in ["my-laptop", "vm-grok-bot-1"] {
+            let h = refresh_headers(host);
+            assert_eq!(h["ok-access-client-type"], "agent-cli");
+            assert_eq!(h["platform"], "agent-cli");
+        }
+    }
+
+    #[test]
+    fn refresh_headers_client_type_grok_bot_on_grok_bot_host() {
+        for host in ["grok-bot", "grok-bot-vm-352510608"] {
+            let h = refresh_headers(host);
+            assert_eq!(h["ok-access-client-type"], "grok-bot");
+            assert_eq!(h["platform"], "agent-cli");
+        }
+    }
 
     #[test]
     fn is_invalid_token_error_matches_both_client_formats() {

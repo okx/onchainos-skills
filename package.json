@@ -1,6 +1,6 @@
 {
   "name": "onchainos-skills",
-  "version": "4.6.7",
+  "version": "4.6.8",
   "description": "onchainos skills for AI coding assistants — token search, market data, wallet balance, swap execution, and transaction broadcasting across 20+ chains",
   "keywords": [
     "claude-code",
@@ -41,6 +41,7 @@
     "CLAUDE.md",
     ".claude-plugin/",
     ".cursor-plugin/",
+    "assets/onchainos-logotype.svg",
     ".mcp.json.example"
   ],
   "scripts": {
