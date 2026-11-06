@@ -68,7 +68,7 @@ otherwise preprocess or enrich the input or output.
 **Service confirmation gate**:
 - Show Provider, Service, Type, Online, Price, Subscription/Trial summary, and Description.
 - Require `serviceType=A2A` and render it verbatim. If any A2MCP service reaches this Task playbook, stop with `legacy_a2mcp_flow_removed`; the upstream confirmed-service route must emit `invoke_a2mcp` instead.
-- For a non-subscription Service, render `feeAmount` with `feeTokenSymbol`. If `feeAmount` is zero (number or numeric string), render localized `Free` instead of `0 <symbol>`.
+- For a non-subscription Service, render `feeAmount` in USD. If `feeAmount` is zero (number or numeric string), render localized `Free` instead of `0 <symbol>`.
 - Offline services are ineligible for Task creation.
 - Ask the user to confirm using this service. Offer \"show 3 alternatives\" only when `hasMore == true` and `searchAfter` is a non-empty string; otherwise state that no more alternatives are available.
 - If the user chooses alternatives, call:
@@ -127,13 +127,16 @@ If explicit subscriber-input language is absent or ambiguous → `serviceParams`
 Do NOT ask the user for serviceParams separately — always show in the confirmation form. The user can correct it there.\n"
 }
 
+fn creation_funding_recovery() -> &'static str {
+    "- `phase=funding_required`, `decision=blocked`, `reason=insufficient_balance`: enter `skills/okx-ai/references/a2a/user/create-prepare.md` with the returned payload. Follow `select_funding_token` or `fund_selected_token` and retain the draft and any explicit payment constraint. After a fresh funding check succeeds, return to final task confirmation. Do not save or replay the create command. END TURN; do not create again or Watch."
+}
+
 fn attachments_and_stop() -> String {
     use crate::commands::agent_commerce::task::common::config::is_cli_mode;
 
     let watch_section = if is_cli_mode() {
         "\
 **After create-task/create-subscribe + task-attach (if any), check CLI output for a `[Watch]` block:**
-0. If `phase=funding_required`, follow `skills/okx-agentic-wallet/references/funding.md`, render its shared balance/address/QR template immediately, then stop; do not Watch.
 1. `[Watch]` block present → follow its instructions: read `skills/okx-ai/references/runtime/watch.md` directly and enter its Watch generation. A returned notification, deliverable, or empty poll does **not** end the turn; dispatch and re-enter until `runtime/watch.md` says to stop or a decision requires the user's reply.
 2. No `[Watch]` block → **end this turn immediately**."
     } else {
@@ -145,13 +148,13 @@ fn attachments_and_stop() -> String {
 Step 6.5 -- Save attachments
 ================================================
 
-If the user included file(s)/image(s) as task material → for each: `onchainos agent task-attach --file \"<path>\" <jobId>`. Download to local path first if needed. Failure → skip (do not block). No files → skip this step.
+Only after successful submission, if the user included file(s)/image(s) as task material → for each: `onchainos agent task-attach --file \"<path>\" <jobId>`. Download to local path first if needed. Failure → skip (do not block). No files → skip this step.
 
 ================================================
 
 After the create command:
 
-- `phase=funding_required`, `decision=blocked`, `reason=insufficient_balance`: enter `skills/okx-agentic-wallet/references/funding.md` immediately and render its shared Funding-required template from the same payload, including balance, address, and QR. Do not save or replay the create command. END TURN; do not create again or Watch.
+{funding_recovery}
 - Otherwise, after successful submission: tell the user directly: \"{create_designated}\"
 - Legacy submitted `balanceWarning`: save `jobId` + warning, render `funding-notice`; on Codex/Claude Code repeat the full notice in final. END TURN; do not Watch.
 
@@ -159,6 +162,7 @@ After the create command:
 
 Do not say \"published\"/\"succeeded\" (only submitted). No other commands after the step above; no describing subsequent flow.\n",
         create_designated = super::super::content::create_task_designated_user_notify(),
+        funding_recovery = creation_funding_recovery(),
     )
 }
 
@@ -172,7 +176,7 @@ Step 4 -- Subscription field collection
 ================================================
 
 For subscription tasks, Currency and Budget are derived from the service — do NOT ask the user:
-- **Currency** = `feeTokenSymbol` from task-service-select (auto-filled)
+- **Quote currency** = USD. Without an explicit payment constraint, show the payment order USDC → USDG → USDT. Otherwise show the specified token.
 - **Budget** = `subscriptionInfo.feeAmount` from task-service-select (auto-filled fixed subscription price)
 
 Collection order is strict. Before collecting any item below, complete the selected service's
@@ -255,7 +259,7 @@ The confirmation form has exactly the seven product-facing field items below. Gu
 - Description: <full content> (if <=200 chars inline; if >200 write `see below` and render below)
 - Provider: Agent <providerAgentId>(<providerAgentName>) — degrade to Agent <providerAgentId> when name empty/absent
 - Service params: <serviceParams readable display, or \"None\">
-- Service price: <subscriptionInfo.feeAmount> <feeTokenSymbol> / month
+- Service price: <subscriptionInfo.feeAmount> USD / month
 - Trial: Yes (<subscriptionInfo.freeTrial> hours free) / No (based on `subscriptionInfo.supportTrial`)
 - Auto-renew: On / Off
 
@@ -282,7 +286,6 @@ Step 6 -- Publish subscription (create-subscribe)
 onchainos agent create-subscribe \\
   --service-id <serviceId> \\
   --service-token-amount \"<subscriptionInfo.feeAmount>\" \\
-  --service-token-address \"<feeToken>\" \\
   --auto-renew <0|1> \\
   --title \"<title>\" \\
   --description \"<description>\" \\
@@ -294,6 +297,7 @@ onchainos agent create-subscribe \\
   --service-interval \"<subscriptionInfo.interval>\" \\
   --format json
 ```
+- If `resumeContext.serviceTokenAddress` is present, add `--service-token-address` with that address. Otherwise omit it for automatic selection. Never derive a payment constraint from the funding target.
 - Always pass the exact `serviceGuide` and its matching hash. The CLI writes the Guide and prepared Consent records before broadcast; it does not infer a route from `serviceDescription` and does not accept a second semantic artifact.
 - Field names are not platform-defined. Collect only user-confirmed answers required by the Guide and pass them directly in `--guide-consent-json`. On delivery, the Agent reads the persisted Guide, Consent, and saved Signal together to decide whether and how to use a trusted trading tool.
 - CLI error → relay to user, do NOT auto-modify → return to Step 5.
@@ -315,10 +319,12 @@ Step 4 -- Regular field collection
 
 Consume the fixed payment context from the selected Service:
 
-1. `paymentTokenSymbol = feeTokenSymbol`.
-2. `paymentTokenAmount = feeAmount`.
-3. `serviceTokenAddress = feeToken` and `serviceTokenAmount = feeAmount`.
+1. Without an explicit payment constraint, omit payment Token flags; the CLI selects USDC → USDG → USDT by single-token balance.
+2. `paymentTokenAmount = feeAmount` (USD quote).
+3. `serviceTokenAmount = feeAmount`.
 4. Infer `serviceParams` below, then encode the confirmed key/value data as one JSON object; use `{{}}` when no input is required.
+
+If `resumeContext.paymentTokenSymbol` is present, pass it as `--payment-token-symbol` and pass `resumeContext.serviceTokenAddress` as `--service-token-address`. Show that specified token. Otherwise omit both flags and show the payment order USDC → USDG → USDT. Never derive a payment constraint from the funding target.
 
 Missing or invalid confirmed fields → stop before confirmation. Do not independently re-price the Service, query balance, offer a max budget, or negotiate another amount.
 
@@ -335,7 +341,7 @@ Never add execution mode, per-signal amount, per-signal cap, quote currency, Tra
 - Description: <full content> (if <=200 chars inline; if >200 write `see below` and render below)
 - ASP: Agent <providerAgentId>(<providerAgentName>) — degrade to Agent <providerAgentId> when name empty/absent
 - Service params: <serviceParams readable display, or \"None\">
-- Service price: <localized Free when feeAmount is zero; otherwise feeAmount + feeTokenSymbol> (only show this item if feeAmount has a value)
+- Service price: <localized Free when feeAmount is zero; otherwise feeAmount + USD> (only show this item if feeAmount has a value)
 
 Payment mode is always `escrow` for this Task playbook; do not ask the user or show it as a card item.
 
@@ -360,13 +366,13 @@ Step 6 -- Publish regular (create-task)
 onchainos agent create-task \\
   --title \"<title>\" --description \"<description>\" \\
   --provider-agent-id <agentId> \\
-  --payment-token-symbol <feeTokenSymbol> --payment-token-amount <feeAmount> \\
+  --payment-token-amount <feeAmount> \\
   --service-id <serviceId> --service-params '<confirmed JSON object or {{}}>' \\
-  --service-token-address <feeToken> --service-token-amount <feeAmount> \\
+  --service-token-amount <feeAmount> \\
   [--file \"<attachment-path>\" ...]
 ```
-- Pass the confirmed Service context unchanged. The command does not repeat price, balance, ASP, or payment-mode decisions.
-- `phase=funding_required`, `decision=blocked`, `reason=insufficient_balance`: enter `skills/okx-agentic-wallet/references/funding.md` immediately and render the shared balance/address/QR result. Do not save or replay the create command. END TURN; do not create again or Watch.
+- Pass the confirmed Service context unchanged. The command rechecks payment balance and fixes one token through signing and creation.
+{funding_recovery}
 - CLI error → relay to user, do NOT auto-modify → return to Step 5.
 - `reason=broadcast_submitted` means the UserOperation was submitted, not that `job_created` has arrived.
 - For `payload.initialLifecycle.taskType=one_time`, render its five returned timeline nodes and concise current guidance before Watch. If the display is absent or incomplete, state once that the initial timeline is unavailable; never synthesize lifecycle values.
@@ -374,6 +380,7 @@ onchainos agent create-task \\
 
 Do not call `task-attach`, `set-payment-mode`, `confirm-accept`, `okx-a2a session create`, or `okx-a2a file upload` in this step. Attachments were saved locally by `create-task`; A2A forwarding starts only from the later `job_created` flow.",
         service_params = service_params_inference(),
+        funding_recovery = creation_funding_recovery(),
     )
 }
 
@@ -515,6 +522,34 @@ pub(crate) fn attachment_added_cli(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn both_creation_playbooks_keep_funding_in_the_a2a_recovery_flow() {
+        for out in [create_task_regular(), create_task_subscription()] {
+            assert_eq!(out.matches("`phase=funding_required`").count(), 1);
+            assert!(out.contains("select_funding_token"));
+            assert!(out.contains("fund_selected_token"));
+            assert!(out.contains("retain the draft and any explicit payment constraint"));
+            assert!(out.contains("return to final task confirmation"));
+            assert!(out.contains("Do not save or replay the create command"));
+            assert!(!out.contains("skills/okx-agentic-wallet/references/funding.md"));
+        }
+    }
+
+    #[test]
+    fn subscription_playbook_retains_explicit_payment_token_during_recovery() {
+        let out = create_task_subscription();
+        let command = out
+            .split("onchainos agent create-subscribe ")
+            .nth(1)
+            .unwrap();
+        let command = command.split("```").next().unwrap();
+        assert!(!command.contains("--service-token-address"));
+        assert!(out.contains("If `resumeContext.serviceTokenAddress` is present"));
+        assert!(out.contains("add `--service-token-address` with that address"));
+        assert!(out.contains("Never derive a payment constraint from the funding target"));
+        assert!(out.contains("Otherwise show the specified token"));
+    }
 
     #[test]
     fn common_create_task_confirms_selected_service_after_matching() {
@@ -706,7 +741,7 @@ mod tests {
         assert!(out.contains("`phase=funding_required`"));
         assert!(out.contains("`decision=blocked`"));
         assert!(out.contains("`reason=insufficient_balance`"));
-        assert!(out.contains("enter `skills/okx-agentic-wallet/references/funding.md` immediately"));
+        assert!(out.contains("enter `skills/okx-ai/references/a2a/user/create-prepare.md`"));
         assert!(out.contains("Do not save or replay the create command"));
         assert!(out.contains("do not create again or Watch"));
     }
@@ -728,7 +763,12 @@ mod tests {
         let out = create_task_regular();
 
         assert!(out.contains("--provider-agent-id"));
-        assert!(out.contains("--payment-token-symbol"));
+        let command = out.split("onchainos agent create-task ").nth(1).unwrap();
+        let command = command.split("```").next().unwrap();
+        assert!(!command.contains("--payment-token-symbol"));
+        assert!(!command.contains("--service-token-address"));
+        assert!(out.contains("If `resumeContext.paymentTokenSymbol` is present"));
+        assert!(out.contains("Never derive a payment constraint from the funding target"));
         assert!(out.contains("--payment-token-amount"));
         assert!(!out.contains("--max-budget"));
         assert!(!out.contains("--payment-mode <"));

@@ -17,6 +17,7 @@ pub(in super::super) struct CreateSubscriptionInput<'a> {
     pub service_params: &'a str,
     pub service_token_amount: &'a str,
     pub service_token_address: &'a str,
+    pub token_symbol: &'a str,
     pub auto_renew: i32,
     pub title: &'a str,
     pub description: &'a str,
@@ -39,11 +40,13 @@ fn build_confirm_body(input: &CreateSubscriptionInput<'_>) -> Value {
         "useTrial": input.use_trial,
         "subId": 0,
         "providerAgentId": input.provider_agent_id,
+        "tokenSymbol": input.token_symbol,
+        "serviceTokenAddress": input.service_token_address,
     })
 }
 
 fn parse_confirmation(value: &Value, requested_use_trial: bool) -> Result<(Value, Value, bool)> {
-    if value.as_object().map_or(true, |object| object.is_empty()) {
+    if value.as_object().is_none_or(|object| object.is_empty()) {
         bail!(
             "providerConfirmStatus returned empty terms; the service may not support subscription"
         );
@@ -64,6 +67,26 @@ fn parse_confirmation(value: &Value, requested_use_trial: bool) -> Result<(Value
         .remove("typedData");
     let effective_use_trial = value["useTrial"].as_bool().unwrap_or(requested_use_trial);
     Ok((terms, typed_data, effective_use_trial))
+}
+
+fn validate_typed_data_payment_token(
+    typed_data: &Value,
+    selected_token_address: &str,
+) -> Result<()> {
+    let signed_token_address = typed_data
+        .pointer("/message/token")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|address| !address.is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!("providerConfirmStatus typedData is missing message.token")
+        })?;
+    if !signed_token_address.eq_ignore_ascii_case(selected_token_address) {
+        bail!(
+            "providerConfirmStatus typedData token {signed_token_address} differs from selected payment token {selected_token_address}"
+        );
+    }
+    Ok(())
 }
 
 fn build_create_body(
@@ -127,6 +150,13 @@ where
         .context("providerConfirmStatus failed")?;
     let (terms, typed_data, effective_use_trial) =
         parse_confirmation(&confirmation, input.use_trial)?;
+    let selected_token = common::payment_token::constraint(
+        common::XLAYER_CHAIN_ID as u64,
+        input.token_symbol,
+        input.service_token_address,
+    )?
+    .ok_or_else(|| anyhow::anyhow!("subscription payment token is missing"))?;
+    validate_typed_data_payment_token(&typed_data, selected_token.address)?;
     let terms_sig = signing::sign_typed_data(&typed_data, address)
         .await
         .context("EIP-712 subscription terms signing failed")?;
@@ -196,6 +226,7 @@ mod tests {
 
     fn input() -> CreateSubscriptionInput<'static> {
         CreateSubscriptionInput {
+            token_symbol: "USDT",
             service_id: "svc-1",
             use_trial: true,
             service_params: "{\"symbol\":\"BTC\"}",
@@ -218,6 +249,55 @@ mod tests {
         assert_eq!(body["deviceList"], Value::Null);
         assert_eq!(body["termsSig"], "0xsig");
         assert!(body.get("descriptionSummary").is_none());
+    }
+
+    #[test]
+    fn all_payment_tokens_preserve_trial_terms_and_create_requests() {
+        for token in common::payment_token::TOKENS {
+            for trial in [true, false] {
+                let mut input = input();
+                input.token_symbol = token.symbol;
+                input.service_token_address = token.address;
+                input.use_trial = trial;
+                let confirmed = json!({"subId": 0,
+                    "currency": "0xlegacy-service-currency",
+                    "serviceTokenAddress": "0xlegacy-service-currency",
+                    "tokenSymbol": "USDT",
+                    "typedData": {"message": {"token": token.address, "amount": "10000000"}},
+                    "useTrial": trial});
+                let (terms, typed_data, effective) = parse_confirmation(&confirmed, trial).unwrap();
+                validate_typed_data_payment_token(&typed_data, token.address).unwrap();
+                let body =
+                    build_create_body(&input, effective, terms.clone(), "original-signature");
+                assert_eq!(build_confirm_body(&input)["tokenSymbol"], token.symbol);
+                assert_eq!(
+                    build_confirm_body(&input)["serviceTokenAddress"],
+                    token.address
+                );
+                assert_eq!(build_confirm_body(&input)["subId"], 0);
+                assert_eq!(typed_data["message"]["token"], token.address);
+                assert_eq!(body["terms"], terms);
+                assert_eq!(body["termsSig"], "original-signature");
+                assert_eq!(body["serviceTokenAddress"], token.address);
+                assert_eq!(body["useTrial"], trial);
+            }
+        }
+    }
+
+    #[test]
+    fn typed_data_payment_token_must_match_the_selected_token() {
+        let selected = common::payment_token::TOKENS[0].address;
+        let matching = json!({"message": {"token": selected.to_lowercase()}});
+        assert!(validate_typed_data_payment_token(&matching, selected).is_ok());
+
+        let mismatched = json!({"message": {
+            "token": common::payment_token::TOKENS[2].address,
+        }});
+        let error = validate_typed_data_payment_token(&mismatched, selected).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("differs from selected payment token"));
+        assert!(validate_typed_data_payment_token(&json!({"message": {}}), selected).is_err());
     }
 
     #[test]

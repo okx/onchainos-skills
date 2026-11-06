@@ -90,9 +90,12 @@ impl CreateSubscribeParams {
         if self.service_token_amount.is_empty() {
             bail!("--service-token-amount is required");
         }
-        if self.service_token_address.is_empty() {
-            bail!("--service-token-address is required");
-        }
+        super::create::validate_decimal_amount(&self.service_token_amount, "service-token-amount")?;
+        common::payment_token::constraint(
+            common::XLAYER_CHAIN_ID as u64,
+            "",
+            &self.service_token_address,
+        )?;
         if self.auto_renew != 0 && self.auto_renew != 1 {
             bail!(
                 "--auto-renew must be 0 (off) or 1 (on), got {}",
@@ -232,7 +235,10 @@ fn find_service_sid(data: &serde_json::Value, service_id: &str) -> Option<String
 /// via `onchainos agent service-list`. create-subscribe only holds the Service
 /// UUID, while the authoritative trial-state fetch (`service/search`) is keyed by
 /// `sid`.
-async fn resolve_service_sid(provider_agent_id: &str, service_id: &str) -> Result<String> {
+pub(crate) async fn resolve_service_sid(
+    provider_agent_id: &str,
+    service_id: &str,
+) -> Result<String> {
     let output = tokio::process::Command::new(std::env::current_exe()?)
         .args([
             "agent",
@@ -327,23 +333,38 @@ pub async fn handle_create_subscribe(
         .into());
     }
 
-    if let Some(insufficient) =
-        subscribe_balance_shortfall(&params.service_token_amount, &params.service_token_address)
-            .await?
-    {
-        let deposit = common::deposit_qr::resolve_current_deposit_info(&user_agent_id)
-            .await
-            .ok_or_else(|| anyhow::anyhow!("failed to resolve the funding address"))?;
-        // Keep subscription creation on the same funding contract as the
-        // one-time task create-and-fund flow. In particular, funding is a
-        // successful structured response, not a CLI error envelope.
-        crate::output::success(super::create::build_task_creation_funding_result(
-            &insufficient,
-            &deposit,
-            &params.service_token_address,
+    let (account_id, address) = signing::resolve_wallet_by_agent_id(&user_agent_id).await?;
+    let constrained = common::payment_token::constraint(
+        common::XLAYER_CHAIN_ID as u64,
+        "",
+        &params.service_token_address,
+    )?;
+    let selection = common::payment_token::select(
+        &params.service_token_amount,
+        &account_id,
+        &address,
+        constrained,
+        false,
+    )
+    .await?;
+    let Some(token) = selection.token else {
+        let (mut service, sid) = super::task_create_prepare::service_recovery_context(
+            &user_agent_id,
+            &params.provider_agent_id,
+            &params.service_id,
+        )
+        .await?;
+        service["supportSubscription"] = serde_json::json!(true);
+        crate::output::success(common::payment_token::funding_result(
+            &selection,
+            &address,
+            &service,
+            &sid,
+            constrained,
+            constrained,
         )?);
         return Ok(());
-    }
+    };
 
     // Resolve the trial decision from authoritative Service state (never a caller
     // flag): service-list → sid → service/search detail → subscriptionInfo.supportTrial.
@@ -354,7 +375,6 @@ pub async fn handle_create_subscribe(
     )
     .await?;
 
-    let (account_id, address) = signing::resolve_wallet_by_agent_id(&user_agent_id).await?;
     let receipt = super::v2::execute_create_subscription(
         client,
         super::v2::CreateSubscriptionInput {
@@ -362,7 +382,8 @@ pub async fn handle_create_subscribe(
             use_trial,
             service_params: &params.service_params,
             service_token_amount: &params.service_token_amount,
-            service_token_address: &params.service_token_address,
+            service_token_address: token.address,
+            token_symbol: token.symbol,
             auto_renew: params.auto_renew,
             title: &params.title,
             description: &params.description,
@@ -436,6 +457,9 @@ pub async fn handle_create_subscribe(
         "status": "broadcast_submitted",
         "providerAgentId": params.provider_agent_id,
         "serviceId": params.service_id,
+        "paymentTokenSymbol": token.symbol,
+        "paymentTokenAddress": token.address,
+        "paymentTokenAmount": params.service_token_amount,
         "useTrial": receipt.effective_use_trial,
         "autoRenew": params.auto_renew,
         "runtimeBound": true,
@@ -462,41 +486,6 @@ pub async fn handle_create_subscribe(
         "payload": payload,
     }));
     Ok(())
-}
-
-async fn subscribe_balance_shortfall(
-    service_token_amount: &str,
-    service_token_address: &str,
-) -> Result<Option<common::deposit_qr::InsufficientBalanceError>> {
-    let required: f64 = service_token_amount.parse().unwrap_or(0.0);
-    if required <= 0.0 {
-        return Ok(None);
-    }
-
-    let symbol = match common::util::resolve_token_symbol_by_address(
-        common::XLAYER_CHAIN_INDEX,
-        service_token_address,
-    )
-    .await
-    {
-        Ok(symbol) => symbol,
-        Err(error) => {
-            if DEBUG_LOG {
-                eprintln!(
-                    "[create-subscribe] token symbol resolution failed; skipping balance pre-check: {error}"
-                );
-            }
-            return Ok(None);
-        }
-    };
-
-    match common::ensure_sufficient_balance(required, &symbol).await {
-        Ok(()) => Ok(None),
-        Err(error) => match error.downcast_ref::<common::deposit_qr::InsufficientBalanceError>() {
-            Some(insufficient) => Ok(Some(insufficient.clone())),
-            None => Err(error),
-        },
-    }
 }
 
 #[cfg(test)]
@@ -625,8 +614,7 @@ mod tests {
         ]);
         match cli.cmd {
             super::super::TaskCommand::CreateSubscribe {
-                provider_agent_id,
-                ..
+                provider_agent_id, ..
             } => {
                 assert_eq!(provider_agent_id, "agent-99");
             }
@@ -813,7 +801,7 @@ mod tests {
             service_id: "svc".to_string(),
             service_params: String::new(),
             service_token_amount: "10".to_string(),
-            service_token_address: "0xtok".to_string(),
+            service_token_address: common::payment_token::TOKENS[2].address.to_string(),
             auto_renew: 1,
             title: "t".to_string(),
             description: "d".to_string(),
@@ -849,32 +837,6 @@ mod tests {
     }
 
     #[test]
-    fn subscription_funding_block_uses_common_funding_contract() {
-        let insufficient = common::deposit_qr::InsufficientBalanceError::new(
-            "insufficient".to_string(),
-            "USDT",
-            0.0001,
-            0.0,
-        );
-        let deposit = common::deposit_qr::deposit_info_for_address(
-            "0x1234567890abcdef1234567890abcdef12345678",
-        );
-        let output = super::super::create::build_task_creation_funding_result(
-            &insufficient,
-            &deposit,
-            "0x779ded0c9e1022225f8e0630b35a9b54be713736",
-        )
-        .expect("common Funding result");
-        assert_eq!(output["phase"], "funding_required");
-        assert_eq!(output["decision"], "blocked");
-        assert_eq!(output["reason"], "insufficient_balance");
-        assert_eq!(output["nextAction"], serde_json::json!([]));
-        assert_eq!(output["payload"]["operation"], "task_creation");
-        assert_eq!(output["payload"]["fundingNeed"]["required"], "0.0001");
-        assert!(output["payload"]["qr"].is_object());
-    }
-
-    #[test]
     fn cli_create_subscribe_rejects_removed_copy_trade_argument() {
         assert!(TestCli::try_parse_from([
             "test",
@@ -905,7 +867,7 @@ mod tests {
             service_id: "svc_report_only".to_string(),
             service_params: String::new(),
             service_token_amount: "10".to_string(),
-            service_token_address: "0x6776".to_string(),
+            service_token_address: common::payment_token::TOKENS[2].address.to_string(),
             auto_renew: 0,
             title: "Analytics report".to_string(),
             description: "Read-only market report without trading signals".to_string(),

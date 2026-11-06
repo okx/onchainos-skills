@@ -58,13 +58,23 @@ a field list. Render [Subscription Creation Confirmation](#subscription-creation
 Continue only after that final confirmation and the one-time communication
 check defined by `create.md`.
 
+### Payment token rules
+
+- With `resumeContext.serviceTokenAddress`, pass the same address on
+  `create-subscribe` through recovery. A funding target must not replace it.
+- Otherwise omit `--service-token-address` for automatic selection.
+- To change an explicit payment token, restart creation confirmation with the
+  new choice.
+- Use the receipt's actual payment token and amount for trial conversion,
+  renewal, grace retries and restarting auto-renew.
+
 ### Create subscription
 
 ```bash
 onchainos agent create-subscribe \
   --service-id <payload.serviceId> \
   --service-token-amount <payload.subscriptionInfo.feeAmount> \
-  --service-token-address <payload.feeToken> \
+  [--service-token-address <resumeContext.serviceTokenAddress>] \
   --auto-renew <retained-autoRenew> \
   --title <title> \
   --description <confirmed-description> \
@@ -101,7 +111,7 @@ The CLI owns Guide execution-profile persistence and broadcast activation.
 - Subscription Name: {title}
 - Subscription Description: {confirmedDescription}
 - Provider: {providerAgent}
-- Service Price: {feeAmount} {feeTokenSymbol} / {interval}
+- Service Price: {feeAmount} USD / {interval}
 - Trial: {trialDisplay}
 - Auto-Renew: {OnOrOff}
 - Service Guide Consent: {guideConsent} *(only when the Guide is non-blank)*
@@ -120,3 +130,17 @@ the card or surrounding prose. This card owns the one explicit final
 confirmation for the subscription, displayed payment, and exact Guide Consent.
 Any edit to a displayed fact or Guide answer invalidates that confirmation and
 requires the complete updated card again.
+
+### Payment display
+
+- Render zero service price as `Free`.
+- For paid creation, show the specified token when an explicit payment
+  constraint is present. Otherwise show the payment order USDC → USDG → USDT.
+
+## Troubleshooting
+
+### Insufficient balance
+
+If creation returns `select_funding_token` or `fund_selected_token`, enter
+`create-prepare.md` with `payload.resumeContext` and retain the pending task inputs.
+Funding recovery returns to this confirmation card; it never creates automatically.

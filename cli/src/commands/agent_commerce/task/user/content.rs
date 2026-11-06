@@ -579,9 +579,9 @@ pub fn sub_open_user_notify(
         (Some(amount), Some(symbol)) => out.push_str(&format!(
             " {amount} {symbol} has been funded for the subscription."
         )),
-        (Some(amount), None) => out.push_str(&format!(
-            " {amount} has been funded for the subscription."
-        )),
+        (Some(amount), None) => {
+            out.push_str(&format!(" {amount} has been funded for the subscription."))
+        }
         _ => {}
     }
     out
@@ -620,9 +620,7 @@ pub fn sub_created_user_notify(
     period_end: Option<i64>,
     auto_renew: bool,
 ) -> String {
-    let mut out = format!(
-        "[Subscribed] Job {job_id} (subscribing to {service_name}) is on-chain"
-    );
+    let mut out = format!("[Subscribed] Job {job_id} (subscribing to {service_name}) is on-chain");
     if let (Some(s), Some(e)) = (fmt_epoch(period_start), fmt_epoch(period_end)) {
         out.push_str(&format!(", current period {s}–{e}"));
     }
@@ -1883,12 +1881,7 @@ mod tests {
 
     #[test]
     fn sub_complete_notify_renders_completed_with_period() {
-        let out = sub_complete_notify_user_notify(
-            "My Sub",
-            "job-1",
-            Some(1_700_600_000),
-            true,
-        );
+        let out = sub_complete_notify_user_notify("My Sub", "job-1", Some(1_700_600_000), true);
         assert!(out.starts_with("[Subscription Complete]"));
         assert!(out.contains("\"My Sub\" has completed all scheduled renewals"));
         assert!(out.contains("Job job-1 status: Completed"));
@@ -1994,5 +1987,28 @@ mod tests {
             "ms grace rendered as seconds date: {out}"
         );
         assert!(!out.contains("+58692"), "no five-digit year: {out}");
+    }
+}
+
+#[cfg(test)]
+mod a2a_payment_tests {
+    use super::*;
+    #[test]
+    fn a2a_actual_payment_token_reaches_buyer_refund_and_trial_notifications() {
+        for token in crate::commands::agent_commerce::task::common::payment_token::TOKENS {
+            let refund =
+                sub_asp_agree_user_notify("Service", Some("10"), Some(token.symbol), None, None);
+            let conversion = sub_trial_into_active_user_notify(
+                "job",
+                "Service",
+                Some("10"),
+                Some(token.symbol),
+                None,
+                None,
+            );
+            for text in [refund, conversion] {
+                assert!(text.contains(&format!("10 {}", token.symbol)), "{text}");
+            }
+        }
     }
 }

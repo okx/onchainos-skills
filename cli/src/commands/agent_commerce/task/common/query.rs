@@ -607,8 +607,8 @@ fn active_task_row(
         "statusDescription": status_description,
         "statusCode": status_code,
         "title": string_field_from_keys(task, &["title", "jobName", "serviceName"]),
-        "tokenAmount": string_field_from_keys(task, &["serviceTokenAmount", "paymentTokenAmount", "tokenAmount"]),
-        "tokenSymbol": string_field_from_keys(task, &["serviceTokenSymbol", "paymentTokenSymbol", "tokenSymbol"]),
+        "tokenAmount": string_field_from_keys(task, &["paymentTokenAmount", "tokenAmount", "serviceTokenAmount"]),
+        "tokenSymbol": string_field_from_keys(task, &["paymentTokenSymbol", "tokenSymbol", "serviceTokenSymbol"]),
         "myAgentId": agent_id,
         "myRole": role_name(role),
         "counterpartyAgentId": if counterparty_id.is_empty() {
@@ -762,6 +762,22 @@ pub async fn handle_active_tasks(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a2a_lists_show_actual_payment_snapshot_for_both_roles() {
+        for token in super::super::payment_token::TOKENS {
+            for role in [1, 2] {
+                let task = json!({"jobId": "job", "status": 0, "subStatus": 0,
+                    "paymentTokenSymbol": token.symbol, "paymentTokenAmount": "10",
+                    "serviceTokenSymbol": "USD", "serviceTokenAmount": "99"});
+                for kind in [ActiveTaskKind::OneTime, ActiveTaskKind::Subscription] {
+                    let row = active_task_row(&task, kind, "agent", role, true).unwrap();
+                    assert_eq!(row["tokenSymbol"], token.symbol);
+                    assert_eq!(row["tokenAmount"], "10");
+                }
+            }
+        }
+    }
     use serde_json::json;
 
     fn agent(id: &str, role: i64) -> Value {

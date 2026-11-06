@@ -993,3 +993,45 @@ mod tests {
         assert!(out.contains("Please begin delivering the service."));
     }
 }
+
+#[cfg(test)]
+mod a2a_payment_tests {
+    use super::*;
+    #[test]
+    fn a2a_actual_payment_token_reaches_asp_income_and_refund_notifications() {
+        for token in crate::commands::agent_commerce::task::common::payment_token::TOKENS {
+            let income = sub_asp_selected_asp_notify(
+                Some("Service"),
+                Some("buyer"),
+                "job",
+                Some("10"),
+                Some(token.symbol),
+                None,
+                None,
+            );
+            let expiry = job_delivery_expire_asp_notify(
+                "Service",
+                "job",
+                "one_time",
+                "10",
+                token.symbol,
+                false,
+                true,
+            );
+            for text in [income, expiry] {
+                assert!(text.contains(&format!("10 {}", token.symbol)), "{text}");
+            }
+            let free = job_delivery_expire_asp_notify(
+                "Free service",
+                "job",
+                "one_time",
+                "0",
+                token.symbol,
+                false,
+                false,
+            );
+            assert!(!free.contains(&format!("0 {}", token.symbol)));
+            assert!(free.contains("no refund action is required"));
+        }
+    }
+}

@@ -43,7 +43,6 @@ struct ConfirmContext {
     provider: String,
     receiver: String,
     evaluator: String,
-    currency: String,
     recipient: String,
     amount: String,
     submit_window: u64,
@@ -73,6 +72,13 @@ fn build_confirm_body(input: &CreateAndFundInput<'_>) -> Value {
         "chainId": input.chain_id,
         "serviceId": input.service_id,
     })
+}
+
+/// Payment currency comes from local balance selection. The pre-sign response
+/// may include a legacy service-currency field for older clients; do not use it
+/// to choose or sign the payment token.
+fn selected_currency<'a>(input: &CreateAndFundInput<'a>) -> &'a str {
+    input.service_token_address
 }
 
 fn required_string(value: &Value, name: &str) -> Result<String> {
@@ -119,7 +125,6 @@ fn parse_confirmation(value: &Value) -> Result<ConfirmContext> {
         provider: required_string(value, "provider")?,
         receiver: required_string(value, "receiver")?,
         evaluator: required_string(value, "evaluator")?,
-        currency: required_string(value, "currency")?,
         recipient: required_string(value, "recipient")?,
         amount: required_string(value, "amount")?,
         submit_window: required_u64(value, "submitWindow")?,
@@ -208,6 +213,11 @@ where
         .await
         .context("createAndFundConfirmStatus failed")?;
     let confirmation = parse_confirmation(&confirmation_value)?;
+    common::payment_token::constraint(
+        input.chain_id,
+        input.token_symbol,
+        input.service_token_address,
+    )?;
     audit::log(
         "cli",
         "user/task_create_and_fund_confirmed",
@@ -223,23 +233,27 @@ where
     );
 
     // The authorization is derived only from the backend-confirmed escrow fields.
-    let authorization = a2a_pay::sign_escrow(a2a_pay::SignEscrowParams {
-        chain_id: input.chain_id,
-        provider: confirmation.provider_for_escrow_nonce().to_string(),
-        receiver: confirmation.receiver.clone(),
-        arbitrator: confirmation.evaluator.clone(),
-        currency: confirmation.currency.clone(),
-        escrow_contract: confirmation.recipient.clone(),
-        amount: confirmation.amount.clone(),
-        submit_window: confirmation.submit_window,
-        dispute_window: confirmation.dispute_window,
-        arbitration_window: confirmation.evaluate_window,
-        termination_window: confirmation.completed_window,
-        hook: confirmation.hook.clone(),
-        hook_data: confirmation.hook_data.clone(),
-        salt: confirmation.salt.clone(),
-        expired_at: confirmation.expired_at.clone(),
-    })
+    let authorization = a2a_pay::sign_escrow_for_wallet(
+        a2a_pay::SignEscrowParams {
+            chain_id: input.chain_id,
+            provider: confirmation.provider_for_escrow_nonce().to_string(),
+            receiver: confirmation.receiver.clone(),
+            arbitrator: confirmation.evaluator.clone(),
+            currency: selected_currency(&input).to_string(),
+            escrow_contract: confirmation.recipient.clone(),
+            amount: confirmation.amount.clone(),
+            submit_window: confirmation.submit_window,
+            dispute_window: confirmation.dispute_window,
+            arbitration_window: confirmation.evaluate_window,
+            termination_window: confirmation.completed_window,
+            hook: confirmation.hook.clone(),
+            hook_data: confirmation.hook_data.clone(),
+            salt: confirmation.salt.clone(),
+            expired_at: confirmation.expired_at.clone(),
+        },
+        common::XLAYER_CHAIN_INDEX,
+        address,
+    )
     .await
     .context("EIP-3009 create-and-fund signing failed")?;
 
@@ -349,16 +363,46 @@ mod tests {
         assert!(body.get("paymentMode").is_none());
     }
 
-    fn confirmation() -> ConfirmContext {
-        parse_confirmation(&json!({
+    #[test]
+    fn all_payment_tokens_flow_unchanged_through_confirm_and_create() {
+        for token in common::payment_token::TOKENS {
+            let mut input = input();
+            input.token_symbol = token.symbol;
+            input.service_token_address = token.address;
+            let confirmed = confirmation();
+            let pre_sign = build_confirm_body(&input);
+            let create =
+                build_create_and_fund_body(&input, &confirmed, "signature", "0", "123").unwrap();
+            assert_eq!(pre_sign["tokenSymbol"], token.symbol);
+            assert_eq!(selected_currency(&input), token.address);
+            assert_eq!(create["paymentTokenSymbol"], token.symbol);
+            assert_eq!(create["serviceTokenAddress"], token.address);
+            assert_eq!(create["signature"], "signature");
+            assert_eq!(confirmed.amount, "1250000");
+        }
+    }
+
+    fn confirmation_value() -> Value {
+        json!({
             "jobId": "0xjob", "taskSalt": "0xtask", "provider": "0xprovider",
             "receiver": "0xreceiver", "evaluator": "0xevaluator",
-            "currency": "0xcurrency", "recipient": "0xescrow", "amount": "1250000",
+            "currency": "0xlegacy-service-currency", "recipient": "0xescrow", "amount": "1250000",
             "submitWindow": 10, "disputeWindow": "20", "evaluateWindow": 30,
             "completedWindow": 40, "hook": "0xhook", "hookData": "0xdata",
             "salt": "0xsalt", "expiredAt": 1_785_775_968i64,
-        }))
-        .unwrap()
+        })
+    }
+
+    fn confirmation() -> ConfirmContext {
+        parse_confirmation(&confirmation_value()).unwrap()
+    }
+
+    #[test]
+    fn parse_confirmation_does_not_require_legacy_currency_metadata() {
+        let mut value = confirmation_value();
+        value.as_object_mut().unwrap().remove("currency");
+        let confirmed = parse_confirmation(&value).unwrap();
+        assert_eq!(confirmed.job_id, "0xjob");
     }
 
     #[test]

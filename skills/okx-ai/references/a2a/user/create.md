@@ -40,7 +40,7 @@ display template:
 - Job Name: {title}
 - Job Description: {Description}
 - Service Provider: {providerAgentName}(Agent {providerAgentId})
-- Fee: {feeAmount} {feeTokenSymbol}
+- Fee: {feeAmount} USD
 - Service Parameters: {serviceParams}
 
 {payload.creationConfirmation}
@@ -50,7 +50,9 @@ display rules:
 
 1. Preserve the confirmed Job Name, Job Description, and Service Parameters.
 2. Render the Service Provider as `{providerAgentName}(Agent {providerAgentId})` when the name is available, or `Agent {providerAgentId}` otherwise.
-3. Render a zero Fee as `Free`; otherwise render the exact amount and token symbol.
+3. Render a zero Fee as `Free`. For paid creation, show the exact amount in USD.
+   With an explicit payment constraint, show the specified token.
+   Otherwise show the automatic payment order USDC → USDG → USDT.
 4. Render the Service Parameters item only when `serviceParams` is non-empty. Omit the Service Parameters line entirely when `serviceParams` is empty — `null`, an empty or whitespace-only string, `{}`, or any field-less JSON object. Treat falsy-valued fields (`false`, `0`, `""`) as non-empty and show the line.
 5. Render attachments below the field list.
 6. Keep Guide Consent in its separate confirmation.
@@ -73,6 +75,14 @@ hint/note and ask the User to choose Repair communication or Continue creation.
 Repair uses `../../shared/chat-comm-init.md`. Reuse the confirmed task parameters;
 do not repeat this check or the confirmation afterward.
 
+### Payment token rules
+
+- With `resumeContext.paymentTokenSymbol`, pass it and the matching
+  `resumeContext.serviceTokenAddress` on `create-task`.
+- Otherwise omit both token flags for automatic selection. A funding target
+  alone must not become a payment constraint.
+- Use the receipt's actual payment token and amount for later lifecycle actions.
+
 ### Create once
 
 Use `payload.serviceId` for `--service-id`; `sid` is never the Service UUID.
@@ -82,11 +92,11 @@ onchainos agent create-task \
   --title <title> \
   --description <confirmed-description> \
   --provider-agent-id <payload.providerAgentId> \
-  --payment-token-symbol <payload.feeTokenSymbol> \
   --payment-token-amount <payload.feeAmount> \
+  [--payment-token-symbol <resumeContext.paymentTokenSymbol> \
+   --service-token-address <resumeContext.serviceTokenAddress>] \
   --service-id <payload.serviceId> \
   --service-params '<confirmed JSON or {}>' \
-  --service-token-address <payload.feeToken> \
   --service-token-amount <payload.feeAmount> \
   [--file <attachment> ...] \
   [--service-guide '<exact serviceGuide>' \
@@ -103,3 +113,11 @@ post-result sequence: initial one-time progress, watch banner, creation-start
 note, then the scoped watch call. Creation is final only after `job_created`.
 For an uncertain mutation result, query fresh task state before considering any
 retry.
+
+## Troubleshooting
+
+### Insufficient balance
+
+If creation returns `select_funding_token` or `fund_selected_token`, enter
+`create-prepare.md` with `payload.resumeContext` and retain the pending task inputs.
+Funding recovery returns to this confirmation card; it never creates automatically.

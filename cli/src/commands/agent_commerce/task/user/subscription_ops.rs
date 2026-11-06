@@ -352,7 +352,16 @@ pub async fn handle_subscribe_detail(
     let period_index = resp["periodIndex"].as_u64().unwrap_or(0);
     let buyer = resp["buyerAgentId"].as_str().unwrap_or("?");
     let provider = resp["providerAgentId"].as_str().unwrap_or("?");
-    let amount = resp["serviceTokenAmount"].as_str().unwrap_or("?");
+    let amount = resp
+        .get("paymentTokenAmount")
+        .or_else(|| resp.get("serviceTokenAmount"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("?");
+    let token_symbol = ["paymentTokenSymbol", "tokenSymbol", "serviceTokenSymbol"]
+        .iter()
+        .find_map(|key| resp.get(*key).and_then(serde_json::Value::as_str));
+    let fee_label = subscription_fee_label(Some(amount), token_symbol)
+        .unwrap_or_else(|| "Amount or payment token unavailable".to_string());
     let sub_start = resp["subStartTime"].as_i64();
     let sub_end = resp["subEndTime"].as_i64();
 
@@ -361,7 +370,7 @@ pub async fn handle_subscribe_detail(
     println!("  subId:     {}", resp["jobId"].as_str().unwrap_or(sub_id));
     println!("  buyer:     #{buyer}");
     println!("  provider:  #{provider}");
-    println!("  fee:       {amount}/month");
+    println!("  fee:       {fee_label}");
     println!("  period:    {period_index}");
     println!("  autoRenew: {auto_renew}");
     if let (Some(start), Some(end)) = (sub_start, sub_end) {
@@ -915,13 +924,14 @@ async fn resolve_subscription_display_facts(
         (None, None) => None,
     };
 
-    let token_symbol = ["serviceTokenSymbol", "tokenSymbol", "paymentTokenSymbol"]
+    let token_symbol = ["paymentTokenSymbol", "tokenSymbol", "serviceTokenSymbol"]
         .into_iter()
         .find_map(|key| display_string(detail.get(key)));
     let token_symbol = match token_symbol {
         Some(symbol) => Some(symbol),
         None => {
-            let token_address = display_string(detail.get("serviceTokenAddress"));
+            let token_address = display_string(detail.get("paymentTokenAddress"))
+                .or_else(|| display_string(detail.get("serviceTokenAddress")));
             match token_address.as_deref() {
                 Some(address) => Some(
                     common::util::resolve_token_symbol_by_address(
@@ -984,7 +994,7 @@ fn free_trial_label(
             let hours = facts.trial_hours.or(derived_hours)?;
             let first_charge = common::deadline::format_utc_timestamp(trial_end)?;
             let amount = detail
-                .get("serviceTokenAmount")
+                .get("paymentTokenAmount").or_else(|| detail.get("serviceTokenAmount"))
                 .and_then(serde_json::Value::as_str)?;
             let symbol = facts.token_symbol.as_deref()?;
             Some(format!(
@@ -1188,7 +1198,8 @@ fn enrich_subscription_detail(
                 .unwrap_or(serde_json::Value::Null),
         );
         let fee_label = subscription_fee_label(
-            obj.get("serviceTokenAmount")
+            obj.get("paymentTokenAmount")
+                .or_else(|| obj.get("serviceTokenAmount"))
                 .and_then(serde_json::Value::as_str),
             display_facts.token_symbol.as_deref(),
         );
@@ -2337,5 +2348,24 @@ mod tests {
             assert_eq!(this_device_name(), name); // …but the name is the same.
             assert!(!this_device_name().is_empty());
         }
+    }
+}
+#[test]
+fn a2a_subscription_detail_preserves_historical_price_and_token() {
+    for token in common::payment_token::TOKENS {
+        let detail = serde_json::json!({"paymentTokenAmount": "10", "serviceTokenAmount": "99", "trialType": 1,
+                "trialStartTime": 1_800_000_000_i64, "trialEndTime": 1_800_259_200_i64});
+        let facts = SubscriptionDisplayFacts {
+            provider_name: None,
+            token_symbol: Some(token.symbol.into()),
+            supports_trial: Some(true),
+            trial_hours: Some(72),
+        };
+        let enriched = enrich_subscription_detail(detail, None, true, &facts);
+        assert_eq!(enriched["feeLabel"], format!("10 {} / month", token.symbol));
+        assert!(enriched["freeTrialLabel"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("10 {}", token.symbol)));
     }
 }

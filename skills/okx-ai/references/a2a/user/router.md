@@ -61,6 +61,7 @@ select one Reference.
 | Action ID | Reference |
 |---|---|
 | `restore_subscription` | [`duplicate-subscription.md`](duplicate-subscription.md) |
+| `select_funding_token`, `fund_selected_token` | [`create-prepare.md`](create-prepare.md) |
 | `open_create_playbook` | [`create.md`](create.md) |
 | `send_task_params_response` | [`../params.md`](../params.md) |
 | `request_rejection_reason`, `approve_review` | [`review-decision.md`](review-decision.md) |
