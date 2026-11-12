@@ -967,3 +967,16 @@ fn mcp_social_sentiment_ranking_period_echo_matches_time_frame() {
         );
     }
 }
+
+#[test]
+fn mcp_keeps_existing_tools_without_service_extensions() {
+    let mut client = McpClient::start();
+    let tools = client.list_tools();
+    assert!(!tools.contains(&"service_list".to_string()));
+    assert!(tools.contains(&"payment_quote".to_string()));
+    assert!(!tools.contains(&"newsliquid_status".to_string()));
+    assert!(!tools.contains(&"service_query".to_string()));
+    assert!(!tools.contains(&"newsliquid_query".to_string()));
+    assert!(!tools.contains(&"newsliquid_migrate_login".to_string()));
+    assert!(!tools.contains(&"newsliquid_save_state".to_string()));
+}

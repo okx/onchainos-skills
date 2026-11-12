@@ -22,6 +22,7 @@ The `period` scheme is recurring (subscription) billing. The buyer **subscribes 
 |---|---|
 | subscribe / change | replay `.data.paymentHeaderValue` under header `.data.paymentHeaderName` (`PAYMENT-SIGNATURE`); persist `.data.subId` (the CLI also caches host→subId) |
 | subscribe / change | on `… contract mismatch` in `.error`, treat as a hard security abort (exit 1) — the seller-declared contract did not match the authoritative `allowance-status`; do not retry or force |
+| subscribe | `errorCode=permit2_allowance_insufficient` with `data.stage=before_signing` means neither subscription signature was produced. Read `availableAmount`, `requiredAmount`, `asset` and `permit2Contract`; obtain bounded approval consent before retrying. Message text alone does not establish the failure stage |
 | access | replay `.data.accessHeaderValue` under `APP-Access`; `.data.source` (`cache` \| `override`) tells you whether the subId came from the local cache or `--sub-id` |
 | cancel / cancel-pending | relay the `.data.cancelAuth` / `.data.pendingChangeCancelAuth` object to the seller; the sub stays active/billable until the contract executes — the local cache is NOT flipped to canceled |
 | my-subscriptions | `.data.subscriptions[]` — each item's `state` is `0` pending / `1` active / `2` completed / `3` canceled / `4` changed / `99` failed; the local cache is reconciled from this authoritative state |

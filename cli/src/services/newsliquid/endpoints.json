@@ -1,0 +1,158 @@
+{
+  "healthz": {
+    "method": "GET",
+    "path": "/healthz"
+  },
+  "auth-challenge": {
+    "method": "POST",
+    "path": "/auth/challenge"
+  },
+  "auth-login": {
+    "method": "POST",
+    "path": "/auth/login"
+  },
+  "billing-quota": {
+    "method": "GET",
+    "path": "/billing/quota"
+  },
+  "news-type": {
+    "method": "GET",
+    "path": "/news_type"
+  },
+  "news-search": {
+    "method": "POST",
+    "path": "/news_search"
+  },
+  "twitter-user-info": {
+    "method": "POST",
+    "path": "/twitter_user_info"
+  },
+  "twitter-user-by-id": {
+    "method": "POST",
+    "path": "/twitter_user_by_id"
+  },
+  "twitter-user-tweets": {
+    "method": "POST",
+    "path": "/twitter_user_tweets"
+  },
+  "twitter-search": {
+    "method": "POST",
+    "path": "/twitter_search"
+  },
+  "twitter-follower-events": {
+    "method": "POST",
+    "path": "/twitter_follower_events"
+  },
+  "twitter-deleted-tweets": {
+    "method": "POST",
+    "path": "/twitter_deleted_tweets"
+  },
+  "twitter-kol-followers": {
+    "method": "POST",
+    "path": "/twitter_kol_followers"
+  },
+  "twitter-article-by-id": {
+    "method": "POST",
+    "path": "/twitter_article_by_id"
+  },
+  "twitter-tweet-by-id": {
+    "method": "POST",
+    "path": "/twitter_tweet_by_id"
+  },
+  "twitter-quote-tweets-by-id": {
+    "method": "POST",
+    "path": "/twitter_quote_tweets_by_id"
+  },
+  "twitter-retweet-users-by-id": {
+    "method": "POST",
+    "path": "/twitter_retweet_users_by_id"
+  },
+  "twitter-watch": {
+    "method": "POST",
+    "path": "/twitter_watch"
+  },
+  "twitter-watch-add": {
+    "method": "POST",
+    "path": "/twitter_watch_add"
+  },
+  "twitter-watch-delete": {
+    "method": "POST",
+    "path": "/twitter_watch_delete"
+  },
+  "finance-enhance-company-search": {
+    "method": "POST",
+    "path": "/finance-enhance/company-search"
+  },
+  "finance-enhance-company-info": {
+    "method": "POST",
+    "path": "/finance-enhance/company-info"
+  },
+  "finance-enhance-company-report-text": {
+    "method": "POST",
+    "path": "/finance-enhance/company-report-text"
+  },
+  "finance-enhance-key-market-events": {
+    "method": "POST",
+    "path": "/finance-enhance/key-market-events"
+  },
+  "finance-enhance-institution-managers": {
+    "method": "POST",
+    "path": "/finance-enhance/institution-managers"
+  },
+  "finance-enhance-institution-stock-holdings": {
+    "method": "POST",
+    "path": "/finance-enhance/institution-stock-holdings"
+  },
+  "finance-enhance-crypto-holdings": {
+    "method": "POST",
+    "path": "/finance-enhance/crypto-holdings"
+  },
+  "finance-enhance-crypto-holding-changes": {
+    "method": "POST",
+    "path": "/finance-enhance/crypto-holding-changes"
+  },
+  "meme-token-evidence": {
+    "method": "POST",
+    "path": "/meme/token-evidence"
+  },
+  "meme-activity": {
+    "method": "POST",
+    "path": "/meme/activity"
+  },
+  "strategy-list": {
+    "method": "GET",
+    "path": "/strategy_list"
+  },
+  "strategy-hits": {
+    "method": "GET",
+    "path": "/strategy_hits"
+  },
+  "billing-offers": {
+    "method": "GET",
+    "path": "/billing/offers"
+  },
+  "billing-orders": {
+    "method": "POST",
+    "path": "/billing/orders"
+  },
+  "billing-orders-id-pay": {
+    "method": "POST",
+    "path": "/billing/orders/:id/pay"
+  },
+  "billing-orders-id": {
+    "method": "GET",
+    "path": "/billing/orders/:id"
+  },
+  "billing-orders-id-reconcile": {
+    "method": "POST",
+    "path": "/billing/orders/:id/reconcile"
+  },
+  "billing-subscriptions": {
+    "method": "GET",
+    "path": "/billing/subscriptions"
+  },
+  "billing-subscriptions-id-cancel": {
+    "method": "POST",
+    "path": "/billing/subscriptions/:id/cancel"
+  }
+}

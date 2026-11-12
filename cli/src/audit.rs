@@ -452,6 +452,7 @@ pub fn cli_command_name(cmd: &crate::Commands) -> String {
         Commands::Leaderboard { command } => format!("leaderboard {}", leaderboard_sub(command)),
         Commands::Tracker { command } => format!("tracker {}", tracker_sub(command)),
         Commands::Payment { command } => format!("payment {}", payment_sub(command)),
+        Commands::Service { .. } => "service".to_string(),
         Commands::Defi { command } => format!("defi {}", defi_sub(command)),
         Commands::Strategy { command } => format!("strategy {}", strategy_sub(command)),
         Commands::Ws { command } => format!("ws {}", ws_sub(command)),

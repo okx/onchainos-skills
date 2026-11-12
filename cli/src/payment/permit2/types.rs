@@ -5,6 +5,25 @@
 
 use serde::{Deserialize, Serialize};
 
+/// An allowance shortage established before any payment signature.
+#[derive(Debug, Clone)]
+pub struct InsufficientPermit2Allowance {
+    pub token: String,
+    pub chain_index: String,
+    pub available: String,
+    pub required: String,
+    pub permit2_contract: String,
+    pub message: String,
+}
+
+impl std::fmt::Display for InsufficientPermit2Allowance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for InsufficientPermit2Allowance {}
+
 /// Seconds to backdate `witness.validAfter` to absorb clock skew between
 /// the client clock and the chain's block time. Callers that build a
 /// `Permit2Witness` must subtract this from `now` when setting `valid_after`.

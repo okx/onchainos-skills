@@ -549,14 +549,23 @@ fn validate_payment_inputs(amount: &str, pay_to: &str, asset: &str) -> Result<u1
 /// influence which accepts entry gets signed — this command signs exactly
 /// what the caller supplied via `--payload`.
 async fn cmd_pay(payload: &str, selected_index: Option<usize>) -> Result<()> {
+    output::success(sign_pay_payload(payload, None, selected_index).await?);
+    Ok(())
+}
+
+/// Sign the supplied payload with an optional explicitly bound payer.
+pub(crate) async fn sign_pay_payload(
+    payload: &str,
+    from: Option<&str>,
+    selected_index: Option<usize>,
+) -> Result<Value> {
     let (mut accepts_val, resource_val) = decode_pay_payload(payload)?;
     if let Some(i) = selected_index {
         accepts_val = select_accepts_index(&accepts_val, i)?;
     }
     let (proof, entry) =
-        payment_flow::sign_payment_with_preference(&accepts_val, None, None, None).await?;
-    output::success(emit_pay_result(&proof, &entry, resource_val.as_ref())?);
-    Ok(())
+        payment_flow::sign_payment_with_preference(&accepts_val, from, None, None).await?;
+    emit_pay_result(&proof, &entry, resource_val.as_ref())
 }
 
 /// Two-phase `payment pay --payment-id`: delegate to `fetch_pay`, which

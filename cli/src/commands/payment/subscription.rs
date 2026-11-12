@@ -227,7 +227,7 @@ fn select_subscription_entry(accepts: &Value) -> Result<Value> {
 
 /// Build the base64 `PAYMENT-SIGNATURE` header for a subscribe / change
 /// double-sign (x402 v2 envelope + subscription payload).
-fn build_subscription_payment_header(
+pub(crate) fn build_subscription_payment_header(
     accepted: &Value,
     resource_url: Option<&str>,
     payload: &SubscriptionPayload,
@@ -313,7 +313,9 @@ async fn cmd_subscribe(accepts: &str, from: Option<&str>, url: Option<&str>) -> 
     let accepted = select_subscription_entry(&accepts_val)?;
     let (chain_index, chain_id, payer) =
         payment_flow::resolve_chain_and_payer(&accepted, from).await?;
-    let signed = sign::sign_subscribe(&chain_index, chain_id, &payer, &accepted).await?;
+    let signed = sign::sign_subscribe(&chain_index, chain_id, &payer, &accepted)
+        .await
+        .map_err(payment_flow::map_pre_signing_allowance_error)?;
     let (hname, hvalue) = build_subscription_payment_header(&accepted, url, &signed.payload)?;
     cache_subscription(url, &signed.payload, &signed.sub_id, &signed.plan_id);
     let payload_v =
@@ -504,6 +506,36 @@ async fn cmd_allowance_status(token: &str, chain: &str, from: Option<&str>) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pre_signing_allowance_failure_preserves_structured_facts() {
+        let failure = crate::payment::subscription::types::InsufficientPermit2Allowance {
+            token: "asset-fixture".into(),
+            chain_index: "196".into(),
+            available: "0".into(),
+            required: "5000000".into(),
+            permit2_contract: "contract-fixture".into(),
+            message: "A human explanation independent of recovery".into(),
+        };
+        let error = payment_flow::map_pre_signing_allowance_error(
+            anyhow::Error::new(failure).context("a different human explanation"),
+        );
+        let coded = error
+            .downcast_ref::<crate::commands::sink::CodedError>()
+            .unwrap();
+        assert_eq!(coded.code, "permit2_allowance_insufficient");
+        let data = coded.data.as_ref().unwrap();
+        assert_eq!(data["stage"], "before_signing");
+        assert_eq!(data["requiredAmount"], "5000000");
+        assert_eq!(data["availableAmount"], "0");
+        assert_eq!(data["asset"], "asset-fixture");
+        let unknown = payment_flow::map_pre_signing_allowance_error(anyhow!(
+            "allowance insufficient after unknown signing"
+        ));
+        assert!(unknown
+            .downcast_ref::<crate::commands::sink::CodedError>()
+            .is_none());
+    }
 
     #[test]
     fn select_subscription_entry_from_array() {
