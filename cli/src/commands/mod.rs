@@ -7,6 +7,7 @@ pub mod gateway;
 pub mod leaderboard;
 pub mod market;
 pub mod memepump;
+pub mod services;
 pub mod payment;
 pub mod portfolio;
 pub(crate) mod risk_classify;

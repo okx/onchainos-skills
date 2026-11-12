@@ -24,8 +24,8 @@ use crate::payment::subscription::eip712::{
 };
 use crate::payment::subscription::facilitator::allowance_status;
 use crate::payment::subscription::types::{
-    AllowanceStatus, CancelAuth, PendingChangeCancelAuth, PermitDetailsWire, PermitSingleWire,
-    SubscriptionPayload, SubscriptionTermsWire,
+    AllowanceStatus, CancelAuth, InsufficientPermit2Allowance, PendingChangeCancelAuth,
+    PermitDetailsWire, PermitSingleWire, SubscriptionPayload, SubscriptionTermsWire,
 };
 
 const ZERO_BYTES32: &str = "0x0000000000000000000000000000000000000000000000000000000000000000";
@@ -186,7 +186,7 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-fn random_bytes32_hex() -> String {
+pub(crate) fn random_bytes32_hex() -> String {
     let mut bytes = [0u8; 32];
     rand::rngs::OsRng.fill_bytes(&mut bytes);
     format!("0x{}", hex::encode(bytes))
@@ -280,17 +280,15 @@ async fn sign_double(
     if !a.permit2_allowance.is_empty() {
         if let Ok(layer1) = u256(&a.permit2_allowance) {
             if layer1 < amount {
-                bail!(
-                    "Layer-1 Permit2 allowance insufficient on token {} (chain {}). \
-                     ERC20.allowance(buyer, Permit2) is {}, but this subscription needs {}. \
-                     Approve once first: IERC20.approve({}, MAX) — e.g. via an on-chain \
-                     contract call — then retry the subscription.",
-                    p.token,
-                    chain_index,
-                    layer1,
-                    amount,
-                    a.permit2_contract
-                );
+                return Err(InsufficientPermit2Allowance {
+                    token: p.token.clone(),
+                    chain_index: chain_index.to_owned(),
+                    available: layer1.to_string(),
+                    required: amount.to_string(),
+                    permit2_contract: a.permit2_contract.clone(),
+                    message: format!("Layer-1 Permit2 allowance insufficient on token {} (chain {}). ERC20.allowance(buyer, Permit2) is {}, but this subscription needs {} base units. Ask the buyer to confirm the required total allowance. Then approve only that amount for Permit2 {} and retry this subscription.", p.token, chain_index, layer1, amount, a.permit2_contract),
+                }
+                .into());
             }
         }
     }

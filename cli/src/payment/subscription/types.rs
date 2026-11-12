@@ -8,6 +8,8 @@
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
+pub use crate::payment::permit2::types::InsufficientPermit2Allowance;
+
 // ───────────────────────────── signed payload ──────────────────────────────
 
 /// The signed `SubscriptionTerms` fields, in EIP-712 order. Atomic amounts

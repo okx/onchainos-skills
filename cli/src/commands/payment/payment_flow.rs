@@ -492,6 +492,26 @@ pub(crate) fn detect_permit2_route(entry: &Value, params: &ResolvedEntry) -> (bo
     (is_upto, is_exact_permit2)
 }
 
+/// Expose a typed, proven pre-signing shortage through the CLI error contract.
+pub(crate) fn map_pre_signing_allowance_error(error: anyhow::Error) -> anyhow::Error {
+    if let Some(failure) =
+        error.downcast_ref::<crate::payment::permit2::types::InsufficientPermit2Allowance>()
+    {
+        return crate::commands::sink::CodedError::new(
+            "permit2_allowance_insufficient",
+            None,
+            failure.to_string(),
+        )
+        .with_data(json!({
+            "stage": "before_signing", "asset": failure.token,
+            "chainIndex": failure.chain_index, "availableAmount": failure.available,
+            "requiredAmount": failure.required, "permit2Contract": failure.permit2_contract,
+        }))
+        .into();
+    }
+    error
+}
+
 /// Pre-check Permit2 allowance for a Permit2/upto payment. Bails with
 /// an actionable error if allowance < `required_amount`; degrades to a
 /// warning + Ok if the RPC probe itself fails (so probe outages don't
@@ -506,19 +526,7 @@ pub(crate) async fn preflight_permit2_allowance(
         .parse()
         .with_context(|| format!("invalid required amount (decimal uint256): {required_amount}"))?;
     match crate::payment::permit2::rpc::fetch_permit2_allowance(chain_index, asset, payer).await {
-        Ok(allowance) if allowance < required => bail!(
-            "Permit2 allowance insufficient on token {} for chain {}. \
-             Current allowance is {}, but this payment needs {}. \
-             The buyer must first call \
-             IERC20.approve({}, MAX) once \
-             before any x402 Permit2 payment can be settled.",
-            asset,
-            chain_index,
-            allowance,
-            required,
-            crate::chains::PERMIT2_ADDRESS
-        ),
-        Ok(_) => Ok(()),
+        Ok(allowance) => require_permit2_allowance(chain_index, asset, allowance, required),
         Err(e) => {
             eprintln!(
                 "Warning: Permit2 allowance pre-check unavailable on chain {chain_index} ({e:#}); falling back to on-chain settle revert"
@@ -526,6 +534,22 @@ pub(crate) async fn preflight_permit2_allowance(
             Ok(())
         }
     }
+}
+
+fn require_permit2_allowance(
+    chain_index: &str,
+    asset: &str,
+    allowance: alloy_primitives::U256,
+    required: alloy_primitives::U256,
+) -> Result<()> {
+    if allowance < required {
+        return Err(crate::payment::permit2::types::InsufficientPermit2Allowance {
+            token: asset.to_owned(), chain_index: chain_index.to_owned(), available: allowance.to_string(),
+            required: required.to_string(), permit2_contract: crate::chains::PERMIT2_ADDRESS.to_owned(),
+            message: format!("Permit2 allowance insufficient on token {} for chain {}. Current allowance is {}, but this payment needs {} base units. Ask the buyer to confirm the required total allowance. Then approve only that amount for Permit2 {} and retry this payment.", asset, chain_index, allowance, required, crate::chains::PERMIT2_ADDRESS),
+        }.into());
+    }
+    Ok(())
 }
 
 /// Time-bounded fields + 256-bit random nonce shared by all Permit2 /
@@ -2588,6 +2612,30 @@ pub async fn fetch_session(params: SessionParams) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::await_holding_lock)] // TEST_ENV_MUTEX serializes process-wide env vars across async tests
+    #[test]
+    fn exact_permit2_shortage_is_typed_before_signing() {
+        let error = super::require_permit2_allowance(
+            "196",
+            "asset-fixture",
+            alloy_primitives::U256::from(1u64),
+            alloy_primitives::U256::from(5u64),
+        )
+        .unwrap_err();
+        let failure = error
+            .downcast_ref::<crate::payment::permit2::types::InsufficientPermit2Allowance>()
+            .unwrap();
+        assert_eq!(failure.available, "1");
+        assert_eq!(failure.required, "5");
+        assert_eq!(failure.permit2_contract, crate::chains::PERMIT2_ADDRESS);
+        assert_eq!(error.to_string(), format!("Permit2 allowance insufficient on token asset-fixture for chain 196. Current allowance is 1, but this payment needs 5 base units. Ask the buyer to confirm the required total allowance. Then approve only that amount for Permit2 {} and retry this payment.", crate::chains::PERMIT2_ADDRESS));
+        super::require_permit2_allowance(
+            "196",
+            "asset-fixture",
+            alloy_primitives::U256::from(5u64),
+            alloy_primitives::U256::from(5u64),
+        )
+        .unwrap();
+    }
     #[test]
     fn a2mcp_sale_success_requires_successful_mcp_tool_not_just_http_200() {
         for result in [

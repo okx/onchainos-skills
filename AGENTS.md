@@ -3,6 +3,11 @@
 This file is the canonical development guide for all coding agents in this
 repository. `CLAUDE.md` only adds Claude Code specifics on top of it.
 
+## Development notes
+
+1. Do not use `cargo test --lib` because `cli/` is a binary-only Rust crate and
+   has no library target.
+
 ## Development flow
 
 Follow these steps for every development change.

@@ -17,6 +17,7 @@ mod keyring_store;
 mod mcp;
 mod mcp_client;
 mod output;
+mod services;
 pub mod payment;
 mod payment_cache;
 mod payment_notify;
@@ -122,6 +123,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: commands::payment::PaymentCommand,
     },
+    /// Registered third-party service access
+    Service {
+        #[command(subcommand)]
+        command: commands::services::ServiceCommand,
+    },
     /// Address tracker: REST activities for KOL / smart money / custom address activity
     Tracker {
         #[command(subcommand)]
@@ -203,7 +209,12 @@ async fn run() {
     }
 
     let raw_args: Vec<String> = std::env::args().collect();
-    let redacted_args = audit::redact_args(&raw_args);
+    // Service IDs and unsigned payment approvals stay in Agent context, not audit files.
+    let redacted_args = if matches!(&cli.command, Commands::Service { .. }) {
+        Vec::new()
+    } else {
+        audit::redact_args(&raw_args)
+    };
     let command_name = audit::cli_command_name(&cli.command);
     let start = std::time::Instant::now();
 
@@ -226,6 +237,7 @@ async fn run() {
         Commands::Wallet { command } => commands::agentic_wallet::execute(command).await,
         Commands::Security { command } => commands::security::execute(&ctx, command).await,
         Commands::Payment { command } => commands::payment::execute(command).await,
+        Commands::Service { command } => commands::services::execute(command).await,
         Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
         Commands::Strategy { command } => {
             commands::agentic_wallet::strategy::execute(&ctx, *command).await

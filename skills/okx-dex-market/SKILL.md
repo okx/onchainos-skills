@@ -4,7 +4,7 @@ description: "Query read-only DEX token, market, signal, social, trenches, and W
 license: MIT
 metadata:
   author: okx
-  version: "4.6.9"
+  version: "4.6.10"
   homepage: "https://web3.okx.com"
 ---
 
