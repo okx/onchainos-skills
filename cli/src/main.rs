@@ -181,11 +181,19 @@ fn main() {
 
 #[tokio::main]
 async fn run() {
-    if let Err(e) = crate::home::self_heal_permissions() {
-        eprintln!("Warning: {e}");
-    }
-
     let mut cli = Cli::parse();
+    // Stop validates its own session paths. Startup's legacy
+    // watch-log permission scan must not touch unvalidated stop targets.
+    if !matches!(
+        &cli.command,
+        Commands::Ws {
+            command: commands::ws::WsCommand::Stop { .. }
+        }
+    ) {
+        if let Err(e) = crate::home::self_heal_permissions() {
+            eprintln!("Warning: {e}");
+        }
+    }
     endpoints::set_dev_mode(cli.dev);
 
     // The agent subsystem runs only on XLayer (chainId=196, chain name "xlayer").

@@ -259,6 +259,11 @@ async fn ws_start(
     if channels.is_empty() {
         channels = DEFAULT_CHANNELS.iter().map(|c| c.to_string()).collect();
     }
+    // Reject paths before checking credentials, reusing or creating a session,
+    // or starting a daemon; stop must be able to handle every saved channel.
+    for channel in &channels {
+        crate::watch::stop::validate_channel(channel)?;
+    }
     channels.sort();
     channels.dedup();
 
@@ -584,19 +589,18 @@ struct StopResult {
     flushed_events: Vec<Value>,
 }
 
-fn stop_one(id: &str, flush: bool) -> Result<StopResult> {
-    let dir = store::watch_dir(id)?;
-    if !dir.exists() {
-        bail!("session '{}' not found", id);
-    }
+fn stop_one(root: &crate::watch::stop::StopRoot, id: &str, flush: bool) -> Result<StopResult> {
+    let session = root.session(id)?;
+    stop_session(session, flush)
+}
 
+fn stop_session(session: crate::watch::stop::StopSession, flush: bool) -> Result<StopResult> {
     let mut flushed_events = Vec::new();
     if flush {
-        let config = store::read_config(id)?;
-        for ch in &config.channels {
-            let result = store::read_events_from_cursor(&dir, ch, 1000)?;
+        for ch in &session.config.channels {
+            let result = store::read_events_from_cursor(&session.dir, ch, 1000)?;
             store::write_cursor(
-                &dir,
+                &session.dir,
                 ch,
                 result.new_cursor.file_no,
                 result.new_cursor.offset,
@@ -604,16 +608,19 @@ fn stop_one(id: &str, flush: bool) -> Result<StopResult> {
             flushed_events.extend(result.events);
         }
     }
-
-    let _ = kill_daemon(id);
-    let _ = store::write_status(&dir, "stopped", None);
-    store::remove_watch_dir(id)?;
-
+    if let Some(pid) = session.pid {
+        let _ = kill_daemon(pid);
+    }
+    let _ = store::write_status(&session.dir, "stopped", None);
+    session.remove()?;
     Ok(StopResult { flushed_events })
 }
 
 fn ws_stop(id: &str, flush: bool) -> Result<()> {
-    let result = stop_one(id, flush)?;
+    crate::watch::stop::validate_id(id)?;
+    let root = crate::watch::stop::StopRoot::open()?
+        .ok_or_else(|| anyhow::anyhow!("session '{}' not found", id))?;
+    let result = stop_one(&root, id, flush)?;
     output::success(json!({
         "id": id,
         "status": "stopped",
@@ -624,25 +631,42 @@ fn ws_stop(id: &str, flush: bool) -> Result<()> {
 }
 
 fn ws_stop_all(flush: bool) -> Result<()> {
-    let watches = store::list_watches()?;
-    if watches.is_empty() {
+    let root = crate::watch::stop::StopRoot::open()?;
+    let (ids, unsafe_names) = match &root {
+        Some(root) => root.ids()?,
+        None => (Vec::new(), Vec::new()),
+    };
+    if ids.is_empty() && unsafe_names.is_empty() {
         output::success(json!({ "stopped": [], "message": "no active sessions" }));
         return Ok(());
     }
+    let root = root.expect("non-empty IDs require an open root");
     let mut stopped = Vec::new();
-    for w in watches {
-        match stop_one(&w.id, flush) {
-            Ok(_) => stopped.push(w.id),
-            Err(e) => eprintln!("[warn] failed to stop {}: {}", w.id, e),
+    let mut failed: Vec<Value> = unsafe_names
+        .into_iter()
+        .map(|id| {
+            json!({
+                "id": id, "error": "non-UTF-8 session name; inspect manually"
+            })
+        })
+        .collect();
+    for id in ids {
+        match stop_one(&root, &id, flush) {
+            Ok(_) => stopped.push(id),
+            Err(e) => failed.push(json!({ "id": id, "error": format!("{e:#}") })),
         }
+    }
+    if !failed.is_empty() {
+        bail!(
+            "some sessions could not be safely stopped: {}",
+            json!({ "stopped": stopped, "failed": failed })
+        );
     }
     output::success(json!({ "stopped": stopped }));
     Ok(())
 }
 
-fn kill_daemon(id: &str) -> Result<()> {
-    let pid = store::read_pid(id)?;
-
+fn kill_daemon(pid: u32) -> Result<()> {
     #[cfg(unix)]
     {
         use std::time::Duration;

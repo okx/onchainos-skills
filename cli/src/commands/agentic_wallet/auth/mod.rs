@@ -539,11 +539,12 @@ fn pending_session_key_name(auth_session_id: &str) -> String {
 /// Mint a fresh login session: `(auth_session_id, session_private_key, login_url)`.
 /// `temp_pub_key` travels in the URL so the page can HPKE-encrypt the session
 /// seed; `session_private_key` stays local and is later stored as `session_key`.
-fn new_login_session() -> (String, String, String) {
-    let auth_session_id = uuid::Uuid::new_v4().to_string();
+async fn new_login_session() -> Result<(String, String, String)> {
     let (session_private_key, temp_pub_key) = crate::crypto::generate_x25519_session_keypair();
+    let mut client = WalletApiClient::new()?;
+    let auth_session_id = client.create_login_session().await?;
     let login_url = build_login_url(&social_login_base_url(), &auth_session_id, &temp_pub_key);
-    (auth_session_id, session_private_key, login_url)
+    Ok((auth_session_id, session_private_key, login_url))
 }
 
 pub(super) fn attach_post_login_subscriptions(
@@ -767,18 +768,19 @@ async fn complete_login(
 /// login page, and return the login URL. The caller displays the returned login
 /// information in the Agent conversation before invoking `poll`.
 pub(super) async fn cmd_login_init() -> Result<()> {
-    // Drop the previous pending session's key so repeated `init`s don't accumulate.
-    if let Some(prev) = keyring_store::get_opt(PENDING_AUTH_SESSION_ID).filter(|s| !s.is_empty()) {
-        let _ = keyring_store::delete(&pending_session_key_name(&prev));
-    }
-
-    let (auth_session_id, session_private_key, login_url) = new_login_session();
+    let (auth_session_id, session_private_key, login_url) = new_login_session().await?;
+    let previous = keyring_store::get_opt(PENDING_AUTH_SESSION_ID);
 
     let pending_key = pending_session_key_name(&auth_session_id);
     keyring_store::store(&[
         (PENDING_AUTH_SESSION_ID, auth_session_id.as_str()),
         (pending_key.as_str(), session_private_key.as_str()),
     ])?;
+
+    // Retire the old session only after the replacement is saved successfully.
+    if let Some(prev) = previous.filter(|id| !id.is_empty() && id != &auth_session_id) {
+        let _ = keyring_store::delete(&pending_session_key_name(&prev));
+    }
 
     let opened = is_browsable_url(&login_url) && try_open_browser(&login_url);
 
