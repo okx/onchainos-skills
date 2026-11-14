@@ -3,7 +3,7 @@
 //!
 //! ── Scope and contract ──────────────────────────────────────────────────
 //!
-//! These are **offline, deterministic** tests of the new clap surface and its
+//! Default tests are **offline, deterministic** tests of the new clap surface and its
 //! pre-network guards — no backend round-trip, no live login. They pin the
 //! handler-dispatch contract that the unit tests (which only cover helpers
 //! like `build_login_url` / `classify_poll`) cannot reach:
@@ -22,7 +22,8 @@
 //! `init` success packet: `data.nextSteps.completeLogin` is the exact `--phase
 //! poll` command with the packet's own `authSessionId` interpolated. `init`
 //! opens the login page and returns `data.nextSteps.displayLoginUrl`; the Agent
-//! renders that URL before it invokes the poll command.
+//! renders that URL before it invokes the poll command. These init cases are
+//! opt-in live tests because session creation now requires the backend.
 //!
 //! ── Sandbox conventions ──────────────────────────────────────────────────
 //!
@@ -85,6 +86,7 @@ fn fresh_home() -> (TestHome, PathBuf) {
 /// `ONCHAINOS_HOME`, and suppress the browser open (`init` opens best-effort).
 fn scrubbed<'a>(cmd: &'a mut assert_cmd::Command, home: &Path) -> &'a mut assert_cmd::Command {
     cmd.env("ONCHAINOS_HOME", home)
+        .env("ONCHAINOS_FORCE_FILE_KEYRING", "1")
         .env("ONCHAINOS_NO_BROWSER", "1")
 }
 
@@ -166,6 +168,7 @@ fn login_phase_poll_unknown_session_errors() {
 // ── bare `login` (no --phase) defaults to `init` ─────────────────────
 
 #[test]
+#[ignore = "Creates a real backend login session; run explicitly against an approved test backend. Offline transport coverage lives in wallet_api unit tests."]
 fn login_no_phase_defaults_to_init() {
     let (_tmp, home) = fresh_home();
 
@@ -220,8 +223,7 @@ fn login_phase_full_is_rejected() {
 
 // ── C4 discoverability: `init` next-step commands ────────────────────
 //
-// `init` mints the session locally (uuid + keypair) and never touches the
-// backend, so these golden cases run offline. `assert_ok_and_extract_data`
+// `init` creates a backend session, so these golden cases are opt-in live tests. `assert_ok_and_extract_data`
 // (shared `common` helper) parses stdout, asserts `ok:true`, and returns `data`.
 
 /// IT-001 — `init` shows the exact command to finish signing in.
@@ -232,6 +234,7 @@ fn login_phase_full_is_rejected() {
 /// `contains:` substring the plan lists) also proves the session id is
 /// interpolated, not a placeholder.
 #[test]
+#[ignore = "Creates a real backend login session; run explicitly against an approved test backend. Offline transport coverage lives in wallet_api unit tests."]
 fn login_init_next_steps_complete_login_matches_session_id() {
     let (_tmp, home) = fresh_home();
 
@@ -262,6 +265,7 @@ fn login_init_next_steps_complete_login_matches_session_id() {
 /// `data.nextSteps.displayLoginUrl`, which equals `data.loginUrl`. With browser
 /// opening disabled, `openLoginUrl` also carries the same manual fallback.
 #[test]
+#[ignore = "Creates a real backend login session; run explicitly against an approved test backend. Offline transport coverage lives in wallet_api unit tests."]
 fn login_bare_default_init_next_steps_open_login_url() {
     let (_tmp, home) = fresh_home();
 
@@ -335,6 +339,7 @@ fn login_poll_interval_is_two_seconds() {
 
 /// IT-006 — `init` uses the canonical login host and shows the finish command.
 #[test]
+#[ignore = "Creates a real backend login session; run explicitly against an approved test backend. Offline transport coverage lives in wallet_api unit tests."]
 fn login_init_uses_compiled_base_url_and_shows_next_steps() {
     let (_tmp, home) = fresh_home();
 
@@ -385,6 +390,7 @@ fn removed_base_url_flag_is_rejected() {
 }
 
 #[test]
+#[ignore = "Creates a real backend login session; run explicitly against an approved test backend. Offline transport coverage lives in wallet_api unit tests."]
 fn hidden_dev_flag_uses_beta_base_url() {
     let (_tmp, home) = fresh_home();
     let output = scrubbed(&mut onchainos(), &home)

@@ -354,11 +354,10 @@ pub fn list_watches() -> Result<Vec<WatchEntry>> {
 
 /// Remove watch directory (called by watch stop after daemon is killed).
 pub fn remove_watch_dir(id: &str) -> Result<()> {
-    let dir = watch_dir(id)?;
-    if dir.exists() {
-        fs::remove_dir_all(dir)?;
-    }
-    Ok(())
+    super::stop::validate_id(id)?;
+    let root = super::stop::StopRoot::open()?
+        .ok_or_else(|| anyhow::anyhow!("session '{}' not found", id))?;
+    root.session(id)?.remove()
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

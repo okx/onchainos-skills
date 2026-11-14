@@ -4,7 +4,7 @@ description: "Access NewsLiquid / 6551 through the OnchainOS CLI. Use for explic
 license: MIT
 metadata:
   author: okx
-  version: "4.6.10"
+  version: "4.6.11"
   homepage: "https://web3.okx.com"
 ---
 

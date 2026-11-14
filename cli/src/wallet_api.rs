@@ -1480,9 +1480,75 @@ impl WalletApiClient {
         Ok(resp)
     }
 
+    /// Create a social-login session with at most one network recovery retry.
+    /// Each retry may create a new session; only the returned ID is used.
+    pub async fn create_login_session(&mut self) -> Result<String> {
+        let mut data = Value::Null;
+        for attempt in 0..2 {
+            let url = format!(
+                "{}/priapi/v5/wallet/agentic/auth/cli/sessionId",
+                self.effective_base_url().trim_end_matches('/')
+            );
+            let response = match self
+                .http
+                .post(&url)
+                .headers(crate::client::ApiClient::anonymous_headers())
+                .send()
+                .await
+            {
+                Ok(response) => response,
+                Err(error) if error.is_connect() || error.is_timeout() => {
+                    if self.doh.handle_failure().await {
+                        self.rebuild_http_client()?;
+                    }
+                    if attempt == 0 {
+                        continue;
+                    }
+                    return Err(error).context("failed to create login session after retry");
+                }
+                Err(error) => return Err(error).context("failed to create login session"),
+            };
+            if self.doh.should_failover_on_response(&response) {
+                let recovered = self.doh.handle_failure().await;
+                if recovered {
+                    self.rebuild_http_client()?;
+                    if attempt == 0 {
+                        continue;
+                    }
+                }
+            }
+            data = match self.handle_response(response).await {
+                Ok(data) => data,
+                Err(error)
+                    if error
+                        .downcast_ref::<reqwest::Error>()
+                        .is_some_and(|error| error.is_timeout()) =>
+                {
+                    if self.doh.handle_failure().await {
+                        self.rebuild_http_client()?;
+                    }
+                    if attempt == 0 {
+                        continue;
+                    }
+                    return Err(error).context("failed to create login session after retry");
+                }
+                Err(error) => return Err(error),
+            };
+            self.doh.cache_direct_if_needed();
+            break;
+        }
+        let session_id = data
+            .as_array()
+            .and_then(|items| items.first())
+            .and_then(Value::as_str)
+            .filter(|id| !id.trim().is_empty())
+            .context("cli/sessionId: expected a non-empty string in data[0]")?;
+        Ok(session_id.to_owned())
+    }
+
     /// POST /priapi/v5/wallet/agentic/auth/session/result
     ///
-    /// Look up the verify result by `authSessionId` (the UUID in the social-login
+    /// Look up the verify result by `authSessionId` (the server-issued ID in the social-login
     /// link). On `code=0` returns the raw `data[0]` (VerifyResponse-shaped); while
     /// login is incomplete the backend returns `code=10018`, surfaced as an
     /// `ApiCodeError` for the caller to treat as "keep polling".
@@ -2453,6 +2519,193 @@ mod tests {
         assert_eq!(resp.accounts[1].addresses.len(), 2);
         assert_eq!(resp.accounts[1].addresses[0].chain_index, "56");
         assert_eq!(resp.accounts[1].addresses[1].chain_index, "501");
+    }
+
+    // A local server keeps session creation tests independent of live accounts.
+    fn login_mock(responses: Vec<(u16, String)>) -> (String, std::thread::JoinHandle<Vec<String>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            for (status, body) in responses {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(std::time::Instant::now() < deadline, "missing request");
+                            std::thread::sleep(std::time::Duration::from_millis(5));
+                        }
+                        Err(e) => panic!("accept: {e}"),
+                    }
+                };
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                    .unwrap();
+                let mut request = Vec::new();
+                loop {
+                    let mut buf = [0; 4096];
+                    let n = stream.read(&mut buf).unwrap();
+                    assert!(n > 0, "incomplete request");
+                    request.extend_from_slice(&buf[..n]);
+                    if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let length = String::from_utf8_lossy(&request[..end])
+                            .lines()
+                            .filter_map(|line| line.split_once(':'))
+                            .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                            .map(|(_, value)| value.trim().parse::<usize>().unwrap())
+                            .unwrap_or(0);
+                        if request.len() >= end + 4 + length {
+                            break;
+                        }
+                    }
+                }
+                requests.push(String::from_utf8(request).unwrap());
+                if status == 1 {
+                    // Return headers and a partial body before stalling the body read.
+                    stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{").unwrap();
+                    stream.flush().unwrap();
+                }
+                if status == 0 || status == 1 {
+                    // 0 stalls headers; 1 stalls the body. Both exceed the client timeout.
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                    continue;
+                }
+                write!(stream, "HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            }
+            requests
+        });
+        (url, server)
+    }
+
+    #[tokio::test]
+    async fn login_session_creation_and_poll_use_server_id() {
+        let id = "server-issued-session";
+        let (url, server) = login_mock(vec![
+            (200, json!({"code":"0", "data":[id]}).to_string()),
+            (
+                200,
+                json!({"code":"0", "data":[{"status":"pending"}]}).to_string(),
+            ),
+        ]);
+        let mut client = WalletApiClient::new_for_test(&url).unwrap();
+        let session = client.create_login_session().await.unwrap();
+        assert_eq!(session, id);
+        client.session_result(&session).await.unwrap();
+        let requests = server.join().unwrap();
+        assert!(requests[0].starts_with("POST /priapi/v5/wallet/agentic/auth/cli/sessionId HTTP/1.1"));
+        assert_eq!(requests[0].split_once("\r\n\r\n").unwrap().1, "");
+        assert!(requests[0].to_lowercase().contains("ok-client-version:"));
+        assert!(!requests[0].to_lowercase().contains("authorization:"));
+        assert!(requests[1].starts_with("POST /priapi/v5/wallet/agentic/auth/session/result HTTP/1.1"));
+        let body: Value = serde_json::from_str(requests[1].split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(body, json!({"authSessionId":id}));
+    }
+
+    #[tokio::test]
+    async fn login_session_creation_retries_timeout_with_new_session() {
+        let (url, server) = login_mock(vec![
+            (0, String::new()),
+            (
+                200,
+                json!({"code":"0", "data":["replacement-session"]}).to_string(),
+            ),
+        ]);
+        let mut client = WalletApiClient::new_for_test(&url).unwrap();
+        client.http = Client::builder()
+            .timeout(std::time::Duration::from_millis(200))
+            .build()
+            .unwrap();
+        assert_eq!(
+            client.create_login_session().await.unwrap(),
+            "replacement-session"
+        );
+        let requests = server.join().unwrap();
+        assert_eq!(requests.len(), 2);
+        for request in requests {
+            assert!(request.starts_with("POST /priapi/v5/wallet/agentic/auth/cli/sessionId HTTP/1.1"));
+            assert_eq!(request.split_once("\r\n\r\n").unwrap().1, "");
+        }
+    }
+
+    #[tokio::test]
+    async fn login_session_creation_stops_after_second_timeout() {
+        let (url, server) = login_mock(vec![(0, String::new()), (0, String::new())]);
+        let mut client = WalletApiClient::new_for_test(&url).unwrap();
+        client.http = Client::builder()
+            .timeout(std::time::Duration::from_millis(200))
+            .build()
+            .unwrap();
+        let error = client.create_login_session().await.unwrap_err();
+        assert!(error.to_string().contains("after retry"));
+        assert_eq!(server.join().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn login_session_creation_retries_body_timeout() {
+        let (url, server) = login_mock(vec![
+            (1, String::new()),
+            (
+                200,
+                json!({"code":"0", "data":["body-retry-session"]}).to_string(),
+            ),
+        ]);
+        let mut client = WalletApiClient::new_for_test(&url).unwrap();
+        client.http = Client::builder()
+            .timeout(std::time::Duration::from_millis(200))
+            .build()
+            .unwrap();
+        assert_eq!(
+            client.create_login_session().await.unwrap(),
+            "body-retry-session"
+        );
+        let requests = server.join().unwrap();
+        assert_eq!(requests.len(), 2);
+        for request in requests {
+            assert!(request.starts_with("POST /priapi/v5/wallet/agentic/auth/cli/sessionId HTTP/1.1"));
+            assert_eq!(request.split_once("\r\n\r\n").unwrap().1, "");
+        }
+    }
+
+    #[tokio::test]
+    async fn login_session_creation_shares_retry_limit_across_timeout_phases() {
+        for (first, second) in [(1, 1), (0, 1), (1, 0)] {
+            let (url, server) = login_mock(vec![(first, String::new()), (second, String::new())]);
+            let mut client = WalletApiClient::new_for_test(&url).unwrap();
+            client.http = Client::builder()
+                .timeout(std::time::Duration::from_millis(200))
+                .build()
+                .unwrap();
+            let error = client.create_login_session().await.unwrap_err();
+            assert!(error.to_string().contains("after retry"));
+            assert!(error.downcast_ref::<reqwest::Error>().unwrap().is_timeout());
+            assert_eq!(server.join().unwrap().len(), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn login_session_creation_rejects_invalid_responses() {
+        for (status, body) in [
+            (
+                200,
+                json!({"code":"1", "msg":"denied", "data":["ignored"]}).to_string(),
+            ),
+            (200, json!({"data":["ignored"]}).to_string()),
+            (200, json!({"code":"0", "data":[]}).to_string()),
+            (200, json!({"code":"0", "data":[""]}).to_string()),
+            (200, json!({"code":"0", "data":["   "]}).to_string()),
+            (200, json!({"code":"0", "data":[42]}).to_string()),
+            (200, json!({"code":"0", "data":{}}).to_string()),
+            (200, "not json".to_string()),
+            (503, "unavailable".to_string()),
+        ] {
+            let (url, server) = login_mock(vec![(status, body)]);
+            let mut client = WalletApiClient::new_for_test(&url).unwrap();
+            assert!(client.create_login_session().await.is_err());
+            assert_eq!(server.join().unwrap().len(), 1);
+        }
     }
 
     #[tokio::test]
