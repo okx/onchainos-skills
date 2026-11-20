@@ -815,6 +815,7 @@ fn payment_sub(c: &PaymentCommand) -> String {
     use crate::commands::payment::{DefaultAction, SessionCommand};
     match c {
         PaymentCommand::X402Pay { .. } => "pay".to_string(),
+        PaymentCommand::Validate { .. } => "validate".to_string(),
         PaymentCommand::Quote { .. } => "quote".to_string(),
         PaymentCommand::DecodeReceipt { .. } => "decode-receipt".to_string(),
         PaymentCommand::Eip3009Sign { .. } => "pay-local".to_string(),

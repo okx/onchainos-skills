@@ -161,6 +161,11 @@ pub(super) fn parse_service_deltas(raw: Option<&str>) -> Result<Vec<Value>> {
         .collect()
 }
 
+/// The only free-trial duration (hours) the product supports.
+pub(super) const FREE_TRIAL_HOURS: &str = "72";
+pub(super) const FREE_TRIAL_UNSUPPORTED_MSG: &str =
+    "The free trial duration you entered is not supported. Only 72 hours (3 days) is available";
+
 pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentService> {
     service.id = normalize_service_id(service.id.as_ref())?;
     service.service_name = service.service_name.trim().to_string();
@@ -213,6 +218,17 @@ pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentServic
         .free_trial
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
+    // Only the fixed 72-hour trial may be written. Any other present value
+    // (0, negative, legacy hours, non-numeric) is rejected. A delete only
+    // identifies the service by id, so it must not be blocked by a legacy trial.
+    if service.operation != Some(ServiceOperation::Delete)
+        && service
+            .free_trial
+            .as_deref()
+            .is_some_and(|trial| trial != FREE_TRIAL_HOURS)
+    {
+        bail!("{FREE_TRIAL_UNSUPPORTED_MSG}");
+    }
 
     if service.service_name.is_empty() {
         bail!("missing required field in --service: serviceName");

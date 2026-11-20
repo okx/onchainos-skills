@@ -1,50 +1,96 @@
-//! Service CLI entry point for NewsLiquid / 6551.
-use super::sink::CodedError;
-use crate::output;
-use crate::services::newsliquid;
+//! Service login and wallet-scoped credential access.
+use crate::{output, services::newsliquid};
 use anyhow::Result;
 use clap::Subcommand;
-use serde_json::{json, Value};
+use serde_json::json;
 
 #[derive(Subcommand)]
 pub enum ServiceCommand {
-    /// Call one service operation. Writes require the owning flow's confirmation.
-    Call {
+    /// Log in with the selected wallet and store the service credential.
+    Login {
         #[arg(long)]
         service: String,
+        /// Obtain a fresh login even when a cached credential has not expired.
         #[arg(long)]
-        operation: String,
+        refresh: bool,
+        /// Accept only a wallet warning already shown to and accepted by the user.
+        #[arg(long, requires = "wallet")]
+        confirm_wallet_warning: bool,
+        /// Expected current wallet; required when continuing a wallet warning.
         #[arg(long)]
-        id: Option<String>,
-        #[arg(long, default_value = "{}")]
-        params: String,
-        #[arg(long)]
-        confirmed: bool,
+        wallet: Option<String>,
     },
-}
-
-fn params(raw: &str) -> Result<Value> {
-    let value: Value = serde_json::from_str(raw)
-        .map_err(|_| CodedError::invalid_input("params", "Provide a JSON parameter object."))?;
-    newsliquid::check_params(&value)?;
-    Ok(value)
+    /// Read the current wallet's valid service token for use inside a script.
+    Token {
+        #[arg(long)]
+        service: String,
+        /// Stop if the selected wallet differs from the script's intended wallet.
+        #[arg(long)]
+        wallet: Option<String>,
+    },
 }
 
 pub async fn execute(command: ServiceCommand) -> Result<()> {
     let result = match command {
-        ServiceCommand::Call {
+        ServiceCommand::Login {
             service,
-            operation,
-            id,
-            params: raw,
-            confirmed,
+            refresh,
+            confirm_wallet_warning,
+            wallet,
         } => {
-            let params = params(&raw)?;
             newsliquid::require_service(&service)?;
-            let result = newsliquid::call(&operation, id, params, confirmed).await?;
-            json!({"service":newsliquid::ID,"result":result})
+            newsliquid::login(refresh, confirm_wallet_warning, wallet.as_deref()).await?
+        }
+        ServiceCommand::Token { service, wallet } => {
+            newsliquid::require_service(&service)?;
+            newsliquid::token(wallet.as_deref())?
         }
     };
-    output::success(result);
+    output::success(json!({"service":newsliquid::ID,"result":result}));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(subcommand)]
+        command: ServiceCommand,
+    }
+
+    #[test]
+    fn credential_commands_parse_and_removed_proxy_commands_are_rejected() {
+        let parsed =
+            TestCli::try_parse_from(["service", "login", "--service", "newsliquid", "--refresh"])
+                .unwrap();
+        assert!(matches!(
+            parsed.command,
+            ServiceCommand::Login { refresh: true, .. }
+        ));
+        assert!(TestCli::try_parse_from([
+            "service",
+            "token",
+            "--service",
+            "newsliquid",
+            "--wallet",
+            "expected-wallet",
+        ])
+        .is_ok());
+        for command in ["request", "status", "stream"] {
+            assert!(
+                TestCli::try_parse_from(["service", command, "--service", "newsliquid"]).is_err()
+            );
+        }
+        assert!(TestCli::try_parse_from([
+            "service",
+            "login",
+            "--service",
+            "newsliquid",
+            "--confirm-wallet-warning",
+        ])
+        .is_err());
+    }
 }

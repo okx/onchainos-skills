@@ -1721,6 +1721,17 @@ mod tests {
     }
 
     #[test]
+    fn pinned_payer_does_not_follow_selected_account_changes() {
+        let mut wallets = make_test_wallets();
+        wallets.selected_account_id = "acc-2".into();
+        let (account, address) = resolve_address(&wallets, Some("0xAAA"), "eth").unwrap();
+        assert_eq!(account, "acc-1");
+        assert_eq!(address.address, "0xAAA");
+        wallets.accounts_map.remove("acc-1");
+        assert!(resolve_address(&wallets, Some("0xAAA"), "eth").is_err());
+    }
+
+    #[test]
     fn resolve_address_case_insensitive() {
         let w = make_test_wallets();
         let (acct_id, _) = resolve_address(&w, Some("0xaaa"), "eth").unwrap();

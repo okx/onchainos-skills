@@ -21,31 +21,47 @@
 
 All costs remain subject to actual usage.
 
-Use the native CLI for service operations. User-managed clients reuse CLI login and retrieve credentials through the root-linked CLI reference. Each endpoint below names its CLI operation.
+Call the documented 6551 endpoints directly. The CLI only handles login and Token retrieval; payment signatures use the existing payment commands.
 
-- For catalog operations, pass body or query fields in `--params` and path IDs in `--id`.
-- For login, order creation, payment and cancellation, use the dedicated parameters in the operation reference.
-- The CLI manages credentials and protocol headers internally. Use native operations rather than constructing HTTP requests for CLI-managed business flows.
+Use the root Skill's Token variable in the same tool invocation. Example news query:
+
+```bash
+printf 'Authorization: Bearer %s\n' "$NEWSLIQUID_TOKEN" |
+  curl -q -sS --max-time 30 --retry 0 --max-redirs 0 \
+    --header @- \
+    --header 'Content-Type: application/json' \
+    --data '{"coins":["BTC"],"limit":3}' \
+    --write-out '\nHTTP_STATUS:%{http_code}\n' \
+    'https://x402-okx.newsliquid.com/news_search'
+```
+
+Inspect the HTTP status and the body's top-level and nested errors. Keep redirects and automatic retries disabled. Public health/offers need no Token. Capture `PAYMENT-REQUIRED` and `Retry-After` headers when needed.
+
+Custom WSS clients retrieve the Token inside their own process. The root-linked stream protocol defines that client boundary.
 
 Business decisions remain in the root-linked Flow references.
 
-HTTP uses `https://x402-okx.newsliquid.com`. Wallet login and payment use X Layer (`chainId=196`); finance snapshot-chain filters do not change that network. Protected calls use Bearer authentication; JSON requests use `Content-Type: application/json`. IDs for Twitter are strings, booleans are JSON booleans, and usernames omit `@`. Check `success`, nested errors and `usage.cost`; quota values are decimal strings.
+- HTTP base URL: `https://x402-okx.newsliquid.com`.
+- Login/payment network: X Layer (`chainId=196`). Finance snapshot-chain filters do not change it.
+- Protected calls: Bearer authentication. JSON requests: `Content-Type: application/json`.
+- Twitter inputs: string IDs, JSON booleans and usernames without `@`.
+- Results: check `success`, nested errors and `usage.cost`. Quota values are decimal strings.
 
 ### Account
 
 #### Service health
 
-**GET /healthz**. No Token required. Parameters: none. CLI operation: `healthz`.
+**GET /healthz**. No Token required. Parameters: none.
 
 Returns ok and service. This only indicates whether the service is running.
 
 #### Service login
 
-Use the account Flow for CLI login. The CLI handles the wallet challenge and signature internally. User-managed clients read the stored Token through the `token` operation in the root-linked CLI reference.
+Use the account Flow for CLI login and the root-linked CLI reference for Token retrieval. The CLI handles the wallet challenge and signature internally.
 
 #### Read one-time quota and the current plan
 
-**GET /billing/quota**. Parameters: none. Reads only the current account. CLI operation: `billing-quota`.
+**GET /billing/quota**. Parameters: none. Reads only the current account.
 
 | Return field | Meaning |
 | --- | --- |
@@ -67,7 +83,7 @@ Quota values are decimal strings, not dollar amounts.
 
 #### News sources and types
 
-**GET /news_type**. No request body. CLI operation: `news-type`.
+**GET /news_type**. No request body.
 
 Cost: 0. The account still needs available quota to pass the current gateway precheck.
 
@@ -77,7 +93,7 @@ Returns engine and category lists. Use their code values in searches.
 
 #### Search news
 
-**POST /news_search**。 CLI operation: `news-search`.
+**POST /news_search**.
 
 Cost: 1 point per 20 returned items, with a minimum of 1. No results still cost 1 point.
 
@@ -101,7 +117,7 @@ Returns a news list for the last month. Filters can be combined. total is not an
 
 #### Read a Twitter user by username
 
-**POST /twitter_user_info**。 CLI operation: `twitter-user-info`.
+**POST /twitter_user_info**.
 
 Cost: 1 point per successful query.
 
@@ -117,7 +133,7 @@ Returns the user profile. Also check data.success and read data.error on failure
 
 #### Read a Twitter user by ID
 
-**POST /twitter_user_by_id**。 CLI operation: `twitter-user-by-id`.
+**POST /twitter_user_by_id**.
 
 Cost: 1 point per successful query.
 
@@ -133,7 +149,7 @@ Returns the user profile. Here userId identifies a Twitter user, not the logged-
 
 #### Read user tweets
 
-**POST /twitter_user_tweets**。 CLI operation: `twitter-user-tweets`.
+**POST /twitter_user_tweets**.
 
 Cost: 1 point per 20 successfully returned tweets. When no tweets are found, the current endpoint returns an error without charging quota.
 
@@ -154,7 +170,7 @@ Returns a tweet array in data and a top-level nextCursor when more results exist
 
 #### Search tweets
 
-**POST /twitter_search**。 CLI operation: `twitter-search`.
+**POST /twitter_search**.
 
 Cost: 1 point per actual upstream query that returns results; 0 when none are found. One request may query several pages. maxResults: 20 does not guarantee a cost of 1, and cost is not simply the final item count divided by 20.
 
@@ -173,7 +189,7 @@ Returns a tweet array in data and a top-level nextCursor when more results exist
 
 #### Read follow/unfollow events
 
-**POST /twitter_follower_events**。 CLI operation: `twitter-follower-events`.
+**POST /twitter_follower_events**.
 
 Cost: 1 point per successful query.
 
@@ -191,7 +207,7 @@ Returns recorded follow/unfollow events. This request does not create a monitor.
 
 #### Read deleted tweets
 
-**POST /twitter_deleted_tweets**。 CLI operation: `twitter-deleted-tweets`.
+**POST /twitter_deleted_tweets**.
 
 Cost: 1 point per 20 returned items; 0 when no results are returned.
 
@@ -208,7 +224,7 @@ Returns recorded deleted tweets. Complete historical coverage is not guaranteed.
 
 #### Read KOL followers
 
-**POST /twitter_kol_followers**。 CLI operation: `twitter-kol-followers`.
+**POST /twitter_kol_followers**.
 
 Cost: 1 point per successful query.
 
@@ -224,7 +240,7 @@ Returns data.totalCount and data.users.
 
 #### Read a Twitter article
 
-**POST /twitter_article_by_id**。 CLI operation: `twitter-article-by-id`.
+**POST /twitter_article_by_id**.
 
 Cost: 1 point per successful query.
 
@@ -240,7 +256,7 @@ Returns the article title, content, author and other available information.
 
 #### Read one tweet
 
-**POST /twitter_tweet_by_id**。 CLI operation: `twitter-tweet-by-id`.
+**POST /twitter_tweet_by_id**.
 
 Cost: 1 point per successful query.
 
@@ -256,7 +272,7 @@ Returns one tweet and available quote/reply context.
 
 #### Read quote tweets
 
-**POST /twitter_quote_tweets_by_id**。 CLI operation: `twitter-quote-tweets-by-id`.
+**POST /twitter_quote_tweets_by_id**.
 
 Cost: 1 point per 20 returned items; 0 when no results are returned.
 
@@ -270,11 +286,11 @@ Cost: 1 point per 20 returned items; 0 when no results are returned.
 {"id":"<content ID>","maxResults":20}
 ```
 
-Returns quote tweets. Each quoteId identifies the original quoted tweet. Cost is 1 point per 20 returned items. A top-level nextCursor indicates more results; an empty or missing cursor means no next page. Equivalent to /twitter_search with `quoted_tweet_id:<id>`.
+Returns quote tweets. Each quoteId identifies the original quoted tweet. A top-level nextCursor indicates more results; an empty or missing cursor means no next page. Equivalent to /twitter_search with `quoted_tweet_id:<id>`.
 
 #### Read retweet users
 
-**POST /twitter_retweet_users_by_id**。 CLI operation: `twitter-retweet-users-by-id`.
+**POST /twitter_retweet_users_by_id**.
 
 Cost: 1 point per successful query. Each cursor page is a separate, separately charged request.
 
@@ -291,7 +307,7 @@ Returns data.users and the next data.cursor. Stop when the cursor is empty and p
 
 #### List Twitter monitors
 
-**POST /twitter_watch**. Requires a valid **Max** plan and available quota. Cost: 0. Send {} as the body. CLI operation: `twitter-watch`.
+**POST /twitter_watch**. Requires a valid **Max** plan and available quota. Cost: 0. Send {} as the body.
 
 ```json
 {}
@@ -301,7 +317,7 @@ Returns all monitors for the current account in data, with their count in total.
 
 #### Add a Twitter monitor
 
-**POST /twitter_watch_add**. Requires a valid **Max** plan and available quota. CLI operation: `twitter-watch-add`.
+**POST /twitter_watch_add**. Requires a valid **Max** plan and available quota.
 
 Cost: 10 points for a new account; 0 for an existing account or a group move.
 
@@ -331,7 +347,7 @@ Returns data.success, username, groupId, cost and message. Moving an existing ac
 
 #### Delete a Twitter monitor
 
-**POST /twitter_watch_delete**. Requires a valid **Max** plan and available quota. CLI operation: `twitter-watch-delete`.
+**POST /twitter_watch_delete**. Requires a valid **Max** plan and available quota.
 
 Cost: 0. Available quota is still required.
 
@@ -349,7 +365,7 @@ Returns the operation result and `usage.cost: "0"`, and automatically refreshes 
 
 #### Search companies
 
-**POST /finance-enhance/company-search**. Search candidates by company name, ticker or company identifier. CLI operation: `finance-enhance-company-search`.
+**POST /finance-enhance/company-search**. Search candidates by company name, ticker or company identifier.
 
 | Parameter | Type | Required/default | Description |
 | --- | --- | --- | --- |
@@ -369,7 +385,7 @@ Returns data.companies, data.count and matching company identifiers.
 
 #### Company profile and report directory
 
-**POST /finance-enhance/company-info**. Read company information, available reports and financial field names. CLI operation: `finance-enhance-company-info`.
+**POST /finance-enhance/company-info**. Read company information, available reports and financial field names.
 
 | Parameter | Type | Required/default | Description |
 | --- | --- | --- | --- |
@@ -397,7 +413,7 @@ Returns data.company, data.available_reports, data.available_financial_item_name
 
 #### Report, research and earnings-call text
 
-**POST /finance-enhance/company-report-text**。 CLI operation: `finance-enhance-company-report-text`.
+**POST /finance-enhance/company-report-text**.
 
 | Parameter | Type | Required/default | Description |
 | --- | --- | --- | --- |
@@ -425,7 +441,7 @@ Returns data.selected_report, data.sections, data.full_text and any available da
 
 #### Key market events
 
-**POST /finance-enhance/key-market-events**. Read macro policy, economic-data and major-company earnings schedules. CLI operation: `finance-enhance-key-market-events`.
+**POST /finance-enhance/key-market-events**. Read macro policy, economic-data and major-company earnings schedules.
 
 | Parameter | Type | Required/default | Description |
 | --- | --- | --- | --- |
@@ -452,7 +468,7 @@ Returns data.events and data.count. source_status marks estimated schedules. Ver
 
 #### Institution directory
 
-**POST /finance-enhance/institution-managers**. Find institutions with SEC 13F filings. CLI operation: `finance-enhance-institution-managers`.
+**POST /finance-enhance/institution-managers**. Find institutions with SEC 13F filings.
 
 | Parameter | Type | Required/default | Description |
 | --- | --- | --- | --- |
@@ -469,7 +485,7 @@ Returns data.institutions, data.count and data.total_count. Use manager_cik from
 
 #### Institutional stock holdings
 
-**POST /finance-enhance/institution-stock-holdings**. Read quarterly SEC 13F filings. CLI operation: `finance-enhance-institution-stock-holdings`.
+**POST /finance-enhance/institution-stock-holdings**. Read quarterly SEC 13F filings.
 
 | Parameter | Type | Required/default | Description |
 | --- | --- | --- | --- |
@@ -492,7 +508,7 @@ Returns data.holdings, data.summary and data.pagination. These are quarter-end h
 
 #### On-chain holdings
 
-**POST /finance-enhance/crypto-holdings**. Read holdings snapshots by wallet address or a listed institution. CLI operation: `finance-enhance-crypto-holdings`.
+**POST /finance-enhance/crypto-holdings**. Read holdings snapshots by wallet address or a listed institution.
 
 | Parameter | Type | Required/default | Description |
 | --- | --- | --- | --- |
@@ -514,7 +530,7 @@ Returns data.holdings and data.count. Query a specific wallet when the instituti
 
 #### On-chain holding changes
 
-**POST /finance-enhance/crypto-holding-changes**. Read holdings differences between adjacent snapshots. CLI operation: `finance-enhance-crypto-holding-changes`.
+**POST /finance-enhance/crypto-holding-changes**. Read holdings differences between adjacent snapshots.
 
 | Parameter | Type | Required/default | Description |
 | --- | --- | --- | --- |
@@ -540,7 +556,7 @@ Returns data.changes and data.count. At least two snapshots are needed. Snapshot
 
 #### Token opinion evidence
 
-**POST /meme/token-evidence**. Read original token opinions on fomo/pump. CLI operation: `meme-token-evidence`.
+**POST /meme/token-evidence**. Read original token opinions on fomo/pump.
 
 | Parameter | Type | Required/default | Description |
 | --- | --- | --- | --- |
@@ -560,7 +576,7 @@ Returns data.count, data.nextSeq and data.items. Each item includes platform, ty
 
 #### Opinion changes and trade evidence
 
-**POST /meme/activity**. Read later activity by token, author or event type. CLI operation: `meme-activity`.
+**POST /meme/activity**. Read later activity by token, author or event type.
 
 | Parameter | Type | Required/default | Description |
 | --- | --- | --- | --- |
@@ -583,7 +599,7 @@ Returns data.count, data.nextSeq and data.items. items[].trade contains trade ev
 
 #### List my strategies
 
-**GET /strategy_list**. Pass parameters in the query. CLI operation: `strategy-list`.
+**GET /strategy_list**. Pass parameters in the query.
 
 | Parameter | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -594,7 +610,7 @@ Returns a data array, total, page and limit, sorted by creation time descending.
 
 #### Read hits by strategy ID
 
-**GET /strategy_hits**. Pass parameters in the query. CLI operation: `strategy-hits`.
+**GET /strategy_hits**. Pass parameters in the query.
 
 | Parameter | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -608,7 +624,7 @@ Returns a data array, total, page and limit, sorted by hit time descending. Each
 
 #### List purchasable offers
 
-**GET /billing/offers**. No Token required. Parameters: none. CLI operation: `billing-offers`.
+**GET /billing/offers**. No Token required. Parameters: none.
 
 Returns subscriptions and oneTimePackages. Main fields:
 
@@ -623,7 +639,7 @@ Returns subscriptions and oneTimePackages. Main fields:
 
 #### Create a purchase order
 
-**POST /billing/orders**. Creating an order does not charge. CLI operation: `create-order`. The CLI also requires `operationKey` in `--params`.
+**POST /billing/orders**. Creating an order does not charge.
 
 | Location | Parameter | Type | Required | Description |
 | --- | --- | --- | --- | --- |
@@ -639,7 +655,7 @@ The example productId shows its type only. Use an actual ID from the selected ki
 
 #### Fetch a payment challenge and pay
 
-**POST /billing/orders/:id/pay**。 CLI operations: `prepare-payment` and `pay`; pass the order ID via `--id`. Use their parameters from the operation reference.
+**POST /billing/orders/:id/pay**.
 
 | Location | Parameter | Type | Required | Description |
 | --- | --- | --- | --- | --- |
@@ -660,13 +676,13 @@ Protocol constraints:
 
 #### Read order and fulfillment status
 
-**GET /billing/orders/:id**. Path id is a required string containing the actual orderId. No other parameters. CLI operation: `billing-orders-id`; pass the original order ID via `--id`.
+**GET /billing/orders/:id**. Path id is a required string containing the actual orderId. No other parameters.
 
 Returns orderId, quote, paymentStatus, fulfillmentStatus, expiresAt and any available periodStart, periodEnd, subId and transaction. paymentStatus: paid with fulfillmentStatus: completed confirms payment and fulfillment. For auto-renewal, paymentStatus: authorized confirms authorization, not a charge or new quota. Read actual rights and renewal status from /billing/quota.
 
 #### Reconcile paid but unfulfilled orders
 
-**POST /billing/orders/:id/reconcile**. Path id is a required string containing the actual orderId. No request body. CLI operation: `billing-orders-id-reconcile`; pass the original order ID via `--id`.
+**POST /billing/orders/:id/reconcile**. Path id is a required string containing the actual orderId. No request body.
 
 Use for an original paid order that remains incomplete after approximately 5 minutes or has no quota visible in /billing/quota. The gateway resends fulfillment notifications using official OKX payment records. The same payment is credited only once; **no new charge or signature is required**.
 
@@ -685,13 +701,13 @@ A repeat call within 60 seconds after successful reconciliation returns 429 and 
 
 #### List my subscription authorizations
 
-**GET /billing/subscriptions**. Parameters: none. CLI operation: `billing-subscriptions`.
+**GET /billing/subscriptions**. Parameters: none.
 
 Returns an array with subId, status, quote, periodStart, periodEnd and subscription. subId and order ID are not interchangeable. Read current plan quota and expiry from /billing/quota.
 
 #### Cancel automatic renewal
 
-**POST /billing/subscriptions/:id/cancel**. Stops renewal at expiry, including earlier multi-period authorizations. Use autoRenew.subId from /billing/quota as id. Single-month purchases do not renew and need no cancellation. CLI operation: `cancel-renewal`; pass the subscription subId via `--id`. The CLI builds and signs the cancellation.
+**POST /billing/subscriptions/:id/cancel**. Stops renewal at expiry, including earlier multi-period authorizations. Use autoRenew.subId from /billing/quota as id. Single-month purchases do not renew and need no cancellation.
 
 | Location | Parameter | Type | Required | Description |
 | --- | --- | --- | --- | --- |
@@ -704,6 +720,6 @@ Returns an array with subId, status, quote, periodStart, periodEnd and subscript
 | JSON | cancelAuth.deadline | integer | Yes | Unix seconds; later than now and no more than now plus 600 seconds |
 | JSON | cancelAuth.signature | string | Yes | Payer wallet's EIP-712 signature of CancelAuth |
 
-The body contains cancelAuth. Its signature follows the subscription contract's CancelAuth EIP-712 domain. The existing CLI builds, signs and submits it. Users do not create cancellation request files.
+The body contains cancelAuth. Its signature follows the subscription contract's CancelAuth EIP-712 domain. The existing payment command builds and signs it. Submit cancelAuth to this endpoint after confirmation.
 
 Returns subId and state. 200 means cancelled; 202 means processing. Query subscriptions to verify. Cancellation stops future charges and preserves paid rights until expiry.

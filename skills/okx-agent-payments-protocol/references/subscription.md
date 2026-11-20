@@ -20,7 +20,7 @@ The `period` scheme is recurring (subscription) billing. The buyer **subscribes 
 ## Interpreting the result
 | Command | How to read the result |
 |---|---|
-| subscribe / change | replay `.data.paymentHeaderValue` under header `.data.paymentHeaderName` (`PAYMENT-SIGNATURE`); persist `.data.subId` (the CLI also caches host→subId) |
+| subscribe / change | replay `.data.paymentHeaderValue` under header `.data.paymentHeaderName` (`PAYMENT-SIGNATURE`); persist `.data.subId` (the CLI also caches host→subId unless subscribe uses `--no-cache`) |
 | subscribe / change | on `… contract mismatch` in `.error`, treat as a hard security abort (exit 1) — the seller-declared contract did not match the authoritative `allowance-status`; do not retry or force |
 | subscribe | `errorCode=permit2_allowance_insufficient` with `data.stage=before_signing` means neither subscription signature was produced. Read `availableAmount`, `requiredAmount`, `asset` and `permit2Contract`; obtain bounded approval consent before retrying. Message text alone does not establish the failure stage |
 | access | replay `.data.accessHeaderValue` under `APP-Access`; `.data.source` (`cache` \| `override`) tells you whether the subId came from the local cache or `--sub-id` |
@@ -31,10 +31,10 @@ The `period` scheme is recurring (subscription) billing. The buyer **subscribes 
 ## CLI Reference
 
 ```bash
-onchainos payment subscription subscribe        --accepts '<json>' [--from <addr>] [--url <url>]
+onchainos payment subscription subscribe        --accepts '<json>' [--from <addr>] [--url <url>] [--no-cache] [--expected-cap <amount>]
 onchainos payment subscription access           --url <url> [--sub-id <id>] [--from <addr>] [--chain <name|index>]
 onchainos payment subscription change           --accepts '<json>' --sub-id <id> [--from <addr>] [--url <url>]
-onchainos payment subscription cancel           --sub-id <id> [--contract <addr>] [--token <addr>] [--chain <name|index>] [--from <addr>]
+onchainos payment subscription cancel           --sub-id <id> [--contract <addr>] [--token <addr>] [--chain <name|index>] [--from <addr>] [--valid-for-seconds <seconds>]
 onchainos payment subscription cancel-pending   --sub-id <id> --new-sub-id <id> [--contract <addr>] [--token <addr>] [--chain <name|index>] [--from <addr>]
 onchainos payment subscription my-subscriptions [--chain <name|index>] [--from <addr>] [--limit <n>] [--offset <n>]
 onchainos payment subscription allowance-status --token <addr> [--chain <name|index>] [--from <addr>]
@@ -46,6 +46,8 @@ onchainos payment subscription allowance-status --token <addr> [--chain <name|in
 | `--accepts` | yes | the 402 `accepts` array or single object (JSON); must contain a `period` entry |
 | `--from` | no | payer address; default = selected account |
 | `--url` | no | protected-resource URL; used as `resource.url` and the cache-key host |
+| `--no-cache` | no | Sign without updating the active host mapping; use when seller/order confirmation must happen first |
+| `--expected-cap` | no | Abort before either signature if the fresh Permit2 cap differs from the confirmed amount |
 
 ### `access`
 | Param | Required | Description |
@@ -78,6 +80,7 @@ Required sequence: `access` (proof) → one proof-carrying probe of the change e
 | `--token` | no | used to look up `--contract` via `allowance-status` when `--contract` omitted |
 | `--chain` | no | chain name or index (default `xlayer` / `196`) |
 | `--from` | no | payer address; default = selected account |
+| `--valid-for-seconds` | no | CancelAuth lifetime, 1–3600 seconds; default 3600; use the seller's shorter limit when required |
 
 ### `cancel-pending`
 | Param | Required | Description |

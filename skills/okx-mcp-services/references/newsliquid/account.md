@@ -2,7 +2,7 @@
 
 ## Module Description
 
-Log in to the service using the selected OnchainOS EVM wallet. Reuse a valid login for that same wallet. Login output contains metadata only. User-managed clients read the stored Token through the `token` operation in the root-linked CLI reference.
+Log in through the CLI using the selected OnchainOS EVM wallet. Reuse a valid login for that wallet. Request scripts and custom WSS clients retrieve the stored Token through the root-linked CLI reference.
 
 ## Flow
 
@@ -13,10 +13,10 @@ Log in to the service using the selected OnchainOS EVM wallet. Reuse a valid log
 
 ### Execute
 
-1. Run `onchainos service call --service newsliquid --operation login`.
-2. A valid same-wallet session is reused. If signing returns Confirming, display its actual message and wait for the user's answer. After approval, run the returned continuation with `confirmWalletWarning=true` and the same `wallet`.
-3. Run `onchainos service call --service newsliquid --operation billing-quota` to read the account.
-4. On HTTP 401, restore login for the current wallet. Do not treat authentication failure as an instruction to buy. Preserve an interrupted query, but do not replay it if its charging outcome is unknown.
+1. Run `onchainos service login --service newsliquid`.
+2. A valid same-wallet session is reused. If signing returns Confirming, display its actual message and wait for the user's answer. After approval, run the returned continuation with `--confirm-wallet-warning` and the same `--wallet`.
+3. Read `GET /billing/quota` directly using the authentication pattern in the root-linked HTTP reference.
+4. On an authentication 401, run `onchainos service login --service newsliquid --refresh` for the same wallet, then retrieve the Token again. Preserve any wallet-warning continuation. Do not treat quota or plan-right failures as login failures or payment consent. Do not replay a query whose charging outcome is unknown.
 
 ### Handle Result
 
@@ -36,7 +36,10 @@ Stop on a wallet/host mismatch, stale challenge, an unreadable credential store 
 
 ## Output Rules
 
-Show the current plan/name, `subscription.remaining`, `periodEnd` and `serviceEnd` separately. Show actual `oneTime`, `dailyRefresh` and `legacy` categories. Show `autoRenew` separately, including status, monthly price/currency and `nextChargeAt`. A null category is absent; use quota/used to distinguish a never-held zero category from a held category exhausted to zero.
+- Show plan/name, `subscription.remaining`, `periodEnd` and `serviceEnd` separately.
+- Show actual `oneTime`, `dailyRefresh` and `legacy` categories.
+- Show `autoRenew` separately: status, monthly price/currency and `nextChargeAt`.
+- Omit null categories. Use quota/used to distinguish never-held zero categories from held categories exhausted to zero.
 
 New-wallet service evidence reports 5 free daily points and no repeat grant on re-login. Daily points do not accumulate. The refresh timezone remains unverified; do not promise a local reset time.
 
@@ -46,4 +49,4 @@ Use the centralized [newsliquid-troubleshooting.md](newsliquid-troubleshooting.m
 
 ## CLI Reference
 
-- [client-cli-reference.md](client-cli-reference.md)
+- [service-cli-reference.md](../service-cli-reference.md)

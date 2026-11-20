@@ -15,15 +15,15 @@ Active Max and available quota are required. Ordinary HTTP GET returns 426.
 
 ### Authentication
 
-1. Log in through the account Flow using the wallet that owns the intended service plan.
-2. In the user's client, call `onchainos service call --service newsliquid --operation token` and capture `data.result.token` in memory. Verify the returned wallet matches the intended plan wallet. The root-linked CLI reference shows the subprocess call.
-3. Attach the header below during the WSS handshake. Do not run the credential-read operation as an AI tool call.
+Use the account Flow for CLI login with the wallet that owns the intended service plan. Inside the client process, retrieve `data.result.token` using the root-linked CLI reference and that wallet. Keep the Token out of exceptions, logs and AI tool results.
+
+Attach this header during the WSS handshake:
 
 ```text
 Authorization: Bearer <data.result.token>
 ```
 
-Login stores credentials; `token` reads the current wallet's unexpired credential without logging in or signing. Public `ai.6551.io/open` credentials are a separate integration; do not assume they work with this gateway.
+Login stores credentials; Token retrieval reads them without signing or network calls. Public `ai.6551.io/open` credentials are a separate integration; do not assume they work with this gateway.
 
 ### Login ACK
 
@@ -76,7 +76,7 @@ The client owns its lifecycle, storage and notifications. Read account quota for
 
 ### Reconnection Strategy
 
-The client must reconnect and resubscribe after disconnection. If its Token is rejected, pause for an account check through the CLI; a 401 invalidates the stored credential. Complete CLI login recovery, then read the Token again. If the account check succeeds but WSS still returns 401, stop for diagnosis rather than looping through login. An expired credential also requires CLI login. Offline replay and delivery latency are not guaranteed.
+The client must reconnect and resubscribe after disconnection. For an authentication 401, pause for `service login --refresh` through the account Flow, then retrieve the new Token. Check that the wallet still matches the intended plan. A fresh Token rejected again needs diagnosis, not a login loop. Offline replay and delivery latency are not guaranteed.
 
 ## Security
 

@@ -15,8 +15,8 @@ Run one information query by default. Ordinary news/Twitter queries need availab
 
 ### Execute
 
-1. Use the account Flow if no valid login exists. Run `onchainos service call --service newsliquid --operation` with the chosen operation and a JSON parameter object, including query resumption after purchase. The CLI uses the current-wallet credential and gateway.
-2. On `failureKind=quota_insufficient` or `subscription_required`, explain the actual limit and show billing's purchase-options template using the returned catalog. The user may decline; showing options does not authorize creating an order or paying. Preserve only an interrupted query and its one-resumption limit. On `unknown_402`, use troubleshooting instead of guessing a quota problem.
+1. Use the account Flow if no valid login exists. Call the documented 6551 endpoint directly with its method and business fields. Use the root-linked HTTP reference's curl authentication pattern, including query resumption after purchase.
+2. On HTTP 402 with an exact `quota_insufficient` or `subscription_required` error/code, explain the limit. Read `/billing/quota` and public `/billing/offers`, then show billing's purchase-options template. The user may decline; showing options does not authorize creating an order or paying. Preserve only an interrupted query and its one-resumption limit. For an unrecognized or ambiguous 402, use troubleshooting instead of guessing a quota problem.
 3. For pagination, pass the returned cursor unchanged and preserve object and filters. Twitter normally uses top-level `nextCursor`; retweet users use `data.cursor`; company info uses `data.pagination.next_cursor`; Meme uses `data.nextSeq` as the next `since`.
 4. Deduplicate by content ID. Explain any broader multi-page collection or polling scope, quota use and stop condition before expanding beyond the request. An early empty Twitter page does not prove complete history.
 
@@ -28,7 +28,7 @@ Check top-level and nested success/error fields.
 - Finance: show `partial_result` and snapshot/report dates.
 - Saved strategies: null `data` means no current strategies. Query only IDs returned for this account. The gateway does not create, copy or start/stop strategies.
 
-After a successful query, render its result and actual cost. If the native quota check returns `quotaState=exhausted`, immediately show the same billing purchase-options template used for insufficient quota. Do not wait for another query. The completed query is not an interrupted request and is not replayed after purchase. A single exhausted daily/plan category is not enough when the account still has other available quota. If the quota/catalog read fails, state that it could not be checked; do not invent prices or remaining quota.
+After a successful query, render its result and actual cost, then read `/billing/quota`. If `totalRemaining` is exactly zero, read `/billing/offers` and immediately show billing's purchase-options template. Do not wait for another query. The completed query is not an interrupted request and is not replayed after purchase. A single exhausted daily/plan category is not enough when the account still has other available quota. If the quota/catalog read fails, state that it could not be checked; do not invent prices or remaining quota.
 
 ## Security
 
@@ -50,4 +50,4 @@ Use the centralized troubleshooting reference linked from the root Skill.
 
 ## CLI Reference
 
-- [client-cli-reference.md](client-cli-reference.md)
+- [service-cli-reference.md](../service-cli-reference.md)

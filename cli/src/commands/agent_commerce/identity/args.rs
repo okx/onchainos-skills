@@ -76,10 +76,8 @@ pub struct CreateArgs {
     ///                          currently limited to "month"; each `fee` is a
     ///                          plain number with ≤2 decimals.
     ///   • freeTrial          — OPTIONAL. Free-trial duration in HOURS as a
-    ///                          positive integer string ("72" = 3 days) for a
-    ///                          subscription-priced A2A service. The low-level CLI
-    ///                          accepts legacy positive-hour values for write-back;
-    ///                          guided product flows create 72-hour trials only.
+    ///                          string. Only "72" (3 days) is accepted; any
+    ///                          other value is rejected. Subscription-priced A2A only.
     ///                          Only allowed when
     ///                          `subscription` is non-empty; forbidden on
     ///                          single-purchase A2A and on A2MCP. Absent or an
@@ -177,9 +175,7 @@ pub struct UpdateArgs {
     /// `subscription` (A2A only — array of `{interval, fee}`, `interval`
     /// limited to `"month"`, with a plain-number `fee` of ≤2 decimals),
     /// `freeTrial` (OPTIONAL — free-trial duration in
-    /// HOURS as a positive integer string, e.g. `"72"`; the low-level CLI
-    /// accepts legacy positive-hour values for write-back, while guided product
-    /// flows create 72-hour trials only; only allowed on a subscription-priced service,
+    /// HOURS; only `"72"` is accepted, any other value is rejected; only allowed on a subscription-priced service,
     /// forbidden on single-purchase A2A / A2MCP;
     /// absent or an empty `""` both mean NO trial, so an update that omits it
     /// leaves the service with no trial), `endpoint` (A2MCP only), plus `operation`:
