@@ -10,47 +10,52 @@ Buy a single month or quota package, inspect/recover its original order, or inde
 
 ### Collect Parameters
 
-1. Use `quotaCheck` and `purchaseOptions` supplied by the query Flow, or read `billing-quota` and public `billing-offers` when absent. Show the purchase-options template below. The user may decline.
+1. Reuse fresh account/catalog responses, or request `GET /billing/quota` and public `GET /billing/offers`. Show the purchase-options template below. The user may decline.
 2. Show both monthly plans and one-time quota packages by default. Narrow only for an explicit product or category request.
 3. Show each current product's name, price/currency and points or rights. Identify the plan required for the requested capability; quota alone cannot unlock plan rights. Account status lists only held categories, while the purchase catalog lists all options.
-4. Select the actual product ID from its offer kind. A price-only reply (such as “2 USDT”) selects only a uniquely matching current offer; if multiple products match, clarify the product. It is not payment consent. Keep the current wallet, one operation key and order ID in the Agent task context.
+4. Select the actual product ID from its offer kind. A price-only reply (such as “2 USDT”) selects only a uniquely matching current offer; if multiple products match, clarify the product. It is not payment consent. Keep the current wallet, one stable Idempotency-Key and order ID in the Agent task context.
 5. Preserve any interrupted query and its one-resumption limit in the current task context.
 
 ### Execute
 
 #### Single month or quota package
 
-1. After product selection, call create-order with kind=subscription or one_time, the actual productId and stable operationKey. Creation does not pay.
-2. Call prepare-payment with the order ID via `--id` and its selected `kind` in params. The CLI reads the order from 6551. Check the returned terms against its quote and the confirmation table below.
-3. Render the single-payment template below with the current product, quote and preparation result. Obtain consent through the existing wallet interaction.
-4. After consent, call pay with the order ID, `--confirmed` and the complete unsigned preparation result as `params.approval`. Keep this object in task context, without writing a file. The CLI re-reads the order/challenge and rejects changed terms before signing.
-5. Read the original order and quota. Report arrival only when `paymentStatus=paid`, `fulfillmentStatus=completed` and the corresponding rights are verified.
-6. Resume an interrupted query once and show its actual result before asking about renewal.
+1. After product selection, request `POST /billing/orders` with `kind=subscription` or `one_time`, the actual `productId` and the stable `Idempotency-Key` header. Retain the returned order ID, quote, expiry and wallet. Creation does not pay.
+2. Request `POST /billing/orders/{orderId}/pay` without a body or payment header. Capture the complete encoded `PAYMENT-REQUIRED` header from its 402 response in the execution process.
+3. Validate the native order/challenge through `payment validate` in prepare mode. Retain the complete unsigned approval snapshot. Use its checked terms and cap in the confirmation template; obtain consent before signing.
+4. Re-read the same original order and check its status/expiry.
+5. Keep the intended wallet. Refresh authoritative allowance for period payments and current plan expiry for renewal.
+6. Validate the fresh native responses against the approved snapshot before signing. Stop on any difference; prepare and confirm the new terms again.
+7. Capture the signer output in a variable using the root-linked CLI reference. Validate its proof and submit once in the same tool invocation. Never echo the variable.
+8. Read the original order and quota. Report arrival only when `paymentStatus=paid`, `fulfillmentStatus=completed` and the rights are verified. Unknown signing/submission outcomes allow status queries only.
+9. Resume an interrupted query once and show its actual result before asking about renewal.
+
+#### Payment checks
+
+The Rust validator owns order/challenge consistency, integer ranges, exact cap calculation and signed-proof comparison. It reuses the subscription signer's arithmetic. The Skill selects the product, shows checked values, obtains consent and stops on validation errors.
+
+| Purchase | Required terms |
+| --- | --- |
+| Quota package | One `exact` candidate matching the quoted amount |
+| Single month | One `period` candidate; one calendar month; initial charge of one period |
+| Automatic renewal | One `period` candidate; 12 calendar months; zero initial charge; future start matching current plan expiry |
+
+Multiple candidates stop before signing. Changed quote, wallet, cap or renewal terms require new confirmation. The signing boundary pins the wallet and the confirmed cap. This order-based path uses `--no-cache`, preserving any existing active host mapping.
 
 #### Arrival and optional automatic renewal
 
 1. After a new single-month plan arrives, ask once whether to enable renewal. If there is no interrupted query, ask in the arrival notice. Ordinary login, viewing or use does not repeat this question.
 2. Decline/no answer leaves renewal off. If renewal is already active, show its actual state without asking to open another authorization.
-3. If the user chooses renewal, create a separate `auto_renew` order for the current `subscription.planId`. The plan must have more than 20 minutes until expiry.
-4. Prepare that order with kind=auto_renew and read current allowance through the existing `payment subscription allowance-status` command. Use the actual preview fields documented in the CLI Reference.
-5. Check the renewal terms in the confirmation table, fill the independent-renewal template and obtain separate consent.
-6. Pay that renewal order with its approved preparation object and `--confirmed`. Use the success template only after its order is `authorized` and the account renewal is `active`.
+3. If the user chooses renewal, create a separate order with `kind=auto_renew` and the current `subscription.planId`. The plan must have more than 20 minutes until expiry.
+4. Fetch that original order's payment challenge and apply the payment checks above. Fill the independent-renewal template with quoted `startAt`, 12 one-month periods and zero initial charge; obtain separate consent.
+5. Sign and submit once using the same period-payment steps. Use the success template only after the order is `authorized` and the account renewal is `active`.
 
 #### Renewal cancellation
 
-1. Read quota/subscriptions and identify this wallet's actual `autoRenew.subId`. Show the target plan, wallet and paid expiry; obtain separate cancellation consent.
-2. Call cancel-renewal with that subId via `--id` and `--confirmed` for that target.
-3. Verify actual cancellation through service subscriptions and quota. Then report that future charging stopped and paid rights remain to expiry. Cancellation is not a refund or token-allowance revocation.
-
-#### Confirmation checks
-
-Use the latest trusted `prepare-payment` result. The CLI validates the order, contracts and signed payload internally.
-
-| Purchase | Kind | Terms to confirm |
-| --- | --- | --- |
-| Quota package | `one_time` | Quoted one-time amount; no automatic renewal |
-| Single month | `subscription` | One month; `maxPeriods=1` |
-| Future renewal | `auto_renew` | 12 one-month periods; quoted `startAt`; zero initial charge; actual allowance cap |
+1. Request `GET /billing/quota` and `GET /billing/subscriptions`. Identify this wallet's actual `autoRenew.subId`. Show the plan, wallet and paid expiry; obtain separate cancellation consent.
+2. Run `onchainos payment subscription cancel --sub-id "$NEWSLIQUID_SUB_ID" --token "$NEWSLIQUID_ASSET" --chain xlayer --from "$NEWSLIQUID_WALLET" --valid-for-seconds 300`. The existing payment module resolves the authoritative contract and signs CancelAuth.
+3. Submit its `data.cancelAuth` as `{"cancelAuth":...}` through `POST /billing/subscriptions/{subId}/cancel`, bound to the same wallet. Capture the signer output in a variable and submit within the same tool invocation. Check the signed subId, action=0, initiator=0 and deadline before submitting. Never echo CancelAuth or run the signer separately.
+4. Verify cancellation through service subscriptions and quota. Then report that future charging stopped and paid rights remain to expiry. Cancellation is not a refund or token-allowance revocation.
 
 #### Plan changes
 
@@ -72,7 +77,7 @@ Use the confirmation templates below with actual values. Payment, future renewal
 
 ### Risk and Stop Conditions
 
-Stop on mismatched terms, wallet, endpoint or contracts. The CLI `--confirmed` flag records consent already obtained; it does not obtain consent.
+Stop on mismatched terms, wallet, endpoint or contracts. A transport request does not obtain consent or verify payment terms. Complete the checks above before using the existing signer.
 
 ## Output Rules
 
@@ -98,12 +103,14 @@ Which option would you like? You may also decline. No payment will be made befor
 
 ### Confirmation and success templates
 
-Use the PRD case 2 and case 3 templates below:
+Use the templates below.
 
-- Keep the structure, labels, field order and closing consent wording. Fill actual values and translate prose.
+- Keep their structure, label meanings, field order and closing consent wording.
+- Fill actual values and translate only the prose.
 - Omit recipient addresses, order IDs, raw quote/typed-data fields and technical contract labels from routine confirmation.
-- Use `autoRenewTerms.text` to verify the rendered terms rather than showing a second raw block. Explain additional material authorization conditions in plain language.
-- Preserve actual wallet risk warnings and requested diagnostics. Do not add duplicate confirmation.
+- Verify rendered terms against the order's `autoRenewTerms.text`; do not repeat the raw terms.
+- Explain other material authorization conditions in plain language.
+- Preserve real wallet warnings and requested diagnostics. Do not add duplicate confirmation.
 
 Single month or one-time quota package:
 
@@ -122,9 +129,11 @@ This pays only the current order. It does not enable automatic renewal or author
 Do you confirm authorization and payment?
 ```
 
-- Keep order, recipient and authoritative contract checks inside the CLI. Show this order's actual payment in the template.
-- If the signed permit cap exceeds this payment because of existing commitments, explain the cap and reason before consent, even when allowance is sufficient.
-- A required allowance increase needs separate consent through the existing wallet flow. Show its actual amount/change. Do not request an increase when allowance is sufficient or suppress a wallet warning.
+- Keep order ID, recipient and authoritative contract checks in the payment checks above; omit them only from routine user-facing copy.
+- Show this order's actual payment in the template, not a larger allowance cap.
+- If existing commitments make the signed permit cap exceed this payment, explain the actual cap and reason before consent, even when token allowance is sufficient.
+- A required token-allowance increase needs its actual amount/change and separate consent through the existing wallet flow.
+- Do not require an increase when allowance is sufficient or suppress a wallet risk warning.
 
 Independent automatic-renewal authorization:
 
@@ -162,4 +171,4 @@ Use the centralized troubleshooting reference linked from the root Skill.
 
 ## CLI Reference
 
-- [client-cli-reference.md](client-cli-reference.md)
+- [service-cli-reference.md](../service-cli-reference.md)

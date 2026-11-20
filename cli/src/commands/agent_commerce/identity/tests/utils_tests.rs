@@ -3081,19 +3081,23 @@ fn normalize_free_trial_non_integer_is_err() {
     svc.free_trial = Some("24.5".to_string());
     let err = normalize_service(svc).unwrap_err().to_string();
     assert!(
-        err.contains("freeTrial"),
+        err.contains("free trial duration"),
         "expected freeTrial format error; got: {err}"
     );
 }
 
 #[test]
-fn normalize_free_trial_legacy_positive_integer_is_ok() {
-    // Existing positive-hour values remain valid for write-back compatibility.
-    let mut svc = a2a_with("", vec![("month", "10")]);
-    svc.free_trial = Some("24".to_string());
-    let svc = normalize_service(svc).unwrap();
-    assert_eq!(svc.free_trial.as_deref(), Some("24"));
-    assert_eq!(serde_json::to_value(&svc).unwrap()["freeTrial"], "24");
+fn normalize_free_trial_non_72_is_err_with_exact_message() {
+    for v in ["24", "0", "-72", "73", "072", "24.5", "abc"] {
+        let mut svc = a2a_with("", vec![("month", "10")]);
+        svc.free_trial = Some(v.to_string());
+        let err = normalize_service(svc).unwrap_err().to_string();
+        assert_eq!(
+            err,
+            "The free trial duration you entered is not supported. Only 72 hours (3 days) is available",
+            "value {v}"
+        );
+    }
 }
 
 #[test]
@@ -3116,7 +3120,7 @@ fn normalize_free_trial_zero_is_err() {
     svc.free_trial = Some("0".to_string());
     let err = normalize_service(svc).unwrap_err().to_string();
     assert!(
-        err.contains("freeTrial"),
+        err.contains("free trial duration"),
         "expected freeTrial format error; got: {err}"
     );
 }

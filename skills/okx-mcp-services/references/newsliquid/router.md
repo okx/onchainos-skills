@@ -5,7 +5,7 @@
 | Input or state | Reference |
 | --- | --- |
 | NewsLiquid login succeeded in this request, including session reuse | [Account result handling](account.md) |
-| NewsLiquid prepare-payment returned requiresConfirmation=true | [Billing confirmation](billing.md) |
+| An original NewsLiquid order returned a payment challenge | [Billing confirmation](billing.md) |
 | A valid NewsLiquid account read shows missing Max for requested live reception | [Delivery choices](monitoring.md) |
 
 ## Intent Routing

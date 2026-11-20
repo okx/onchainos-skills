@@ -186,7 +186,7 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-pub(crate) fn random_bytes32_hex() -> String {
+fn random_bytes32_hex() -> String {
     let mut bytes = [0u8; 32];
     rand::rngs::OsRng.fill_bytes(&mut bytes);
     format!("0x{}", hex::encode(bytes))
@@ -198,6 +198,52 @@ fn u256(s: &str) -> Result<U256> {
         if s.trim().starts_with("0x") { 16 } else { 10 },
     )
     .with_context(|| format!("invalid uint256: {s}"))
+}
+
+/// Shared exact commitment arithmetic for previews and the signing boundary.
+pub(crate) fn commitment_cap(
+    initial_amount: &str,
+    max_periods: u32,
+    initial_periods: u32,
+    amount_per_period: &str,
+    reserved_amount: &str,
+) -> Result<(U256, U256)> {
+    let remaining = max_periods
+        .checked_sub(initial_periods)
+        .ok_or_else(|| anyhow!("initialChargePeriods exceeds maxPeriods"))?;
+    let commitment = u256(amount_per_period)?
+        .checked_mul(U256::from(remaining))
+        .and_then(|n| n.checked_add(u256(initial_amount).ok()?))
+        .ok_or_else(|| anyhow!("subscription commitment overflow"))?;
+    let reserved = if reserved_amount.is_empty() {
+        U256::ZERO
+    } else {
+        u256(reserved_amount)?
+    };
+    let cap = reserved
+        .checked_add(commitment)
+        .filter(|n| n.bit_len() <= 160)
+        .ok_or_else(|| anyhow!("subscription permit cap exceeds uint160"))?;
+    Ok((commitment, cap))
+}
+
+fn verify_expected_cap(actual: U256, expected: Option<&str>) -> Result<()> {
+    if let Some(expected) = expected {
+        if actual != u256(expected)? {
+            bail!("payment_terms_changed: permit cap changed before signing");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn commitment_and_confirmed_cap_are_checked_before_signing() {
+    let (_, cap) = commitment_cap("1000000", 1, 1, "1000000", "7").unwrap();
+    assert_eq!(cap, U256::from(1000007));
+    assert!(verify_expected_cap(cap, Some("1000007")).is_ok());
+    assert!(verify_expected_cap(cap, Some("1000006")).is_err());
+    assert!(commitment_cap("0", 1, 2, "1", "0").is_err());
+    assert!(commitment_cap("1", 1, 0, &U256::MAX.to_string(), "0").is_err());
 }
 
 /// Case-insensitive EVM address equality with fail-closed semantics: returns
@@ -243,6 +289,7 @@ async fn sign_double(
     accepted: &Value,
     change_from_sub_id: &str,
     change_effective_at: u8,
+    expected_cap: Option<&str>,
 ) -> Result<SignedSubscription> {
     let p = extract_terms_params(accepted)?;
 
@@ -262,18 +309,14 @@ async fn sign_double(
     let spender = a.subscription_contract.clone();
 
     // newCommit = initialChargeAmount + (maxPeriods - initialChargePeriods) * amountPerPeriod
-    let remaining_periods = (p.max_periods as u64)
-        .checked_sub(p.initial_charge_periods as u64)
-        .ok_or_else(|| anyhow!("initialChargePeriods exceeds maxPeriods"))?;
-    let new_commit = u256(&p.initial_charge_amount)?
-        + u256(&p.amount_per_period)? * U256::from(remaining_periods);
-    // permit.details.amount >= reservedAmount + newCommit (cover full commitment)
-    let reserved = if a.reserved_amount.trim().is_empty() {
-        U256::ZERO
-    } else {
-        u256(&a.reserved_amount)?
-    };
-    let amount = reserved + new_commit;
+    let (_, amount) = commitment_cap(
+        &p.initial_charge_amount,
+        p.max_periods,
+        p.initial_charge_periods,
+        &p.amount_per_period,
+        &a.reserved_amount,
+    )?;
+    verify_expected_cap(amount, expected_cap)?;
 
     // Layer-1 (ERC20 -> Permit2) must be approved first; if short, the buyer
     // approves on-chain before retrying.
@@ -437,7 +480,26 @@ pub async fn sign_subscribe(
     payer: &str,
     accepted: &Value,
 ) -> Result<SignedSubscription> {
-    sign_double(chain_index, chain_id, payer, accepted, ZERO_BYTES32, 0).await
+    sign_subscribe_with_cap(chain_index, chain_id, payer, accepted, None).await
+}
+
+pub(crate) async fn sign_subscribe_with_cap(
+    chain_index: &str,
+    chain_id: u64,
+    payer: &str,
+    accepted: &Value,
+    expected_cap: Option<&str>,
+) -> Result<SignedSubscription> {
+    sign_double(
+        chain_index,
+        chain_id,
+        payer,
+        accepted,
+        ZERO_BYTES32,
+        0,
+        expected_cap,
+    )
+    .await
 }
 
 /// Change (up/downgrade). `change_from_sub_id` falls back to
@@ -468,6 +530,7 @@ pub async fn sign_change(
         accepted,
         &from_sub_id,
         effective_at,
+        None,
     )
     .await
 }
@@ -491,6 +554,13 @@ fn change_effective_at_from(change_from: Option<&Value>) -> Result<u8> {
     }
 }
 
+fn cancel_deadline(valid_for_seconds: u64) -> Result<u64> {
+    if !(1..=DEFAULT_TIMEOUT_SECS).contains(&valid_for_seconds) {
+        bail!("cancellation validity must be between 1 and {DEFAULT_TIMEOUT_SECS} seconds");
+    }
+    Ok(now_secs() + valid_for_seconds)
+}
+
 /// Sign a `CancelAuth` to cancel an active subscription (`initiator = 0` payer).
 /// `verifying_contract` is the subscription contract.
 pub async fn sign_cancel(
@@ -499,9 +569,10 @@ pub async fn sign_cancel(
     payer: &str,
     sub_id: &str,
     verifying_contract: &str,
+    valid_for_seconds: u64,
 ) -> Result<CancelAuth> {
     let nonce = random_bytes32_hex();
-    let deadline = now_secs() + DEFAULT_TIMEOUT_SECS;
+    let deadline = cancel_deadline(valid_for_seconds)?;
     let d = SubDomain {
         chain_id,
         verifying_contract,
@@ -576,6 +647,17 @@ pub async fn build_access_proof(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cancellation_validity_supports_short_service_windows_and_keeps_hour_default() {
+        let before = now_secs();
+        for lifetime in [300, DEFAULT_TIMEOUT_SECS] {
+            let deadline = cancel_deadline(lifetime).unwrap();
+            assert!(deadline >= before + lifetime && deadline <= now_secs() + lifetime);
+        }
+        assert!(cancel_deadline(0).is_err());
+        assert!(cancel_deadline(DEFAULT_TIMEOUT_SECS + 1).is_err());
+    }
+
     use super::*;
     use serde_json::json;
 

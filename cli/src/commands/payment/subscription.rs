@@ -38,6 +38,12 @@ pub enum SubscriptionCommand {
         /// Resource URL (used as the header `resource.url` and the cache key).
         #[arg(long)]
         url: Option<String>,
+        /// Sign without changing the host's active subscription cache.
+        #[arg(long)]
+        no_cache: bool,
+        /// Reject a changed Permit2 cap before producing either signature.
+        #[arg(long)]
+        expected_cap: Option<String>,
     },
 
     /// Build an `APP-Access` AccessProof header for a resource URL: resolve the
@@ -90,6 +96,9 @@ pub enum SubscriptionCommand {
         chain: String,
         #[arg(long)]
         from: Option<String>,
+        /// Lifetime of the signed cancellation authorization; default one hour.
+        #[arg(long, default_value_t = 3600, value_parser = clap::value_parser!(u64).range(1..=3600))]
+        valid_for_seconds: u64,
     },
 
     /// Sign a PendingChangeCancelAuth to cancel a not-yet-effective downgrade.
@@ -140,8 +149,21 @@ pub enum SubscriptionCommand {
 
 pub async fn execute(cmd: SubscriptionCommand) -> Result<()> {
     match cmd {
-        SubscriptionCommand::Subscribe { accepts, from, url } => {
-            cmd_subscribe(&accepts, from.as_deref(), url.as_deref()).await
+        SubscriptionCommand::Subscribe {
+            accepts,
+            from,
+            url,
+            no_cache,
+            expected_cap,
+        } => {
+            cmd_subscribe(
+                &accepts,
+                from.as_deref(),
+                url.as_deref(),
+                no_cache,
+                expected_cap.as_deref(),
+            )
+            .await
         }
         SubscriptionCommand::Access {
             url,
@@ -164,6 +186,7 @@ pub async fn execute(cmd: SubscriptionCommand) -> Result<()> {
             token,
             chain,
             from,
+            valid_for_seconds,
         } => {
             let chain = chains::resolve_chain(&chain);
             cmd_cancel(
@@ -173,7 +196,7 @@ pub async fn execute(cmd: SubscriptionCommand) -> Result<()> {
                 token.as_deref(),
                 &chain,
                 from.as_deref(),
-                false,
+                valid_for_seconds,
             )
             .await
         }
@@ -193,7 +216,7 @@ pub async fn execute(cmd: SubscriptionCommand) -> Result<()> {
                 token.as_deref(),
                 &chain,
                 from.as_deref(),
-                true,
+                3600,
             )
             .await
         }
@@ -227,7 +250,7 @@ fn select_subscription_entry(accepts: &Value) -> Result<Value> {
 
 /// Build the base64 `PAYMENT-SIGNATURE` header for a subscribe / change
 /// double-sign (x402 v2 envelope + subscription payload).
-pub(crate) fn build_subscription_payment_header(
+fn build_subscription_payment_header(
     accepted: &Value,
     resource_url: Option<&str>,
     payload: &SubscriptionPayload,
@@ -259,7 +282,12 @@ fn cache_subscription(
     payload: &SubscriptionPayload,
     sub_id: &str,
     plan_id: &str,
+    no_cache: bool,
 ) {
+    // Order-based callers must wait for seller confirmation. Preserve any old entry.
+    if no_cache {
+        return;
+    }
     let Some(url) = url else {
         eprintln!(
             "Warning: subscription NOT cached (no --url). Subsequent \
@@ -308,16 +336,29 @@ fn cache_subscription(
     }
 }
 
-async fn cmd_subscribe(accepts: &str, from: Option<&str>, url: Option<&str>) -> Result<()> {
+async fn cmd_subscribe(
+    accepts: &str,
+    from: Option<&str>,
+    url: Option<&str>,
+    no_cache: bool,
+    expected_cap: Option<&str>,
+) -> Result<()> {
     let accepts_val: Value = serde_json::from_str(accepts).context("parse --accepts JSON")?;
     let accepted = select_subscription_entry(&accepts_val)?;
     let (chain_index, chain_id, payer) =
         payment_flow::resolve_chain_and_payer(&accepted, from).await?;
-    let signed = sign::sign_subscribe(&chain_index, chain_id, &payer, &accepted)
-        .await
-        .map_err(payment_flow::map_pre_signing_allowance_error)?;
+    let signed =
+        sign::sign_subscribe_with_cap(&chain_index, chain_id, &payer, &accepted, expected_cap)
+            .await
+            .map_err(payment_flow::map_pre_signing_allowance_error)?;
     let (hname, hvalue) = build_subscription_payment_header(&accepted, url, &signed.payload)?;
-    cache_subscription(url, &signed.payload, &signed.sub_id, &signed.plan_id);
+    cache_subscription(
+        url,
+        &signed.payload,
+        &signed.sub_id,
+        &signed.plan_id,
+        no_cache,
+    );
     let payload_v =
         serde_json::to_value(&signed.payload).context("serialize subscription payload")?;
     output::success(json!({
@@ -349,7 +390,7 @@ async fn cmd_change(
     )
     .await?;
     let (hname, hvalue) = build_subscription_payment_header(&accepted, url, &signed.payload)?;
-    cache_subscription(url, &signed.payload, &signed.sub_id, &signed.plan_id);
+    cache_subscription(url, &signed.payload, &signed.sub_id, &signed.plan_id, false);
     let payload_v =
         serde_json::to_value(&signed.payload).context("serialize subscription payload")?;
     output::success(json!({
@@ -426,16 +467,13 @@ async fn cmd_cancel(
     token: Option<&str>,
     chain: &str,
     from: Option<&str>,
-    pending: bool,
+    valid_for_seconds: u64,
 ) -> Result<()> {
     let (chain_index, chain_id, payer) =
         payment_flow::resolve_chain_and_payer_by_chain(chain, from).await?;
     let verifying_contract = resolve_contract(contract, token, &payer, &chain_index).await?;
 
-    if pending {
-        let new_sub_id = new_sub_id.ok_or_else(|| {
-            anyhow!("cancel-pending requires --new-sub-id (the PENDING downgrade's newSubId)")
-        })?;
+    if let Some(new_sub_id) = new_sub_id {
         let auth = sign::sign_cancel_pending_change(
             &chain_index,
             chain_id,
@@ -448,8 +486,15 @@ async fn cmd_cancel(
         let auth_v = serde_json::to_value(&auth).context("serialize pendingChangeCancelAuth")?;
         output::success(json!({ "pendingChangeCancelAuth": auth_v, "chainIndex": chain_index }));
     } else {
-        let auth =
-            sign::sign_cancel(&chain_index, chain_id, &payer, sub_id, &verifying_contract).await?;
+        let auth = sign::sign_cancel(
+            &chain_index,
+            chain_id,
+            &payer,
+            sub_id,
+            &verifying_contract,
+            valid_for_seconds,
+        )
+        .await?;
         // Don't mark the cache canceled here — this only signs the CancelAuth.
         // The sub stays active and billable until the contract executes; the
         // `my-subscriptions` reconcile corrects it once on-chain confirms.
@@ -563,9 +608,8 @@ mod tests {
         assert!(select_subscription_entry(&accepts).is_err());
     }
 
-    #[test]
-    fn header_uses_permit_single_payload_keys() {
-        let payload: SubscriptionPayload = serde_json::from_value(json!({
+    fn subscription_payload_fixture() -> SubscriptionPayload {
+        serde_json::from_value(json!({
             "terms": {
                 "payer": "0xp", "merchant": "0xm", "facilitator": "0xf", "token": "0xt",
                 "amountPerPeriod": "5000000", "periodSec": 2592000, "maxPeriods": 12, "startAt": 0,
@@ -579,7 +623,12 @@ mod tests {
                         "spender": "0xsub", "sigDeadline": "1750000000" },
             "permitSignature": "0xpsig"
         }))
-        .unwrap();
+        .unwrap()
+    }
+
+    #[test]
+    fn header_uses_permit_single_payload_keys() {
+        let payload = subscription_payload_fixture();
         let accepted = json!({ "scheme": "period" });
         let (name, value) =
             build_subscription_payment_header(&accepted, Some("https://api.x.com/d"), &payload)
@@ -592,5 +641,78 @@ mod tests {
         assert_eq!(body["payload"]["termsSignature"], "0xtsig");
         assert_eq!(body["payload"]["permitSingle"]["details"]["nonce"], 7);
         assert_eq!(body["payload"]["terms"]["planTier"], 2);
+    }
+
+    #[test]
+    fn no_cache_preserves_the_previously_confirmed_host_mapping() {
+        let payload = subscription_payload_fixture();
+        // A checked service handoff must not replace a previously active host mapping,
+        // even if later proof validation/submission fails. No signer or network is used.
+        let _guard = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let root = tempfile::tempdir().unwrap();
+        let previous = std::env::var_os("ONCHAINOS_HOME");
+        std::env::set_var("ONCHAINOS_HOME", root.path());
+        let mut cache = SubscriptionCache::default();
+        cache.put(SubscriptionCacheEntry {
+            sub_id: "old-confirmed-sub".into(),
+            resource_host: "api.x.com".into(),
+            merchant: "merchant-fixture".into(),
+            plan_id: "old-plan".into(),
+            plan_tier: 1,
+            max_periods: 1,
+            state: "active".into(),
+            changed_to_sub_id: None,
+        });
+        cache.save().unwrap();
+        let before = std::fs::read(SubscriptionCache::cache_path().unwrap()).unwrap();
+        cache_subscription(
+            Some("https://api.x.com/d"),
+            &payload,
+            "unconfirmed-sub",
+            "new-plan",
+            true,
+        );
+        assert_eq!(
+            std::fs::read(SubscriptionCache::cache_path().unwrap()).unwrap(),
+            before
+        );
+        assert_eq!(
+            SubscriptionCache::load()
+                .resolve("https://api.x.com/d")
+                .unwrap()
+                .sub_id,
+            "old-confirmed-sub"
+        );
+        match previous {
+            Some(value) => std::env::set_var("ONCHAINOS_HOME", value),
+            None => std::env::remove_var("ONCHAINOS_HOME"),
+        }
+    }
+
+    #[test]
+    fn subscribe_no_cache_is_opt_in() {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct Cli {
+            #[command(subcommand)]
+            command: SubscriptionCommand,
+        }
+        for enabled in [false, true] {
+            let mut args = vec![
+                "test",
+                "subscribe",
+                "--accepts",
+                "{}",
+                "--url",
+                "https://example.com/pay",
+            ];
+            if enabled {
+                args.push("--no-cache");
+            }
+            assert!(matches!(Cli::parse_from(args).command,
+                SubscriptionCommand::Subscribe { no_cache, .. } if no_cache == enabled));
+        }
     }
 }

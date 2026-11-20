@@ -14,8 +14,8 @@ use crate::commands::Context;
 use super::args::ValidateListingArgs;
 use super::models::{AgentService, ServiceOperation};
 use super::utils::{
-    display_width, is_plain_number, is_positive_integer, is_zero_value, normalize_role,
-    SERVICE_GUIDE_MAX_DISPLAY_WIDTH,
+    display_width, is_plain_number, is_zero_value, normalize_role, FREE_TRIAL_HOURS,
+    FREE_TRIAL_UNSUPPORTED_MSG, SERVICE_GUIDE_MAX_DISPLAY_WIDTH,
 };
 
 // ─── CLI entry point (hidden — not shown in --help) ─────────────────────────
@@ -65,7 +65,7 @@ mod fe {
     pub const FE17: &str = "The subscription billing setup is invalid: A2MCP doesn't support subscriptions, and an A2A service must use exactly one of pay-per-use or monthly subscription \u{2014} you can't leave both empty or fill in both. Pick one billing mode for your A2A service: set a pay-per-use fee, or set a monthly subscription (leave fee as an empty string \"\" when using subscription); for A2MCP, remove the subscription field. Then resubmit.";
     pub const FE18: &str = "Subscriptions currently support monthly billing only, but a different interval was provided. Set the subscription tier's interval to \"month\" (weekly, yearly, and other intervals aren't supported yet), then resubmit.";
     pub const FE19: &str = "The A2A subscription price must be a plain number, but the current value contains units, symbols, non-numeric text, or more than 2 decimal places. Enter each tier's price as a number only (e.g., 10 or 0.25) \u{2014} denominated in USD by default, up to 2 decimal places, no symbols or extra text. Then resubmit.";
-    pub const FE20: &str = "The free-trial setup is invalid: freeTrial can only be configured on monthly-subscription A2A services and must be a positive integer number of hours; A2MCP and pay-per-use services can't offer a trial. Guided writes use \"72\" (3 days); preserve another positive integer only when writing back a legacy service. Otherwise omit freeTrial entirely (don't set \"\" or \"0\"). Then resubmit.";
+    pub const FE20: &str = "The free-trial setup is invalid: freeTrial can only be configured on monthly-subscription A2A services; A2MCP and pay-per-use services can't offer a trial. Only \"72\" (3 days) is supported; otherwise omit freeTrial entirely (don't set \"\" or \"0\"). Then resubmit.";
     pub fn service_guide_too_long(service_name: &str) -> String {
         format!(
             "The service guide for [{service_name}] exceeds the length limit. Shorten it to no more than 5,000 full-width Chinese/Japanese characters or 10,000 Latin characters, then resubmit."
@@ -556,13 +556,14 @@ fn check_pricing(
                 ));
             }
         }
-        // Free trial is subscription-only and must be a positive integer hour count.
+        // Free trial is subscription-only and only the fixed 72-hour trial is supported.
         if !trial.is_empty() {
             if !has_subscription {
                 findings.push(Finding::block(&trial_field, "P7", fe::FE20));
             }
-            if !is_positive_integer(trial) {
-                findings.push(Finding::block(&trial_field, "P8", fe::FE20));
+            // A delete only identifies the service by id, so a legacy trial must not block it.
+            if svc.operation != Some(ServiceOperation::Delete) && trial != FREE_TRIAL_HOURS {
+                findings.push(Finding::block(&trial_field, "P8", FREE_TRIAL_UNSUPPORTED_MSG));
             }
         }
         return;

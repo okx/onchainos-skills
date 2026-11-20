@@ -503,14 +503,37 @@ fn a2a_free_trial_non_integer_fails_p8() {
 }
 
 #[test]
-fn a2a_free_trial_legacy_positive_integer_passes_p8() {
+fn a2a_free_trial_other_than_72_fails_p8_with_exact_message() {
     let desc = "Does a thing.\\nMore detail here.\\nDo the thing";
-    let service = format!(
-        "[{{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"{desc}\",\"serviceGuide\":\"Choose a market.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{{\"interval\":\"month\",\"fee\":\"10\"}}],\"freeTrial\":\"24\"}}]"
-    );
-    let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
-    assert!(!codes(&r).contains(&"P8".to_string()), "got {:?}", codes(&r));
-    assert!(r.pass, "got {:?}", codes(&r));
+    for trial in ["0", "-1", "24", "abc"] {
+        let service = format!(
+            "[{{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"{desc}\",\"serviceGuide\":\"Choose a market.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{{\"interval\":\"month\",\"fee\":\"10\"}}],\"freeTrial\":\"{trial}\"}}]"
+        );
+        let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+        assert!(!r.pass, "trial {trial} should fail");
+        let f = r
+            .findings
+            .iter()
+            .find(|f| f.code == "P8")
+            .unwrap_or_else(|| panic!("trial {trial}: no P8, got {:?}", codes(&r)));
+        assert_eq!(
+            f.message,
+            "The free trial duration you entered is not supported. Only 72 hours (3 days) is available"
+        );
+    }
+}
+
+#[test]
+fn a2a_free_trial_blank_or_absent_passes_p8() {
+    let desc = "Does a thing.\\nMore detail here.\\nDo the thing";
+    for extra in ["", ",\"freeTrial\":\"\"", ",\"freeTrial\":\"  \""] {
+        let service = format!(
+            "[{{\"serviceName\":\"Pricing Service\",\"serviceDescription\":\"{desc}\",\"serviceGuide\":\"Choose a market.\",\"serviceType\":\"A2A\",\"fee\":\"\",\"subscription\":[{{\"interval\":\"month\",\"fee\":\"10\"}}]{extra}}}]"
+        );
+        let r = run_validation("asp", Some("Agent Name"), None, Some(&service));
+        assert!(!codes(&r).contains(&"P8".to_string()), "got {:?}", codes(&r));
+        assert!(r.pass, "got {:?}", codes(&r));
+    }
 }
 
 #[test]

@@ -19,7 +19,7 @@
 > fall back to the explicit `pay --payload` sign-only path because `payment quote` is
 > genuinely unavailable.
 
-**Compat sign-only surface (`pay --payload`).** When you must bypass `quote` (explicit legacy request, or `quote` unavailable), all three schemes share one signing surface: `onchainos payment pay --payload '<base64 PAYMENT-REQUIRED>' [--selected-index <n>]` decodes the payload, signs the chosen `accepts` entry via TEE, **assembles the header itself** (embedding `sessionCert` into `accepted.extra` for `aggr_deferred` only — without clobbering `name` / `version`), and returns `{authorization_header, header_name, scheme, wallet}`; you then replay it yourself. You never assemble or merge anything. On the primary Path A flow `pay --payment-id` does this signing **and** the replay for you. The local-key fallback `pay-local` signs **`exact + EIP-3009`, `exact + Permit2`, and `upto`** locally — only `aggr_deferred` is unsupported (it needs a TEE-resident session key).
+**Compat sign-only surface (`pay --payload`).** When you must bypass `quote` (explicit legacy request, or `quote` unavailable), all three schemes share one signing surface: `onchainos payment pay --payload '<base64 PAYMENT-REQUIRED>' [--selected-index <n>] [--from <addr>]` decodes the payload, signs the chosen `accepts` entry via TEE, **assembles the header itself** (embedding `sessionCert` into `accepted.extra` for `aggr_deferred` only — without clobbering `name` / `version`), and returns `{authorization_header, header_name, scheme, wallet}`; you then replay it yourself. You never assemble or merge anything. On the primary Path A flow `pay --payment-id` does this signing **and** the replay for you. The local-key fallback `pay-local` signs **`exact + EIP-3009`, `exact + Permit2`, and `upto`** locally — only `aggr_deferred` is unsupported (it needs a TEE-resident session key).
 
 ## Interpreting the settlement result
 
@@ -68,7 +68,7 @@ X-PAYMENT: btoa(JSON.stringify(paymentPayload))
 ## CLI Reference
 
 ```bash
-onchainos payment pay --payload '<base64 of the decoded 402 payload / raw PAYMENT-REQUIRED>' [--selected-index <n>]
+onchainos payment pay --payload '<base64 of the decoded 402 payload / raw PAYMENT-REQUIRED>' [--selected-index <n>] [--from <addr>]
 onchainos payment pay-local --payload '<base64 ...>'      # exact+EIP-3009 / exact+Permit2 / upto (not aggr_deferred)
 ```
 
@@ -77,7 +77,7 @@ onchainos payment pay-local --payload '<base64 ...>'      # exact+EIP-3009 / exa
 | `--payload` | Yes | base64 (or base64url) of `{x402Version, resource, accepts}` — the raw `PAYMENT-REQUIRED` header value. CLI decodes, signs, and returns the assembled header (v2). |
 | `--selected-index` | No | 0-based index into `accepts[]` pinning the scheme the user chose in a multi-scheme prompt. Omit → CLI auto-selects (`exact` > `aggr_deferred` > first). |
 
-Signs from the currently selected wallet account.
+Signs from `--from` when supplied; otherwise uses the currently selected wallet account. `--from` is available only with `--payload`, not `--payment-id`.
 
 ## Edge cases
 

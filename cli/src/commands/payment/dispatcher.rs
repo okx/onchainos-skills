@@ -42,6 +42,9 @@ pub enum PaymentCommand {
         /// Omit to let the CLI auto-select (exact > aggr_deferred > first).
         #[arg(long)]
         selected_index: Option<usize>,
+        /// Bind legacy payload signing to this payer instead of the selected account.
+        #[arg(long, requires = "payload", conflicts_with = "payment_id")]
+        from: Option<String>,
         /// Additional business param, repeatable: --param key=value. Passed to the
         /// merchant on replay (two-phase mode).
         #[arg(long = "param")]
@@ -50,6 +53,16 @@ pub enum PaymentCommand {
         /// it, two-phase `pay` returns a confirming prompt (exit 2).
         #[arg(long, visible_alias = "force")]
         yes: bool,
+    },
+    /// Check a NewsLiquid order/challenge or signed proof from stdin. No network or signing.
+    Validate {
+        #[arg(long, value_parser = ["newsliquid"])]
+        service: String,
+        #[arg(long, value_parser = ["prepare", "before-sign", "after-sign"])]
+        stage: String,
+        /// Wallet whose payment terms were selected and confirmed.
+        #[arg(long)]
+        from: String,
     },
     /// Probe a 402/A2MCP endpoint, parse the challenge, preflight balance,
     /// rank candidates, and persist a paymentId. Never signs.
@@ -289,10 +302,31 @@ pub enum DefaultAction {
 
 pub async fn execute(cmd: PaymentCommand) -> Result<()> {
     match cmd {
+        PaymentCommand::Validate {
+            service: _,
+            stage,
+            from,
+        } => {
+            use std::io::Read;
+            let mut input = Vec::new();
+            std::io::stdin()
+                .take(8 * 1024 * 1024 + 1)
+                .read_to_end(&mut input)?;
+            if input.len() > 8 * 1024 * 1024 {
+                bail!("payment_validation_input_too_large");
+            }
+            let input = serde_json::from_slice(&input)
+                .map_err(|_| anyhow!("invalid_payment_validation_json"))?;
+            output::success(crate::services::newsliquid::validate_payment(
+                &input, &from, &stage,
+            )?);
+            Ok(())
+        }
         PaymentCommand::X402Pay {
             payload,
             payment_id,
             selected_index,
+            from,
             param,
             yes,
         } => {
@@ -303,7 +337,7 @@ pub async fn execute(cmd: PaymentCommand) -> Result<()> {
                 // Legacy sign-only mode — byte-for-byte unchanged.
                 let payload = payload
                     .ok_or_else(|| anyhow!("--payload is required unless --payment-id is set"))?;
-                cmd_pay(&payload, selected_index).await
+                cmd_pay(&payload, selected_index, from.as_deref()).await
             }
         }
         PaymentCommand::Quote {
@@ -548,24 +582,15 @@ fn validate_payment_inputs(amount: &str, pay_to: &str, asset: &str) -> Result<u1
 /// `None` for the preference so the user's saved default asset does NOT
 /// influence which accepts entry gets signed — this command signs exactly
 /// what the caller supplied via `--payload`.
-async fn cmd_pay(payload: &str, selected_index: Option<usize>) -> Result<()> {
-    output::success(sign_pay_payload(payload, None, selected_index).await?);
-    Ok(())
-}
-
-/// Sign the supplied payload with an optional explicitly bound payer.
-pub(crate) async fn sign_pay_payload(
-    payload: &str,
-    from: Option<&str>,
-    selected_index: Option<usize>,
-) -> Result<Value> {
+async fn cmd_pay(payload: &str, selected_index: Option<usize>, from: Option<&str>) -> Result<()> {
     let (mut accepts_val, resource_val) = decode_pay_payload(payload)?;
     if let Some(i) = selected_index {
         accepts_val = select_accepts_index(&accepts_val, i)?;
     }
     let (proof, entry) =
         payment_flow::sign_payment_with_preference(&accepts_val, from, None, None).await?;
-    emit_pay_result(&proof, &entry, resource_val.as_ref())
+    output::success(emit_pay_result(&proof, &entry, resource_val.as_ref())?);
+    Ok(())
 }
 
 /// Two-phase `payment pay --payment-id`: delegate to `fetch_pay`, which
@@ -2324,6 +2349,44 @@ mod tests {
 
     // ── CLI argument parsing ──────────────────────────────────────────
 
+    #[test]
+    fn cli_payload_payment_binds_payer_without_changing_two_phase_mode() {
+        match TestCli::parse_from([
+            "test",
+            "pay",
+            "--payload",
+            "unsigned-fixture",
+            "--selected-index",
+            "1",
+            "--from",
+            "0x1111111111111111111111111111111111111111",
+        ])
+        .command
+        {
+            PaymentCommand::X402Pay {
+                from,
+                selected_index,
+                ..
+            } => {
+                assert_eq!(
+                    from.as_deref(),
+                    Some("0x1111111111111111111111111111111111111111")
+                );
+                assert_eq!(selected_index, Some(1));
+            }
+            _ => panic!("expected payload payment"),
+        }
+        assert!(TestCli::try_parse_from([
+            "test",
+            "pay",
+            "--payment-id",
+            "payment-fixture",
+            "--from",
+            "wallet-fixture",
+        ])
+        .is_err());
+    }
+
     /// Wrapper so clap can parse PaymentCommand as a top-level subcommand.
     #[derive(Parser)]
     struct TestCli {
@@ -2394,6 +2457,7 @@ mod tests {
                 param,
                 yes,
                 payload,
+                ..
             } => {
                 assert_eq!(payment_id.as_deref(), Some("pay_abc"));
                 assert_eq!(selected_index, Some(0));
