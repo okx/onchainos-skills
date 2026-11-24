@@ -1,0 +1,76 @@
+# ──────────────────────────────────────────────────────────────
+# Continuous integration pipeline
+# Trigger: push to any branch / pull requests
+# Checks: formatting + Clippy static analysis + unit tests + cargo audit
+# Cross-platform: Ubuntu / macOS / Windows
+# ──────────────────────────────────────────────────────────────
+name: CI
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 1.0.5 or 2.0.0-beta.0) — must match Cargo.toml"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_DIR: cli
+
+jobs:
+  check:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable @ 2026-03-27
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: ${{ env.CARGO_DIR }}
+
+      - name: Check formatting
+        working-directory: ${{ env.CARGO_DIR }}
+        run: cargo fmt --check
+
+      - name: Clippy lint
+        working-directory: ${{ env.CARGO_DIR }}
+        run: cargo clippy -- -D warnings
+
+      - name: Run tests
+        working-directory: ${{ env.CARGO_DIR }}
+        run: cargo test
+        env:
+          OKX_API_KEY: ${{ secrets.OKX_API_KEY }}
+          OKX_SECRET_KEY: ${{ secrets.OKX_SECRET_KEY }}
+          OKX_PASSPHRASE: ${{ secrets.OKX_PASSPHRASE }}
+
+  # ── Dependency vulnerability audit (runs once, not per-platform) ──
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable @ 2026-03-27
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Audit dependencies for known vulnerabilities
+        working-directory: ${{ env.CARGO_DIR }}
+        run: cargo audit

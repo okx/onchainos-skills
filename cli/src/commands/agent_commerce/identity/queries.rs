@@ -1,0 +1,777 @@
+//! Read-only agent commands and their query assembly:
+//! - `agent get-my-agents` → `GET /agent/agent-list`
+//! - `agent get-agents`   → `GET /agent/batch-list`
+//! - `agent search`      → `GET /search/agent-search`
+//! - `agent service-list`→ `GET /agent/services`
+//! - `agent feedback-list`→ `GET /agent/reviews`
+
+use anyhow::{bail, Result};
+use serde_json::Value;
+
+use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
+use crate::commands::Context;
+use crate::output;
+
+use super::args::{
+    FeedbackListArgs, GetAgentsArgs, GetArgs, GetByAddressArgs, GetMyAgentsArgs, SearchArgs,
+    ServiceListArgs, TaskFeedbackArgs,
+};
+use super::models::XLAYER_CHAIN_INDEX;
+use super::utils::{
+    add_agent_list_cells, add_feedback_list_cells, add_service_list_cells, build_search_table,
+    convert_feedback_list_scores, enrich_agent_detail_rows, enrich_agent_get_rows,
+    normalize_role_code, normalize_singleton_object, parse_u32_arg, push_multi_query,
+    push_optional_query, reconstruct_get_url_for_log, redact_token_for_debug, require_non_empty,
+    wallet_client,
+};
+
+// ─── Public command entry points ──────────────────────────────────────────
+
+pub async fn get_my_agents(args: GetMyAgentsArgs, ctx: &Context) -> Result<()> {
+    output::success(get_my_agents_impl(&args, ctx).await?);
+    Ok(())
+}
+
+pub async fn get_agents(args: GetAgentsArgs, ctx: &Context) -> Result<()> {
+    output::success(get_agents_impl(&args, ctx).await?);
+    Ok(())
+}
+
+pub async fn get(args: GetArgs, ctx: &Context) -> Result<()> {
+    output::success(get_impl(&args, ctx).await?);
+    Ok(())
+}
+
+pub async fn search(args: SearchArgs, ctx: &Context) -> Result<()> {
+    output::success(search_impl(&args, ctx).await?);
+    Ok(())
+}
+
+pub async fn service_list(args: ServiceListArgs, ctx: &Context) -> Result<()> {
+    output::success(service_list_impl(&args, ctx).await?);
+    Ok(())
+}
+
+pub async fn feedback_list(args: FeedbackListArgs, ctx: &Context) -> Result<()> {
+    output::success(feedback_list_impl(&args, ctx).await?);
+    Ok(())
+}
+
+pub async fn task_feedback(args: TaskFeedbackArgs, ctx: &Context) -> Result<()> {
+    output::success(task_feedback_impl(&args, ctx).await?);
+    Ok(())
+}
+
+pub async fn get_by_address(args: GetByAddressArgs, ctx: &Context) -> Result<()> {
+    output::success(get_by_address_impl(&args, ctx).await?);
+    Ok(())
+}
+
+// ─── `agent get-my-agents` ────────────────────────────────────────────────
+
+async fn get_my_agents_impl(args: &GetMyAgentsArgs, ctx: &Context) -> Result<Value> {
+    let access_token = ensure_tokens_refreshed().await?;
+    get_my_agents_with_access_token(args, ctx, &access_token).await
+}
+
+pub(super) async fn get_my_agents_with_access_token(
+    args: &GetMyAgentsArgs,
+    ctx: &Context,
+    access_token: &str,
+) -> Result<Value> {
+    let mut client = wallet_client(ctx)?;
+
+    let query = build_get_my_agents_query(args)?;
+
+    let query_refs: Vec<(&str, &str)> = query
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect();
+
+    debug_log!(
+        "[agent-identity] get-my-agents request: url={} access_token_len={} access_token_prefix={} query={:?}",
+        reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent/agent-list", &query_refs),
+        access_token.len(),
+        redact_token_for_debug(access_token),
+        query_refs,
+    );
+
+    let result = client
+        .get_authed(
+            "/priapi/v5/wallet/agentic/agent/agent-list",
+            access_token,
+            &query_refs,
+        )
+        .await;
+
+    match &result {
+        Ok(data) => debug_log!(
+            "[agent-identity] get-my-agents response: {}",
+            {
+                let s = serde_json::to_string(data).unwrap_or_else(|_| "<serialize failed>".to_string());
+                if s.chars().count() > 256 { format!("{}...", s.chars().take(256).collect::<String>()) } else { s }
+            }
+        ),
+        Err(e) => debug_log!("[agent-identity] get-my-agents response err: {:#}", e),
+    }
+
+    let mut out = normalize_singleton_object(result?);
+    // Additive: enrich each agent row with computed display fields (roleLabel
+    // / statusLabel / approvalLabel / ratingStars). Rows are read from the
+    // live double-layer shape (row = list[*].agentList[*]) or the
+    // single-layer fallback (row = list[*]); both are tolerated. Raw role /
+    // status / approvalDisplayStatus / reputation are left intact.
+    enrich_agent_get_rows(&mut out);
+    // Additive: add a ready-to-render `cells` array per row (the list-table
+    // analog of `card`; references/identity/profile.md §My Agents columns). `agent get` is
+    // now list-only — filtered by `--role` / `--owner-address` — so cells are
+    // always meaningful.
+    add_agent_list_cells(&mut out);
+    Ok(out)
+}
+
+fn build_get_my_agents_query(args: &GetMyAgentsArgs) -> Result<Vec<(String, String)>> {
+    // Product spec: agent-list identifies the user via JWT; `from` is never needed.
+    let mut query = vec![("chainIndex".to_string(), XLAYER_CHAIN_INDEX.to_string())];
+    // Optional listing filters. `role` accepts the canonical values
+    // user/asp/evaluator only (strict — no aliases) and is sent to the backend
+    // as its integer code (1/2/3). `ownerAddress` filters to a single owner.
+    // `agentIdList` narrows to specific agents — the raw comma-joined string is
+    // forwarded as-is (same contract as `agent get`'s `--agent-ids`; the
+    // backend owns splitting/validation).
+    if let Some(role_raw) = args.role.as_deref().filter(|r| !r.trim().is_empty()) {
+        query.push(("role".to_string(), normalize_role_code(role_raw)?));
+    }
+    push_optional_query(&mut query, "ownerAddress", args.owner_address.as_deref());
+    push_optional_query(&mut query, "agentIdList", args.agent_ids.as_deref());
+    if let Some(page_raw) = args.page.as_deref() {
+        let page = parse_u32_arg(Some(page_raw), "--page", 1, Some(1), None, false)?;
+        query.push(("page".to_string(), page.to_string()));
+    }
+    let page_size = parse_u32_arg(args.page_size.as_deref(), "--page-size", 10, Some(1), None, false)?;
+    query.push(("pageSize".to_string(), page_size.to_string()));
+    Ok(query)
+}
+
+// ─── `agent get` (original dual-mode agent-list query) ────────────────────
+
+async fn get_impl(args: &GetArgs, ctx: &Context) -> Result<Value> {
+    let access_token = ensure_tokens_refreshed().await?;
+    let mut client = wallet_client(ctx)?;
+
+    // Product spec: agent-list identifies the user via JWT; `from` is never needed.
+    let mut query = vec![("chainIndex".to_string(), XLAYER_CHAIN_INDEX.to_string())];
+    push_optional_query(&mut query, "agentIdList", args.agent_ids.as_deref());
+    if let Some(page_raw) = args.page.as_deref() {
+        let page = parse_u32_arg(Some(page_raw), "--page", 1, Some(1), None, false)?;
+        query.push(("page".to_string(), page.to_string()));
+    }
+    let page_size = parse_u32_arg(args.page_size.as_deref(), "--page-size", 5, Some(1), None, false)?;
+    query.push(("pageSize".to_string(), page_size.to_string()));
+
+    let query_refs: Vec<(&str, &str)> = query
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect();
+
+    debug_log!(
+        "[agent-identity] get request: url={} access_token_len={} access_token_prefix={} query={:?}",
+        reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent/agent-list", &query_refs),
+        access_token.len(),
+        redact_token_for_debug(&access_token),
+        query_refs,
+    );
+
+    let result = client
+        .get_authed(
+            "/priapi/v5/wallet/agentic/agent/agent-list",
+            &access_token,
+            &query_refs,
+        )
+        .await;
+
+    match &result {
+        Ok(data) => debug_log!("[agent-identity] get response: {}", {
+            let s = serde_json::to_string(data).unwrap_or_else(|_| "<serialize failed>".to_string());
+            if s.chars().count() > 256 {
+                format!("{}...", s.chars().take(256).collect::<String>())
+            } else {
+                s
+            }
+        }),
+        Err(e) => debug_log!("[agent-identity] get response err: {:#}", e),
+    }
+
+    let mut out = normalize_singleton_object(result?);
+    // Additive: enrich each agent row with computed display fields (roleLabel
+    // / statusLabel / approvalLabel / ratingStars). Rows are read from the
+    // live double-layer shape (row = list[*].agentList[*]) or the
+    // single-layer fallback (row = list[*]); both are tolerated. Raw role /
+    // status / approvalDisplayStatus / reputation are left intact.
+    enrich_agent_get_rows(&mut out);
+    // Additive: in LIST mode (no --agent-ids) add a ready-to-render `cells`
+    // array per row (references/identity/profile.md §My Agents columns). Detail mode (with
+    // --agent-ids) already carries the `card`; the list-table `cells` are the
+    // row analog and only meaningful for the list view.
+    if args.agent_ids.is_none() {
+        add_agent_list_cells(&mut out);
+    }
+    Ok(out)
+}
+
+// ─── `agent get-agents` ───────────────────────────────────────────────────
+
+async fn get_agents_impl(args: &GetAgentsArgs, ctx: &Context) -> Result<Value> {
+    let access_token = ensure_tokens_refreshed().await?;
+    let mut client = wallet_client(ctx)?;
+
+    // Parse the comma-separated `--agent-ids` into the `agentIdList` array —
+    // one query param per id (the backend binds repeated keys to a List). Trim
+    // and drop empties so `1791, ,1002` → ["1791","1002"].
+    let raw_ids = require_non_empty(args.agent_ids.as_deref(), "--agent-ids")?;
+    let ids: Vec<String> = raw_ids
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    if ids.is_empty() {
+        bail!("--agent-ids must contain at least one agent ID");
+    }
+
+    let mut query: Vec<(String, String)> = ids
+        .iter()
+        .map(|id| ("agentIdList".to_string(), id.clone()))
+        .collect();
+    query.push(("needBlackStatus".to_string(), "false".to_string()));
+    query.push(("needAgentService".to_string(), "false".to_string()));
+
+    let query_refs: Vec<(&str, &str)> = query
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect();
+
+    debug_log!(
+        "[agent-identity] get-agents request: url={} access_token_len={} access_token_prefix={} query={:?}",
+        reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent/batch-list", &query_refs),
+        access_token.len(),
+        redact_token_for_debug(&access_token),
+        query_refs,
+    );
+
+    let result = client
+        .get_authed(
+            "/priapi/v5/wallet/agentic/agent/batch-list",
+            &access_token,
+            &query_refs,
+        )
+        .await;
+
+    match &result {
+        Ok(data) => debug_log!("[agent-identity] get-agents response: {}", {
+            let s = serde_json::to_string(data).unwrap_or_else(|_| "<serialize failed>".to_string());
+            if s.chars().count() > 256 {
+                format!("{}...", s.chars().take(256).collect::<String>())
+            } else {
+                s
+            }
+        }),
+        Err(e) => debug_log!("[agent-identity] get-agents response err: {:#}", e),
+    }
+
+    // batch-list returns a BARE array of agent objects (get_authed unwraps
+    // `data`). Additive: enrich each row with the same display fields + `card`
+    // as `agent get`. Raw fields are left intact.
+    let mut out = result?;
+    enrich_agent_detail_rows(&mut out);
+    Ok(out)
+}
+
+// ─── `agent search` ───────────────────────────────────────────────────────
+
+async fn search_impl(args: &SearchArgs, ctx: &Context) -> Result<Value> {
+    let access_token = ensure_tokens_refreshed().await?;
+    let mut client = wallet_client(ctx)?;
+    let query_text = require_non_empty(args.query.as_deref(), "--query")?;
+
+    // query is required; page / pageSize / multi-value filter fields are optional — omit when not provided
+    let mut query = vec![("query".to_string(), query_text.to_string())];
+    if let Some(page_raw) = args.page.as_deref() {
+        let page = parse_u32_arg(Some(page_raw), "--page", 1, Some(1), None, false)?;
+        query.push(("page".to_string(), page.to_string()));
+    }
+    let page_size = parse_u32_arg(args.page_size.as_deref(), "--page-size", 5, Some(1), Some(100), true)?;
+    query.push(("pageSize".to_string(), page_size.to_string()));
+    push_multi_query(&mut query, "feedback", &args.feedback);
+    push_multi_query(&mut query, "agentInfo", &args.agent_info);
+    push_multi_query(&mut query, "status", &args.status);
+    push_multi_query(&mut query, "service", &args.service);
+
+    let query_refs: Vec<(&str, &str)> = query
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect();
+
+    debug_log!(
+        "[agent-identity] search request: url={} access_token_len={} access_token_prefix={} query={:?}",
+        reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/search/agent-search", &query_refs),
+        access_token.len(),
+        redact_token_for_debug(&access_token),
+        query_refs,
+    );
+
+    let result = client
+        .get_authed(
+            "/priapi/v5/wallet/agentic/search/agent-search",
+            &access_token,
+            &query_refs,
+        )
+        .await;
+
+    match &result {
+        Ok(data) => debug_log!(
+            "[agent-identity] search response: {}",
+            {
+                let s = serde_json::to_string(data).unwrap_or_else(|_| "<serialize failed>".to_string());
+                if s.chars().count() > 256 { format!("{}...", s.chars().take(256).collect::<String>()) } else { s }
+            }
+        ),
+        Err(e) => debug_log!("[agent-identity] search response err: {:#}", e),
+    }
+
+    let out = normalize_singleton_object(result?);
+    // Search has one stable output contract: a display-ready table. Keeping a
+    // single shape prevents callers from accidentally depending on backend
+    // fields that may change independently of the CLI.
+    Ok(build_search_table(&out))
+}
+
+// ─── `agent service-list` ─────────────────────────────────────────────────
+
+/// Query params for `/agent/services`: `agentId` (required), pagination, and
+/// the optional `serviceId` filter.
+/// A provided-but-blank `serviceId` is an error rather than a silent drop:
+/// dropping it would return the full unfiltered listing, and a caller that
+/// reads one service's detail from the response would get the wrong service.
+fn build_service_list_query(
+    agent_id: &str,
+    service_id: Option<&str>,
+    page: Option<&str>,
+    page_size: Option<&str>,
+) -> Result<Vec<(String, String)>> {
+    let page = parse_u32_arg(page, "--page", 1, Some(1), None, false)?;
+    let page_size = parse_u32_arg(page_size, "--page-size", 3, Some(1), None, false)?;
+    let mut query = vec![
+        ("agentId".to_string(), agent_id.to_string()),
+        ("page".to_string(), page.to_string()),
+        ("pageSize".to_string(), page_size.to_string()),
+    ];
+    match service_id.map(str::trim) {
+        Some("") => bail!("invalid parameter: --service-id must not be blank"),
+        Some(service_id) => query.push(("serviceId".to_string(), service_id.to_string())),
+        None => {}
+    }
+    Ok(query)
+}
+
+async fn service_list_impl(args: &ServiceListArgs, ctx: &Context) -> Result<Value> {
+    let access_token = ensure_tokens_refreshed().await?;
+    let mut client = wallet_client(ctx)?;
+    let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?;
+    let query = build_service_list_query(
+        agent_id,
+        args.service_id.as_deref(),
+        args.page.as_deref(),
+        args.page_size.as_deref(),
+    )?;
+    let query_refs: Vec<(&str, &str)> = query
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect();
+
+    debug_log!(
+        "[agent-identity] service-list request: url={} access_token_len={} access_token_prefix={} query={:?}",
+        reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent/services", &query_refs),
+        access_token.len(),
+        redact_token_for_debug(&access_token),
+        query_refs,
+    );
+
+    let result = client
+        .get_authed(
+            "/priapi/v5/wallet/agentic/agent/services",
+            &access_token,
+            &query_refs,
+        )
+        .await;
+
+    match &result {
+        Ok(data) => debug_log!(
+            "[agent-identity] service-list response: {}",
+            {
+                let s = serde_json::to_string(data).unwrap_or_else(|_| "<serialize failed>".to_string());
+                if s.chars().count() > 256 { format!("{}...", s.chars().take(256).collect::<String>()) } else { s }
+            }
+        ),
+        Err(e) => debug_log!("[agent-identity] service-list response err: {:#}", e),
+    }
+
+    // Additive: add a ready-to-render `cells` array per service (§4 columns).
+    let mut out = result?;
+    add_service_list_cells(&mut out);
+    Ok(out)
+}
+
+// ─── `agent feedback-list` ────────────────────────────────────────────────
+
+fn build_feedback_list_query(
+    agent_id: &str,
+    page: Option<&str>,
+    page_size: Option<&str>,
+) -> Result<Vec<(String, String)>> {
+    let page = parse_u32_arg(page, "--page", 1, Some(1), None, false)?;
+    let page_size = parse_u32_arg(page_size, "--page-size", 5, Some(1), Some(50), true)?;
+    Ok(vec![
+        ("agentId".to_string(), agent_id.to_string()),
+        ("pageNo".to_string(), page.to_string()),
+        ("pageSize".to_string(), page_size.to_string()),
+    ])
+}
+
+async fn feedback_list_impl(args: &FeedbackListArgs, ctx: &Context) -> Result<Value> {
+    let access_token = ensure_tokens_refreshed().await?;
+    let mut client = wallet_client(ctx)?;
+
+    let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?;
+    let query = build_feedback_list_query(
+        agent_id,
+        args.page.as_deref(),
+        args.page_size.as_deref(),
+    )?;
+    let query_refs: Vec<(&str, &str)> = query
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect();
+
+    debug_log!(
+        "[agent-identity] feedback-list request: url={} access_token_len={} access_token_prefix={} query={:?}",
+        reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent/reviews", &query_refs),
+        access_token.len(),
+        redact_token_for_debug(&access_token),
+        query_refs,
+    );
+
+    let result = client
+        .get_authed(
+            "/priapi/v5/wallet/agentic/agent/reviews",
+            &access_token,
+            &query_refs,
+        )
+        .await;
+
+    match &result {
+        Ok(data) => debug_log!(
+            "[agent-identity] feedback-list response: {}",
+            {
+                let s = serde_json::to_string(data).unwrap_or_else(|_| "<serialize failed>".to_string());
+                if s.chars().count() > 256 { format!("{}...", s.chars().take(256).collect::<String>()) } else { s }
+            }
+        ),
+        Err(e) => debug_log!("[agent-identity] feedback-list response err: {:#}", e),
+    }
+
+    // Convert backend 0–100 scores to 0.00–5.00 stars before surfacing to
+    // the user. Both `average` and per-entry `score` become 2-decimal
+    // floats — matches the 2-decimal input precision now accepted by
+    // `feedback-submit`. Mapping rule: `utils::convert_feedback_list_scores`.
+    let mut out = normalize_singleton_object(result?);
+    convert_feedback_list_scores(&mut out);
+    // Additive: add a ready-to-render `cells` array per feedback item (§5
+    // columns). Runs AFTER score conversion so `score` is a 0.00–5.00 float.
+    add_feedback_list_cells(&mut out);
+    Ok(out)
+}
+
+// ─── `agent task-feedback` ────────────────────────────────────────────
+
+async fn task_feedback_impl(args: &TaskFeedbackArgs, ctx: &Context) -> Result<Value> {
+    let access_token = ensure_tokens_refreshed().await?;
+    let mut client = wallet_client(ctx)?;
+
+    // agentId (the rater) and taskId are required; chainIndex is fixed to XLayer
+    // (agent identities live on XLayer only) — not a user-facing flag.
+    let agent_id = require_non_empty(args.agent_id.as_deref(), "--agent-id")?;
+    let task_id = require_non_empty(args.task_id.as_deref(), "--task-id")?;
+
+    let query = [
+        ("agentId".to_string(), agent_id.to_string()),
+        ("taskId".to_string(), task_id.to_string()),
+        ("chainIndex".to_string(), XLAYER_CHAIN_INDEX.to_string()),
+    ];
+    let query_refs: Vec<(&str, &str)> = query
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect();
+
+    debug_log!(
+        "[agent-identity] task-feedback request: url={} access_token_len={} access_token_prefix={} query={:?}",
+        reconstruct_get_url_for_log(ctx, "/priapi/v5/wallet/agentic/agent/task-feedback", &query_refs),
+        access_token.len(),
+        redact_token_for_debug(&access_token),
+        query_refs,
+    );
+
+    let result = client
+        .get_authed(
+            "/priapi/v5/wallet/agentic/agent/task-feedback",
+            &access_token,
+            &query_refs,
+        )
+        .await;
+
+    match &result {
+        Ok(data) => debug_log!(
+            "[agent-identity] task-feedback response: {}",
+            {
+                let s = serde_json::to_string(data).unwrap_or_else(|_| "<serialize failed>".to_string());
+                if s.chars().count() > 256 { format!("{}...", s.chars().take(256).collect::<String>()) } else { s }
+            }
+        ),
+        Err(e) => debug_log!("[agent-identity] task-feedback response err: {:#}", e),
+    }
+
+    // Backend returns `data` as an array: one review row when the rater already
+    // reviewed this task (`agentId` / `taskId` / `chainIndex` echoed back plus
+    // `feedbackId` + `comment`), or `[]` when not. Return it verbatim.
+    result
+}
+
+// ─── `agent get-by-address` ───────────────────────────────────────────────
+//
+// Hidden command. Reverse-lookup an agent by its on-chain communication
+// address + chainIndex. Same JWT-auth shape as the other read-side calls.
+
+async fn get_by_address_impl(args: &GetByAddressArgs, ctx: &Context) -> Result<Value> {
+    let access_token = ensure_tokens_refreshed().await?;
+    let mut client = wallet_client(ctx)?;
+    // clap already enforces required=true; this defensively trims against `--communication-address ""`.
+    let communication_address =
+        require_non_empty(Some(args.communication_address.as_str()), "--communication-address")?;
+    let chain_index = args
+        .chain_index
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(XLAYER_CHAIN_INDEX);
+
+    let query = [
+        (
+            "communicationAddress".to_string(),
+            communication_address.to_string(),
+        ),
+        ("chainIndex".to_string(), chain_index.to_string()),
+    ];
+    let query_refs: Vec<(&str, &str)> = query
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect();
+
+    debug_log!(
+        "[agent-identity] get-by-address request: url={} access_token_len={} access_token_prefix={} query={:?}",
+        reconstruct_get_url_for_log(
+            ctx,
+            "/priapi/v5/wallet/agentic/agent/by-communication-address",
+            &query_refs,
+        ),
+        access_token.len(),
+        redact_token_for_debug(&access_token),
+        query_refs,
+    );
+
+    let result = client
+        .get_authed(
+            "/priapi/v5/wallet/agentic/agent/by-communication-address",
+            &access_token,
+            &query_refs,
+        )
+        .await;
+
+    match &result {
+        Ok(data) => debug_log!(
+            "[agent-identity] get-by-address response: {}",
+            {
+                let s = serde_json::to_string(data).unwrap_or_else(|_| "<serialize failed>".to_string());
+                if s.chars().count() > 256 { format!("{}...", s.chars().take(256).collect::<String>()) } else { s }
+            }
+        ),
+        Err(e) => debug_log!("[agent-identity] get-by-address response err: {:#}", e),
+    }
+
+    Ok(normalize_singleton_object(result?))
+}
+
+// ─── Tests ───────────────────────────────────────────────────────────────────
+// NOTE: All public entry points in this module (get / search / service_list /
+// feedback_list / get_by_address) are async and require a live
+// authenticated HTTP client. Integration-level coverage requires a mock HTTP
+// layer (e.g. mockito) which is not yet wired into this crate's dev-dependencies.
+//
+// The testable pure-logic paths are:
+//   - `chain_index` default-fallback in get_by_address_impl (None/empty → XLAYER)
+//
+// These are exercised at the integration layer. Add `mockito` to
+// [dev-dependencies] in Cargo.toml to enable unit-level HTTP mocking here.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn get_my_agents_query_uses_default_page_size_ten() {
+        let query = build_get_my_agents_query(&GetMyAgentsArgs {
+            role: None,
+            owner_address: None,
+            agent_ids: None,
+            page: None,
+            page_size: None,
+        })
+        .unwrap();
+
+        assert_eq!(query[1], ("pageSize".to_string(), "10".to_string()));
+    }
+
+    #[test]
+    fn get_my_agents_query_forwards_agent_ids_as_agent_id_list() {
+        let query = build_get_my_agents_query(&GetMyAgentsArgs {
+            role: Some("user".to_string()),
+            owner_address: None,
+            agent_ids: Some("13373,9967".to_string()),
+            page: None,
+            page_size: Some("5".to_string()),
+        })
+        .unwrap();
+
+        assert!(
+            query.contains(&("agentIdList".to_string(), "13373,9967".to_string())),
+            "expected agentIdList in query, got {query:?}"
+        );
+        assert!(
+            query.contains(&("role".to_string(), "1".to_string())),
+            "role filter must still be present alongside agent_ids, got {query:?}"
+        );
+        assert!(
+            query.contains(&("pageSize".to_string(), "5".to_string())),
+            "page_size filter must still be present alongside agent_ids, got {query:?}"
+        );
+    }
+
+    #[test]
+    fn search_output_is_always_table() {
+        let response = serde_json::json!({
+            "total": 1,
+            "list": [{ "agentId": "4424", "name": "OpenModels" }]
+        });
+        let output = build_search_table(&response);
+        assert!(output.get("table").is_some());
+        assert!(output.get("list").is_none());
+    }
+
+    #[test]
+    fn service_list_query_uses_documented_defaults() {
+        let query = build_service_list_query("1921", None, None, None).unwrap();
+        assert_eq!(
+            query,
+            vec![
+                ("agentId".to_string(), "1921".to_string()),
+                ("page".to_string(), "1".to_string()),
+                ("pageSize".to_string(), "3".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn service_list_query_appends_service_id_filter_when_given() {
+        let query =
+            build_service_list_query(
+                "1921",
+                Some("4a7f30a7-46fb-4695-80a1-25d160da33b3"),
+                None,
+                None,
+            )
+            .unwrap();
+        assert_eq!(
+            query,
+            vec![
+                ("agentId".to_string(), "1921".to_string()),
+                ("page".to_string(), "1".to_string()),
+                ("pageSize".to_string(), "3".to_string()),
+                (
+                    "serviceId".to_string(),
+                    "4a7f30a7-46fb-4695-80a1-25d160da33b3".to_string()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn service_list_query_rejects_blank_service_id() {
+        let err = build_service_list_query("1921", Some("  "), None, None).unwrap_err();
+        assert!(err.to_string().contains("--service-id must not be blank"));
+    }
+
+    #[test]
+    fn service_list_query_forwards_explicit_pagination() {
+        let query = build_service_list_query("42", None, Some("3"), Some("20")).unwrap();
+        assert_eq!(
+            query,
+            vec![
+                ("agentId".to_string(), "42".to_string()),
+                ("page".to_string(), "3".to_string()),
+                ("pageSize".to_string(), "20".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn service_list_query_rejects_invalid_pagination_values() {
+        for (page, page_size) in [
+            (Some("0"), Some("5")),
+            (Some("1"), Some("0")),
+            (Some("abc"), Some("5")),
+            (Some("1"), Some("abc")),
+        ] {
+            assert!(build_service_list_query("42", None, page, page_size).is_err());
+        }
+    }
+
+    #[test]
+    fn feedback_list_query_uses_documented_defaults() {
+        let query = build_feedback_list_query("42", None, None).unwrap();
+        assert_eq!(
+            query,
+            vec![
+                ("agentId".to_string(), "42".to_string()),
+                ("pageNo".to_string(), "1".to_string()),
+                ("pageSize".to_string(), "5".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn feedback_list_query_forwards_explicit_pagination() {
+        let query = build_feedback_list_query("42", Some("3"), Some("20")).unwrap();
+        assert_eq!(
+            query,
+            vec![
+                ("agentId".to_string(), "42".to_string()),
+                ("pageNo".to_string(), "3".to_string()),
+                ("pageSize".to_string(), "20".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn feedback_list_query_clamps_page_size_to_fifty() {
+        let query = build_feedback_list_query("42", None, Some("51")).unwrap();
+        assert_eq!(query[2], ("pageSize".to_string(), "50".to_string()));
+    }
+}

@@ -1,0 +1,1042 @@
+//! Create a subscription task.
+//!
+//! Flow: providerConfirmStatus → EIP-712 sign terms → createSubscription → local readiness → broadcast(bizType=204)
+
+use anyhow::{bail, Context, Result};
+use std::collections::BTreeMap;
+use std::time::Duration;
+
+use crate::audit;
+use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::common::okx_a2a;
+use crate::commands::agent_commerce::task::common::subscription_identity::select_subscription_agent_id;
+use crate::commands::agent_commerce::task::common::{self, DEBUG_LOG};
+use crate::commands::agent_commerce::task::signing;
+use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
+
+pub(crate) const SUBSCRIBE_API_PREFIX: &str = "/priapi/v1/aieco/task/subscribe";
+
+pub struct CreateSubscribeParams {
+    pub service_id: String,
+    pub service_params: String,
+    pub service_token_amount: String,
+    pub service_token_address: String,
+    pub auto_renew: i32,
+    pub title: String,
+    pub description: String,
+    pub attachments: Option<Vec<String>>,
+    pub provider_agent_id: String,
+    /// Provider service Guide retained locally before the subscription broadcast.
+    pub service_guide: Option<String>,
+    /// Optional provider-supplied SHA-256 of `service_guide`.
+    pub service_guide_hash: Option<String>,
+    /// User-confirmed values for the matching Guide.
+    pub guide_consent_json: Option<String>,
+    pub service_interval: String,
+    pub format: String,
+}
+
+const MAX_TITLE_CHARS: usize = 30;
+const MAX_DESCRIPTION_CHARS: usize = 4096;
+
+/// The validated, ephemeral Guide + Consent input for one subscription create.
+///
+/// This is deliberately not a subscription state. A created subscription only
+/// exposes whether its persisted Guide and Consent are both active.
+#[derive(Debug)]
+struct GuideConsentInput {
+    draft: super::super::common::autotrade::guide::GuideDraft,
+    consent_values: BTreeMap<String, serde_json::Value>,
+}
+
+impl CreateSubscribeParams {
+    fn guide_draft(&self) -> Result<Option<super::super::common::autotrade::guide::GuideDraft>> {
+        super::super::common::autotrade::guide::parse_draft(
+            self.service_guide.as_deref(),
+            self.service_guide_hash.as_deref(),
+        )
+    }
+
+    fn guide_consent_values(&self) -> Result<BTreeMap<String, serde_json::Value>> {
+        let Some(raw) = self.guide_consent_json.as_deref() else {
+            return Ok(BTreeMap::new());
+        };
+        serde_json::from_str(raw).context("--guide-consent-json must be a JSON object")
+    }
+
+    fn validated_guide_consent(&self) -> Result<Option<GuideConsentInput>> {
+        let guide_draft = self.guide_draft()?;
+        let Some(draft) = guide_draft else {
+            if self.service_guide_hash.is_some() || self.guide_consent_json.is_some() {
+                bail!("guide-driven signal execution requires --service-guide");
+            }
+            return Ok(None);
+        };
+        if self.guide_consent_json.is_none() {
+            bail!("guide-driven signal execution requires --guide-consent-json, including {{}} when the Guide declares no consent fields");
+        }
+        let consent_values = self.guide_consent_values()?;
+        super::super::common::autotrade::guide::validate_consent_values(&consent_values)?;
+        Ok(Some(GuideConsentInput {
+            draft,
+            consent_values,
+        }))
+    }
+
+    fn validate(&self) -> Result<Option<GuideConsentInput>> {
+        if self.service_id.is_empty() {
+            bail!("--service-id is required");
+        }
+        if self.service_token_amount.is_empty() {
+            bail!("--service-token-amount is required");
+        }
+        super::create::validate_decimal_amount(&self.service_token_amount, "service-token-amount")?;
+        common::payment_token::constraint(
+            common::XLAYER_CHAIN_ID as u64,
+            "",
+            &self.service_token_address,
+        )?;
+        if self.auto_renew != 0 && self.auto_renew != 1 {
+            bail!(
+                "--auto-renew must be 0 (off) or 1 (on), got {}",
+                self.auto_renew
+            );
+        }
+        if self.provider_agent_id.trim().is_empty() {
+            bail!("--provider-agent-id is required; use the confirmed Service result unchanged");
+        }
+        if self.title.is_empty() {
+            bail!("--title is required");
+        }
+        if self.title.chars().count() > MAX_TITLE_CHARS {
+            bail!("--title exceeds {MAX_TITLE_CHARS} characters");
+        }
+        if self.description.is_empty() {
+            bail!("--description is required");
+        }
+        if self.description.chars().count() > MAX_DESCRIPTION_CHARS {
+            bail!("--description exceeds {MAX_DESCRIPTION_CHARS} characters");
+        }
+        super::attachments::validate_attachment_sources(
+            self.attachments.as_deref().unwrap_or(&[]),
+        )?;
+        self.validated_guide_consent()
+    }
+}
+
+fn prepare_guide_consent(
+    job_id: &str,
+    params: &CreateSubscribeParams,
+    execution: &GuideConsentInput,
+) -> Result<()> {
+    let guide_file = execution.draft.clone().into_file(
+        job_id,
+        &params.service_id,
+        Some(&params.provider_agent_id),
+    );
+    super::super::common::autotrade::guide::write_guide(&guide_file, &execution.draft.source)?;
+    super::super::common::autotrade::guide::write_prepared_consent(
+        job_id,
+        &guide_file,
+        execution.consent_values.clone(),
+        super::super::common::autotrade::DEFAULT_AUTOTRADE_TTL_SEC,
+    )?;
+    Ok(())
+}
+
+fn activate_guide_consent(job_id: &str) -> Result<()> {
+    super::super::common::autotrade::guide::activate_prepared_consent(job_id)
+}
+
+fn require_subscription_execution_mode(
+    user_agent_id: &str,
+    service_id: &str,
+) -> Result<super::super::common::autotrade::subscription_config::ExecutionMode> {
+    super::super::common::autotrade::subscription_config::execution_mode(user_agent_id, service_id)?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "subscription execution configuration is required; based on the Service Guide, save signal_only for pure signals or guide_direct for automatic copy-trading before create-subscribe"
+            )
+        })
+}
+
+fn build_duplicate_subscription_block(
+    service_id: &str,
+    existing: &super::subscription_ops::ExistingSubscriptionSummary,
+) -> serde_json::Value {
+    let base = format!(
+        "Service {service_id} already has a subscription task, jobId: {}. It cannot be created again.",
+        existing.job_id
+    );
+    let prompt = if existing.restore_listening_available {
+        format!("{base} Would you like to restore listening?")
+    } else {
+        base
+    };
+    let mut block = serde_json::json!({
+        "blockedReason": "duplicate-subscription",
+        "userFacingPrompt": prompt,
+        "existingSubscription": existing,
+    });
+    if existing.restore_listening_available {
+        block["nextAfterUserChoice"] = serde_json::json!(["restore-listening"]);
+    }
+    block
+}
+
+/// Normalize a JSON scalar `sid` (string or integer) to a trimmed, non-empty String.
+fn sid_to_string(value: &serde_json::Value) -> Option<String> {
+    value
+        .as_str()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| value.as_i64().map(|n| n.to_string()))
+        .or_else(|| value.as_u64().map(|n| n.to_string()))
+}
+
+/// Find the matching Service's numeric sid in a `service-list` response and
+/// return it as a string. The marketplace `sid` is carried as each service-list
+/// row's `id` field (the `serviceId` is the UUID). Tolerates both response
+/// shapes: an array of `{ list: [service…] }` wrappers, or a single object
+/// carrying a flat `list`/`services` array.
+fn find_service_sid(data: &serde_json::Value, service_id: &str) -> Option<String> {
+    fn scan(services: &[serde_json::Value], service_id: &str) -> Option<String> {
+        services.iter().find_map(|service| {
+            let matches = service
+                .get("serviceId")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                == Some(service_id);
+            if matches {
+                service.get("id").and_then(sid_to_string)
+            } else {
+                None
+            }
+        })
+    }
+    match data {
+        serde_json::Value::Array(wrappers) => wrappers.iter().find_map(|wrapper| {
+            wrapper
+                .get("list")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|services| scan(services, service_id))
+        }),
+        object => ["list", "services"].into_iter().find_map(|key| {
+            object
+                .get(key)
+                .and_then(serde_json::Value::as_array)
+                .and_then(|services| scan(services, service_id))
+        }),
+    }
+}
+
+/// Resolve the Service's numeric `sid` from its `providerAgentId` + `serviceId`
+/// via `onchainos agent service-list`. create-subscribe only holds the Service
+/// UUID, while the authoritative trial-state fetch (`service/search`) is keyed by
+/// `sid`.
+pub(crate) async fn resolve_service_sid(
+    provider_agent_id: &str,
+    service_id: &str,
+) -> Result<String> {
+    let output = tokio::process::Command::new(std::env::current_exe()?)
+        .args([
+            "agent",
+            "service-list",
+            "--agent-id",
+            provider_agent_id,
+            "--service-id",
+            service_id,
+            "--page",
+            "1",
+            "--page-size",
+            "100",
+        ])
+        .output()
+        .await
+        .context("failed to invoke service-list")?;
+    if !output.status.success() {
+        bail!(
+            "service-list failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .context("failed to parse service-list JSON output")?;
+    let data = response.get("data").unwrap_or(&response);
+    find_service_sid(data, service_id).ok_or_else(|| {
+        anyhow::anyhow!("service-list returned no Service matching serviceId `{service_id}`")
+    })
+}
+
+/// Compute `useTrial` from authoritative Service state instead of a caller flag.
+/// Mirrors `task-create-prepare`'s subscription handling: resolve the Service via
+/// its `sid` and use `subscriptionInfo.supportTrial` as the trial decision.
+async fn resolve_use_trial(
+    provider_agent_id: &str,
+    service_id: &str,
+    user_agent_id: &str,
+) -> Result<bool> {
+    let sid = resolve_service_sid(provider_agent_id, service_id).await?;
+    let service = super::task_create_prepare::fetch_service_detail(user_agent_id, &sid).await?;
+    Ok(service
+        .get("subscriptionInfo")
+        .and_then(|info| info.get("supportTrial"))
+        .or_else(|| service.get("supportTrial"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false))
+}
+
+pub async fn handle_create_subscribe(
+    client: &mut TaskApiClient,
+    params: CreateSubscribeParams,
+) -> Result<()> {
+    let guide_consent = params.validate()?;
+
+    ensure_tokens_refreshed().await.map_err(|e| {
+        anyhow::anyhow!("session has expired; run `onchainos wallet login` first: {e}")
+    })?;
+    let has_session_cert = crate::wallet_store::load_session()?
+        .is_some_and(|session| !session.session_cert.trim().is_empty());
+    if !has_session_cert {
+        bail!("current login has no sessionCert; run `onchainos wallet login` again before create-subscribe");
+    }
+
+    let (user_agent_id, _) = super::create::resolve_user_agent().await?;
+    let user_agent_id = select_subscription_agent_id(&user_agent_id, "")?;
+    if DEBUG_LOG {
+        eprintln!("[create-subscribe] user identity check passed (agentId: {user_agent_id})");
+    }
+
+    let execution_mode = require_subscription_execution_mode(&user_agent_id, &params.service_id)?;
+    if execution_mode
+        == super::super::common::autotrade::subscription_config::ExecutionMode::GuideDirect
+        && guide_consent.is_none()
+    {
+        bail!(
+            "automatic copy-trading requires --service-guide and --guide-consent-json before create-subscribe"
+        );
+    }
+
+    // Repeat the selection-time duplicate and balance checks immediately
+    // before the V2 subscription write boundary.
+    let existing_subscriptions =
+        super::subscription_ops::fetch_active_buyer_subscriptions_for_agent(client, &user_agent_id)
+            .await?;
+    if let Some(existing) = super::subscription_ops::existing_subscription_for_service(
+        &existing_subscriptions,
+        &params.service_id,
+    ) {
+        return Err(crate::output::CliDuplicateSubscription {
+            data: build_duplicate_subscription_block(&params.service_id, existing),
+        }
+        .into());
+    }
+
+    let (account_id, address) = signing::resolve_wallet_by_agent_id(&user_agent_id).await?;
+    let constrained = common::payment_token::constraint(
+        common::XLAYER_CHAIN_ID as u64,
+        "",
+        &params.service_token_address,
+    )?;
+    let selection = common::payment_token::select(
+        &params.service_token_amount,
+        &account_id,
+        &address,
+        constrained,
+        false,
+    )
+    .await?;
+    let Some(token) = selection.token else {
+        let (mut service, sid) = super::task_create_prepare::service_recovery_context(
+            &user_agent_id,
+            &params.provider_agent_id,
+            &params.service_id,
+        )
+        .await?;
+        service["supportSubscription"] = serde_json::json!(true);
+        crate::output::success(common::payment_token::funding_result(
+            &selection,
+            &address,
+            &service,
+            &sid,
+            constrained,
+            constrained,
+        )?);
+        return Ok(());
+    };
+
+    // Resolve the trial decision from authoritative Service state (never a caller
+    // flag): service-list → sid → service/search detail → subscriptionInfo.supportTrial.
+    let use_trial = resolve_use_trial(
+        &params.provider_agent_id,
+        &params.service_id,
+        &user_agent_id,
+    )
+    .await?;
+
+    let receipt = super::v2::execute_create_subscription(
+        client,
+        super::v2::CreateSubscriptionInput {
+            service_id: &params.service_id,
+            use_trial,
+            service_params: &params.service_params,
+            service_token_amount: &params.service_token_amount,
+            service_token_address: token.address,
+            token_symbol: token.symbol,
+            auto_renew: params.auto_renew,
+            title: &params.title,
+            description: &params.description,
+            provider_agent_id: &params.provider_agent_id,
+            service_interval: &params.service_interval,
+            attachments: params.attachments.as_deref().unwrap_or(&[]),
+        },
+        &account_id,
+        &address,
+        &user_agent_id,
+        |job_id| {
+            if let Some(ref guide_consent) = guide_consent {
+                prepare_guide_consent(job_id, &params, guide_consent)?;
+            }
+            Ok(())
+        },
+    )
+    .await?;
+
+    let offline_replay = okx_a2a::probe_offline_replay_capability();
+    let tx_hash = receipt.broadcast["txHash"].as_str().unwrap_or("pending");
+    let guide_and_consent_active = if guide_consent.is_some() {
+        match activate_guide_consent(&receipt.job_id) {
+            Ok(()) => true,
+            Err(err) => {
+                eprintln!("[guide-execution] subscription created, but Guide Consent could not be activated: {err}");
+                false
+            }
+        }
+    } else {
+        false
+    };
+
+    audit::log(
+        "cli",
+        "user/create_subscribe",
+        true,
+        Duration::default(),
+        Some(vec![
+            format!("jobId={}", receipt.job_id),
+            format!("agentId={user_agent_id}"),
+            format!("serviceId={}", params.service_id),
+            format!("useTrial={}", receipt.effective_use_trial),
+            format!("autoRenew={}", params.auto_renew),
+            "bizType=204".to_string(),
+            format!(
+                "guideStatus={}",
+                if guide_and_consent_active {
+                    "active"
+                } else {
+                    "none"
+                }
+            ),
+            format!(
+                "consentStatus={}",
+                if guide_and_consent_active {
+                    "active"
+                } else {
+                    "none"
+                }
+            ),
+            format!("txHash={tx_hash}"),
+        ]),
+        None,
+    );
+
+    let mut payload = serde_json::json!({
+        "jobId": receipt.job_id,
+        "type": 204,
+        "bizType": 204,
+        "status": "broadcast_submitted",
+        "providerAgentId": params.provider_agent_id,
+        "serviceId": params.service_id,
+        "paymentTokenSymbol": token.symbol,
+        "paymentTokenAddress": token.address,
+        "paymentTokenAmount": params.service_token_amount,
+        "useTrial": receipt.effective_use_trial,
+        "autoRenew": params.auto_renew,
+        "runtimeBound": true,
+        "attachments": receipt.attachments,
+        "guideStatus": if guide_and_consent_active { "active" } else { "none" },
+        "consentStatus": if guide_and_consent_active { "active" } else { "none" },
+        "executionProfileSaved": guide_and_consent_active,
+        "offlineReplaySupported": offline_replay.supported,
+        "broadcast": receipt.broadcast,
+    });
+    if !offline_replay.supported {
+        payload["offlineReplayFixCommands"] =
+            serde_json::json!(offline_replay.fix_commands_or_default());
+    }
+    crate::output::success(serde_json::json!({
+        "phase": "creation",
+        "decision": "ready",
+        "reason": "broadcast_submitted",
+        "nextAction": [{
+            "id": "watch_task",
+            "recommend": true,
+            "params": {"jobId": receipt.job_id}
+        }],
+        "payload": payload,
+    }));
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(subcommand)]
+        cmd: super::super::TaskCommand,
+    }
+
+    #[test]
+    fn cli_create_subscribe_all_required() {
+        let cli = TestCli::parse_from([
+            "test",
+            "create-subscribe",
+            "--service-id",
+            "svc_001",
+            "--service-token-amount",
+            "10",
+            "--service-token-address",
+            "0x6776",
+            "--auto-renew",
+            "1",
+            "--title",
+            "Signal Subscription",
+            "--description",
+            "On-chain signal subscription service",
+            "--provider-agent-id",
+            "asp-1",
+        ]);
+        match cli.cmd {
+            super::super::TaskCommand::CreateSubscribe {
+                service_id,
+                service_token_amount,
+                service_token_address,
+                auto_renew,
+                title,
+                description,
+                attachments,
+                provider_agent_id,
+                service_guide,
+                service_guide_hash,
+                guide_consent_json,
+                service_params,
+                service_interval,
+                format,
+            } => {
+                assert_eq!(service_id, "svc_001");
+                assert_eq!(service_token_amount, "10");
+                assert_eq!(service_token_address, "0x6776");
+                assert_eq!(auto_renew, "1");
+                assert_eq!(title, "Signal Subscription");
+                assert_eq!(description, "On-chain signal subscription service");
+                assert!(attachments.is_none());
+                assert_eq!(provider_agent_id, "asp-1");
+                assert!(service_guide.is_none());
+                assert!(service_guide_hash.is_none());
+                assert!(guide_consent_json.is_none());
+                assert_eq!(service_params, "");
+                assert_eq!(service_interval, "month");
+                assert_eq!(format, "");
+            }
+            _ => panic!("expected CreateSubscribe"),
+        }
+    }
+
+    #[test]
+    fn cli_create_subscribe_accepts_repeated_files() {
+        let cli = TestCli::parse_from([
+            "test",
+            "create-subscribe",
+            "--service-id",
+            "svc_attachments",
+            "--service-token-amount",
+            "10",
+            "--service-token-address",
+            "0x6776",
+            "--auto-renew",
+            "1",
+            "--title",
+            "Subscription with files",
+            "--description",
+            "Subscription request with two supporting files",
+            "--provider-agent-id",
+            "asp-1",
+            "--file",
+            "/tmp/brief.pdf",
+            "--file",
+            "/tmp/data.csv",
+        ]);
+
+        let super::super::TaskCommand::CreateSubscribe { attachments, .. } = cli.cmd else {
+            panic!("expected CreateSubscribe");
+        };
+        assert_eq!(
+            attachments,
+            Some(vec![
+                "/tmp/brief.pdf".to_string(),
+                "/tmp/data.csv".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn cli_create_subscribe_with_provider() {
+        let cli = TestCli::parse_from([
+            "test",
+            "create-subscribe",
+            "--service-id",
+            "svc_002",
+            "--service-token-amount",
+            "5",
+            "--service-token-address",
+            "0xAddr",
+            "--auto-renew",
+            "0",
+            "--title",
+            "Copy Trade",
+            "--description",
+            "Auto copy trade subscription",
+            "--provider-agent-id",
+            "agent-99",
+        ]);
+        match cli.cmd {
+            super::super::TaskCommand::CreateSubscribe {
+                provider_agent_id, ..
+            } => {
+                assert_eq!(provider_agent_id, "agent-99");
+            }
+            _ => panic!("expected CreateSubscribe"),
+        }
+    }
+
+    #[test]
+    fn cli_create_subscribe_bool_strings() {
+        let cli = TestCli::parse_from([
+            "test",
+            "create-subscribe",
+            "--service-id",
+            "svc_003",
+            "--service-token-amount",
+            "1",
+            "--service-token-address",
+            "0xA",
+            "--auto-renew",
+            "true",
+            "--title",
+            "t",
+            "--description",
+            "d for test bool strings ok",
+            "--provider-agent-id",
+            "asp-1",
+        ]);
+        match cli.cmd {
+            super::super::TaskCommand::CreateSubscribe { auto_renew, .. } => {
+                assert_eq!(auto_renew, "true");
+            }
+            _ => panic!("expected CreateSubscribe"),
+        }
+    }
+
+    #[test]
+    fn cli_create_subscribe_missing_service_id_fails() {
+        assert!(TestCli::try_parse_from([
+            "test",
+            "create-subscribe",
+            "--service-token-amount",
+            "10",
+            "--service-token-address",
+            "0xAddr",
+            "--auto-renew",
+            "1",
+            "--title",
+            "t",
+            "--description",
+            "d",
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn cli_create_subscribe_rejects_create_time_device_selection() {
+        assert!(TestCli::try_parse_from([
+            "test",
+            "create-subscribe",
+            "--service-id",
+            "svc_001",
+            "--service-token-amount",
+            "10",
+            "--service-token-address",
+            "0xAddr",
+            "--auto-renew",
+            "1",
+            "--title",
+            "t",
+            "--description",
+            "d",
+            "--provider-agent-id",
+            "asp-1",
+            "--exclude-device",
+            "device-2",
+        ])
+        .is_err());
+    }
+
+    // The backend create response is the first point where the subscription has
+    // a jobId. Try to bind that job to the current runtime before broadcasting,
+    // but do not block the broadcast when the local binding is unavailable.
+    #[test]
+    fn create_subscribe_treats_job_provider_binding_as_best_effort() {
+        let source = include_str!("v2/create_subscription.rs");
+        let job_id = source
+            .find("validate_create_response(&response)")
+            .expect("v2 create must validate jobId from the create response");
+        let readiness = source
+            .find("establish_local_readiness(&job_id)")
+            .expect("v2 create must establish local execution readiness");
+        let bind = source
+            .find("bind_job_provider_to_current_runtime(&job_id)")
+            .expect("v2 create must attempt runtime binding without requiring it");
+        let broadcast = source
+            .find("signing::sign_uop_and_broadcast_full(")
+            .expect("v2 create must broadcast the subscription transaction");
+        let rollback = source
+            .find("if let Some(prebind) = prebind.as_ref()")
+            .expect("handler must roll back a newly-created binding when broadcast fails");
+
+        assert!(
+            !source.contains("bind_job_provider_to_current_runtime_required(&job_id)"),
+            "subscription creation must not block on runtime binding"
+        );
+        assert!(
+            job_id < readiness,
+            "jobId must be resolved before local readiness"
+        );
+        assert!(
+            readiness < bind,
+            "local readiness must precede runtime binding"
+        );
+        assert!(
+            bind < broadcast,
+            "best-effort runtime binding must be attempted before broadcast"
+        );
+        assert!(
+            broadcast < rollback,
+            "broadcast failure handling must be able to roll back the pre-bind"
+        );
+    }
+
+    #[test]
+    fn create_subscribe_validates_required_fields_before_remote_work() {
+        let source = include_str!("create_subscribe.rs");
+        let handler = source
+            .split_once("pub async fn handle_create_subscribe")
+            .expect("create-subscribe handler must exist")
+            .1
+            .split_once("#[cfg(test)]")
+            .expect("handler must precede its tests")
+            .0;
+
+        let local_validation = handler
+            .find("params.validate()?;")
+            .expect("required-field validation must be part of the create handler");
+        let first_remote_boundary = handler
+            .find("ensure_tokens_refreshed().await")
+            .expect("create handler must refresh the remote session");
+
+        assert!(
+            local_validation < first_remote_boundary,
+            "required-field failures must return before authentication, remote create, signing, or broadcast"
+        );
+    }
+
+    #[test]
+    fn find_service_sid_reads_id_from_service_list_wrapper_shape() {
+        // service-list wraps `data` as [{ agentInfo, list:[service…] }]; the sid
+        // we need is each row's numeric `id`, located by matching `serviceId`.
+        let data = serde_json::json!([{
+            "agentInfo": {"agentId": "9967"},
+            "list": [{
+                "id": 38259,
+                "serviceId": "1cbf0412-5570-4109-9dd6-cba39fca7de4",
+                "serviceName": "Trade kit",
+                "subscription": [{"fee": "0.1", "interval": "month"}],
+                "freeTrial": "72"
+            }],
+            "hasMore": false
+        }]);
+        assert_eq!(
+            super::find_service_sid(&data, "1cbf0412-5570-4109-9dd6-cba39fca7de4"),
+            Some("38259".to_string())
+        );
+        assert_eq!(super::find_service_sid(&data, "no-such-uuid"), None);
+    }
+
+    #[test]
+    fn find_service_sid_reads_id_from_flat_object_shape() {
+        let data = serde_json::json!({
+            "list": [{"id": "77", "serviceId": "svc-uuid"}],
+            "page": 1
+        });
+        assert_eq!(
+            super::find_service_sid(&data, "svc-uuid"),
+            Some("77".to_string())
+        );
+    }
+
+    fn params_fixture(provider: Option<&str>) -> super::CreateSubscribeParams {
+        super::CreateSubscribeParams {
+            service_id: "svc".to_string(),
+            service_params: String::new(),
+            service_token_amount: "10".to_string(),
+            service_token_address: common::payment_token::TOKENS[2].address.to_string(),
+            auto_renew: 1,
+            title: "t".to_string(),
+            description: "d".to_string(),
+            attachments: None,
+            provider_agent_id: provider.unwrap_or_default().to_string(),
+            service_guide: None,
+            service_guide_hash: None,
+            guide_consent_json: None,
+            service_interval: "month".to_string(),
+            format: "json".to_string(),
+        }
+    }
+
+    fn attach_minimal_guide(params: &mut super::CreateSubscribeParams) {
+        params.service_guide =
+            Some("Follow the saved Signal using only the confirmed Consent.".to_string());
+        params.guide_consent_json = Some("{}".to_string());
+    }
+
+    #[test]
+    fn create_subscribe_rejects_missing_attachment_before_creation() {
+        let mut params = params_fixture(Some("asp-1"));
+        params.attachments = Some(vec![
+            "/path/that/does/not/exist/subscription-attachment.pdf".to_string(),
+        ]);
+
+        let error = params
+            .validate()
+            .expect_err("a missing attachment must stop subscription creation");
+        assert!(error
+            .to_string()
+            .contains("attachment file is not readable"));
+    }
+
+    #[test]
+    fn cli_create_subscribe_rejects_removed_copy_trade_argument() {
+        assert!(TestCli::try_parse_from([
+            "test",
+            "create-subscribe",
+            "--service-id",
+            "svc_001",
+            "--service-token-amount",
+            "10",
+            "--service-token-address",
+            "0x6776",
+            "--auto-renew",
+            "1",
+            "--copy-trade",
+            "0",
+            "--title",
+            "Signal Subscription",
+            "--description",
+            "On-chain signal subscription service",
+            "--provider-agent-id",
+            "asp-1",
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn create_without_guide_has_no_execution_profile() {
+        let params = CreateSubscribeParams {
+            service_id: "svc_report_only".to_string(),
+            service_params: String::new(),
+            service_token_amount: "10".to_string(),
+            service_token_address: common::payment_token::TOKENS[2].address.to_string(),
+            auto_renew: 0,
+            title: "Analytics report".to_string(),
+            description: "Read-only market report without trading signals".to_string(),
+            attachments: None,
+            provider_agent_id: "agent-99".to_string(),
+            service_guide: None,
+            service_guide_hash: None,
+            guide_consent_json: None,
+            service_interval: "month".to_string(),
+            format: "json".to_string(),
+        };
+        assert!(params.validate().is_ok());
+    }
+
+    #[test]
+    fn missing_subscription_execution_config_blocks_create_until_agent_classifies_guide() {
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp")
+            .join("create_subscribe_signal_only_default");
+        if home.exists() {
+            std::fs::remove_dir_all(&home).ok();
+        }
+        std::fs::create_dir_all(&home).unwrap();
+        std::env::set_var("ONCHAINOS_HOME", &home);
+
+        let error = require_subscription_execution_mode("agent-1", "svc-signal-only")
+            .expect_err("missing config must block create-subscribe");
+        assert!(
+            error
+                .to_string()
+                .contains("subscription execution configuration is required"),
+            "unexpected error: {error}"
+        );
+
+        super::super::super::common::autotrade::subscription_config::save_execution_mode(
+            "agent-1",
+            "svc-signal-only",
+            super::super::super::common::autotrade::subscription_config::ExecutionMode::SignalOnly,
+            false,
+        )
+        .unwrap();
+        let mode = require_subscription_execution_mode("agent-1", "svc-signal-only").unwrap();
+        assert_eq!(
+            mode,
+            super::super::super::common::autotrade::subscription_config::ExecutionMode::SignalOnly
+        );
+
+        std::env::remove_var("ONCHAINOS_HOME");
+        std::fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
+    fn cli_create_subscribe_accepts_guide_defined_consent_values() {
+        let cli = TestCli::parse_from([
+            "test",
+            "create-subscribe",
+            "--service-id",
+            "svc_auto",
+            "--service-token-amount",
+            "1",
+            "--service-token-address",
+            "0xA",
+            "--auto-renew",
+            "1",
+            "--title",
+            "Signals",
+            "--description",
+            "Execute the delivered signals",
+            "--provider-agent-id",
+            "asp-1",
+            "--service-guide",
+            "guide body",
+            "--guide-consent-json",
+            r#"{"strategyArmed":true}"#,
+        ]);
+        let super::super::TaskCommand::CreateSubscribe {
+            guide_consent_json, ..
+        } = cli.cmd
+        else {
+            panic!("expected CreateSubscribe");
+        };
+        assert_eq!(
+            guide_consent_json.as_deref(),
+            Some(r#"{"strategyArmed":true}"#)
+        );
+    }
+
+    #[test]
+    fn cli_create_subscribe_help_documents_required_field_contract() {
+        let help = match TestCli::try_parse_from(["test", "create-subscribe", "--help"]) {
+            Err(error) => error.to_string(),
+            Ok(_) => panic!("--help must exit through clap"),
+        };
+
+        for expected in ["--guide-consent-json", "matching Guide"] {
+            assert!(
+                help.contains(expected),
+                "help must contain {expected:?}: {help}"
+            );
+        }
+    }
+
+    #[test]
+    fn prepared_guide_consent_activates_only_after_broadcast() {
+        let _lock = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test_tmp")
+            .join("create_subscribe_guide");
+        if home.exists() {
+            std::fs::remove_dir_all(&home).ok();
+        }
+        std::fs::create_dir_all(&home).unwrap();
+        std::env::set_var("ONCHAINOS_HOME", &home);
+
+        let mut params = params_fixture(Some("asp-1"));
+        params.service_guide =
+            Some("Place only as directed by this Guide and the saved Signal.".to_string());
+        params.guide_consent_json = Some(r#"{"strategyArmed":true}"#.to_string());
+        let consent = params.validate().unwrap().expect("Guide Consent input");
+        prepare_guide_consent("job-subscribe-guide", &params, &consent).unwrap();
+        assert!(home
+            .join("autotrade")
+            .join("guide")
+            .join("job-subscribe-guide.md")
+            .is_file());
+        assert!(home
+            .join("autotrade")
+            .join("consent")
+            .join("job-subscribe-guide.md")
+            .is_file());
+        assert_eq!(
+            crate::commands::agent_commerce::task::common::autotrade::guide::consent_snapshot(
+                "job-subscribe-guide"
+            )
+            .status,
+            "unavailable"
+        );
+        activate_guide_consent("job-subscribe-guide").unwrap();
+        assert_eq!(
+            crate::commands::agent_commerce::task::common::autotrade::guide::consent_snapshot(
+                "job-subscribe-guide"
+            )
+            .status,
+            "active"
+        );
+
+        std::env::remove_var("ONCHAINOS_HOME");
+        std::fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
+    fn guide_consent_requires_explicit_json_even_when_empty() {
+        let mut params = params_fixture(Some("asp-1"));
+        attach_minimal_guide(&mut params);
+        params.guide_consent_json = None;
+
+        let error = params
+            .validate()
+            .expect_err("Guide bundle needs explicit Consent");
+        assert!(
+            error.to_string().contains("--guide-consent-json"),
+            "unexpected error: {error}"
+        );
+    }
+}

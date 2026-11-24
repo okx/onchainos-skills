@@ -1,0 +1,402 @@
+#![allow(dead_code)]
+
+pub mod asset_class;
+pub mod audit;
+pub mod chains;
+mod client;
+mod commands;
+mod config;
+pub mod crypto;
+mod device;
+mod doh;
+mod endpoints;
+mod file_keyring;
+mod funding;
+mod home;
+mod keyring_store;
+mod mcp;
+mod mcp_client;
+mod output;
+mod services;
+pub mod payment;
+mod payment_cache;
+mod payment_notify;
+mod qr;
+pub mod token_alias;
+mod token_metadata;
+pub mod validators;
+mod wallet_api;
+mod wallet_store;
+mod watch;
+
+#[cfg(test)]
+mod test_helpers;
+
+use clap::{Parser, Subcommand};
+
+#[derive(Parser)]
+#[command(
+    name = "onchainos",
+    version,
+    about = "onchainOS CLI - interact with OKX Web3 backend"
+)]
+pub struct Cli {
+    /// Use the internal development API endpoint.
+    #[arg(long, global = true, hide = true)]
+    pub dev: bool,
+
+    /// Chain: ethereum, solana, base, bsc, polygon, arbitrum, sui, etc.
+    #[arg(long, global = true)]
+    pub chain: Option<String>,
+
+    #[command(subcommand)]
+    pub command: Commands,
+}
+
+#[derive(Subcommand)]
+pub enum Commands {
+    /// Market data: prices, charts, wallet PnL
+    Market {
+        #[command(subcommand)]
+        command: Box<commands::market::MarketCommand>,
+    },
+    /// Smart money / whale / KOL signal tracking
+    Signal {
+        #[command(subcommand)]
+        command: commands::signal::SignalCommand,
+    },
+    /// Social signals: crypto news, market sentiment, vibe / KOL chatter
+    Social {
+        #[command(subcommand)]
+        command: commands::social::SocialCommand,
+    },
+    /// Meme / pump.fun token scanning and analysis
+    Memepump {
+        #[command(subcommand)]
+        command: Box<commands::memepump::MemepumpCommand>,
+    },
+    /// Leaderboard (top traders ranked by PnL, win rate, or volume)
+    Leaderboard {
+        #[command(subcommand)]
+        command: commands::leaderboard::LeaderboardCommand,
+    },
+    /// Token information
+    Token {
+        #[command(subcommand)]
+        command: Box<commands::token::TokenCommand>,
+    },
+    /// DEX swap
+    Swap {
+        #[command(subcommand)]
+        command: commands::swap::SwapCommand,
+    },
+    /// Cross-chain bridge swap
+    #[command(name = "cross-chain")]
+    CrossChain {
+        #[command(subcommand)]
+        command: commands::cross_chain::CrossChainCommand,
+    },
+    /// On-chain gateway
+    Gateway {
+        #[command(subcommand)]
+        command: commands::gateway::GatewayCommand,
+    },
+    /// Wallet portfolio and balances
+    Portfolio {
+        #[command(subcommand)]
+        command: commands::portfolio::PortfolioCommand,
+    },
+    /// Start as MCP server (JSON-RPC 2.0 over stdio)
+    Mcp,
+    /// Agentic wallet: accounts, balances, transfers, UTXOs, contract calls, and history
+    Wallet {
+        #[command(subcommand)]
+        command: commands::agentic_wallet::WalletCommand,
+    },
+    /// Security scanning (tx-scan, token-scan, dapp-scan, sig-scan)
+    Security {
+        #[command(subcommand)]
+        command: commands::security::SecurityCommand,
+    },
+    /// Payment protocols — auto-pay gated APIs and agent-to-agent payment links
+    Payment {
+        #[command(subcommand)]
+        command: commands::payment::PaymentCommand,
+    },
+    /// Registered third-party service access
+    Service {
+        #[command(subcommand)]
+        command: commands::services::ServiceCommand,
+    },
+    /// Address tracker: REST activities for KOL / smart money / custom address activity
+    Tracker {
+        #[command(subcommand)]
+        command: commands::tracker::TrackerCommand,
+    },
+    /// Real-time WebSocket subscriptions for DEX data
+    Ws {
+        #[command(subcommand)]
+        command: commands::ws::WsCommand,
+    },
+    /// DeFi product discovery, investment, redemption, and portfolio
+    Defi {
+        #[command(subcommand)]
+        command: commands::defi::DefiCommand,
+    },
+    /// Limit-order strategy trading on Agentic Wallet (create-limit / cancel / list / resume)
+    Strategy {
+        #[command(subcommand)]
+        command: Box<commands::agentic_wallet::strategy::StrategyCommand>,
+    },
+    /// Multi-step workflow commands that chain API calls for complete operations
+    Workflow {
+        #[command(subcommand)]
+        command: Box<commands::workflows::WorkflowCommand>,
+    },
+
+    /// Upgrade onchainos with the package-managed installer
+    Upgrade(commands::upgrade::UpgradeArgs),
+
+    /// Deprecated compatibility command
+    Preflight(commands::upgrade::PreflightArgs),
+
+    /// AI Agent commerce: identity, tasks, chat, file attachments
+    Agent {
+        #[command(subcommand)]
+        command: commands::agent_commerce::AgentCommand,
+    },
+}
+
+fn main() {
+    // Clap's recursive command-tree builder uses ~900+ KB of stack in debug
+    // builds. Windows default is 1 MB — not enough headroom. Spawn with 8 MB
+    // to match macOS/Linux defaults.
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(run)
+        .expect("failed to spawn main thread")
+        .join()
+        .expect("main thread panicked");
+}
+
+#[tokio::main]
+async fn run() {
+    let mut cli = Cli::parse();
+    // Stop validates its own session paths. Startup's legacy
+    // watch-log permission scan must not touch unvalidated stop targets.
+    if !matches!(
+        &cli.command,
+        Commands::Ws {
+            command: commands::ws::WsCommand::Stop { .. }
+        }
+    ) {
+        if let Err(e) = crate::home::self_heal_permissions() {
+            eprintln!("Warning: {e}");
+        }
+    }
+    endpoints::set_dev_mode(cli.dev);
+
+    // The agent subsystem runs only on XLayer (chainId=196, chain name "xlayer").
+    // `--chain` is a top-level global flag, and clap 4 has no clean way to hide
+    // a global arg per-subcommand, so we just force-override the chain to "xlayer"
+    // at runtime for any agent subcommand — whatever the user passes (or omits)
+    // is silently ignored. agent_commerce internals already use the constant
+    // XLAYER_CHAIN_INDEX="196"; this just keeps Context::chain_override in sync
+    // so nothing downstream misreads it.
+    if matches!(cli.command, Commands::Agent { .. }) {
+        cli.chain = Some("xlayer".to_string());
+    }
+
+    // MCP server runs indefinitely — skip audit for it (MCP tools log individually).
+    if matches!(cli.command, Commands::Mcp) {
+        if let Err(e) = mcp::serve().await {
+            output::error(&format!("{e:#}"));
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    let raw_args: Vec<String> = std::env::args().collect();
+    // Service IDs and unsigned payment approvals stay in Agent context, not audit files.
+    let redacted_args = if matches!(&cli.command, Commands::Service { .. }) {
+        Vec::new()
+    } else {
+        audit::redact_args(&raw_args)
+    };
+    let command_name = audit::cli_command_name(&cli.command);
+    let start = std::time::Instant::now();
+
+    let ctx = commands::Context::new(&cli);
+    let dev_mode = cli.dev;
+
+    let result = match cli.command {
+        Commands::Market { command } => commands::market::execute(&ctx, *command).await,
+        Commands::Signal { command } => commands::signal::execute(&ctx, command).await,
+        Commands::Social { command } => commands::social::execute(&ctx, command).await,
+        Commands::Memepump { command } => commands::memepump::execute(&ctx, *command).await,
+        Commands::Leaderboard { command } => commands::leaderboard::execute(&ctx, command).await,
+        Commands::Tracker { command } => commands::tracker::execute(&ctx, command).await,
+        Commands::Token { command } => commands::token::execute(&ctx, *command).await,
+        Commands::Swap { command } => commands::swap::execute(&ctx, command).await,
+        Commands::CrossChain { command } => commands::cross_chain::execute(&ctx, command).await,
+        Commands::Gateway { command } => commands::gateway::execute(&ctx, command).await,
+        Commands::Portfolio { command } => commands::portfolio::execute(&ctx, command).await,
+        Commands::Mcp => unreachable!("handled above"),
+        Commands::Wallet { command } => commands::agentic_wallet::execute(command).await,
+        Commands::Security { command } => commands::security::execute(&ctx, command).await,
+        Commands::Payment { command } => commands::payment::execute(command).await,
+        Commands::Service { command } => commands::services::execute(command).await,
+        Commands::Defi { command } => commands::defi::execute(&ctx, command).await,
+        Commands::Strategy { command } => {
+            commands::agentic_wallet::strategy::execute(&ctx, *command).await
+        }
+        Commands::Ws { command } => commands::ws::execute(command, dev_mode).await,
+        Commands::Workflow { command } => commands::workflows::execute(&ctx, *command).await,
+        Commands::Upgrade(args) => commands::upgrade::execute(args).await,
+        Commands::Preflight(args) => commands::upgrade::preflight(args).await,
+        Commands::Agent { command } => commands::agent_commerce::run(command, &ctx).await,
+    };
+
+    let elapsed = start.elapsed();
+    audit::log(
+        "cli",
+        &command_name,
+        result.is_ok(),
+        elapsed,
+        Some(redacted_args),
+        result.as_ref().err().map(|e| format!("{e:#}")).as_deref(),
+    );
+
+    if let Err(e) = result {
+        match e.downcast::<commands::agentic_wallet::common::WalletPreviewConfirming>() {
+            Ok(c) => {
+                output::agentic_wallet_confirming(&c.message, &c.next, &c.scene, &c.preview);
+                std::process::exit(2);
+            }
+            Err(e) => match e.downcast::<output::CliConfirming>() {
+                Ok(c) => {
+                    output::confirming_scene(&c.message, &c.next, c.scene.as_deref());
+                    std::process::exit(2);
+                }
+                Err(e) => match e.downcast::<output::CliSetupRequired>() {
+                    Ok(s) => {
+                        output::setup_required(&s.error_code, &s.message, &s.data);
+                        std::process::exit(3);
+                    }
+                    Err(e) => {
+                        let e = match e.downcast::<output::CliFundingBlocked>() {
+                            Ok(blocked) => {
+                                output::error_data(blocked.data);
+                                std::process::exit(1);
+                            }
+                            Err(e) => e,
+                        };
+                        let e = match e.downcast::<output::CliDuplicateSubscription>() {
+                            Ok(blocked) => {
+                                output::error_data(blocked.data);
+                                std::process::exit(1);
+                            }
+                            Err(e) => e,
+                        };
+                        match e.downcast::<commands::sink::CodedError>() {
+                                Ok(c) => {
+                                    output::error_coded_details(
+                                        &c.code,
+                                        c.field.as_deref(),
+                                        &c.message,
+                                        c.data.as_ref(),
+                                        c.next_steps.as_ref(),
+                                    );
+                                    std::process::exit(1);
+                                }
+                                Err(e) => match e.downcast::<
+                                    commands::agent_commerce::task::common::deposit_qr::InsufficientBalanceError,
+                                >() {
+                                    Ok(ib) => {
+                                        output::error_insufficient_balance(&ib);
+                                        std::process::exit(1);
+                                    }
+                                    Err(e) => {
+                                        output::error(&format!("{e:#}"));
+                                        std::process::exit(1);
+                                    }
+                                },
+                            }
+                    }
+                },
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod cli_environment_tests {
+    use super::*;
+
+    fn with_cli_stack(test: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(test)
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn dev_flag_selects_pre_watch_environment() {
+        with_cli_stack(|| {
+            let cli = Cli::try_parse_from([
+                "onchainos",
+                "--dev",
+                "ws",
+                "start",
+                "--channel",
+                "kol_smartmoney-tracker-activity",
+            ])
+            .unwrap();
+
+            assert!(cli.dev);
+            assert_eq!(
+                watch::types::WatchEnv::from_dev_mode(cli.dev),
+                watch::types::WatchEnv::Pre
+            );
+        });
+    }
+
+    #[test]
+    fn default_cli_selects_prod_watch_environment() {
+        with_cli_stack(|| {
+            let cli = Cli::try_parse_from([
+                "onchainos",
+                "ws",
+                "start",
+                "--channel",
+                "kol_smartmoney-tracker-activity",
+            ])
+            .unwrap();
+
+            assert!(!cli.dev);
+            assert_eq!(
+                watch::types::WatchEnv::from_dev_mode(cli.dev),
+                watch::types::WatchEnv::Prod
+            );
+        });
+    }
+
+    #[test]
+    fn ws_start_rejects_removed_env_flag() {
+        with_cli_stack(|| {
+            let result = Cli::try_parse_from([
+                "onchainos",
+                "ws",
+                "start",
+                "--channel",
+                "kol_smartmoney-tracker-activity",
+                "--env",
+                "pre",
+            ]);
+
+            assert!(result.is_err());
+        });
+    }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "onchainos-skills",
+  "description": "onchainos skills for on-chain operations — token search, market data, wallet balance, swap execution, and transaction broadcasting across 20+ chains",
+  "version": "4.6.12",
+  "author": {
+    "name": "OKX"
+  },
+  "homepage": "https://web3.okx.com",
+  "repository": "https://github.com/okx/onchainos-skills",
+  "license": "MIT",
+  "keywords": [
+    "okx",
+    "dex",
+    "web3",
+    "defi",
+    "swap",
+    "token",
+    "blockchain",
+    "onchain",
+    "onchainos",
+    "gas",
+    "broadcast",
+    "transaction"
+  ],
+  "logo": "assets/onchainos-logotype.svg",
+  "skills": ["./skills/"]
+}

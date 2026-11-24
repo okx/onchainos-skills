@@ -1,0 +1,389 @@
+# ──────────────────────────────────────────────────────────────
+# Automated release pipeline
+# Trigger: workflow_dispatch with version input
+# Flow: validate → build non-macOS platforms → download signed
+#        macOS from sign-server → generate checksums →
+#        commit version update → tag → publish Release
+# Artifacts: raw binaries (not tar.gz), with checksums.txt
+#
+# Beta releases:
+#   Use version format "2.0.0-beta.0" — the workflow auto-detects
+#   the "-beta" suffix and marks the GitHub Release as a pre-release.
+#   Pre-releases are excluded from the /releases/latest API endpoint,
+#   so stable auto-update is unaffected.
+# ──────────────────────────────────────────────────────────────
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 1.0.5 or 2.0.0-beta.0) — must match Cargo.toml"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_DIR: cli
+  BIN_NAME: onchainos
+  SIGN_SERVER_REPO: okx/macos-sign-service
+
+jobs:
+  # ── Step 1: Validate version input ──────────────────────────
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ inputs.version }}
+      tag: v${{ inputs.version }}
+      is_beta: ${{ steps.detect_beta.outputs.is_beta }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Detect beta release
+        id: detect_beta
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if echo "$INPUT_VERSION" | grep -q '\-beta'; then
+            echo "is_beta=true" >> "$GITHUB_OUTPUT"
+            echo "Detected beta release: v${INPUT_VERSION}"
+          else
+            echo "is_beta=false" >> "$GITHUB_OUTPUT"
+            echo "Detected stable release: v${INPUT_VERSION}"
+          fi
+
+      - name: Read version from Cargo.toml
+        id: cargo_ver
+        run: |
+          VER=$(grep '^version' "$CARGO_DIR"/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "value=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: Validate Cargo.toml version matches input
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          CARGO_VER: ${{ steps.cargo_ver.outputs.value }}
+        run: |
+          if [ "$CARGO_VER" != "$INPUT_VERSION" ]; then
+            echo "::error::Cargo.toml version ($CARGO_VER) != input ($INPUT_VERSION). Update Cargo.toml first."
+            exit 1
+          fi
+
+      - name: Ensure tag does not already exist on origin
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/v${INPUT_VERSION}" "refs/tags/v${INPUT_VERSION}^{}" >/dev/null 2>&1; then
+            echo "::error::Tag v${INPUT_VERSION} already exists on origin."
+            exit 1
+          fi
+
+  # ── Step 2: Build non-macOS binaries in parallel ────────────
+  build:
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    env:
+      SM_API_KEY: ${{ secrets.SM_API_KEY }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ── Linux (all musl static link — zero glibc dependency) ──
+          # Every Linux target is built against musl and statically linked, then
+          # aliased to its -gnu download name (see the artifact-prep step). This
+          # makes the published binaries independent of the host/image glibc, so
+          # they run on any distro — Debian 12 (glibc 2.36), older, or newer —
+          # not only on systems that ship the build image's glibc baseline.
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-22.04 }
+          - { target: i686-unknown-linux-musl, os: ubuntu-latest, cross: true }
+          - {
+              target: aarch64-unknown-linux-musl,
+              os: ubuntu-latest,
+              cross: true,
+            }
+          - {
+              target: armv7-unknown-linux-musleabihf,
+              os: ubuntu-latest,
+              cross: true,
+            }
+          # ── Windows (x64 / x86 / ARM64) ──
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+          - { target: i686-pc-windows-msvc, os: windows-latest }
+          - { target: aarch64-pc-windows-msvc, os: windows-latest }
+
+    name: Build ${{ matrix.target }}
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable @ 2026-03-27
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: ${{ env.CARGO_DIR }}
+          key: ${{ matrix.target }}
+
+      - name: "Install musl toolchain (native musl build only)"
+        # Only the host-native x86_64 build links with musl-gcc; the cross
+        # targets get their musl toolchain from inside the cross container.
+        if: contains(matrix.target, 'musl') && !matrix.cross
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: "Install cross (Linux cross-compilation tool)"
+        if: matrix.cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build release binary
+        working-directory: ${{ env.CARGO_DIR }}
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          USE_CROSS: ${{ matrix.cross }}
+        run: |
+          if [ "$USE_CROSS" = "true" ]; then
+            cross build --release --target "$TARGET"
+          else
+            cargo build --release --target "$TARGET"
+          fi
+
+      - name: "Prepare artifact (Unix: strip symbols + rename)"
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          USE_CROSS: ${{ matrix.cross }}
+        run: |
+          src="${CARGO_DIR}/target/${TARGET}/release/${BIN_NAME}"
+          if [ "$USE_CROSS" != "true" ]; then
+            strip "$src" 2>/dev/null || true
+          fi
+          cp "$src" "${BIN_NAME}-${TARGET}"
+          chmod +x "${BIN_NAME}-${TARGET}"
+          # Keep GNU-named downloads available while publishing static musl binaries.
+          if echo "$TARGET" | grep -q 'musl'; then
+            gnu_name=$(echo "${BIN_NAME}-${TARGET}" | sed 's/musl/gnu/')
+            cp "${BIN_NAME}-${TARGET}" "$gnu_name"
+            chmod +x "$gnu_name"
+          fi
+
+      - name: "Prepare artifact (Windows: rename .exe)"
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          Copy-Item "${env:CARGO_DIR}\target\${env:TARGET}\release\${env:BIN_NAME}.exe" `
+                    "${env:BIN_NAME}-${env:TARGET}.exe"
+
+      # ── Windows code signing with jsign + DigiCert ONE ──
+      - name: "Setup DigiCert certificate"
+        if: runner.os == 'Windows' && env.SM_API_KEY != ''
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
+        shell: pwsh
+        run: |
+          $certPath = "${{ runner.temp }}\Certificate_pkcs12.p12"
+          [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:SM_CLIENT_CERT_FILE_B64))
+          Write-Host "Certificate file size: $((Get-Item $certPath).Length) bytes"
+          "SM_CLIENT_CERT_FILE=$certPath" >> $env:GITHUB_ENV
+
+      - name: "Download jsign"
+        if: runner.os == 'Windows' && env.SM_API_KEY != ''
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/ebourg/jsign/releases/download/7.5/jsign-7.5.jar" `
+            -OutFile "${{ runner.temp }}\jsign.jar"
+
+      - name: "Sign Windows binary (DigiCert ONE via jsign)"
+        if: runner.os == 'Windows' && env.SM_API_KEY != ''
+        shell: pwsh
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_CERTIFICATE_ID: ${{ secrets.SM_CERTIFICATE_ID }}
+        run: |
+          $storepass = "$env:SM_API_KEY|$env:SM_CLIENT_CERT_FILE|$env:SM_CLIENT_CERT_PASSWORD"
+          java -jar "${{ runner.temp }}\jsign.jar" `
+            --storetype DIGICERTONE `
+            --storepass $storepass `
+            --alias "$env:SM_CERTIFICATE_ID" `
+            --tsaurl "http://timestamp.digicert.com" `
+            "${{ env.BIN_NAME }}-${{ matrix.target }}.exe"
+
+      - name: "Verify Windows binary signature"
+        if: runner.os == 'Windows' && env.SM_API_KEY != ''
+        shell: pwsh
+        run: |
+          $sig = Get-AuthenticodeSignature "${{ env.BIN_NAME }}-${{ matrix.target }}.exe"
+          Write-Host "Signature status: $($sig.Status)"
+          Write-Host "Signer: $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') {
+            Write-Host "::warning::Code signing verification failed with status: $($sig.Status)"
+          }
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ env.BIN_NAME }}-${{ matrix.target }}
+          path: ${{ env.BIN_NAME }}-${{ matrix.target }}*
+
+      - name: "Upload gnu-named alias (musl builds only)"
+        if: contains(matrix.target, 'musl')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ env.BIN_NAME }}-${{ matrix.target }}-gnu-alias
+          # Trailing * also captures the armv7 alias (…-linux-gnueabihf)
+          path: ${{ env.BIN_NAME }}-*-linux-gnu*
+
+  # ── Step 2.5: Download signed macOS binaries from sign-server ──
+  download-signed-macos:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          repositories: "macos-sign-service"
+          owner: "okx"
+
+      - name: Download signed macOS binary from sign-server
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: v${{ needs.validate.outputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          gh release download "$TAG" \
+            --repo "$SIGN_SERVER_REPO" \
+            --pattern "${BIN_NAME}-${TARGET}" \
+            --dir .
+          echo "Downloaded signed binary:"
+          ls -lh "${BIN_NAME}-${TARGET}"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ env.BIN_NAME }}-${{ matrix.target }}
+          path: ${{ env.BIN_NAME }}-${{ matrix.target }}
+
+  # ── Step 3: Generate SHA256 checksums ───────────────────────
+  checksums:
+    needs: [build, download-signed-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          merge-multiple: true
+
+      - name: Generate SHA256 checksum file
+        run: sha256sum ${BIN_NAME}-* > checksums.txt
+
+      - name: List checksums
+        run: cat checksums.txt
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: checksums
+          path: checksums.txt
+
+  # ── Step 4: Commit version update and create tag ────────────
+  commit-and-tag:
+    needs: [validate, checksums]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # Use RELEASE_PAT if branch protection is enabled, otherwise GITHUB_TOKEN
+          token: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
+          ref: ${{ github.ref_name }}
+
+      - name: Update skill metadata version (stable releases only)
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          IS_BETA: ${{ needs.validate.outputs.is_beta }}
+        run: |
+          if [ "$IS_BETA" != "true" ]; then
+            for skill_md in skills/*/SKILL.md; do
+              sed -i "s/^  version: .*/  version: \"${VERSION}\"/" "$skill_md"
+            done
+          fi
+
+      - name: Commit and tag
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          IS_BETA: ${{ needs.validate.outputs.is_beta }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [ "$IS_BETA" != "true" ]; then
+            git add skills/*/SKILL.md
+          fi
+          git diff --cached --quiet && echo "No changes to commit" || \
+            git commit -m "release: v${VERSION} — update skill metadata"
+          git tag -a "v${VERSION}" -m "Release v${VERSION}"
+          git push origin HEAD --follow-tags
+
+  # ── Step 5: Create GitHub Release ───────────────────────────
+  release:
+    needs: [validate, commit-and-tag, checksums]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+          ref: v${{ needs.validate.outputs.version }}
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          merge-multiple: true
+
+      - name: Package workflows
+        run: |
+          test -d workflows/ || { echo "::error::workflows/ directory missing"; exit 1; }
+          tar -czf workflows.tar.gz workflows/
+
+      - name: Generate workflows checksum
+        run: sha256sum workflows.tar.gz > workflows-checksums.txt
+
+      - name: List all release artifacts
+        run: ls -lh && echo "---" && cat checksums.txt && echo "---" && cat workflows-checksums.txt
+
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          tag_name: v${{ needs.validate.outputs.version }}
+          name: v${{ needs.validate.outputs.version }}
+          prerelease: ${{ needs.validate.outputs.is_beta == 'true' }}
+          generate_release_notes: true
+          files: |
+            ${{ env.BIN_NAME }}-*
+            checksums.txt
+            workflows.tar.gz
+            workflows-checksums.txt

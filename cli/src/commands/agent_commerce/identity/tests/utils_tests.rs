@@ -1,0 +1,3225 @@
+use super::super::models::{AgentCard, AgentService, ServiceOperation, SubscriptionTier};
+use super::*;
+use crate::commands::Context;
+use crate::config::AppConfig;
+use crate::endpoints::{AGENT_IDENTITY_WS_URL, BASE_URL};
+use serde_json::json;
+
+fn ctx_no_override() -> Context {
+    Context {
+        config: AppConfig::default(),
+        chain_override: None,
+    }
+}
+
+// ─── parse_stars_arg: happy path ─────────────────────────────────────
+
+#[test]
+fn parse_stars_arg_accepts_integers() {
+    assert_eq!(parse_stars_arg("0", "--score").unwrap(), 0);
+    assert_eq!(parse_stars_arg("1", "--score").unwrap(), 20);
+    assert_eq!(parse_stars_arg("5", "--score").unwrap(), 100);
+}
+
+#[test]
+fn parse_stars_arg_accepts_one_and_two_decimals() {
+    assert_eq!(parse_stars_arg("4.5", "--score").unwrap(), 90);
+    assert_eq!(parse_stars_arg("5.00", "--score").unwrap(), 100);
+    assert_eq!(parse_stars_arg("0.01", "--score").unwrap(), 0); // 0.2 → round to 0
+    assert_eq!(parse_stars_arg("0.03", "--score").unwrap(), 1); // 0.6 → round to 1
+}
+
+#[test]
+fn parse_stars_arg_round_half_up_at_wire_boundary() {
+    // 3.30 / 3.31 / 3.32 all collapse to wire 66 (0.05-star grain).
+    assert_eq!(parse_stars_arg("3.30", "--score").unwrap(), 66);
+    assert_eq!(parse_stars_arg("3.31", "--score").unwrap(), 66);
+    assert_eq!(parse_stars_arg("3.32", "--score").unwrap(), 66);
+    // 3.33 rounds up to wire 67 (= 66.6 round-half-up).
+    assert_eq!(parse_stars_arg("3.33", "--score").unwrap(), 67);
+    // 3.35 is exact (no rounding needed).
+    assert_eq!(parse_stars_arg("3.35", "--score").unwrap(), 67);
+    // Upper-edge: 4.97 → 99.4 → 99; 4.98 / 4.99 → 100.
+    assert_eq!(parse_stars_arg("4.97", "--score").unwrap(), 99);
+    assert_eq!(parse_stars_arg("4.98", "--score").unwrap(), 100);
+    assert_eq!(parse_stars_arg("4.99", "--score").unwrap(), 100);
+}
+
+#[test]
+fn parse_stars_arg_trims_whitespace() {
+    assert_eq!(parse_stars_arg("  4.5  ", "--score").unwrap(), 90);
+}
+
+// ─── parse_stars_arg: rejected inputs ────────────────────────────────
+
+#[test]
+fn parse_stars_arg_rejects_more_than_two_decimals() {
+    assert!(parse_stars_arg("3.333", "--score").is_err());
+    assert!(parse_stars_arg("0.001", "--score").is_err());
+}
+
+#[test]
+fn parse_stars_arg_rejects_trailing_dot() {
+    assert!(parse_stars_arg("3.", "--score").is_err());
+}
+
+#[test]
+fn parse_stars_arg_rejects_signs_and_exponent() {
+    assert!(parse_stars_arg("-1", "--score").is_err());
+    assert!(parse_stars_arg("+5", "--score").is_err());
+    assert!(parse_stars_arg("5e0", "--score").is_err());
+}
+
+#[test]
+fn parse_stars_arg_rejects_out_of_range() {
+    assert!(parse_stars_arg("6", "--score").is_err());
+    assert!(parse_stars_arg("5.01", "--score").is_err());
+}
+
+#[test]
+fn parse_stars_arg_rejects_non_numeric() {
+    assert!(parse_stars_arg("abc", "--score").is_err());
+    assert!(parse_stars_arg("3.3.3", "--score").is_err());
+    assert!(parse_stars_arg("", "--score").is_err());
+    assert!(parse_stars_arg("   ", "--score").is_err());
+}
+
+// ─── score_to_stars: wire (0..=100) → stars (0.0..=5.0) ──────────────
+
+#[test]
+fn score_to_stars_is_exact_at_two_decimals() {
+    assert_eq!(score_to_stars(0), 0.0);
+    assert_eq!(score_to_stars(66), 3.3);
+    assert_eq!(score_to_stars(67), 3.35);
+    assert_eq!(score_to_stars(70), 3.5);
+    assert_eq!(score_to_stars(89), 4.45);
+    assert_eq!(score_to_stars(90), 4.5);
+    assert_eq!(score_to_stars(100), 5.0);
+}
+
+#[test]
+fn score_to_stars_clamps_above_100() {
+    assert_eq!(score_to_stars(101), 5.0);
+    assert_eq!(score_to_stars(u64::MAX), 5.0);
+}
+
+// ─── convert_feedback_list_scores: average + items + list ────────────
+
+fn assert_score_eq(v: &Value, expected: f64) {
+    let got = v.as_f64().expect("expected numeric");
+    assert!(
+        (got - expected).abs() < 1e-9,
+        "expected {expected}, got {got}"
+    );
+}
+
+#[test]
+fn convert_feedback_list_scores_rewrites_average_and_items() {
+    let mut v = json!({
+        "average": 89,
+        "items": [
+            { "score": 90 },
+            { "score": 70 },
+            { "score": 67 },
+        ],
+    });
+    convert_feedback_list_scores(&mut v);
+    assert_score_eq(&v["average"], 4.45);
+    assert_score_eq(&v["items"][0]["score"], 4.5);
+    assert_score_eq(&v["items"][1]["score"], 3.5);
+    assert_score_eq(&v["items"][2]["score"], 3.35);
+}
+
+#[test]
+fn convert_feedback_list_scores_rewrites_list_field() {
+    let mut v = json!({ "list": [ { "score": 100 } ] });
+    convert_feedback_list_scores(&mut v);
+    assert_score_eq(&v["list"][0]["score"], 5.0);
+}
+
+#[test]
+fn convert_feedback_list_scores_leaves_non_numeric_fields_alone() {
+    let mut v = json!({
+        "average": "n/a",
+        "items": [
+            { "score": "n/a" },
+            { "other_field": 5 },
+        ],
+    });
+    let before = v.clone();
+    convert_feedback_list_scores(&mut v);
+    assert_eq!(v, before);
+}
+
+// ─── normalize_bcp47 ─────────────────────────────────────────────────
+
+#[test]
+fn normalize_bcp47_canonicalizes_casing_and_separator() {
+    assert_eq!(normalize_bcp47(Some("zh-CN")).as_deref(), Some("zh-CN"));
+    assert_eq!(normalize_bcp47(Some("zh_CN")).as_deref(), Some("zh-CN"));
+    assert_eq!(normalize_bcp47(Some("ZH-cn")).as_deref(), Some("zh-CN"));
+    assert_eq!(normalize_bcp47(Some("en_us")).as_deref(), Some("en-US"));
+    assert_eq!(
+        normalize_bcp47(Some("zh-hant-tw")).as_deref(),
+        Some("zh-Hant-TW")
+    );
+    assert_eq!(normalize_bcp47(Some("  en-US  ")).as_deref(), Some("en-US"));
+}
+
+#[test]
+fn normalize_bcp47_default_region_completes_bare_language() {
+    // Bare supported languages get the product's canonical region.
+    assert_eq!(normalize_bcp47(Some("zh")).as_deref(), Some("zh-CN"));
+    assert_eq!(normalize_bcp47(Some("ZH")).as_deref(), Some("zh-CN"));
+    assert_eq!(normalize_bcp47(Some("en")).as_deref(), Some("en-US"));
+    assert_eq!(normalize_bcp47(Some("ja")).as_deref(), Some("ja-JP"));
+    // Unmapped bare languages pass through unchanged.
+    assert_eq!(normalize_bcp47(Some("fr")).as_deref(), Some("fr"));
+    // Tags that already carry a region / script are NOT overridden.
+    assert_eq!(normalize_bcp47(Some("zh-TW")).as_deref(), Some("zh-TW"));
+    assert_eq!(normalize_bcp47(Some("zh-Hant")).as_deref(), Some("zh-Hant"));
+    assert_eq!(normalize_bcp47(Some("en-GB")).as_deref(), Some("en-GB"));
+}
+
+#[test]
+fn normalize_bcp47_rejects_blank_and_malformed_language() {
+    assert_eq!(normalize_bcp47(None), None);
+    assert_eq!(normalize_bcp47(Some("")), None);
+    assert_eq!(normalize_bcp47(Some("   ")), None);
+    assert_eq!(normalize_bcp47(Some("1-CN")), None); // language subtag not alpha
+    assert_eq!(normalize_bcp47(Some("z")), None); // too short
+}
+
+// ─── agent get row enrichment: label mappings ────────────────────────
+
+#[test]
+fn role_label_maps_known_and_omits_unknown() {
+    // Canonical tokens only (callers always pass a canonical token).
+    assert_eq!(role_label("user"), Some("User"));
+    assert_eq!(role_label("asp"), Some("ASP"));
+    assert_eq!(role_label("evaluator"), Some("Evaluator"));
+    assert_eq!(role_label(" asp "), Some("ASP"));
+    // Legacy enum strings / aliases are NOT labels here.
+    assert_eq!(role_label("requester"), None);
+    assert_eq!(role_label("provider"), None);
+    assert_eq!(role_label("buyer"), None);
+    assert_eq!(role_label(""), None);
+}
+
+#[test]
+fn status_label_maps_int_and_string() {
+    assert_eq!(status_label(&json!(1)), Some("active"));
+    assert_eq!(status_label(&json!("active")), Some("active"));
+    assert_eq!(status_label(&json!(2)), Some("not listed"));
+    assert_eq!(status_label(&json!("2")), Some("not listed"));
+    assert_eq!(status_label(&json!(3)), Some("unavailable"));
+    assert_eq!(status_label(&json!(4)), Some("unavailable"));
+    assert_eq!(status_label(&json!(5)), Some("unavailable"));
+    assert_eq!(status_label(&json!(99)), None);
+    assert_eq!(status_label(&json!(null)), None);
+}
+
+#[test]
+fn approval_label_maps_known_codes() {
+    assert_eq!(approval_label(1), Some("Review not submitted"));
+    assert_eq!(approval_label(2), Some("Listing under review"));
+    assert_eq!(
+        approval_label(4),
+        Some("Listed — eligible for task recommendations")
+    );
+    assert_eq!(approval_label(5), Some("Listing rejected"));
+    assert_eq!(
+        approval_label(7),
+        Some("This agent is currently unavailable")
+    );
+    assert_eq!(approval_label(3), None);
+    assert_eq!(approval_label(0), None);
+}
+
+// ─── agent get row enrichment: ratingStars ───────────────────────────
+
+#[test]
+fn format_rating_stars_representative_values() {
+    assert_eq!(format_rating_stars(92), "4.6"); // 4.60 → trailing zero trimmed
+    assert_eq!(format_rating_stars(89), "4.45");
+    assert_eq!(format_rating_stars(100), "5"); // whole
+    assert_eq!(format_rating_stars(0), "0");
+    assert_eq!(format_rating_stars(90), "4.5");
+    assert_eq!(format_rating_stars(85), "4.25");
+    assert_eq!(format_rating_stars(70), "3.5");
+    assert_eq!(format_rating_stars(66), "3.3");
+    assert_eq!(format_rating_stars(101), "5"); // clamped
+}
+
+#[test]
+fn rating_stars_omitted_when_no_reputation() {
+    // count == 0 → omit
+    assert_eq!(rating_stars(&json!({ "score": 0, "count": 0 })), None);
+    // score absent → omit
+    assert_eq!(rating_stars(&json!({ "count": 3 })), None);
+    // present score + nonzero count → Some
+    assert_eq!(
+        rating_stars(&json!({ "score": 92, "count": 18 })).as_deref(),
+        Some("4.6")
+    );
+    // score 0 with positive count is a real "0 stars" rating → keep
+    assert_eq!(
+        rating_stars(&json!({ "score": 0, "count": 2 })).as_deref(),
+        Some("0")
+    );
+}
+
+// ─── agent get row enrichment: full row + envelope walk ──────────────
+
+#[test]
+fn enrich_agent_row_adds_all_four_fields() {
+    let mut row = json!({
+        "agentId": 42,
+        "role": 2,
+        "status": 1,
+        "approvalDisplayStatus": 4,
+        "reputation": { "score": 92, "count": 18 },
+    });
+    enrich_agent_row(&mut row);
+    assert_eq!(row["roleLabel"], json!("ASP"));
+    assert_eq!(row["statusLabel"], json!("active"));
+    assert_eq!(
+        row["approvalLabel"],
+        json!("Listed — eligible for task recommendations")
+    );
+    assert_eq!(row["ratingStars"], json!("4.6"));
+    // Raw fields untouched.
+    assert_eq!(row["role"], json!(2));
+    assert_eq!(row["status"], json!(1));
+    assert_eq!(row["approvalDisplayStatus"], json!(4));
+    assert_eq!(row["reputation"], json!({ "score": 92, "count": 18 }));
+}
+
+#[test]
+fn enrich_agent_row_omits_unknown_and_absent() {
+    let mut row = json!({
+        "agentId": 7,
+        "role": 9,               // unknown role code → omit roleLabel
+        "status": 99,            // unknown → omit statusLabel
+        // no approvalDisplayStatus → omit approvalLabel
+        "reputation": { "count": 0 }, // count 0 → omit ratingStars
+    });
+    enrich_agent_row(&mut row);
+    assert!(row.get("roleLabel").is_none());
+    assert!(row.get("statusLabel").is_none());
+    assert!(row.get("approvalLabel").is_none());
+    assert!(row.get("ratingStars").is_none());
+}
+
+// ─── agent get row enrichment: `card` array ─────────────────────────
+
+#[test]
+fn build_agent_card_asp_full_ordered_with_services_and_rating() {
+    let mut row = json!({
+        "agentId": 42,
+        "name": "DeFi Analyzer",
+        "role": 2,
+        "status": 1,
+        "approvalDisplayStatus": 4,
+        "address": "0xabcdef0123456789abcdef0123456789abcd1234",
+        "description": "On-chain data analysis.",
+        "picture": "https://cdn.example.com/a.png",
+        "services": [
+            { "serviceName": "TVL Query", "serviceType": "A2MCP", "fee": "10",
+              "endpoint": "https://api.example.com/mcp" },
+            { "serviceName": "Yield Check", "serviceType": "A2A" },
+            { "serviceName": "Whale Alert", "serviceType": "A2A", "fee": "5" },
+        ],
+        "reputation": { "score": 92, "count": 18 },
+    });
+    enrich_agent_row(&mut row);
+    let card = row["card"].as_array().expect("card present");
+    let pairs: Vec<(&str, &str)> = card
+        .iter()
+        .map(|r| (r["label"].as_str().unwrap(), r["value"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        pairs,
+        vec![
+            ("Agent ID", "#42"),
+            ("Name", "DeFi Analyzer"),
+            ("Role", "ASP"),
+            ("Status", "active"),
+            (
+                "Approval status",
+                "Listed — eligible for task recommendations"
+            ),
+            ("Address", "0xabcd…1234"),
+            ("Description", "On-chain data analysis."),
+            ("Profile photo", "https://cdn.example.com/a.png"),
+            (
+                "Service 1",
+                "TVL Query — API service, 10 USD, https://api.example.com/mcp"
+            ),
+            ("Service 2", "Yield Check — agent-to-agent, free"),
+            ("Service 3", "Whale Alert — agent-to-agent, 5 USD"),
+            ("Rating", "★ 4.6 (18 reviews)"),
+        ]
+    );
+    // Raw fields untouched.
+    assert_eq!(row["role"], json!(2));
+    assert!(row["services"].is_array());
+}
+
+#[test]
+fn build_agent_card_user_has_no_service_rows_and_description_not_set() {
+    let mut row = json!({
+        "agentId": 58,
+        "name": "MyBuyer",
+        "role": 1,
+        "status": 1,
+        // empty description → "(not set)"; no picture → "default".
+        "description": "",
+        // Anomaly: backend returned services for a non-ASP — must be dropped.
+        "services": [
+            { "serviceName": "Should Not Appear", "serviceType": "A2MCP", "fee": "1",
+              "endpoint": "https://x" },
+        ],
+        "reputation": { "score": 0, "count": 0 },
+    });
+    enrich_agent_row(&mut row);
+    let card = row["card"].as_array().expect("card present");
+    let labels: Vec<&str> = card.iter().map(|r| r["label"].as_str().unwrap()).collect();
+    // No Service rows at all, even though services[] is non-empty.
+    assert!(labels.iter().all(|l| !l.starts_with("Service")));
+    // Description always emitted with "(not set)" when empty.
+    let desc = card
+        .iter()
+        .find(|r| r["label"] == json!("Description"))
+        .expect("description row");
+    assert_eq!(desc["value"], json!("(not set)"));
+    // Profile photo defaults to "default".
+    let photo = card
+        .iter()
+        .find(|r| r["label"] == json!("Profile photo"))
+        .expect("photo row");
+    assert_eq!(photo["value"], json!("default"));
+    // ratingStars omitted when count 0 → no Rating row.
+    assert!(labels.iter().all(|l| *l != "Rating"));
+}
+
+#[test]
+fn build_agent_card_omits_rating_when_count_zero() {
+    let mut row = json!({
+        "agentId": 7,
+        "role": 3,
+        "reputation": { "score": 80, "count": 0 },
+    });
+    enrich_agent_row(&mut row);
+    let card = row["card"].as_array().expect("card present");
+    assert!(card.iter().all(|r| r["label"] != json!("Rating")));
+    // Evaluator is not an ASP → no Service rows.
+    assert!(card
+        .iter()
+        .all(|r| !r["label"].as_str().unwrap().starts_with("Service")));
+}
+
+#[test]
+fn build_agent_card_includes_txhash_when_present() {
+    let mut row = json!({
+        "agentId": 1,
+        "role": 1,
+        "txHash": "0xabcdef0f12",
+    });
+    enrich_agent_row(&mut row);
+    let card = row["card"].as_array().unwrap();
+    let tx = card
+        .iter()
+        .find(|r| r["label"] == json!("txHash"))
+        .expect("txHash row");
+    assert_eq!(tx["value"], json!("0xabcdef0f12"));
+}
+
+// ─── `cells` helpers: truncate_name ─────────────────────────────────
+
+#[test]
+fn truncate_name_appends_ellipsis_only_when_longer() {
+    assert_eq!(truncate_name("short", 20), "short");
+    // 21-char name → truncated to 20 + ellipsis.
+    let n21 = "abcdefghijklmnopqrstu"; // 21 chars
+    assert_eq!(n21.chars().count(), 21);
+    assert_eq!(truncate_name(n21, 20), "abcdefghijklmnopqrst…");
+    // exactly 20 → unchanged.
+    let n20 = "abcdefghijklmnopqrst"; // 20 chars
+    assert_eq!(truncate_name(n20, 20), n20);
+}
+
+// ─── §1 agent-list cells ─────────────────────────────────────────────
+
+fn cell_pairs(cells: &Value) -> Vec<(String, String)> {
+    cells
+        .as_array()
+        .expect("cells is an array")
+        .iter()
+        .map(|c| {
+            (
+                c["label"].as_str().unwrap().to_string(),
+                c["value"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn build_agent_list_cells_full_asp_row() {
+    let row = json!({
+        "agentId": 42,
+        "name": "DeFi Analyzer",
+        "role": 2,
+        "status": 1,
+        "approvalDisplayStatus": 4,
+        "reputation": { "score": 92, "count": 18 },
+    });
+    let cells = build_agent_list_cells(row.as_object().unwrap());
+    assert_eq!(
+        cell_pairs(&Value::Array(cells)),
+        vec![
+            ("Agent ID".to_string(), "#42".to_string()),
+            ("Name".to_string(), "DeFi Analyzer".to_string()),
+            ("Role".to_string(), "ASP".to_string()),
+            ("Status".to_string(), "active".to_string()),
+            (
+                "Approval status".to_string(),
+                "Listed — eligible for task recommendations".to_string()
+            ),
+            ("Rating".to_string(), "★ 4.6 (18)".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn build_agent_list_cells_user_role_and_truncated_name() {
+    let row = json!({
+        "agentId": "58",
+        "name": "A really long agent name that exceeds twenty",
+        "role": 1,
+        "status": 1,
+        "reputation": { "score": 0, "count": 0 },
+    });
+    let cells = build_agent_list_cells(row.as_object().unwrap());
+    let pairs = cell_pairs(&Value::Array(cells));
+    // 6 columns always present.
+    assert_eq!(pairs.len(), 6);
+    // First 20 chars of the name, then `…` (char 20 happens to be a space).
+    assert_eq!(
+        pairs[1],
+        ("Name".to_string(), "A really long agent …".to_string())
+    );
+    assert_eq!(pairs[2].1, "User");
+    // User status and approval are not applicable.
+    assert_eq!(pairs[3], ("Status".to_string(), "—".to_string()));
+    assert_eq!(pairs[4], ("Approval status".to_string(), "—".to_string()));
+    assert_eq!(
+        pairs[5],
+        ("Rating".to_string(), "No rating yet".to_string())
+    );
+}
+
+#[test]
+fn build_agent_list_cells_review_failed_with_reason() {
+    let row = json!({
+        "agentId": 7,
+        "name": "RejectedAgent",
+        "role": 2,
+        "status": 2,
+        "approvalDisplayStatus": 5,
+        "approvalRemark": "Name violates policy",
+        "reputation": { "score": 80, "count": 3 },
+    });
+    let cells = build_agent_list_cells(row.as_object().unwrap());
+    let pairs = cell_pairs(&Value::Array(cells));
+    assert_eq!(
+        pairs[4],
+        (
+            "Approval status".to_string(),
+            "Review failed (reason: Name violates policy)".to_string()
+        )
+    );
+    // status 2 → not listed.
+    assert_eq!(pairs[3], ("Status".to_string(), "not listed".to_string()));
+}
+
+#[test]
+fn build_agent_list_cells_review_failed_empty_remark() {
+    let row = json!({
+        "agentId": 8,
+        "name": "X",
+        "role": 2,
+        "approvalDisplayStatus": 5,
+        "approvalRemark": "   ",
+    });
+    let cells = build_agent_list_cells(row.as_object().unwrap());
+    let pairs = cell_pairs(&Value::Array(cells));
+    assert_eq!(
+        pairs[4],
+        ("Approval status".to_string(), "Review failed".to_string())
+    );
+    // unknown status (absent) → `—`.
+    assert_eq!(pairs[3], ("Status".to_string(), "—".to_string()));
+}
+
+#[test]
+fn add_agent_list_cells_walks_envelope_and_skips_detail_unaffected() {
+    let mut env = json!({
+        "total": 1,
+        "list": [
+            {
+                "agentList": [
+                    { "agentId": 1, "name": "A", "role": 1, "status": 1 },
+                ],
+            },
+        ],
+    });
+    add_agent_list_cells(&mut env);
+    let cells = &env["list"][0]["agentList"][0]["cells"];
+    assert!(cells.is_array());
+    assert_eq!(cells.as_array().unwrap().len(), 6);
+}
+
+#[test]
+fn add_agent_list_cells_derives_has_more_from_pagination() {
+    for (page, page_size, total, expected) in
+        [(1, 10, 11, true), (2, 10, 11, false), (1, 10, 10, false)]
+    {
+        let mut env = json!({
+            "list": [],
+            "page": page,
+            "pageSize": page_size,
+            "total": total,
+            "hasMore": !expected,
+        });
+
+        add_agent_list_cells(&mut env);
+
+        assert_eq!(env["hasMore"], json!(expected));
+    }
+}
+
+// ─── §6 search cells ─────────────────────────────────────────────────
+
+#[test]
+fn build_search_table_row_converts_feedbackrate_to_stars() {
+    // The backend returns feedbackRate on a 0–100 scale.
+    let row = json!({
+        "agentId": "1128",
+        "name": "DeFi Analyzer",
+        "soldCount": 10,
+        "feedbackRate": 95,
+        "serviceMinPrice": 10.0,
+        "services": [
+            { "serviceName": "TVL Query", "serviceType": "A2MCP",
+              "feeAmount": 10.0, "feeToken": "USDT", "endpoint": "https://x" }
+        ],
+    });
+    let row = build_search_table_row(row.as_object().unwrap());
+    assert_eq!(
+        row,
+        json!({
+            "agentId": "#1128",
+            "name": "DeFi Analyzer",
+            "soldCount": 10,
+            "rating": "★ 4.75",
+            "minPrice": "10.0",
+            "recommendService": "TVL Query (API service, 10.0 USDT)"
+        })
+    );
+}
+
+#[test]
+fn build_search_table_row_formats_perfect_feedbackrate_as_five_stars() {
+    let row = json!({
+        "agentId": "1129",
+        "name": "Perfect Agent",
+        "feedbackRate": 100,
+    });
+    let row = build_search_table_row(row.as_object().unwrap());
+    assert_eq!(row["rating"], json!("★ 5"));
+}
+
+#[test]
+fn build_search_table_row_null_rate_null_price_absent_services() {
+    // feedbackRate null → `—`; serviceMinPrice null → `—`; services key
+    // absent (NON_NULL) → `—` Top service.
+    let row = json!({
+        "agentId": "1129",
+        "name": "On-chain Insights",
+        "profileDescription": "Analytics",
+        "soldCount": null,
+        "feedbackRate": null,
+        "serviceMinPrice": null,
+    });
+    let row = build_search_table_row(row.as_object().unwrap());
+    assert_eq!(row["soldCount"], json!("—"));
+    assert_eq!(row["rating"], json!("—"));
+    assert_eq!(row["minPrice"], json!("—"));
+    assert_eq!(row["recommendService"], json!("—"));
+}
+
+#[test]
+fn build_search_table_row_feedbackrate_zero_is_no_rating_yet() {
+    // 0 means no feedback yet — never `★ 0`.
+    let row = json!({
+        "agentId": "1130",
+        "name": "NewAgent",
+        "feedbackRate": 0,
+        "serviceMinPrice": 1.0,
+        "services": [
+            { "serviceName": "Free Tier", "serviceType": "A2A" }
+        ],
+    });
+    let row = build_search_table_row(row.as_object().unwrap());
+    assert_eq!(row["rating"], json!("No rating yet"));
+    // A2A with no fee and no subscription → "free"; no token appended.
+    assert_eq!(
+        row["recommendService"],
+        json!("Free Tier (agent-to-agent, free)")
+    );
+}
+
+#[test]
+fn build_search_table_has_fixed_columns_and_walks_flat_list() {
+    let env = json!({
+        "total": 1,
+        "page": 2,
+        "pageSize": 5,
+        "list": [ { "agentId": "1", "name": "A", "feedbackRate": null } ]
+    });
+    let table = build_search_table(&env);
+    assert_eq!(table["total"], json!(1));
+    assert_eq!(table["page"], json!(2));
+    assert_eq!(table["pageSize"], json!(5));
+    assert_eq!(
+        table["table"]["columns"],
+        json!([
+            { "key": "agentId", "label": "Agent ID" },
+            { "key": "name", "label": "Name" },
+            { "key": "soldCount", "label": "Sold Count" },
+            { "key": "rating", "label": "Rating" },
+            { "key": "minPrice", "label": "Min price" },
+            { "key": "recommendService", "label": "Top service" }
+        ])
+    );
+    assert_eq!(table["table"]["rows"].as_array().unwrap().len(), 1);
+    assert_eq!(table["table"]["rows"][0]["agentId"], json!("#1"));
+    assert_eq!(table["table"]["rows"][0]["soldCount"], json!("—"));
+}
+
+// ─── §4 service-list cells ───────────────────────────────────────────
+
+#[test]
+fn build_service_cells_hides_endpoint_for_both_types_and_all_endpoint_states() {
+    for service_type in ["A2A", "A2MCP", "a2a", "a2mcp"] {
+        let base = json!({
+            "serviceName": "Service",
+            "serviceType": service_type,
+            "fee": "5",
+            "serviceDescription": "Description stays visible.",
+        });
+        let expected = build_service_cells(1, &base).unwrap();
+        assert_eq!(expected.len(), 11);
+        assert_eq!(
+            expected[6],
+            json!({"label": "Description", "value": "Description stays visible."})
+        );
+        assert!(!expected.iter().any(|c| c["label"] == "Endpoint"));
+        for key in ["endpoint", "Endpoint"] {
+            for endpoint in [
+                Value::Null,
+                json!(""),
+                json!("https://service.example/hidden"),
+            ] {
+                let mut svc = base.clone();
+                svc[key] = endpoint;
+                let original = svc.clone();
+                assert_eq!(build_service_cells(1, &svc).unwrap(), expected);
+                assert_eq!(svc, original);
+            }
+        }
+    }
+}
+
+#[test]
+fn add_service_list_cells_preserves_endpoint_and_other_source_fields() {
+    let services = json!([
+        {"serviceName": "A2A", "serviceType": "A2A", "endpoint": "https://a2a.example/hidden"},
+        {"serviceName": "A2MCP", "serviceType": "A2MCP", "Endpoint": "https://mcp.example/hidden", "inputSchema": {"type": "object"}},
+        {"serviceName": "No endpoint", "serviceType": "A2MCP"},
+    ]);
+    for key in ["list", "services"] {
+        let mut data = json!({"page": 2, "pageSize": 3, "total": 7});
+        data[key] = services.clone();
+        add_service_list_cells(&mut data);
+        assert_eq!(data["hasMore"], true);
+        for (i, original) in services.as_array().unwrap().iter().enumerate() {
+            let cells = data[key][i]
+                .as_object_mut()
+                .unwrap()
+                .remove("cells")
+                .unwrap();
+            assert!(!cells
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["label"] == "Endpoint"));
+            assert!(!cells.to_string().contains("/hidden"));
+            assert_eq!(&data[key][i], original);
+        }
+    }
+}
+
+#[test]
+fn build_service_cells_a2mcp_pascalcase() {
+    // service-list returns PascalCase keys per references/identity/profile.md §Services for an explicit Agent ID.
+    let svc = json!({
+        "ServiceName": "TVL Query",
+        "ServiceType": "A2MCP",
+        "Fee": "10",
+        "Endpoint": "https://api.example.com/mcp",
+        "ServiceDescription": "Query protocol TVL by chain.",
+    });
+    let cells = build_service_cells(1, &svc).expect("cells");
+    assert_eq!(
+        cell_pairs(&Value::Array(cells)),
+        vec![
+            ("#".to_string(), "1".to_string()),
+            ("Name".to_string(), "TVL Query".to_string()),
+            ("Type".to_string(), "A2MCP".to_string()),
+            ("Fee".to_string(), "10 USD".to_string()),
+            ("Subscription".to_string(), "—".to_string()),
+            ("Free trial".to_string(), "—".to_string()),
+            (
+                "Description".to_string(),
+                "Query protocol TVL by chain.".to_string()
+            ),
+            ("Request type".to_string(), "—".to_string()),
+            ("Method".to_string(), "—".to_string()),
+            ("Tool name".to_string(), "—".to_string()),
+            ("Request example".to_string(), "—".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn build_service_cells_a2mcp_hides_legacy_service_guide() {
+    let svc = json!({
+        "ServiceName": "TVL Query",
+        "ServiceType": "A2MCP",
+        "Fee": "10",
+        "Endpoint": "https://api.example.com/mcp",
+        "ServiceDescription": "Query protocol TVL by chain.",
+        "ServiceGuide": "Legacy value that must remain internal.",
+    });
+    let cells = build_service_cells(1, &svc).expect("cells");
+    let pairs = cell_pairs(&Value::Array(cells));
+    assert!(!pairs.iter().any(|(label, _)| label == "Service guide"));
+}
+
+#[test]
+fn build_service_cells_a2mcp_no_fee_renders_dash() {
+    // An A2MCP with no fee is missing REQUIRED data (create/update forbid an
+    // empty A2MCP fee); the read path degrades to `—`, NOT `free`.
+    let svc = json!({
+        "ServiceName": "TVL Query",
+        "ServiceType": "A2MCP",
+        "fee": "",
+        "Endpoint": "https://api.example.com/mcp",
+    });
+    let cells = build_service_cells(1, &svc).expect("cells");
+    let pairs = cell_pairs(&Value::Array(cells));
+    assert_eq!(pairs[3], ("Fee".to_string(), "—".to_string()));
+}
+
+#[test]
+fn build_service_cells_a2a_single_fee() {
+    let svc = json!({ "ServiceName": "Whale Alert", "ServiceType": "A2A", "Fee": "5" });
+    let cells = build_service_cells(3, &svc).expect("cells");
+    let pairs = cell_pairs(&Value::Array(cells));
+    // Single-priced A2A: Fee shows the number, Subscription is `—`.
+    assert_eq!(pairs[3], ("Fee".to_string(), "5 USD".to_string()));
+    assert_eq!(pairs[4], ("Subscription".to_string(), "—".to_string()));
+    // A single-fee A2A never has a free trial.
+    assert_eq!(pairs[5], ("Free trial".to_string(), "—".to_string()));
+    // A2A lists omit Endpoint entirely.
+    assert!(!pairs.iter().any(|(label, _)| label == "Endpoint"));
+}
+
+#[test]
+fn build_service_cells_a2a_subscription() {
+    // Subscription-priced A2A: empty single fee + a monthly tier. Fee → `—`,
+    // Subscription → `<n> USD / month`. Never "negotiable".
+    let svc = json!({
+        "ServiceName": "Loop Helper",
+        "ServiceType": "A2A",
+        "fee": "",
+        "subscription": [{ "interval": "month", "fee": "10" }],
+        "serviceGuide": "Choose a strategy and submit your budget.",
+    });
+    let cells = build_service_cells(2, &svc).expect("cells");
+    let pairs = cell_pairs(&Value::Array(cells));
+    assert_eq!(pairs[3], ("Fee".to_string(), "—".to_string()));
+    assert_eq!(
+        pairs[4],
+        ("Subscription".to_string(), "10 USD / month".to_string())
+    );
+    // No freeTrial in this fixture → `—`.
+    assert_eq!(pairs[5], ("Free trial".to_string(), "—".to_string()));
+    assert!(!pairs.iter().any(|(label, _)| label == "Endpoint"));
+    assert!(!pairs.iter().any(|(label, _)| label == "Service guide"));
+}
+
+#[test]
+fn build_service_cells_hides_service_guide_on_read() {
+    let guide = ["Follow this complete instruction exactly."; 4].join(" ");
+    assert!(guide.chars().count() > 80);
+    let svc = json!({
+        "ServiceName": "Loop Helper",
+        "ServiceType": "A2A",
+        "fee": "",
+        "subscription": [{ "interval": "month", "fee": "10" }],
+        "serviceGuide": guide,
+    });
+    let cells = build_service_cells(1, &svc).expect("cells");
+    let pairs = cell_pairs(&Value::Array(cells));
+    assert!(!pairs.iter().any(|(label, _)| label == "Service guide"));
+}
+
+#[test]
+fn build_service_cells_a2a_subscription_with_free_trial() {
+    // Subscription-priced A2A carrying a 3-day (72h) free trial → the Free trial
+    // column renders "3 days".
+    let svc = json!({
+        "ServiceName": "Loop Helper",
+        "ServiceType": "A2A",
+        "fee": "",
+        "subscription": [{ "interval": "month", "fee": "10" }],
+        "freeTrial": "72",
+    });
+    let cells = build_service_cells(1, &svc).expect("cells");
+    let pairs = cell_pairs(&Value::Array(cells));
+    assert_eq!(
+        pairs[4],
+        ("Subscription".to_string(), "10 USD / month".to_string())
+    );
+    assert_eq!(pairs[5], ("Free trial".to_string(), "3 days".to_string()));
+}
+
+#[test]
+fn format_free_trial_hours_to_label() {
+    // A subscription must be present for a trial to render at all (see the
+    // subscription-only gate); with one, the hours→label conversion applies.
+    let ft = |h: &str| {
+        let m = json!({
+            "subscription": [{ "interval": "month", "fee": "10" }],
+            "freeTrial": h,
+        });
+        format_free_trial(m.as_object().unwrap())
+    };
+    assert_eq!(ft("72"), Some("3 days".to_string())); // whole days
+    assert_eq!(ft("24"), Some("1 day".to_string())); // singular day
+    assert_eq!(ft("5"), Some("5 hours".to_string())); // sub-day → hours
+    assert_eq!(ft("1"), Some("1 hour".to_string())); // singular hour
+    assert_eq!(ft("0"), None); // not a trial
+    assert_eq!(ft(""), None); // blank
+    assert_eq!(ft("24.5"), None); // non-integer
+}
+
+#[test]
+fn format_free_trial_without_subscription_is_none() {
+    // A free trial is a subscription-only concept: a stray `freeTrial` on a
+    // service that is NOT subscription-priced must not render a trial, mirroring
+    // the write-side contract (normalize_service / validate P7).
+    let no_sub = json!({ "freeTrial": "72" });
+    assert_eq!(format_free_trial(no_sub.as_object().unwrap()), None);
+    // An empty subscription array is equivalent to no subscription.
+    let empty_sub = json!({ "freeTrial": "72", "subscription": [] });
+    assert_eq!(format_free_trial(empty_sub.as_object().unwrap()), None);
+}
+
+#[test]
+fn build_service_cells_orphan_free_trial_without_subscription_renders_dash() {
+    // Single-fee A2A carrying a stray `freeTrial` (contract-violating write-side).
+    // On read the Free trial column must stay `—` — no orphan trial.
+    let svc = json!({
+        "ServiceName": "Whale Alert",
+        "ServiceType": "A2A",
+        "Fee": "5",
+        "freeTrial": "72",
+    });
+    let cells = build_service_cells(3, &svc).expect("cells");
+    let pairs = cell_pairs(&Value::Array(cells));
+    assert_eq!(pairs[3], ("Fee".to_string(), "5 USD".to_string()));
+    assert_eq!(pairs[4], ("Subscription".to_string(), "—".to_string()));
+    assert_eq!(pairs[5], ("Free trial".to_string(), "—".to_string()));
+}
+
+#[test]
+fn format_service_value_orphan_free_trial_without_subscription_omitted() {
+    // Detail-card value: a single-fee A2A with a stray `freeTrial` shows the fee
+    // alone — the trial segment is not appended.
+    let svc = json!({
+        "serviceName": "Whale Alert",
+        "serviceType": "A2A",
+        "fee": "5",
+        "freeTrial": "72",
+    });
+    let value = format_service_value(&svc).unwrap();
+    assert_eq!(value, "Whale Alert — agent-to-agent, 5 USD");
+}
+
+#[test]
+fn format_service_value_a2a_subscription_with_free_trial() {
+    // Detail-card value string appends the trial after the subscription price.
+    let svc = json!({
+        "serviceName": "Loop Helper",
+        "serviceType": "A2A",
+        "fee": "",
+        "subscription": [{ "interval": "month", "fee": "10" }],
+        "freeTrial": "72",
+    });
+    let value = format_service_value(&svc).unwrap();
+    assert_eq!(
+        value,
+        "Loop Helper — agent-to-agent, 10 USD / month, 3 days free trial"
+    );
+}
+
+#[test]
+fn format_service_value_a2mcp_no_fee_renders_dash() {
+    // Detail card: an A2MCP with no fee degrades to `—`, NOT `free`.
+    let svc = json!({
+        "serviceName": "TVL Query",
+        "serviceType": "A2MCP",
+        "fee": "",
+        "endpoint": "https://api.example.com/mcp",
+    });
+    let value = format_service_value(&svc).unwrap();
+    assert_eq!(
+        value,
+        "TVL Query — API service, —, https://api.example.com/mcp"
+    );
+}
+
+#[test]
+fn build_service_cells_returns_none_without_name() {
+    let svc = json!({ "ServiceType": "A2MCP", "Fee": "1" });
+    assert!(build_service_cells(1, &svc).is_none());
+}
+
+#[test]
+fn build_service_cells_a2mcp_new_fields_all_present() {
+    // Spec §2.3: 4 new A2MCP display cells follow `Description`, in order.
+    let svc = json!({
+        "ServiceName": "Quote Service",
+        "ServiceType": "A2MCP",
+        "Fee": "10",
+        "Endpoint": "https://api.example.com/mcp",
+        "ServiceDescription": "Quote a swap.",
+        "reqType": "MCP",
+        "method": "POST",
+        "toolName": "quote",
+        "inputSchema": { "type": "object", "properties": { "chain": { "type": "string" } } },
+        "reqExample": "curl -X POST https://api.example.com/mcp -d '{\"chain\":\"eth\",\"token\":\"usdc\",\"amount\":\"100\",\"slippage\":\"0.5\"}' -H 'content-type: application/json'",
+    });
+    let cells = build_service_cells(1, &svc).expect("cells");
+    let pairs = cell_pairs(&Value::Array(cells));
+    // Remaining 7 core cells retain their order; request cells begin at index 7.
+    assert_eq!(pairs[7], ("Request type".to_string(), "MCP".to_string()));
+    assert_eq!(pairs[8], ("Method".to_string(), "POST".to_string()));
+    assert_eq!(pairs[9], ("Tool name".to_string(), "quote".to_string()));
+    assert!(!pairs.iter().any(|(label, _)| label == "Input schema"));
+    // Request example is truncate_name(s, 80) → ≤ 81 chars (80 + ellipsis).
+    let (req_example_label, req_example_value) = &pairs[10];
+    assert_eq!(req_example_label, "Request example");
+    assert!(req_example_value.chars().count() <= 81);
+}
+
+#[test]
+fn build_service_cells_a2mcp_new_fields_http_empty_and_null() {
+    // reqType HTTP / method GET; empty toolName → `—`.
+    let svc = json!({
+        "ServiceName": "Quote Service",
+        "ServiceType": "A2MCP",
+        "Fee": "10",
+        "Endpoint": "https://api.example.com/mcp",
+        "ServiceDescription": "Quote a swap.",
+        "reqType": "HTTP",
+        "method": "GET",
+        "toolName": "",
+        "inputSchema": null,
+    });
+    let cells = build_service_cells(1, &svc).expect("cells");
+    let pairs = cell_pairs(&Value::Array(cells));
+    assert_eq!(pairs[7], ("Request type".to_string(), "HTTP".to_string()));
+    assert_eq!(pairs[8], ("Method".to_string(), "GET".to_string()));
+    assert_eq!(pairs[9], ("Tool name".to_string(), "—".to_string()));
+    assert_eq!(pairs[10], ("Request example".to_string(), "—".to_string()));
+}
+
+#[test]
+fn build_service_cells_new_fields_missing_render_dash() {
+    // Pre-existing service (TBC[2]): none of the 4 keys present → all `—`,
+    // and the remaining 7 core cells are unchanged.
+    let svc = json!({
+        "ServiceName": "TVL Query",
+        "ServiceType": "A2MCP",
+        "Fee": "10",
+        "Endpoint": "https://api.example.com/mcp",
+        "ServiceDescription": "Query protocol TVL by chain.",
+    });
+    let cells = build_service_cells(1, &svc).expect("cells");
+    let pairs = cell_pairs(&Value::Array(cells));
+    // Remaining 7 core cells retain their values.
+    assert_eq!(
+        pairs[..7],
+        [
+            ("#".to_string(), "1".to_string()),
+            ("Name".to_string(), "TVL Query".to_string()),
+            ("Type".to_string(), "A2MCP".to_string()),
+            ("Fee".to_string(), "10 USD".to_string()),
+            ("Subscription".to_string(), "—".to_string()),
+            ("Free trial".to_string(), "—".to_string()),
+            (
+                "Description".to_string(),
+                "Query protocol TVL by chain.".to_string()
+            ),
+        ]
+    );
+    // 4 new cells all `—`, in documented order.
+    assert_eq!(pairs[7], ("Request type".to_string(), "—".to_string()));
+    assert_eq!(pairs[8], ("Method".to_string(), "—".to_string()));
+    assert_eq!(pairs[9], ("Tool name".to_string(), "—".to_string()));
+    assert_eq!(pairs[10], ("Request example".to_string(), "—".to_string()));
+    assert_eq!(pairs.len(), 11);
+}
+
+#[test]
+fn add_service_list_cells_indexes_one_based_and_skips_nameless() {
+    let mut resp = json!({
+        "agentId": 42,
+        "services": [
+            { "ServiceName": "First", "ServiceType": "A2A" },
+            { "ServiceType": "A2MCP" }, // nameless → no cells, no index burn
+            { "ServiceName": "Third", "ServiceType": "A2MCP", "Fee": "2", "Endpoint": "https://z" },
+        ],
+    });
+    add_service_list_cells(&mut resp);
+    let svcs = resp["services"].as_array().unwrap();
+    assert_eq!(svcs[0]["cells"][0]["value"], json!("1"));
+    assert!(svcs[1].get("cells").is_none());
+    // Third keeps index 2 (nameless one did not consume an index).
+    assert_eq!(svcs[2]["cells"][0]["value"], json!("2"));
+}
+
+// ─── §5 feedback-list cells ──────────────────────────────────────────
+
+#[test]
+fn build_feedback_cells_full_entry() {
+    // score is already a 0.00–5.00 float (convert_feedback_list_scores ran).
+    let item = json!({
+        "creatorId": 88,
+        "score": 5.0,
+        "description": "Timely delivery, accurate data",
+        "taskId": "0xabc03e8",
+        "createdAt": "2026-04-20",
+    });
+    let cells = build_feedback_cells(item.as_object().unwrap());
+    assert_eq!(
+        cell_pairs(&Value::Array(cells)),
+        vec![
+            ("Score".to_string(), "5".to_string()),
+            ("Reviewer".to_string(), "#88".to_string()),
+            ("Date".to_string(), "2026-04-20".to_string()),
+            (
+                "Comment".to_string(),
+                "Timely delivery, accurate data".to_string()
+            ),
+        ]
+    );
+}
+
+#[test]
+fn build_feedback_cells_no_comment() {
+    let item = json!({
+        "creatorId": 77,
+        "score": 4.45,
+        "createdAt": "2026-04-15",
+    });
+    let cells = build_feedback_cells(item.as_object().unwrap());
+    let pairs = cell_pairs(&Value::Array(cells));
+    assert_eq!(pairs[0], ("Score".to_string(), "4.45".to_string()));
+    // empty/missing description → `(no comment)`.
+    assert_eq!(
+        pairs[3],
+        ("Comment".to_string(), "(no comment)".to_string())
+    );
+}
+
+#[test]
+fn build_feedback_cells_accepts_live_agent_name_and_content() {
+    let time = 1_751_587_200_000_i64;
+    let expected_date = chrono::Local
+        .timestamp_millis_opt(time)
+        .single()
+        .unwrap()
+        .format("%Y-%m-%d")
+        .to_string();
+    let item = json!({
+        "agentName": "ScoutGate Buyer",
+        "content": "x402 completion confirmed; no replay issues",
+        "valueString": "100",
+        "time": time,
+    });
+    let cells = build_feedback_cells(item.as_object().unwrap());
+    let pairs = cell_pairs(&Value::Array(cells));
+    assert_eq!(pairs[0], ("Score".to_string(), "5".to_string()));
+    assert_eq!(
+        pairs[1],
+        ("Reviewer".to_string(), "ScoutGate Buyer".to_string())
+    );
+    assert_eq!(pairs[2], ("Date".to_string(), expected_date));
+    assert_eq!(
+        pairs[3],
+        (
+            "Comment".to_string(),
+            "x402 completion confirmed; no replay issues".to_string()
+        )
+    );
+}
+
+#[test]
+fn build_feedback_cells_accepts_numeric_live_value() {
+    let item = json!({ "value": 70 });
+    let cells = build_feedback_cells(item.as_object().unwrap());
+    assert_eq!(cells[0], json!({ "label": "Score", "value": "3.5" }));
+}
+
+#[test]
+fn build_feedback_cells_accepts_suffixed_live_value_string() {
+    let item = json!({ "valueString": "90/100" });
+    let cells = build_feedback_cells(item.as_object().unwrap());
+    assert_eq!(cells[0], json!({ "label": "Score", "value": "4.5" }));
+}
+
+#[test]
+fn add_feedback_list_cells_walks_items() {
+    let mut resp = json!({
+        "agentId": 42,
+        "average": 4.45,
+        "items": [
+            { "creatorId": 88, "score": 4.5, "description": "ok", "createdAt": "2026-04-20" },
+        ],
+    });
+    add_feedback_list_cells(&mut resp);
+    assert_eq!(resp["items"][0]["cells"].as_array().unwrap().len(), 4);
+    assert_eq!(resp["items"][0]["cells"][0]["value"], json!("4.5"));
+}
+
+#[test]
+fn enrich_agent_get_rows_walks_double_layer_envelope() {
+    let mut env = json!({
+        "total": 1,
+        "list": [
+            {
+                "ownerAddress": "0xabc",
+                "agentList": [
+                    { "agentId": 1, "role": 1, "status": 2,
+                      "approvalDisplayStatus": 5 },
+                    { "agentId": 2, "role": 3, "status": 3,
+                      "reputation": { "score": 100, "count": 4 } },
+                ],
+            },
+        ],
+    });
+    enrich_agent_get_rows(&mut env);
+    let rows = &env["list"][0]["agentList"];
+    assert_eq!(rows[0]["roleLabel"], json!("User"));
+    assert_eq!(rows[0]["statusLabel"], json!("not listed"));
+    assert_eq!(rows[0]["approvalLabel"], json!("Listing rejected"));
+    assert!(rows[0].get("ratingStars").is_none());
+    assert_eq!(rows[1]["roleLabel"], json!("Evaluator"));
+    assert_eq!(rows[1]["statusLabel"], json!("unavailable"));
+    assert_eq!(rows[1]["ratingStars"], json!("5"));
+}
+
+// ─── REAL backend shapes (live /agent-list & /service-list verified) ──
+//
+// The live `/agent-list` endpoint returns a DOUBLE-layer `list[*].agentList[*]`
+// envelope, grouped by owning account, with INTEGER role and
+// `profileDescription` / `profilePicture` / `agentWalletAddress` field names.
+// These tests pin the tolerant handling against the real shape and its
+// defensive single-layer fallback (not observed live).
+
+#[test]
+fn enrich_agent_row_accepts_integer_role() {
+    // role=2 (asp) as an integer, the live backend form.
+    let mut row = json!({ "agentId": 392, "role": 2, "status": 1, "approvalDisplayStatus": 1 });
+    enrich_agent_row(&mut row);
+    assert_eq!(row["roleLabel"], json!("ASP"));
+    assert_eq!(row["statusLabel"], json!("active"));
+    assert_eq!(row["approvalLabel"], json!("Review not submitted"));
+    // role untouched (still the integer).
+    assert_eq!(row["role"], json!(2));
+}
+
+#[test]
+fn enrich_agent_get_rows_walks_single_layer_envelope() {
+    // Defensive fallback shape (not observed on the live endpoint, which
+    // always groups via `agentList`): data.list[*] are flat agent rows, NO
+    // `agentList` sub-layer.
+    let mut env = json!({
+        "total": 1,
+        "list": [
+            { "agentId": 392, "name": "Agent 392", "role": 2, "status": 1,
+              "approvalDisplayStatus": 1 },
+        ],
+    });
+    enrich_agent_get_rows(&mut env);
+    let row = &env["list"][0];
+    assert_eq!(row["roleLabel"], json!("ASP"));
+    assert_eq!(row["statusLabel"], json!("active"));
+    assert_eq!(row["approvalLabel"], json!("Review not submitted"));
+    // `card` was assembled too.
+    assert!(row["card"].is_array());
+}
+
+#[test]
+fn build_agent_card_reads_live_backend_field_names() {
+    // profileDescription / profilePicture / agentWalletAddress + int role.
+    let mut row = json!({
+        "agentId": 392,
+        "name": "Agent 392",
+        "role": 2,
+        "status": 1,
+        "approvalDisplayStatus": 1,
+        "agentWalletAddress": "0x30c140554508a515a8da0fe1e2377c4d8eff59d7",
+        "profileDescription": "On-chain data analysis.",
+        "profilePicture": "https://cdn.example.com/x.png",
+    });
+    enrich_agent_row(&mut row);
+    let card = row["card"].as_array().expect("card present");
+    let pairs: Vec<(&str, &str)> = card
+        .iter()
+        .map(|r| (r["label"].as_str().unwrap(), r["value"].as_str().unwrap()))
+        .collect();
+    assert!(pairs.contains(&("Role", "ASP")));
+    assert!(pairs.contains(&("Status", "active")));
+    assert!(pairs.contains(&("Address", "0x30c1…59d7")));
+    assert!(pairs.contains(&("Description", "On-chain data analysis.")));
+    assert!(pairs.contains(&("Profile photo", "https://cdn.example.com/x.png")));
+}
+
+#[test]
+fn add_service_list_cells_preserves_service_guide_in_array_wrapper_shape() {
+    // The live backend wraps `data` in a one-element array of
+    // `{ agentInfo, list:[service…] }`; serviceGuide must pass through
+    // untouched after cells are stamped.
+    let mut data = json!([
+        {
+            "agentInfo": { "agentId": "1921", "name": "Goudan Monitor" },
+            "list": [
+                { "serviceId": "4a7f30a7-46fb-4695-80a1-25d160da33b3",
+                  "serviceName": "Bot Monitor", "serviceType": "A2MCP",
+                  "fee": "0.005", "endpoint": "https://x",
+                  "serviceGuide": "## Summary\nSubscribe checklist body" },
+            ],
+            "page": 1, "pageSize": 9, "total": 1,
+        }
+    ]);
+    add_service_list_cells(&mut data);
+    let svc = &data[0]["list"][0];
+    assert_eq!(
+        svc["serviceGuide"],
+        json!("## Summary\nSubscribe checklist body")
+    );
+    assert!(svc["serviceGuideHash"]
+        .as_str()
+        .is_some_and(|value| value.starts_with("sha256:") && value.len() == 71));
+    assert!(svc.get("cells").is_some());
+}
+
+#[test]
+fn add_service_list_cells_preserves_service_guide_in_bare_object_shape() {
+    // Backend doc examples show a bare object with no array envelope; both
+    // shapes must pass the guide through, and an absent guide stays absent
+    // (no key invented).
+    let mut data = json!({
+        "list": [
+            { "serviceName": "Guided", "serviceType": "A2A",
+              "serviceGuide": "step 1; step 2" },
+            { "serviceName": "Unguided", "serviceType": "A2MCP" },
+        ],
+        "page": 1, "pageSize": 9, "total": 2,
+    });
+    add_service_list_cells(&mut data);
+    assert_eq!(data["list"][0]["serviceGuide"], json!("step 1; step 2"));
+    assert!(data["list"][0]["serviceGuideHash"]
+        .as_str()
+        .is_some_and(|value| value.starts_with("sha256:") && value.len() == 71));
+    assert!(data["list"][1].get("serviceGuide").is_none());
+    assert!(data["list"][1].get("serviceGuideHash").is_none());
+    assert!(data["list"][0].get("cells").is_some());
+}
+
+#[test]
+fn add_service_list_cells_walks_array_of_wrappers_with_list_key() {
+    // Live `/service-list` shape: data is an ARRAY of
+    // `{ agentInfo, list:[service…] }`; services under `list`.
+    let mut data = json!([
+        {
+            "agentInfo": { "agentId": "392", "name": "Agent 392" },
+            "list": [
+                { "serviceName": "Mock Service 1", "serviceType": "A2MCP",
+                  "fee": "0.3", "endpoint": "https://x", "serviceDescription": "desc" },
+                { "serviceName": "Mock Service 2", "serviceType": "A2A" },
+            ],
+            "page": 1, "pageSize": 20, "total": 2,
+        }
+    ]);
+    add_service_list_cells(&mut data);
+    let svcs = &data[0]["list"];
+    assert_eq!(svcs[0]["cells"][0], json!({ "label": "#", "value": "1" }));
+    assert_eq!(
+        svcs[0]["cells"][1],
+        json!({ "label": "Name", "value": "Mock Service 1" })
+    );
+    assert_eq!(
+        svcs[0]["cells"][2],
+        json!({ "label": "Type", "value": "A2MCP" })
+    );
+    assert_eq!(svcs[1]["cells"][0], json!({ "label": "#", "value": "2" }));
+    assert_eq!(
+        svcs[1]["cells"][2],
+        json!({ "label": "Type", "value": "A2A" })
+    );
+    assert_eq!(data[0]["page"], json!(1));
+    assert_eq!(data[0]["pageSize"], json!(20));
+    assert_eq!(data[0]["total"], json!(2));
+    assert_eq!(data[0]["hasMore"], json!(false));
+}
+
+#[test]
+fn add_service_list_cells_preserves_empty_page_metadata() {
+    for total in [0, 12] {
+        let mut data = json!([{
+            "agentInfo": { "agentId": "392", "name": "Agent 392" },
+            "list": [],
+            "page": 3,
+            "pageSize": 5,
+            "total": total,
+        }]);
+
+        add_service_list_cells(&mut data);
+
+        assert_eq!(data[0]["list"], json!([]));
+        assert_eq!(data[0]["page"], json!(3));
+        assert_eq!(data[0]["pageSize"], json!(5));
+        assert_eq!(data[0]["total"], json!(total));
+        assert_eq!(data[0]["hasMore"], json!(false));
+    }
+}
+
+#[test]
+fn add_service_list_cells_derives_has_more_from_pagination() {
+    for (page, page_size, total, expected) in [
+        (1, 3, 7, true),
+        (2, 3, 7, true),
+        (3, 3, 7, false),
+        (1, 3, 3, false),
+        (1, 3, 0, false),
+    ] {
+        let mut data = json!([{
+            "list": [],
+            "page": page,
+            "pageSize": page_size,
+            "total": total,
+            "hasMore": !expected,
+        }]);
+
+        add_service_list_cells(&mut data);
+
+        assert_eq!(data[0]["hasMore"], json!(expected));
+    }
+}
+
+#[test]
+fn add_service_list_cells_derives_has_more_from_string_metadata() {
+    let mut data = json!([{
+        "list": [],
+        "page": "2",
+        "pageSize": "3",
+        "total": "7",
+    }]);
+
+    add_service_list_cells(&mut data);
+
+    assert_eq!(data[0]["hasMore"], json!(true));
+}
+
+#[test]
+fn add_feedback_list_cells_walks_list_key() {
+    // Live `/feedback-list` shape: entries under `list` (not `items`).
+    let mut data = json!({
+        "list": [
+            { "score": 5.0, "creatorId": 88, "taskId": "0xabc", "createdAt": "2026-04-20",
+              "description": "Great" },
+        ],
+        "total": 1,
+    });
+    add_feedback_list_cells(&mut data);
+    let cells = &data["list"][0]["cells"];
+    assert_eq!(cells[0], json!({ "label": "Score", "value": "5" }));
+    assert_eq!(cells[1], json!({ "label": "Reviewer", "value": "#88" }));
+    assert_eq!(cells[3], json!({ "label": "Comment", "value": "Great" }));
+}
+
+#[test]
+fn add_feedback_list_cells_derives_has_more_from_pagination() {
+    for (page, page_size, total, expected) in [
+        (1, 3, 7, true),
+        (2, 3, 7, true),
+        (3, 3, 7, false),
+        (1, 3, 3, false),
+        (1, 3, 0, false),
+    ] {
+        let mut data = json!({
+            "list": [],
+            "page": page,
+            "pageSize": page_size,
+            "total": total,
+            "hasMore": !expected,
+        });
+
+        add_feedback_list_cells(&mut data);
+
+        assert_eq!(data["hasMore"], json!(expected));
+    }
+}
+
+#[test]
+fn add_feedback_list_cells_derives_has_more_from_string_metadata() {
+    let mut data = json!({
+        "items": [],
+        "page": "2",
+        "pageSize": "3",
+        "total": "7",
+    });
+
+    add_feedback_list_cells(&mut data);
+
+    assert_eq!(data["hasMore"], json!(true));
+}
+
+// ─── build_precheck (registration §2 uniqueness) ─────────────────────
+
+#[test]
+fn precheck_user_exists_blocks_create() {
+    let data = json!({
+        "list": [
+            { "agentId": 10, "name": "My Buyer", "role": 1, "ownerAddress": "0xSIGNER" },
+            { "agentId": 11, "name": "My ASP",   "role": 2, "ownerAddress": "0xSIGNER" },
+        ],
+    });
+    let r = build_precheck(&data, "0xsigner", "user");
+    assert_eq!(r["canCreate"], json!(false));
+    assert_eq!(r["uniqueness"], json!("single"));
+    assert_eq!(r["existingSameRole"][0]["agentId"], json!("10"));
+    assert_eq!(r["existingSameRole"][0]["roleLabel"], json!("User"));
+    assert!(r.get("knownAgentIds").is_none());
+}
+
+#[test]
+fn precheck_user_absent_allows_create() {
+    let data = json!({ "list": [
+        { "agentId": 11, "name": "My ASP", "role": 2, "ownerAddress": "0xSIGNER" },
+    ]});
+    let r = build_precheck(&data, "0xSIGNER", "user");
+    assert_eq!(r["canCreate"], json!(true));
+    assert_eq!(r["existingSameRole"].as_array().unwrap().len(), 0);
+    assert!(r.get("knownAgentIds").is_none());
+}
+
+#[test]
+fn precheck_asp_always_creatable_and_counts() {
+    let data = json!({ "list": [
+        { "agentId": 11, "name": "ASP One", "role": 2, "ownerAddress": "0xSIGNER" },
+        { "agentId": 12, "name": "ASP Two", "role": 2, "ownerAddress": "0xSIGNER" },
+        { "agentId": 10, "name": "Buyer",   "role": 1, "ownerAddress": "0xSIGNER" },
+    ]});
+    let r = build_precheck(&data, "0xSIGNER", "asp");
+    assert_eq!(r["canCreate"], json!(true));
+    assert_eq!(r["uniqueness"], json!("multiple"));
+    assert_eq!(r["aspCount"], json!(2));
+    assert_eq!(r["existingSameRole"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn precheck_scopes_to_signing_wallet_only() {
+    let data = json!({ "list": [
+        { "agentId": 50, "name": "Other Eval", "role": 3, "ownerAddress": "0xOTHER" },
+    ]});
+    let r = build_precheck(&data, "0xSIGNER", "evaluator");
+    assert_eq!(r["canCreate"], json!(true));
+    assert!(r.get("knownAgentIds").is_none());
+}
+
+#[test]
+fn precheck_double_layer_and_missing_owner() {
+    let data = json!({ "list": [
+        { "ownerAddress": "0xSIGNER", "accountName": "main", "agentList": [
+            { "agentId": 7, "name": "Eval", "role": 3 },
+        ] },
+    ]});
+    let r = build_precheck(&data, "0xSIGNER", "evaluator");
+    assert_eq!(r["canCreate"], json!(false));
+    assert_eq!(r["existingSameRole"][0]["agentId"], json!("7"));
+}
+
+#[test]
+fn collect_owned_counts_for_has_agents_gate() {
+    let data = json!({ "list": [
+        { "agentId": 1, "name": "A", "role": 1, "ownerAddress": "0xSIGNER" },
+    ]});
+    assert_eq!(collect_owned_agents(&data, "0xSIGNER").len(), 1);
+    assert_eq!(collect_owned_agents(&data, "0xOTHER").len(), 0);
+}
+
+// ─── parse_agent_unsigned ─────────────────────────────────────────────
+
+#[test]
+fn parse_agent_unsigned_empty_array_is_err() {
+    assert!(parse_agent_unsigned(json!([])).is_err());
+}
+
+#[test]
+fn parse_agent_unsigned_non_array_is_err() {
+    // Backend wraps data in an array; a bare object is unexpected.
+    assert!(parse_agent_unsigned(json!({ "unsignedTxHash": "0xabc" })).is_err());
+    assert!(parse_agent_unsigned(json!(null)).is_err());
+}
+
+#[test]
+fn parse_agent_unsigned_empty_object_returns_ok_with_defaults() {
+    // All fields have `#[serde(default)]` → an empty object deserializes fine.
+    let result = parse_agent_unsigned(json!([{}])).expect("empty element should deserialize");
+    assert_eq!(result.unsigned_tx_hash, "");
+    assert_eq!(result.sign_type, "");
+}
+
+#[test]
+fn parse_agent_unsigned_extracts_first_element() {
+    let result = parse_agent_unsigned(json!([
+        { "unsignedTxHash": "0xfirst" },
+        { "unsignedTxHash": "0xsecond" },
+    ]))
+    .expect("first element should parse");
+    assert_eq!(result.unsigned_tx_hash, "0xfirst");
+}
+
+#[test]
+fn parse_agent_unsigned_reads_sign_type_and_extra_data() {
+    let result = parse_agent_unsigned(json!([{
+        "unsignedTxHash": "0xabc",
+        "signType": "ed25519",
+        "extraData": { "communicationAddress": "0xaddr" },
+    }]))
+    .expect("should parse");
+    assert_eq!(result.unsigned_tx_hash, "0xabc");
+    assert_eq!(result.sign_type, "ed25519");
+    assert_eq!(result.extra_data["communicationAddress"], json!("0xaddr"));
+}
+
+// ─── reconstruct_get_url_for_log ──────────────────────────────────────
+
+#[test]
+fn reconstruct_get_url_no_query_omits_question_mark() {
+    let ctx = ctx_no_override();
+    let url = reconstruct_get_url_for_log(&ctx, "/api/v1/agents", &[]);
+    assert_eq!(url, format!("{BASE_URL}/api/v1/agents"));
+    assert!(!url.contains('?'));
+}
+
+#[test]
+fn reconstruct_get_url_non_empty_query_appends_pairs() {
+    let ctx = ctx_no_override();
+    let url = reconstruct_get_url_for_log(
+        &ctx,
+        "/api/v1/agents",
+        &[("chainIndex", "196"), ("page", "1")],
+    );
+    assert!(url.starts_with(&format!("{BASE_URL}/api/v1/agents?")));
+    assert!(url.contains("chainIndex=196"));
+    assert!(url.contains("page=1"));
+}
+
+#[test]
+fn reconstruct_get_url_filters_empty_values() {
+    let ctx = ctx_no_override();
+    // Empty-string values are skipped; only non-empty pairs appear.
+    let url = reconstruct_get_url_for_log(
+        &ctx,
+        "/api/v1/agents",
+        &[("chainIndex", "196"), ("agentIdList", ""), ("page", "2")],
+    );
+    assert!(url.contains("chainIndex=196"));
+    assert!(url.contains("page=2"));
+    assert!(!url.contains("agentIdList"));
+}
+
+#[test]
+fn reconstruct_get_url_all_empty_values_omits_question_mark() {
+    let ctx = ctx_no_override();
+    let url =
+        reconstruct_get_url_for_log(&ctx, "/api/v1/agents", &[("chainIndex", ""), ("page", "")]);
+    assert!(!url.contains('?'));
+}
+
+#[test]
+fn reconstruct_get_url_uses_compiled_base_url() {
+    let ctx = ctx_no_override();
+    let url = reconstruct_get_url_for_log(&ctx, "/api/v1/test", &[("k", "v")]);
+    assert!(url.starts_with(&format!("{BASE_URL}/api/v1/test?")));
+    assert!(url.contains("k=v"));
+}
+
+// ─── normalize_role ───────────────────────────────────────────────────
+
+#[test]
+fn normalize_role_canonical_strings() {
+    assert_eq!(normalize_role("user").unwrap(), "user");
+    assert_eq!(normalize_role("asp").unwrap(),  "asp");
+    assert_eq!(normalize_role("evaluator").unwrap(), "evaluator");
+}
+
+#[test]
+fn normalize_role_is_case_insensitive_and_trims_whitespace() {
+    assert_eq!(normalize_role("ASP").unwrap(),             "asp");
+    assert_eq!(normalize_role("User").unwrap(),            "user");
+    assert_eq!(normalize_role("  Evaluator  ").unwrap(),   "evaluator");
+}
+
+#[test]
+fn normalize_role_rejects_legacy_and_numeric_aliases() {
+    // STRICT CLI input: legacy/foreign aliases + numeric codes are NOT accepted.
+    // The skill maps any synonym the user typed to user/asp/evaluator first.
+    for bad in ["buyer", "requestor", "requester", "provider", "1", "2", "3"] {
+        assert!(
+            normalize_role(bad).is_err(),
+            "{bad} must be rejected by strict normalize_role"
+        );
+    }
+}
+
+#[test]
+fn normalize_role_unknown_input_is_err() {
+    assert!(normalize_role("seller").is_err());
+    assert!(normalize_role("admin").is_err());
+    assert!(normalize_role("4").is_err());
+    assert!(normalize_role("").is_err());
+}
+
+// ─── role_token_from_value (backend-response role parser) ──────────────
+// Reads ONLY the backend integer code 1/2/3 (the live agent-list/batch-list
+// form). Any non-integer form (string token/legacy enum/alias, or unknown
+// code) → None.
+
+#[test]
+fn role_token_from_value_reads_integer_code() {
+    // integer code (the live backend form)
+    assert_eq!(role_token_from_value(&json!(1)), Some("user"));
+    assert_eq!(role_token_from_value(&json!(2)), Some("asp"));
+    assert_eq!(role_token_from_value(&json!(3)), Some("evaluator"));
+    // strings (canonical, legacy enum, numeric-string, alias) are NOT backend
+    // forms → None
+    for s in [
+        "user",
+        "asp",
+        "evaluator",
+        "requester",
+        "provider",
+        "buyer",
+        "2",
+    ] {
+        assert_eq!(
+            role_token_from_value(&json!(s)),
+            None,
+            "string {s:?} must not parse"
+        );
+    }
+    // unknown code / null → None
+    assert_eq!(role_token_from_value(&json!(9)), None);
+    assert_eq!(role_token_from_value(&json!(null)), None);
+}
+
+// ─── role_to_wire (create cardJson.role / erc8004Msg.role) ─────────────
+// The CLI-side rename is internal + display only — the backend-accepted
+// create enum is UNCHANGED, so the canonical token maps back to the original
+// role string on the wire.
+
+#[test]
+fn role_to_wire_maps_back_to_original_backend_strings() {
+    assert_eq!(role_to_wire("user"), "requester");
+    assert_eq!(role_to_wire("asp"), "provider");
+    assert_eq!(role_to_wire("evaluator"), "evaluator");
+}
+
+#[test]
+fn normalize_role_code_maps_canonical_to_backend_codes() {
+    // The list/filter enum (1/2/3) is unchanged by the rename; the canonical
+    // tokens map to the same codes the backend has always used.
+    assert_eq!(normalize_role_code("user").unwrap(), "1");
+    assert_eq!(normalize_role_code("asp").unwrap(), "2");
+    assert_eq!(normalize_role_code("evaluator").unwrap(), "3");
+    // STRICT input: legacy aliases are now rejected (skill passes canonical).
+    assert!(normalize_role_code("requester").is_err());
+    assert!(normalize_role_code("provider").is_err());
+}
+
+// ─── require_non_empty ────────────────────────────────────────────────
+
+#[test]
+fn require_non_empty_returns_trimmed_value() {
+    assert_eq!(require_non_empty(Some("hello"),   "--x").unwrap(), "hello");
+    assert_eq!(require_non_empty(Some("  hi  "),  "--x").unwrap(), "hi");
+}
+
+#[test]
+fn require_non_empty_rejects_blank_and_none() {
+    assert!(require_non_empty(Some(""),    "--x").is_err());
+    assert!(require_non_empty(Some("   "), "--x").is_err());
+    assert!(require_non_empty(None,        "--x").is_err());
+}
+
+// ─── trim_or_empty ────────────────────────────────────────────────────
+
+#[test]
+fn trim_or_empty_trims_and_handles_none() {
+    assert_eq!(trim_or_empty(Some("hello")),   "hello");
+    assert_eq!(trim_or_empty(Some("  hi  ")),  "hi");
+    assert_eq!(trim_or_empty(Some("")),         "");
+    assert_eq!(trim_or_empty(None),             "");
+}
+
+// ─── normalize_singleton_object ───────────────────────────────────────
+
+#[test]
+fn normalize_singleton_object_unwraps_one_element_array() {
+    let arr = json!([{ "key": "val" }]);
+    assert_eq!(normalize_singleton_object(arr), json!({ "key": "val" }));
+}
+
+#[test]
+fn normalize_singleton_object_keeps_multi_element_array() {
+    let arr = json!([{ "a": 1 }, { "b": 2 }]);
+    let orig = arr.clone();
+    assert_eq!(normalize_singleton_object(arr), orig);
+}
+
+#[test]
+fn normalize_singleton_object_keeps_bare_object() {
+    let obj = json!({ "key": "val" });
+    let orig = obj.clone();
+    assert_eq!(normalize_singleton_object(obj), orig);
+}
+
+#[test]
+fn normalize_singleton_object_keeps_empty_array() {
+    let arr = json!([]);
+    let orig = arr.clone();
+    assert_eq!(normalize_singleton_object(arr), orig);
+}
+
+#[test]
+fn normalize_singleton_object_does_not_unwrap_single_non_object() {
+    // A one-element array of a non-object (string, number) must NOT be unwrapped.
+    let arr = json!(["just a string"]);
+    let orig = arr.clone();
+    assert_eq!(normalize_singleton_object(arr), orig);
+
+    let arr2 = json!([42]);
+    let orig2 = arr2.clone();
+    assert_eq!(normalize_singleton_object(arr2), orig2);
+}
+
+// ─── parse_services / normalize_service ──────────────────────────────
+
+#[test]
+fn parse_services_none_returns_empty_vec() {
+    let v = parse_services(None).unwrap();
+    assert!(v.is_empty());
+}
+
+#[test]
+fn parse_services_valid_a2mcp() {
+    let raw = r#"[{"serviceName":"TVL Query","serviceDescription":"desc","serviceType":"A2MCP","fee":"10","endpoint":"https://x","reqType":"MCP","method":"POST","toolName":"quote","inputSchema":{"type":"object"},"reqExample":"example only"}]"#;
+    let svcs = parse_services(Some(raw)).unwrap();
+    assert_eq!(svcs.len(), 1);
+    assert_eq!(svcs[0].service_name,              "TVL Query");
+    assert_eq!(svcs[0].service_type,              "A2MCP");
+    assert_eq!(svcs[0].fee,                       "10");
+    assert_eq!(svcs[0].endpoint.as_deref(),       Some("https://x"));
+    assert_eq!(svcs[0].req_type.as_deref(), Some("MCP"));
+    assert_eq!(svcs[0].tool_name.as_deref(), Some("quote"));
+    let serialized = serde_json::to_value(&svcs[0]).unwrap();
+    assert_eq!(serialized["inputSchema"], json!({"type":"object"}));
+    assert_eq!(serialized["reqExample"], "example only");
+}
+
+#[test]
+fn parse_services_rejects_input_schema_without_req_example() {
+    let raw = r#"[{"serviceName":"TVL Query","serviceDescription":"desc","serviceType":"A2MCP","fee":"10","endpoint":"https://x","reqType":"MCP","method":"POST","toolName":"quote","inputSchema":{"type":"object"}}]"#;
+
+    let error = parse_services(Some(raw)).unwrap_err().to_string();
+
+    assert!(error.contains("reqExample is required when inputSchema is provided"));
+}
+
+#[test]
+fn parse_services_allows_a2mcp_without_input_schema() {
+    let services = [
+        r#"[{"serviceName":"MCP no-arg","serviceDescription":"desc","serviceType":"A2MCP","fee":"10","endpoint":"https://x","reqType":"MCP","method":"POST","toolName":"health"}]"#,
+        r#"[{"serviceName":"HTTP no-arg","serviceDescription":"desc","serviceType":"A2MCP","fee":"10","endpoint":"https://x","reqType":"HTTP","method":"GET"}]"#,
+    ];
+
+    for raw in services {
+        let parsed = parse_services(Some(raw)).expect("no-argument A2MCP service is valid");
+        assert!(parsed[0].input_schema.is_none());
+    }
+}
+
+#[test]
+fn parse_services_drops_req_example_without_input_schema() {
+    let raw = r#"[{"serviceName":"MCP no-arg","serviceDescription":"desc","serviceType":"A2MCP","fee":"10","endpoint":"https://x","reqType":"MCP","method":"POST","toolName":"health","reqExample":"{}"}]"#;
+    let service = parse_services(Some(raw)).unwrap().remove(0);
+
+    assert!(service.input_schema.is_none());
+    assert!(service.req_example.is_none());
+    let serialized = serde_json::to_value(service).unwrap();
+    assert!(serialized.get("inputSchema").is_none());
+    assert!(serialized.get("reqExample").is_none());
+}
+
+#[test]
+fn parse_services_preserves_nonempty_req_example_without_input_schema() {
+    let raw = r#"[{"serviceName":"MCP no-arg","serviceDescription":"desc","serviceType":"A2MCP","fee":"10","endpoint":"https://x","reqType":"MCP","method":"POST","toolName":"health","reqExample":"example only"}]"#;
+    let service = parse_services(Some(raw)).unwrap().remove(0);
+
+    assert_eq!(service.req_example.as_deref(), Some("example only"));
+}
+
+#[test]
+fn parse_services_drops_empty_http_input_schema() {
+    let raw = r#"[{"serviceName":"HTTP no-arg","serviceDescription":"desc","serviceType":"A2MCP","fee":"0","endpoint":"https://x","reqType":"HTTP","method":"GET","inputSchema":{"type":"object"},"reqExample":"{}"}]"#;
+    let service = parse_services(Some(raw)).unwrap().remove(0);
+    let serialized = serde_json::to_value(service).unwrap();
+
+    assert!(serialized.get("inputSchema").is_none());
+    assert!(serialized.get("reqExample").is_none());
+}
+
+#[test]
+fn parse_services_drops_empty_mcp_input_schema() {
+    let raw = r#"[{"serviceName":"MCP no-arg","serviceDescription":"desc","serviceType":"A2MCP","fee":"0","endpoint":"https://x","reqType":"MCP","method":"POST","toolName":"health","inputSchema":{"type":"object","properties":{}}}]"#;
+    let service = parse_services(Some(raw)).unwrap().remove(0);
+    let serialized = serde_json::to_value(service).unwrap();
+
+    assert!(serialized.get("inputSchema").is_none());
+    assert!(serialized.get("reqExample").is_none());
+}
+
+#[test]
+fn parse_services_rejects_a2mcp_missing_routing_metadata() {
+    let raw = r#"[{"serviceName":"TVL Query","serviceDescription":"desc","serviceType":"A2MCP","fee":"10","endpoint":"https://x"}]"#;
+    let error = parse_services(Some(raw)).unwrap_err().to_string();
+    assert!(error.contains("reqType"), "unexpected error: {error}");
+}
+
+#[test]
+fn parse_services_valid_a2a_endpoint_cleared() {
+    // A2A services must not carry an endpoint (normalize_service clears it).
+    let raw = r#"[{"serviceName":"Yield","serviceDescription":"yields","serviceType":"A2A","fee":"5","endpoint":"https://should-be-cleared"}]"#;
+    let svcs = parse_services(Some(raw)).unwrap();
+    assert_eq!(svcs[0].service_type, "A2A");
+    assert!(svcs[0].endpoint.is_none(), "A2A endpoint must be cleared");
+}
+
+#[test]
+fn parse_services_a2a_subscription_allows_missing_or_blank_service_guide() {
+    for guide_fragment in ["", r#","serviceGuide":"   ""#] {
+        let raw = format!(
+            r#"[{{"serviceName":"Yield","serviceDescription":"yields","serviceType":"A2A","fee":"","subscription":[{{"interval":"month","fee":"5"}}]{guide_fragment}}}]"#
+        );
+        let services = parse_services(Some(&raw)).expect("subscription A2A guide is optional");
+        assert!(services[0].service_guide.is_empty());
+        assert!(serde_json::to_value(&services[0]).unwrap()["serviceGuide"].is_null());
+    }
+}
+
+#[test]
+fn parse_services_a2a_subscription_trims_and_preserves_service_guide() {
+    let raw = r#"[{"serviceName":"Yield","serviceDescription":"yields","serviceGuide":"  Choose a strategy and submit your budget.  ","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"5"}]}]"#;
+    let svcs = parse_services(Some(raw)).unwrap();
+    assert_eq!(
+        svcs[0].service_guide,
+        "Choose a strategy and submit your budget."
+    );
+    assert_eq!(
+        serde_json::to_value(&svcs[0]).unwrap()["serviceGuide"],
+        "Choose a strategy and submit your budget."
+    );
+}
+
+#[test]
+fn parse_services_enforces_service_guide_display_width_limit() {
+    for guide in ["x".repeat(10000), "中".repeat(5000)] {
+        let raw = json!([{
+            "serviceName": "Yield",
+            "serviceDescription": "yields",
+            "serviceGuide": guide,
+            "serviceType": "A2A",
+            "fee": "",
+            "subscription": [{"interval": "month", "fee": "5"}]
+        }])
+        .to_string();
+        assert!(parse_services(Some(&raw)).is_ok());
+    }
+
+    for guide in ["x".repeat(10001), "中".repeat(5001)] {
+        let raw = json!([{
+            "serviceName": "Yield",
+            "serviceDescription": "yields",
+            "serviceGuide": guide,
+            "serviceType": "A2A",
+            "fee": "",
+            "subscription": [{"interval": "month", "fee": "5"}]
+        }])
+        .to_string();
+        let err = parse_services(Some(&raw)).unwrap_err().to_string();
+        assert!(err.contains("service guide for [Yield] exceeds the length limit"));
+    }
+}
+
+#[test]
+fn parse_services_forwards_optional_service_guide_for_a2a_and_a2mcp() {
+    let a2a = r#"[{"serviceName":"Yield","serviceDescription":"yields","serviceGuide":"Provide a wallet address.","serviceType":"A2A","fee":"5"}]"#;
+    let a2mcp = r#"[{"serviceName":"TVL Query","serviceDescription":"desc","serviceGuide":"Call with a chain id.","serviceType":"A2MCP","fee":"10","endpoint":"https://x"}]"#;
+    assert_eq!(
+        parse_services(Some(a2a)).unwrap()[0].service_guide,
+        "Provide a wallet address."
+    );
+    let service = parse_services(Some(a2mcp)).unwrap().remove(0);
+    assert_eq!(service.service_guide, "Call with a chain id.");
+    assert_eq!(
+        serde_json::to_value(&service).unwrap()["serviceGuide"],
+        "Call with a chain id."
+    );
+}
+
+#[test]
+fn parse_services_preserves_legacy_a2mcp_guide_on_update() {
+    let raw = r#"[{"operation":"update","id":"7","serviceName":"TVL Query","serviceDescription":"desc","serviceGuide":"Legacy guide","serviceType":"A2MCP","fee":"10","endpoint":"https://x"}]"#;
+    let service = parse_services(Some(raw)).unwrap().remove(0);
+    assert_eq!(service.service_guide, "Legacy guide");
+    assert_eq!(
+        serde_json::to_value(&service).unwrap()["serviceGuide"],
+        "Legacy guide"
+    );
+}
+
+#[test]
+fn parse_services_a2a_per_call_allows_missing_or_blank_service_guide() {
+    for guide_fragment in ["", r#","serviceGuide":"   ""#] {
+        let raw = format!(
+            r#"[{{"serviceName":"Yield","serviceDescription":"yields","serviceType":"A2A","fee":"5","subscription":[]{guide_fragment}}}]"#
+        );
+        let services = parse_services(Some(&raw)).expect("per-call A2A guide is optional");
+        assert!(services[0].service_guide.is_empty());
+        assert!(serde_json::to_value(&services[0]).unwrap()["serviceGuide"].is_null());
+    }
+}
+
+#[test]
+fn parse_services_uppercases_servicetype() {
+    let raw = r#"[{"serviceName":"S","serviceDescription":"d","serviceType":"a2a","fee":"1"}]"#;
+    let svcs = parse_services(Some(raw)).unwrap();
+    assert_eq!(svcs[0].service_type, "A2A");
+}
+
+#[test]
+fn parse_services_a2mcp_missing_endpoint_is_err() {
+    let raw =
+        r#"[{"serviceName":"S","serviceDescription":"desc","serviceType":"A2MCP","fee":"5"}]"#;
+    assert!(parse_services(Some(raw)).is_err());
+}
+
+#[test]
+fn parse_services_unknown_servicetype_is_err() {
+    let raw = r#"[{"serviceName":"S","serviceDescription":"desc","serviceType":"REST","fee":"5"}]"#;
+    assert!(parse_services(Some(raw)).is_err());
+}
+
+#[test]
+fn parse_services_missing_name_is_err() {
+    let raw = r#"[{"serviceDescription":"desc","serviceType":"A2A","fee":"1"}]"#;
+    assert!(parse_services(Some(raw)).is_err());
+}
+
+#[test]
+fn parse_services_missing_description_is_err() {
+    let raw = r#"[{"serviceName":"S","serviceType":"A2A","fee":"1"}]"#;
+    // serde requires `serviceDescription` field (no default) → deserialization error.
+    assert!(parse_services(Some(raw)).is_err());
+}
+
+#[test]
+fn parse_services_invalid_json_is_err() {
+    assert!(parse_services(Some("{not json}")).is_err());
+}
+
+// ─── operation × id consistency (update-flow delta directive) ──────────────
+
+#[test]
+fn parse_services_operation_create_without_id_ok() {
+    let raw = r#"[{"operation":"create","serviceName":"S","serviceDescription":"d","serviceType":"A2A","fee":"1"}]"#;
+    let svcs = parse_services(Some(raw)).unwrap();
+    assert_eq!(svcs[0].operation, Some(ServiceOperation::Create));
+    assert!(svcs[0].id.is_none());
+}
+
+#[test]
+fn parse_services_operation_create_with_id_is_err() {
+    // create = brand-new service → must NOT carry an id.
+    let raw = r#"[{"operation":"create","id":"5","serviceName":"S","serviceDescription":"d","serviceType":"A2A","fee":"1"}]"#;
+    assert!(parse_services(Some(raw)).is_err());
+}
+
+#[test]
+fn parse_services_operation_update_with_id_ok() {
+    let raw = r#"[{"operation":"update","id":"7","serviceName":"S","serviceDescription":"d","serviceType":"A2A","fee":"1"}]"#;
+    let svcs = parse_services(Some(raw)).unwrap();
+    assert_eq!(svcs[0].operation, Some(ServiceOperation::Update));
+    assert_eq!(svcs[0].id.as_ref(), Some(&json!("7")));
+}
+
+#[test]
+fn parse_services_operation_update_with_numeric_id_ok() {
+    let raw = r#"[{"operation":"update","id":7,"serviceName":"S","serviceDescription":"d","serviceType":"A2A","fee":"1"}]"#;
+    let svcs = parse_services(Some(raw)).unwrap();
+    assert_eq!(serde_json::to_value(&svcs[0]).unwrap()["id"], json!(7));
+}
+
+#[test]
+fn parse_services_operation_update_without_id_is_err() {
+    let raw = r#"[{"operation":"update","serviceName":"S","serviceDescription":"d","serviceType":"A2A","fee":"1"}]"#;
+    assert!(parse_services(Some(raw)).is_err());
+}
+
+#[test]
+fn parse_service_deltas_delete_without_id_is_err() {
+    let raw = r#"[{"operation":"delete"}]"#;
+    assert!(parse_service_deltas(Some(raw)).is_err());
+}
+
+#[test]
+fn parse_service_deltas_delete_with_id_ok() {
+    let raw = r#"[{"operation":"delete","id":"9"}]"#;
+    let deltas = parse_service_deltas(Some(raw)).unwrap();
+    assert_eq!(deltas, vec![json!({ "operation": "delete", "id": "9" })]);
+}
+
+#[test]
+fn parse_service_deltas_delete_with_numeric_id_ok() {
+    let raw = r#"[{"operation":"delete","id":9}]"#;
+    let deltas = parse_service_deltas(Some(raw)).unwrap();
+    assert_eq!(deltas, vec![json!({ "operation": "delete", "id": 9 })]);
+}
+
+#[test]
+fn parse_service_deltas_update_with_numeric_id_ok() {
+    let raw = r#"[{"operation":"update","id":7,"serviceName":"Signals","serviceDescription":"Provides signals","serviceType":"A2A","fee":"10","subscription":[]}]"#;
+    let deltas = parse_service_deltas(Some(raw)).unwrap();
+    assert_eq!(deltas[0]["id"], json!(7));
+}
+
+#[test]
+fn parse_service_deltas_drops_empty_object_example_without_input_schema() {
+    let raw = r#"[{"operation":"update","id":7,"serviceName":"MCP no-arg","serviceDescription":"desc","serviceType":"A2MCP","fee":"10","endpoint":"https://x","reqType":"MCP","method":"POST","toolName":"health","reqExample":"{}"}]"#;
+    let deltas = parse_service_deltas(Some(raw)).unwrap();
+
+    assert!(deltas[0].get("inputSchema").is_none());
+    assert!(deltas[0].get("reqExample").is_none());
+}
+
+#[test]
+fn parse_service_deltas_rejects_input_schema_without_req_example() {
+    let raw = r#"[{"operation":"update","id":7,"serviceName":"TVL Query","serviceDescription":"desc","serviceType":"A2MCP","fee":"10","endpoint":"https://x","reqType":"MCP","method":"POST","toolName":"quote","inputSchema":{"type":"object"}}]"#;
+
+    let error = parse_service_deltas(Some(raw)).unwrap_err().to_string();
+
+    assert!(error.contains("reqExample is required when inputSchema is provided"));
+}
+
+#[test]
+fn parse_service_deltas_drops_empty_http_input_schema() {
+    let raw = r#"[{"operation":"update","id":7,"serviceName":"HTTP no-arg","serviceDescription":"desc","serviceType":"A2MCP","fee":"0","endpoint":"https://x","reqType":"HTTP","method":"GET","inputSchema":{"type":"object"},"reqExample":"{}"}]"#;
+    let deltas = parse_service_deltas(Some(raw)).unwrap();
+
+    assert!(deltas[0].get("inputSchema").is_none());
+    assert!(deltas[0].get("reqExample").is_none());
+}
+
+#[test]
+fn parse_service_deltas_drops_empty_mcp_input_schema() {
+    let raw = r#"[{"operation":"update","id":7,"serviceName":"MCP no-arg","serviceDescription":"desc","serviceType":"A2MCP","fee":"0","endpoint":"https://x","reqType":"MCP","method":"POST","toolName":"health","inputSchema":{"type":"object","properties":{}}}]"#;
+    let deltas = parse_service_deltas(Some(raw)).unwrap();
+
+    assert!(deltas[0].get("inputSchema").is_none());
+    assert!(deltas[0].get("reqExample").is_none());
+}
+
+#[test]
+fn parse_service_deltas_delete_strips_other_fields() {
+    let raw = r#"[{"operation":"delete","id":"9","serviceName":"S","serviceDescription":"d","serviceType":"A2A","fee":"","subscription":[{"interval":"month","fee":"10"}]}]"#;
+    let deltas = parse_service_deltas(Some(raw)).unwrap();
+    assert_eq!(deltas, vec![json!({ "operation": "delete", "id": "9" })]);
+}
+
+#[test]
+fn parse_service_deltas_mixed_create_and_delete() {
+    let raw = r#"[{"operation":"create","serviceName":"Signals","serviceDescription":"Provides signals","serviceType":"A2A","fee":"10","subscription":[]},{"operation":"delete","id":"9"}]"#;
+    let deltas = parse_service_deltas(Some(raw)).unwrap();
+    assert_eq!(deltas.len(), 2);
+    assert_eq!(deltas[0]["operation"], "create");
+    assert_eq!(deltas[1], json!({ "operation": "delete", "id": "9" }));
+}
+
+#[test]
+fn parse_services_no_operation_ok_register_path() {
+    // register / create-agent services carry no operation and no id → unconstrained.
+    let raw = r#"[{"serviceName":"S","serviceDescription":"d","serviceType":"A2A","fee":"1"}]"#;
+    let svcs = parse_services(Some(raw)).unwrap();
+    assert!(svcs[0].operation.is_none());
+    assert!(svcs[0].id.is_none());
+}
+
+// ─── ensure_asp_has_service ──────────────────────────────────────
+
+fn make_a2a_service() -> AgentService {
+    AgentService {
+        id: None,
+        service_name: "Svc".to_string(),
+        service_description: "d".to_string(),
+        service_guide: String::new(),
+        fee: "1".to_string(),
+        service_type: "A2A".to_string(),
+        subscription: Vec::new(),
+        free_trial: None,
+        operation: None,
+        endpoint: None,
+        req_type: None,
+        method: None,
+        tool_name: None,
+        input_schema: None,
+        req_example: None,
+    }
+}
+
+fn make_card(role: &str, services: Vec<AgentService>) -> AgentCard {
+    AgentCard {
+        role: role.to_string(),
+        name: "X".to_string(),
+        profile_picture: "".to_string(),
+        profile_description: "".to_string(),
+        communication_address: None,
+        services,
+    }
+}
+
+#[test]
+fn ensure_asp_has_service_ok_when_services_present() {
+    let card = make_card("asp", vec![make_a2a_service()]);
+    assert!(ensure_asp_has_service(&card).is_ok());
+}
+
+#[test]
+fn ensure_asp_has_service_err_when_asp_has_no_services() {
+    let card = make_card("asp", vec![]);
+    assert!(ensure_asp_has_service(&card).is_err());
+}
+
+#[test]
+fn ensure_asp_has_service_ok_for_user_without_services() {
+    let card = make_card("user", vec![]);
+    assert!(ensure_asp_has_service(&card).is_ok());
+}
+
+#[test]
+fn ensure_asp_has_service_ok_for_evaluator_without_services() {
+    let card = make_card("evaluator", vec![]);
+    assert!(ensure_asp_has_service(&card).is_ok());
+}
+
+// ─── ensure_asp_has_avatar ───────────────────────────────────────
+
+fn make_card_with_avatar(role: &str, picture: &str) -> AgentCard {
+    let mut card = make_card(role, vec![]);
+    card.profile_picture = picture.to_string();
+    card
+}
+
+#[test]
+fn ensure_asp_has_avatar_ok_when_picture_present() {
+    let card = make_card_with_avatar("asp", "https://cdn.okx.com/avatar/x.png");
+    assert!(ensure_asp_has_avatar(&card).is_ok());
+}
+
+#[test]
+fn ensure_asp_has_avatar_err_when_asp_picture_empty() {
+    let card = make_card_with_avatar("asp", "");
+    assert!(ensure_asp_has_avatar(&card).is_err());
+}
+
+#[test]
+fn ensure_asp_has_avatar_err_when_asp_picture_blank() {
+    let card = make_card_with_avatar("asp", "   ");
+    assert!(ensure_asp_has_avatar(&card).is_err());
+}
+
+#[test]
+fn ensure_asp_has_avatar_ok_for_user_without_picture() {
+    let card = make_card_with_avatar("user", "");
+    assert!(ensure_asp_has_avatar(&card).is_ok());
+}
+
+#[test]
+fn ensure_asp_has_avatar_ok_for_evaluator_without_picture() {
+    let card = make_card_with_avatar("evaluator", "");
+    assert!(ensure_asp_has_avatar(&card).is_ok());
+}
+
+// ─── parse_u32_arg ────────────────────────────────────────────────────
+
+#[test]
+fn parse_u32_arg_none_returns_default() {
+    assert_eq!(parse_u32_arg(None, "--x", 5, None, None, false).unwrap(), 5);
+}
+
+#[test]
+fn parse_u32_arg_parses_valid_integer() {
+    assert_eq!(
+        parse_u32_arg(Some("42"), "--x", 0, None, None, false).unwrap(),
+        42
+    );
+    assert_eq!(
+        parse_u32_arg(Some("0"), "--x", 1, None, None, false).unwrap(),
+        0
+    );
+}
+
+#[test]
+fn parse_u32_arg_non_integer_is_err() {
+    assert!(parse_u32_arg(Some("abc"),  "--x", 0, None, None, false).is_err());
+    assert!(parse_u32_arg(Some("3.14"), "--x", 0, None, None, false).is_err());
+    assert!(parse_u32_arg(Some("-1"),   "--x", 0, None, None, false).is_err());
+}
+
+#[test]
+fn parse_u32_arg_below_min_is_err() {
+    assert!(parse_u32_arg(Some("1"), "--x", 0, Some(5), None, false).is_err());
+}
+
+#[test]
+fn parse_u32_arg_at_boundaries_ok() {
+    assert_eq!(
+        parse_u32_arg(Some("5"), "--x", 0, Some(5), Some(10), false).unwrap(),
+        5
+    );
+    assert_eq!(
+        parse_u32_arg(Some("10"), "--x", 0, Some(5), Some(10), false).unwrap(),
+        10
+    );
+}
+
+#[test]
+fn parse_u32_arg_above_max_clamps_when_flag_set() {
+    assert_eq!(
+        parse_u32_arg(Some("100"), "--x", 0, None, Some(20), true).unwrap(),
+        20
+    );
+}
+
+#[test]
+fn parse_u32_arg_above_max_is_err_without_clamp() {
+    assert!(parse_u32_arg(Some("100"), "--x", 0, None, Some(20), false).is_err());
+}
+
+// ─── push_optional_query ──────────────────────────────────────────────
+
+#[test]
+fn push_optional_query_adds_trimmed_value() {
+    let mut q = Vec::new();
+    push_optional_query(&mut q, "key", Some("  val  "));
+    assert_eq!(q, vec![("key".to_string(), "val".to_string())]);
+}
+
+#[test]
+fn push_optional_query_skips_none_and_blank() {
+    let mut q = Vec::new();
+    push_optional_query(&mut q, "k", None);
+    push_optional_query(&mut q, "k", Some(""));
+    push_optional_query(&mut q, "k", Some("   "));
+    assert!(q.is_empty());
+}
+
+// ─── push_multi_query ─────────────────────────────────────────────────
+
+#[test]
+fn push_multi_query_adds_all_non_blank_trimmed() {
+    let mut q = Vec::new();
+    push_multi_query(
+        &mut q,
+        "k",
+        &["a".to_string(), "  b  ".to_string(), "c".to_string()],
+    );
+    assert_eq!(
+        q,
+        vec![
+        ("k".to_string(), "a".to_string()),
+        ("k".to_string(), "b".to_string()),
+        ("k".to_string(), "c".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn push_multi_query_skips_blank_values() {
+    let mut q = Vec::new();
+    push_multi_query(&mut q, "k", &["".to_string(), "   ".to_string()]);
+    assert!(q.is_empty());
+}
+
+// ─── redact_token_for_debug ───────────────────────────────────────────
+
+#[test]
+fn redact_token_short_appends_stars() {
+    // len <= 16: token + "***"
+    assert_eq!(redact_token_for_debug("abc"),              "abc***");
+    assert_eq!(
+        redact_token_for_debug("1234567890123456"),
+        "1234567890123456***"
+    );
+}
+
+#[test]
+fn redact_token_long_shows_first8_and_last6() {
+    // len > 16: first 8 chars + "***" + last 6 chars
+    let token = "abcdefghijklmnopqrstuvwxyz"; // 26 chars
+    assert_eq!(redact_token_for_debug(token), "abcdefgh***uvwxyz");
+}
+
+#[test]
+fn redact_token_exactly_17_chars() {
+    // 17 chars: first 8 + *** + last 6 = "abcdefgh***klmnopq"[last6="lmnopq"]
+    let token = "abcdefghijklmnopq"; // 17 chars
+    assert_eq!(redact_token_for_debug(token), "abcdefgh***lmnopq");
+}
+
+// ─── short_address ────────────────────────────────────────────────────
+
+#[test]
+fn short_address_standard_40_hex_chars() {
+    let addr = "0x30c140554508a515a8da0fe1e2377c4d8eff59d7";
+    assert_eq!(short_address(addr).unwrap(), "0x30c1…59d7");
+}
+
+#[test]
+fn short_address_minimum_8_hex_chars_ok() {
+    assert_eq!(short_address("0x12345678").unwrap(), "0x1234…5678");
+}
+
+#[test]
+fn short_address_7_hex_chars_is_none() {
+    assert!(short_address("0x1234567").is_none());
+}
+
+#[test]
+fn short_address_accepts_uppercase_0x_prefix() {
+    let result = short_address("0X30c140554508a515a8da0fe1e2377c4d8eff59d7");
+    assert!(result.is_some());
+    assert_eq!(result.unwrap(), "0x30c1…59d7");
+}
+
+#[test]
+fn short_address_non_hex_chars_is_none() {
+    assert!(short_address("0xGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG").is_none());
+}
+
+#[test]
+fn short_address_missing_prefix_is_none() {
+    assert!(short_address("30c140554508a515a8da0fe1e2377c4d8eff59d7").is_none());
+}
+
+// ─── format_search_rate ───────────────────────────────────────────────
+
+#[test]
+fn format_search_rate_trims_trailing_zeros() {
+    assert_eq!(format_search_rate(4.6_f64),  "4.6");
+    assert_eq!(format_search_rate(5.0_f64),  "5");
+    assert_eq!(format_search_rate(4.45_f64), "4.45");
+    assert_eq!(format_search_rate(0.0_f64),  "0");
+    assert_eq!(format_search_rate(3.5_f64),  "3.5");
+    assert_eq!(format_search_rate(1.0_f64),  "1");
+}
+
+// ─── format_top_service ───────────────────────────────────────────────
+
+#[test]
+fn format_top_service_a2mcp_with_fee_and_token() {
+    let svc = json!({
+        "serviceName": "TVL Query",
+        "serviceType": "A2MCP",
+        "feeAmount": 10.0,
+        "feeToken": "USDT",
+        "endpoint": "https://x",
+    });
+    let result = format_top_service(&svc).unwrap();
+    assert_eq!(result, "TVL Query (API service, 10.0 USDT)");
+}
+
+#[test]
+fn format_top_service_a2a_no_fee_no_sub_renders_free() {
+    // A2A with no single fee and no subscription → "free" (never "negotiable").
+    let svc = json!({ "serviceName": "Yield Check", "serviceType": "A2A" });
+    let result = format_top_service(&svc).unwrap();
+    assert_eq!(result, "Yield Check (agent-to-agent, free)");
+}
+
+#[test]
+fn format_top_service_a2mcp_no_fee_renders_dash() {
+    // An A2MCP with no fee is missing REQUIRED data → `—`, NOT `free` (unlike an
+    // unpriced A2A, which stays `free`).
+    let svc = json!({ "serviceName": "TVL Query", "serviceType": "A2MCP" });
+    let result = format_top_service(&svc).unwrap();
+    assert_eq!(result, "TVL Query (API service, —)");
+}
+
+#[test]
+fn format_top_service_a2a_subscription_renders_monthly() {
+    // Subscription-priced A2A → the monthly tier fills the fee slot. (Short
+    // name so the formatted string stays under the 40-char truncation limit.)
+    let svc = json!({
+        "serviceName": "Sub",
+        "serviceType": "A2A",
+        "feeAmount": "",
+        "subscription": [{ "interval": "month", "fee": "10" }],
+    });
+    let result = format_top_service(&svc).unwrap();
+    assert_eq!(result, "Sub (agent-to-agent, 10 USD / month)");
+}
+
+#[test]
+fn format_top_service_a2a_zero_fee_renders_zero_usdt() {
+    // An explicit 0 is a real price (a free service) — shown as "0 USDT".
+    for fee in &["0", "0.0", "0.00"] {
+        let svc = json!({ "serviceName": "S", "serviceType": "A2A", "feeAmount": fee, "feeToken": "USDT" });
+        let result = format_top_service(&svc).unwrap();
+        assert_eq!(
+            result,
+            format!("S (agent-to-agent, {fee} USDT)"),
+            "fee={fee} failed"
+        );
+    }
+}
+
+#[test]
+fn build_service_cells_a2a_zero_fee_renders_zero_usd() {
+    for fee in &["0", "0.0", "0.00"] {
+        let svc = json!({ "ServiceName": "S", "ServiceType": "A2A", "Fee": fee });
+        let cells = build_service_cells(1, &svc).expect("cells");
+        let pairs = cell_pairs(&Value::Array(cells));
+        assert_eq!(
+            pairs[3],
+            ("Fee".to_string(), format!("{fee} USD")),
+            "fee={fee} failed"
+        );
+    }
+}
+
+#[test]
+fn format_top_service_no_name_returns_none() {
+    let svc = json!({ "serviceType": "A2MCP", "feeAmount": 5.0 });
+    assert!(format_top_service(&svc).is_none());
+}
+
+#[test]
+fn format_top_service_truncates_at_40_chars() {
+    // Construct a name long enough that the formatted string exceeds 40 chars.
+    let svc = json!({
+        "serviceName": "A Very Long Service Name Indeed For Testing",
+        "serviceType": "A2A",
+    });
+    let result = format_top_service(&svc).unwrap();
+    let chars: Vec<char> = result.chars().collect();
+    // truncate_name pads with '…' when exceeding the limit.
+    assert!(
+        chars.len() <= 41,
+        "truncated string should be ≤40 chars + ellipsis"
+    );
+    // Last char is the ellipsis when truncated.
+    assert_eq!(chars.last(), Some(&'…'));
+}
+
+// ─── reconstruct_post_url_for_log ─────────────────────────────────────────
+
+#[test]
+fn reconstruct_post_url_for_log_uses_compiled_base_url() {
+    let url = reconstruct_post_url_for_log(&ctx_no_override(), "/agent/create");
+    assert_eq!(url, format!("{}{}", BASE_URL, "/agent/create"));
+}
+
+#[test]
+fn reconstruct_post_url_for_log_appends_path_verbatim() {
+    let url = reconstruct_post_url_for_log(&ctx_no_override(), "/agent/sign?foo=bar");
+    assert_eq!(url, format!("{BASE_URL}/agent/sign?foo=bar"));
+}
+
+// ─── identity_ws_url ─────────────────────────────────────────────────────
+
+#[test]
+fn identity_ws_url_uses_compiled_endpoint() {
+    assert_eq!(identity_ws_url(), AGENT_IDENTITY_WS_URL);
+}
+
+// ─── build_precheck: reason field ────────────────────────────────────────
+
+#[test]
+fn precheck_can_create_false_includes_reason_message() {
+    // A user already exists under the same wallet → canCreate=false.
+    let data = json!({ "list": [
+        { "agentId": 10, "name": "Existing Buyer", "role": 1, "ownerAddress": "0xADDR" },
+    ]});
+    let r = build_precheck(&data, "0xADDR", "user");
+    assert_eq!(r["canCreate"], json!(false));
+    let reason = r["reason"]
+        .as_str()
+        .expect("reason must be a string when canCreate=false");
+    assert!(
+        reason.contains("User"),
+        "reason should mention the role label; got: {reason}"
+    );
+    assert!(
+        reason.contains("already registered") || reason.contains("only one"),
+        "reason should explain the uniqueness constraint; got: {reason}"
+    );
+}
+
+#[test]
+fn precheck_can_create_true_has_no_reason_field() {
+    let data = json!({ "list": [] });
+    let r = build_precheck(&data, "0xADDR", "user");
+    assert_eq!(r["canCreate"], json!(true));
+    assert!(
+        r.get("reason").is_none(),
+        "reason must be absent when canCreate=true"
+    );
+}
+
+// ─── normalize_service: A2MCP empty fee ──────────────────────────────────
+
+#[test]
+fn normalize_service_a2mcp_empty_fee_is_err() {
+    let svc = AgentService {
+        id: None,
+        service_name: "My Service".to_string(),
+        service_description: "desc".to_string(),
+        service_guide: String::new(),
+        fee: "".to_string(),
+        service_type: "A2MCP".to_string(),
+        subscription: Vec::new(),
+        free_trial: None,
+        operation: None,
+        endpoint: Some("https://example.com/mcp".to_string()),
+        req_type: None,
+        method: None,
+        tool_name: None,
+        input_schema: None,
+        req_example: None,
+    };
+    let result = normalize_service(svc);
+    assert!(result.is_err(), "A2MCP with empty fee must be an error");
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("fee"),
+        "error message should mention 'fee'; got: {msg}"
+    );
+}
+
+#[test]
+fn normalize_service_a2mcp_whitespace_only_fee_is_err() {
+    let svc = AgentService {
+        id: None,
+        service_name: "My Service".to_string(),
+        service_description: "desc".to_string(),
+        service_guide: String::new(),
+        fee: "   ".to_string(),
+        service_type: "A2MCP".to_string(),
+        subscription: Vec::new(),
+        free_trial: None,
+        operation: None,
+        endpoint: Some("https://example.com/mcp".to_string()),
+        req_type: None,
+        method: None,
+        tool_name: None,
+        input_schema: None,
+        req_example: None,
+    };
+    let result = normalize_service(svc);
+    assert!(
+        result.is_err(),
+        "A2MCP with whitespace-only fee must be an error after trim"
+    );
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("fee"),
+        "error message should mention 'fee'; got: {msg}"
+    );
+}
+
+// ─── subscription pricing (A2A) ──────────────────────────────────────
+
+fn a2a_with(fee: &str, subs: Vec<(&str, &str)>) -> AgentService {
+    let service_guide = if subs.is_empty() {
+        String::new()
+    } else {
+        "Choose a strategy and submit your budget.".to_string()
+    };
+    AgentService {
+        id: None,
+        service_name: "Aave loop assistant".to_string(),
+        service_description: "desc".to_string(),
+        service_guide,
+        fee: fee.to_string(),
+        service_type: "A2A".to_string(),
+        subscription: subs
+            .into_iter()
+            .map(|(i, f)| SubscriptionTier {
+                interval: i.to_string(),
+                fee: f.to_string(),
+            })
+            .collect(),
+        free_trial: None,
+        operation: None,
+        endpoint: None,
+        req_type: None,
+        method: None,
+        tool_name: None,
+        input_schema: None,
+        req_example: None,
+    }
+}
+
+#[test]
+fn normalize_a2a_empty_fee_passes_through_untouched() {
+    // Subscription-priced A2A carries an empty single `fee` (`""`); it is
+    // accepted alongside a subscription and forwarded verbatim as `""`.
+    let svc = normalize_service(a2a_with("", vec![("month", "10")])).unwrap();
+    assert_eq!(
+        svc.fee, "",
+        "empty fee is the subscription marker; forwarded as-is"
+    );
+    assert_eq!(svc.subscription.len(), 1);
+    assert_eq!(svc.subscription[0].interval, "month");
+    assert_eq!(svc.subscription[0].fee, "10");
+}
+
+#[test]
+fn normalize_a2a_no_pricing_is_err() {
+    let err = normalize_service(a2a_with("", vec![]))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("A2A"),
+        "expected an A2A pricing error; got: {err}"
+    );
+}
+
+#[test]
+fn normalize_a2a_both_is_err() {
+    // A single-purchase fee AND a subscription are mutually exclusive on A2A —
+    // supplying both must be rejected (exactly-one billing model).
+    let err = normalize_service(a2a_with("0.11", vec![("month", "10")]))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("not both"),
+        "expected both-models rejection; got: {err}"
+    );
+}
+
+#[test]
+fn normalize_a2a_subscription_only_lowercases_interval() {
+    // Subscription-priced A2A (empty single fee): interval is canonicalized
+    // to lowercase.
+    let svc = normalize_service(a2a_with("", vec![("Month", "10")])).unwrap();
+    assert_eq!(svc.fee, "");
+    assert_eq!(svc.subscription[0].interval, "month");
+}
+
+#[test]
+fn normalize_a2a_bad_interval_is_err() {
+    let err = normalize_service(a2a_with("", vec![("week", "10")]))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("month"),
+        "expected month-only error; got: {err}"
+    );
+}
+
+#[test]
+fn normalize_a2a_bad_subscription_fee_is_err() {
+    let err = normalize_service(a2a_with("", vec![("month", "10 USDT")]))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("subscription fee"),
+        "expected sub-fee error; got: {err}"
+    );
+}
+
+#[test]
+fn normalize_a2a_prices_allow_at_most_two_decimals() {
+    assert!(normalize_service(a2a_with("0.12", vec![])).is_ok());
+    let single_err = normalize_service(a2a_with("0.123", vec![]))
+        .unwrap_err()
+        .to_string();
+    assert!(single_err.contains("2 decimal places"), "got: {single_err}");
+
+    assert!(normalize_service(a2a_with("", vec![("month", "0.12")])).is_ok());
+    let subscription_err = normalize_service(a2a_with("", vec![("month", "0.123")]))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        subscription_err.contains("2 decimal places"),
+        "got: {subscription_err}"
+    );
+}
+
+#[test]
+fn normalize_a2mcp_fee_keeps_six_decimal_precision() {
+    let build = |fee: &str| AgentService {
+        id: None,
+        service_name: "Price feed svc".to_string(),
+        service_description: "desc".to_string(),
+        service_guide: String::new(),
+        fee: fee.to_string(),
+        service_type: "A2MCP".to_string(),
+        subscription: vec![],
+        free_trial: None,
+        operation: None,
+        endpoint: Some("https://api.example.com/mcp".to_string()),
+        req_type: None,
+        method: None,
+        tool_name: None,
+        input_schema: None,
+        req_example: None,
+    };
+
+    assert!(normalize_service(build("0.123456")).is_ok());
+    let err = normalize_service(build("0.1234567"))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("6 decimal places"), "got: {err}");
+}
+
+#[test]
+fn normalize_a2mcp_with_subscription_is_err() {
+    let svc = AgentService {
+        id: None,
+        service_name: "Price feed svc".to_string(),
+        service_description: "desc".to_string(),
+        service_guide: String::new(),
+        fee: "0.5".to_string(),
+        service_type: "A2MCP".to_string(),
+        subscription: vec![SubscriptionTier {
+            interval: "month".to_string(),
+            fee: "10".to_string(),
+        }],
+        free_trial: None,
+        operation: None,
+        endpoint: Some("https://api.example.com/mcp".to_string()),
+        req_type: None,
+        method: None,
+        tool_name: None,
+        input_schema: None,
+        req_example: None,
+    };
+    let err = normalize_service(svc).unwrap_err().to_string();
+    assert!(
+        err.contains("A2MCP"),
+        "expected A2MCP subscription rejection; got: {err}"
+    );
+}
+
+#[test]
+fn a2a_blank_subscription_tier_dropped() {
+    // A stray blank tier must not count as pricing → falls back to fee.
+    let svc = normalize_service(a2a_with("0.11", vec![("", "")])).unwrap();
+    assert!(svc.subscription.is_empty(), "blank tier should be dropped");
+    assert_eq!(svc.fee, "0.11");
+}
+
+#[test]
+fn update_delete_subscription_serializes_empty_array() {
+    // User drops the subscription (keeps per-call): backend must receive
+    // subscription:[] explicitly so it clears the existing subscription.
+    let mut svc = a2a_with("0.11", vec![]);
+    svc.id = Some(json!("7"));
+    svc.operation = Some(ServiceOperation::Update);
+    let svc = normalize_service(svc).unwrap();
+    let v = serde_json::to_value(&svc).unwrap();
+    assert_eq!(v["fee"], "0.11");
+    assert_eq!(v["subscription"], serde_json::json!([]));
+}
+
+#[test]
+fn update_subscription_service_serializes_empty_fee() {
+    // A subscription-priced service (keeps subscription): backend must receive
+    // fee:"" so it carries "no single-purchase price".
+    let mut svc = a2a_with("", vec![("month", "10")]);
+    svc.id = Some(json!("7"));
+    svc.operation = Some(ServiceOperation::Update);
+    let svc = normalize_service(svc).unwrap();
+    let v = serde_json::to_value(&svc).unwrap();
+    assert_eq!(v["fee"], "");
+    assert_eq!(v["subscription"][0]["interval"], "month");
+    assert_eq!(v["subscription"][0]["fee"], "10");
+}
+
+#[test]
+fn serialized_service_always_carries_subscription_array() {
+    // single-only A2A → subscription serializes as [] (sentinel), fee is the number.
+    let svc = normalize_service(a2a_with("0.11", vec![])).unwrap();
+    let v = serde_json::to_value(&svc).unwrap();
+    assert_eq!(v["fee"], "0.11");
+    assert_eq!(v["subscription"], serde_json::json!([]));
+
+    // subscription-priced A2A → fee serializes as the empty marker "".
+    let svc2 = normalize_service(a2a_with("", vec![("month", "10")])).unwrap();
+    let v2 = serde_json::to_value(&svc2).unwrap();
+    assert_eq!(v2["fee"], "");
+    assert_eq!(v2["subscription"][0]["interval"], "month");
+    assert_eq!(v2["subscription"][0]["fee"], "10");
+}
+
+// ─── empty-price check / positive-price check: A2A subscription tier price (strict path) ──
+//
+// New rules in the A2A subscription-tier loop of normalize_service (spec §6.1
+// / §6.2 / §6.3):
+//   • empty-price check — an empty tier price bails with the empty-price message,
+//     running BEFORE the is_plain_number format check so an empty fee surfaces
+//     the empty-price copy (not the generic "invalid subscription fee" error).
+//   • positive-price check — a zero tier price ("0" / "0.0" / … / "0.000000") bails with
+//     the ">0" message, running AFTER is_plain_number (is_zero_value's
+//     precondition). Order is empty-BEFORE-zero.
+// Single-purchase A2A and A2MCP fees of 0 are NOT subject to the positive-price check
+// (§6.2 scope). Strict path uses bail!() → fail-fast on the first error.
+//
+// The message strings MUST be byte-identical to the QA path (validate.rs), so
+// each test asserts on the FULLY-interpolated canonical text. a2a_with(...) sets
+// service_name = "Aave loop assistant", which is interpolated into {serviceName}.
+
+const FE_PRICE_01_MSG: &str =
+    "The price for \"Aave loop assistant\" cannot be empty. Please enter a price and try again.";
+const FE_PRICE_02_MSG: &str = "The subscription price for \"Aave loop assistant\" must be greater than 0. Please update the price and try again.";
+
+#[test]
+fn normalize_a2a_subscription_empty_tier_fee_is_fe_price_01() {
+    // fee:"" + subscription:[{month, ""}] → empty-price check (empty tier price).
+    let err = normalize_service(a2a_with("", vec![("month", "")]))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains(FE_PRICE_01_MSG),
+        "expected FE-PRICE-01 message; got: {err}"
+    );
+}
+
+#[test]
+fn normalize_a2a_subscription_whitespace_tier_fee_is_fe_price_01() {
+    // A whitespace-only tier fee is trimmed to "" (utils.rs:247), so it hits
+    // The empty-price check — NOT the generic plain-number format error.
+    let err = normalize_service(a2a_with("", vec![("month", "  ")]))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains(FE_PRICE_01_MSG),
+        "expected FE-PRICE-01 message for whitespace-trimmed-to-empty; got: {err}"
+    );
+}
+
+#[test]
+fn normalize_a2a_subscription_zero_tier_fee_is_fe_price_02() {
+    // Every plain-number zero form is rejected with the positive-price check (>0) message.
+    // "0.000000" (6 decimals) is intentionally NOT here: A2A subscription fees
+    // now cap at 2 decimals (skills-v2), so a 6-decimal value fails the format
+    // check (invalid subscription fee) before reaching this zero check.
+    for fee in ["0", "0.0", "0.00"] {
+        let err = normalize_service(a2a_with("", vec![("month", fee)]))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(FE_PRICE_02_MSG),
+            "fee={fee}: expected FE-PRICE-02 message; got: {err}"
+        );
+    }
+}
+
+#[test]
+fn normalize_a2a_subscription_positive_tier_fee_ok() {
+    // A positive subscription price passes both new checks.
+    for fee in ["10", "0.01"] {
+        let svc = normalize_service(a2a_with("", vec![("month", fee)]))
+            .unwrap_or_else(|e| panic!("subscription fee={fee} should be Ok; got: {e}"));
+        assert_eq!(svc.fee, "");
+        assert_eq!(svc.subscription[0].fee, fee);
+    }
+}
+
+#[test]
+fn normalize_a2a_single_purchase_zero_and_positive_fee_ok() {
+    // §6.2 scope: single-purchase (non-subscription) A2A fees are NOT subject to
+    // the positive-price check > 0 rule — 0 and any positive plain number are accepted.
+    for fee in ["10", "0"] {
+        let svc = normalize_service(a2a_with(fee, vec![]))
+            .unwrap_or_else(|e| panic!("single-purchase fee={fee} should be Ok; got: {e}"));
+        assert_eq!(svc.fee, fee);
+        assert!(svc.subscription.is_empty());
+    }
+}
+
+#[test]
+fn normalize_a2mcp_zero_fee_ok() {
+    // A2MCP is exempt from the positive-price check: a 0 single-purchase fee stays Ok (the > 0
+    // rule applies only to A2A subscription tiers, §6.2).
+    let svc = AgentService {
+        id: None,
+        service_name: "Price feed svc".to_string(),
+        service_description: "desc".to_string(),
+        service_guide: String::new(),
+        fee: "0".to_string(),
+        service_type: "A2MCP".to_string(),
+        subscription: Vec::new(),
+        free_trial: None,
+        operation: None,
+        endpoint: Some("https://api.example.com/mcp".to_string()),
+        req_type: None,
+        method: None,
+        tool_name: None,
+        input_schema: None,
+        req_example: None,
+    };
+    let out = normalize_service(svc).expect("A2MCP fee 0 must be Ok");
+    assert_eq!(out.fee, "0");
+}
+
+// ─── freeTrial (A2A subscription only) ────────────────────────────────
+
+#[test]
+fn normalize_a2a_subscription_with_free_trial_ok() {
+    // A positive-integer freeTrial alongside a subscription is accepted and
+    // serialized as "freeTrial".
+    let mut svc = a2a_with("", vec![("month", "10")]);
+    svc.free_trial = Some("72".to_string());
+    let svc = normalize_service(svc).unwrap();
+    assert_eq!(svc.free_trial.as_deref(), Some("72"));
+    let v = serde_json::to_value(&svc).unwrap();
+    assert_eq!(v["freeTrial"], "72");
+}
+
+#[test]
+fn normalize_free_trial_omitted_when_absent() {
+    // No freeTrial → the key is absent from the serialized payload (not "" / null).
+    let svc = normalize_service(a2a_with("", vec![("month", "10")])).unwrap();
+    assert!(svc.free_trial.is_none());
+    let v = serde_json::to_value(&svc).unwrap();
+    assert!(
+        v.get("freeTrial").is_none(),
+        "freeTrial must be omitted when unset"
+    );
+}
+
+#[test]
+fn normalize_free_trial_blank_dropped_to_none() {
+    // A whitespace-only freeTrial is treated as "no trial" → dropped to None.
+    let mut svc = a2a_with("", vec![("month", "10")]);
+    svc.free_trial = Some("   ".to_string());
+    let svc = normalize_service(svc).unwrap();
+    assert!(svc.free_trial.is_none());
+}
+
+#[test]
+fn normalize_free_trial_without_subscription_is_err() {
+    // freeTrial on a single-purchase A2A (no subscription) is rejected.
+    let mut svc = a2a_with("0.11", vec![]);
+    svc.free_trial = Some("72".to_string());
+    let err = normalize_service(svc).unwrap_err().to_string();
+    assert!(
+        err.contains("freeTrial"),
+        "expected freeTrial rejection; got: {err}"
+    );
+}
+
+#[test]
+fn normalize_free_trial_non_integer_is_err() {
+    // The duration must be a positive integer number of hours.
+    let mut svc = a2a_with("", vec![("month", "10")]);
+    svc.free_trial = Some("24.5".to_string());
+    let err = normalize_service(svc).unwrap_err().to_string();
+    assert!(
+        err.contains("free trial duration"),
+        "expected freeTrial format error; got: {err}"
+    );
+}
+
+#[test]
+fn normalize_free_trial_non_72_is_err_with_exact_message() {
+    for v in ["24", "0", "-72", "73", "072", "24.5", "abc"] {
+        let mut svc = a2a_with("", vec![("month", "10")]);
+        svc.free_trial = Some(v.to_string());
+        let err = normalize_service(svc).unwrap_err().to_string();
+        assert_eq!(
+            err,
+            "The free trial duration you entered is not supported. Only 72 hours (3 days) is available",
+            "value {v}"
+        );
+    }
+}
+
+#[test]
+fn normalize_delete_preserves_legacy_positive_free_trial() {
+    let mut svc = a2a_with("", vec![("month", "10")]);
+    svc.id = Some(json!("9"));
+    svc.operation = Some(ServiceOperation::Delete);
+    svc.service_guide.clear();
+    svc.free_trial = Some("24".to_string());
+
+    let svc = normalize_service(svc).unwrap();
+    assert_eq!(svc.free_trial.as_deref(), Some("24"));
+    assert_eq!(serde_json::to_value(&svc).unwrap()["freeTrial"], "24");
+}
+
+#[test]
+fn normalize_free_trial_zero_is_err() {
+    // A zero-hour trial is meaningless → rejected (omit the field instead).
+    let mut svc = a2a_with("", vec![("month", "10")]);
+    svc.free_trial = Some("0".to_string());
+    let err = normalize_service(svc).unwrap_err().to_string();
+    assert!(
+        err.contains("free trial duration"),
+        "expected freeTrial format error; got: {err}"
+    );
+}
+
+#[test]
+fn normalize_a2mcp_with_free_trial_is_err() {
+    let svc = AgentService {
+        id: None,
+        service_name: "Price feed svc".to_string(),
+        service_description: "desc".to_string(),
+        service_guide: String::new(),
+        fee: "0.5".to_string(),
+        service_type: "A2MCP".to_string(),
+        subscription: Vec::new(),
+        free_trial: Some("72".to_string()),
+        operation: None,
+        endpoint: Some("https://api.example.com/mcp".to_string()),
+        req_type: None,
+        method: None,
+        tool_name: None,
+        input_schema: None,
+        req_example: None,
+    };
+    let err = normalize_service(svc).unwrap_err().to_string();
+    assert!(
+        err.contains("freeTrial"),
+        "expected A2MCP freeTrial rejection; got: {err}"
+    );
+}
+
+// ─── detect_image_kind / validate_avatar_image ───────────────────────
+
+#[test]
+fn detect_image_kind_recognizes_png() {
+    let png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x01];
+    assert_eq!(detect_image_kind(&png), Some(("PNG", "image/png")));
+}
+
+#[test]
+fn detect_image_kind_recognizes_jpeg() {
+    let jpeg = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
+    assert_eq!(detect_image_kind(&jpeg), Some(("JPEG", "image/jpeg")));
+}
+
+#[test]
+fn detect_image_kind_recognizes_webp() {
+    // "RIFF" <4 bytes size> "WEBP"
+    let webp = *b"RIFF\x24\x00\x00\x00WEBPVP8 ";
+    assert_eq!(detect_image_kind(&webp), Some(("WebP", "image/webp")));
+}
+
+#[test]
+fn detect_image_kind_rejects_riff_that_is_not_webp() {
+    // "RIFF" container but WAVE, not WEBP — must not be accepted as an image.
+    let wav = *b"RIFF\x24\x00\x00\x00WAVEfmt ";
+    assert_eq!(detect_image_kind(&wav), None);
+}
+
+#[test]
+fn detect_image_kind_rejects_non_image_and_short_input() {
+    assert_eq!(detect_image_kind(b"%PDF-1.4"), None); // PDF
+    assert_eq!(detect_image_kind(b"GIF89a"), None); // GIF is not in the accepted set
+    assert_eq!(detect_image_kind(b"hello text"), None);
+    assert_eq!(detect_image_kind(&[]), None); // empty
+    assert_eq!(detect_image_kind(&[0x89, 0x50]), None); // truncated PNG signature
+}
+
+#[test]
+fn validate_avatar_image_errors_with_supported_types() {
+    let err = validate_avatar_image(b"%PDF-1.4").unwrap_err().to_string();
+    assert!(err.contains("PNG"), "message should list PNG; got: {err}");
+    assert!(err.contains("JPEG"), "message should list JPEG; got: {err}");
+    assert!(err.contains("WebP"), "message should list WebP; got: {err}");
+}
+
+#[test]
+fn validate_avatar_image_accepts_supported() {
+    let png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+    assert_eq!(validate_avatar_image(&png).unwrap(), ("PNG", "image/png"));
+}
+
+// ─── is_zero_value: only reached after is_plain_number passes ─────────
+
+#[test]
+fn is_zero_value_detects_all_zero_forms() {
+    // Every input here already satisfies is_plain_number (^\d+(\.\d{1,6})?$)
+    // and represents zero: stripping all '0' and '.' leaves the empty string.
+    assert!(is_zero_value("0"));
+    assert!(is_zero_value("0.0"));
+    assert!(is_zero_value("0.00"));
+    assert!(is_zero_value("0.000000"));
+    // "00" passes is_plain_number (no leading-zero rejection), then strips to
+    // empty → zero.
+    assert!(is_zero_value("00"));
+}
+
+#[test]
+fn is_zero_value_rejects_nonzero() {
+    assert!(!is_zero_value("0.01"));
+    assert!(!is_zero_value("1"));
+    assert!(!is_zero_value("10"));
+}

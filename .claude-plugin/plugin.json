@@ -1,0 +1,34 @@
+{
+  "name": "onchainos-skills",
+  "version": "4.6.12",
+  "skills": [
+    "./skills/"
+  ],
+  "keywords": [
+    "skills",
+    "okx",
+    "dex",
+    "web3",
+    "defi",
+    "swap",
+    "token",
+    "blockchain",
+    "onchainos",
+    "gas",
+    "broadcast",
+    "transaction",
+    "invest",
+    "earn",
+    "yield",
+    "stake",
+    "liquidity",
+    "lending",
+    "borrow",
+    "apy",
+    "tvl",
+    "deposit",
+    "withdraw",
+    "redeem",
+    "claim"
+  ]
+}

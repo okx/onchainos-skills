@@ -1,0 +1,221 @@
+use anyhow::Result;
+use clap::Subcommand;
+use serde_json::{json, Value};
+
+use super::Context;
+use crate::client::ApiClient;
+use crate::output;
+
+#[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
+pub enum SignalCommand {
+    /// Get supported chains for market signals
+    Chains,
+    /// Get latest signal list (smart money / KOL / whale activity)
+    List {
+        /// Chain (e.g. ethereum, solana, base). Required.
+        #[arg(long)]
+        chain: String,
+        /// Wallet type filter: 1=Smart Money, 2=KOL/Influencer, 3=Whales (comma-separated, e.g. "1,2")
+        #[arg(long)]
+        wallet_type: Option<String>,
+        /// Minimum transaction amount in USD
+        #[arg(long)]
+        min_amount_usd: Option<String>,
+        /// Maximum transaction amount in USD
+        #[arg(long)]
+        max_amount_usd: Option<String>,
+        /// Minimum triggering wallet address count
+        #[arg(long)]
+        min_address_count: Option<String>,
+        /// Maximum triggering wallet address count
+        #[arg(long)]
+        max_address_count: Option<String>,
+        /// Token contract address (filter signals for a specific token)
+        #[arg(long)]
+        token_address: Option<String>,
+        /// Minimum token market cap in USD
+        #[arg(long)]
+        min_market_cap_usd: Option<String>,
+        /// Maximum token market cap in USD
+        #[arg(long)]
+        max_market_cap_usd: Option<String>,
+        /// Minimum token liquidity in USD
+        #[arg(long)]
+        min_liquidity_usd: Option<String>,
+        /// Maximum token liquidity in USD
+        #[arg(long)]
+        max_liquidity_usd: Option<String>,
+        /// Number of results per page (default: 20, max: 100)
+        #[arg(long)]
+        limit: Option<String>,
+        /// Pagination cursor — pass the cursor from the last item of the previous page; omit for first page
+        #[arg(long)]
+        cursor: Option<String>,
+    },
+}
+
+pub async fn execute(ctx: &Context, cmd: SignalCommand) -> Result<()> {
+    match cmd {
+        SignalCommand::Chains => signal_chains(ctx).await,
+        SignalCommand::List {
+            chain,
+            wallet_type,
+            min_amount_usd,
+            max_amount_usd,
+            min_address_count,
+            max_address_count,
+            token_address,
+            min_market_cap_usd,
+            max_market_cap_usd,
+            min_liquidity_usd,
+            max_liquidity_usd,
+            limit,
+            cursor,
+        } => {
+            signal_list(
+                ctx,
+                &chain,
+                wallet_type,
+                min_amount_usd,
+                max_amount_usd,
+                min_address_count,
+                max_address_count,
+                token_address,
+                min_market_cap_usd,
+                max_market_cap_usd,
+                min_liquidity_usd,
+                max_liquidity_usd,
+                limit,
+                cursor,
+            )
+            .await
+        }
+    }
+}
+
+// ── Public fetch functions (used by both CLI and MCP) ────────────────
+
+/// GET /api/v6/dex/market/signal/supported/chain
+pub async fn fetch_chains(client: &mut ApiClient) -> Result<Value> {
+    client
+        .get("/api/v6/dex/market/signal/supported/chain", &[])
+        .await
+}
+
+/// POST /api/v6/dex/market/signal/list — smart money / KOL / whale signals
+#[allow(clippy::too_many_arguments)]
+pub async fn fetch_list(
+    client: &mut ApiClient,
+    chain_index: &str,
+    wallet_type: Option<String>,
+    min_amount_usd: Option<String>,
+    max_amount_usd: Option<String>,
+    min_address_count: Option<String>,
+    max_address_count: Option<String>,
+    token_address: Option<String>,
+    min_market_cap_usd: Option<String>,
+    max_market_cap_usd: Option<String>,
+    min_liquidity_usd: Option<String>,
+    max_liquidity_usd: Option<String>,
+    limit: Option<String>,
+    cursor: Option<String>,
+) -> Result<Value> {
+    if let Some(ref s) = limit {
+        let n: u64 = s
+            .parse()
+            .map_err(|_| anyhow::anyhow!("--limit must be a number between 1 and 100"))?;
+        anyhow::ensure!(
+            (1..=100).contains(&n),
+            "--limit must be between 1 and 100, got {n}"
+        );
+    }
+    let mut body = json!({
+        "chainIndex": chain_index,
+        "limit": limit.as_deref().unwrap_or("20"),
+    });
+    let obj = body.as_object_mut().unwrap();
+    if let Some(v) = cursor {
+        obj.insert("cursor".into(), Value::String(v));
+    }
+    if let Some(v) = wallet_type {
+        obj.insert("walletType".into(), Value::String(v));
+    }
+    if let Some(v) = min_amount_usd {
+        obj.insert("minAmountUsd".into(), Value::String(v));
+    }
+    if let Some(v) = max_amount_usd {
+        obj.insert("maxAmountUsd".into(), Value::String(v));
+    }
+    if let Some(v) = min_address_count {
+        obj.insert("minAddressCount".into(), Value::String(v));
+    }
+    if let Some(v) = max_address_count {
+        obj.insert("maxAddressCount".into(), Value::String(v));
+    }
+    if let Some(v) = token_address {
+        obj.insert("tokenAddress".into(), Value::String(v));
+    }
+    if let Some(v) = min_market_cap_usd {
+        obj.insert("minMarketCapUsd".into(), Value::String(v));
+    }
+    if let Some(v) = max_market_cap_usd {
+        obj.insert("maxMarketCapUsd".into(), Value::String(v));
+    }
+    if let Some(v) = min_liquidity_usd {
+        obj.insert("minLiquidityUsd".into(), Value::String(v));
+    }
+    if let Some(v) = max_liquidity_usd {
+        obj.insert("maxLiquidityUsd".into(), Value::String(v));
+    }
+    client.post("/api/v6/dex/market/signal/list", &body).await
+}
+
+// ── CLI wrappers ─────────────────────────────────────────────────────
+
+async fn signal_chains(ctx: &Context) -> Result<()> {
+    let mut client = ctx.client_async().await?;
+    output::success(fetch_chains(&mut client).await?);
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn signal_list(
+    ctx: &Context,
+    chain: &str,
+    wallet_type: Option<String>,
+    min_amount_usd: Option<String>,
+    max_amount_usd: Option<String>,
+    min_address_count: Option<String>,
+    max_address_count: Option<String>,
+    token_address: Option<String>,
+    min_market_cap_usd: Option<String>,
+    max_market_cap_usd: Option<String>,
+    min_liquidity_usd: Option<String>,
+    max_liquidity_usd: Option<String>,
+    limit: Option<String>,
+    cursor: Option<String>,
+) -> Result<()> {
+    let chain_index = crate::chains::resolve_chain(chain).to_string();
+    let mut client = ctx.client_async().await?;
+    output::success(
+        fetch_list(
+            &mut client,
+            &chain_index,
+            wallet_type,
+            min_amount_usd,
+            max_amount_usd,
+            min_address_count,
+            max_address_count,
+            token_address,
+            min_market_cap_usd,
+            max_market_cap_usd,
+            min_liquidity_usd,
+            max_liquidity_usd,
+            limit,
+            cursor,
+        )
+        .await?,
+    );
+    Ok(())
+}

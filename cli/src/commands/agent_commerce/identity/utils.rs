@@ -1,0 +1,1836 @@
+//! Stateless helpers shared by queries / mutations / signing: HTTP client
+//! factory, logging formatters, CLI arg validators, JSON normalization, and
+//! agent service / role parsing. No network calls, no signing. Functions
+//! here are deliberately small and dependency-light.
+
+use anyhow::{anyhow, bail, Context as _, Result};
+use chrono::TimeZone;
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+
+use crate::commands::Context;
+use crate::wallet_api::{UnsignedInfoResponse, WalletApiClient};
+
+use super::models::{AgentCard, AgentService, ServiceOperation};
+
+pub(super) const SERVICE_GUIDE_MAX_DISPLAY_WIDTH: usize = 10_000;
+
+// ─── HTTP client ──────────────────────────────────────────────────────────
+
+/// Build the wallet HTTP client against the effective process endpoint.
+pub(super) fn wallet_client(_ctx: &Context) -> Result<WalletApiClient> {
+    WalletApiClient::new()
+}
+
+// ─── Logging helpers ──────────────────────────────────────────────────────
+
+pub(super) fn redact_token_for_debug(token: &str) -> String {
+    if token.len() <= 16 {
+        return format!("{token}***");
+    }
+    let head: String = token.chars().take(8).collect();
+    let tail: String = token
+        .chars()
+        .rev()
+        .take(6)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    format!("{}***{}", head, tail)
+}
+
+// Log-only helpers use the same effective endpoint as WalletApiClient.
+// Note: reconstruct_get_url_for_log does NOT percent-encode values, so the
+// logged URL may diverge from the actual wire URL when values contain
+// characters that wallet_api::build_query_string would escape.
+fn resolve_base_url_for_log(_ctx: &Context) -> &'static str {
+    crate::endpoints::base_url()
+}
+
+/// Compile-time `wallet-agentic-identity` push endpoint.
+pub(super) fn identity_ws_url() -> &'static str {
+    crate::endpoints::AGENT_IDENTITY_WS_URL
+}
+
+pub(super) fn reconstruct_post_url_for_log(ctx: &Context, path: &str) -> String {
+    format!("{}{}", resolve_base_url_for_log(ctx), path)
+}
+
+pub(super) fn reconstruct_get_url_for_log(
+    ctx: &Context,
+    path: &str,
+    query: &[(&str, &str)],
+) -> String {
+    let base = resolve_base_url_for_log(ctx);
+    let filtered: Vec<&(&str, &str)> = query.iter().filter(|(_, v)| !v.is_empty()).collect();
+    if filtered.is_empty() {
+        return format!("{base}{path}");
+    }
+    let pairs: Vec<String> = filtered.iter().map(|(k, v)| format!("{k}={v}")).collect();
+    format!("{base}{path}?{}", pairs.join("&"))
+}
+
+// ─── HTTP query building ──────────────────────────────────────────────────
+
+pub(super) fn push_optional_query(
+    query: &mut Vec<(String, String)>,
+    key: &str,
+    value: Option<&str>,
+) {
+    if let Some(value) = value.filter(|value| !value.trim().is_empty()) {
+        query.push((key.to_string(), value.trim().to_string()));
+    }
+}
+
+pub(super) fn push_multi_query(query: &mut Vec<(String, String)>, key: &str, values: &[String]) {
+    for value in values {
+        if !value.trim().is_empty() {
+            query.push((key.to_string(), value.trim().to_string()));
+        }
+    }
+}
+
+// ─── Response shape helpers ───────────────────────────────────────────────
+
+pub(super) fn normalize_singleton_object(data: Value) -> Value {
+    match data {
+        Value::Array(mut arr) if arr.len() == 1 && arr[0].is_object() => arr.remove(0),
+        other => other,
+    }
+}
+
+pub(super) fn parse_agent_unsigned(data: Value) -> Result<UnsignedInfoResponse> {
+    let item = data
+        .as_array()
+        .and_then(|arr| arr.first())
+        .cloned()
+        .ok_or_else(|| anyhow!("pre-transaction response is empty"))?;
+    serde_json::from_value(item).context("failed to parse pre-transaction response")
+}
+
+// ─── Service / Role parsing ───────────────────────────────────────────────
+
+pub(super) fn parse_services(raw: Option<&str>) -> Result<Vec<AgentService>> {
+    let Some(raw) = raw else {
+        return Ok(Vec::new());
+    };
+    let services: Vec<AgentService> =
+        serde_json::from_str(raw).context("failed to parse --service as JSON array")?;
+    services
+        .into_iter()
+        .map(normalize_service)
+        .collect::<Result<Vec<_>>>()
+}
+
+fn normalize_service_id(id: Option<&Value>) -> Result<Option<Value>> {
+    match id {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(id)) if id.trim().is_empty() => Ok(None),
+        Some(Value::String(id)) => Ok(Some(Value::String(id.trim().to_string()))),
+        Some(Value::Number(id)) if id.is_i64() || id.is_u64() => {
+            Ok(Some(Value::Number(id.clone())))
+        }
+        Some(_) => bail!("invalid --service: id must be a string or integer"),
+    }
+}
+
+/// Parse update-only service deltas. Delete directives are canonicalized to
+/// `{operation, id}`; create/update entries use the full service contract.
+pub(super) fn parse_service_deltas(raw: Option<&str>) -> Result<Vec<Value>> {
+    let Some(raw) = raw else {
+        return Ok(Vec::new());
+    };
+    let entries: Vec<Value> =
+        serde_json::from_str(raw).context("failed to parse --service as JSON array")?;
+    entries
+        .into_iter()
+        .map(|entry| {
+            if entry.get("operation").and_then(Value::as_str) == Some("delete") {
+                let id = normalize_service_id(entry.get("id"))?.ok_or_else(|| {
+                    anyhow!("invalid --service: operation 'delete' requires an id")
+                })?;
+                return Ok(json!({ "operation": "delete", "id": id }));
+            }
+
+            let service: AgentService =
+                serde_json::from_value(entry).context("failed to parse --service entry")?;
+            serde_json::to_value(normalize_service(service)?)
+                .context("failed to serialize --service entry")
+        })
+        .collect()
+}
+
+/// The only free-trial duration (hours) the product supports.
+pub(super) const FREE_TRIAL_HOURS: &str = "72";
+pub(super) const FREE_TRIAL_UNSUPPORTED_MSG: &str =
+    "The free trial duration you entered is not supported. Only 72 hours (3 days) is available";
+
+pub(super) fn normalize_service(mut service: AgentService) -> Result<AgentService> {
+    service.id = normalize_service_id(service.id.as_ref())?;
+    service.service_name = service.service_name.trim().to_string();
+    service.service_description = service.service_description.trim().to_string();
+    service.service_guide = service.service_guide.trim().to_string();
+    service.fee = service.fee.trim().to_string();
+    service.service_type = service.service_type.trim().to_ascii_uppercase();
+    service.endpoint = service
+        .endpoint
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    service.req_type = service
+        .req_type
+        .map(|value| value.trim().to_ascii_uppercase())
+        .filter(|value| !value.is_empty());
+    service.method = service
+        .method
+        .map(|value| value.trim().to_ascii_uppercase())
+        .filter(|value| !value.is_empty());
+    service.tool_name = service
+        .tool_name
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    service.req_example = service
+        .req_example
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if service
+        .input_schema
+        .as_ref()
+        .is_some_and(is_empty_input_schema)
+    {
+        service.input_schema = None;
+    }
+    if service
+        .input_schema
+        .as_ref()
+        .is_none_or(Value::is_null)
+        && service.req_example.as_deref() == Some("{}")
+    {
+        service.req_example = None;
+    }
+    // `freeTrial`: trim; an EMPTY string and an ABSENT key are equivalent —
+    // both mean "no trial" — so collapse "" to None. The field is then omitted
+    // from the wire payload, and a missing `freeTrial` is read as no trial.
+    // A non-empty value is validated below as a positive integer number of
+    // hours so legacy services can be written back unchanged. The guided
+    // product flow still creates only the fixed 72-hour trial.
+    service.free_trial = service
+        .free_trial
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    // Only the fixed 72-hour trial may be written. Any other present value
+    // (0, negative, legacy hours, non-numeric) is rejected. A delete only
+    // identifies the service by id, so it must not be blocked by a legacy trial.
+    if service.operation != Some(ServiceOperation::Delete)
+        && service
+            .free_trial
+            .as_deref()
+            .is_some_and(|trial| trial != FREE_TRIAL_HOURS)
+    {
+        bail!("{FREE_TRIAL_UNSUPPORTED_MSG}");
+    }
+
+    if service.service_name.is_empty() {
+        bail!("missing required field in --service: serviceName");
+    }
+    if service.service_description.is_empty() {
+        bail!("missing required field in --service: serviceDescription");
+    }
+    if service.operation != Some(ServiceOperation::Delete)
+        && !service.service_guide.is_empty()
+        && display_width(&service.service_guide) > SERVICE_GUIDE_MAX_DISPLAY_WIDTH
+    {
+        bail!(
+            "The service guide for [{}] exceeds the length limit. Shorten it to no more than 5,000 full-width Chinese/Japanese characters or 10,000 Latin characters, then resubmit.",
+            service.service_name
+        );
+    }
+    // Normalize subscription tiers: trim, canonicalize the interval case, and
+    // drop fully-blank entries (a stray `[{}]` must not count as pricing).
+    for tier in &mut service.subscription {
+        tier.interval = tier.interval.trim().to_ascii_lowercase();
+        tier.fee = tier.fee.trim().to_string();
+    }
+    service
+        .subscription
+        .retain(|t| !(t.interval.is_empty() && t.fee.is_empty()));
+
+    // Fee is a PLAIN NUMBER only — USD is the implicit, only currency. A
+    // currency token / symbol / any extra text is rejected (validate-listing
+    // surfaces the same rule as a P1 finding; create/update bypass validate so
+    // we enforce it here too). The single-purchase `fee` and every
+    // subscription-tier `fee` share the A2A two-decimal contract. A2MCP keeps
+    // its six-decimal contract.
+    match service.service_type.as_str() {
+        "A2A" => {
+            // Product spec: A2A services do not have an endpoint field.
+            service.endpoint = None;
+            // Subscription-priced A2A carries an EMPTY single-purchase `fee`
+            // (`""`); an empty `fee` together with a non-empty `subscription` is
+            // the subscription billing model.
+            let has_single_fee = !service.fee.is_empty();
+            let has_subscription = !service.subscription.is_empty();
+            // Pricing: an A2A service must carry EXACTLY ONE billing model — a
+            // single-purchase fee XOR a subscription. Never neither, and never
+            // both (the two models are mutually exclusive).
+            if !has_single_fee && !has_subscription {
+                bail!("invalid --service for A2A: provide a single-purchase fee or a subscription (exactly one)");
+            }
+            if has_single_fee && has_subscription {
+                bail!("invalid --service for A2A: choose one billing model — a single-purchase fee OR a subscription, not both");
+            }
+            // Subscription tiers: interval currently limited to `month`; each
+            // fee is a plain number.
+            for tier in &service.subscription {
+                if tier.interval != "month" {
+                    bail!(
+                        "invalid subscription interval in --service: {} (only 'month' is supported)",
+                        tier.interval
+                    );
+                }
+                // empty-price check: a subscription tier price must not be empty. This
+                // runs BEFORE the plain-number format check so an empty fee
+                // surfaces the empty-price message rather than the generic format
+                // error. `tier.fee` is already trimmed (line ~247), so a
+                // whitespace-only value has already collapsed to "";
+                // `service.service_name` is guaranteed non-empty by the
+                // `serviceName` bail above (§6.6, no fallback needed). The message
+                // is kept byte-identical to the QA path (validate.rs `fe::fe_price_empty`).
+                if tier.fee.is_empty() {
+                    bail!(
+                        "The price for \"{}\" cannot be empty. Please enter a price and try again.",
+                        service.service_name
+                    );
+                }
+                if !is_plain_number(&tier.fee, 2) {
+                    bail!("invalid subscription fee in --service: must be a plain number with up to 2 decimal places (USD is the default currency)");
+                }
+                // positive-price check: a subscription tier price must be > 0. This runs
+                // AFTER `is_plain_number` so `is_zero_value`'s precondition (a
+                // well-formed plain number) holds. Only subscription tiers are
+                // checked — single-purchase A2A and A2MCP fees of 0 are out of
+                // scope (§6.2). The message is kept byte-identical to the QA path
+                // (validate.rs `fe::fe_price_zero`).
+                if is_zero_value(&tier.fee) {
+                    bail!(
+                        "The subscription price for \"{}\" must be greater than 0. Please update the price and try again.",
+                        service.service_name
+                    );
+                }
+            }
+            // A real single price must be a plain number; an empty `fee` (the
+            // subscription model) is exempt (it is not a price).
+            if has_single_fee && !is_plain_number(&service.fee, 2) {
+                bail!("invalid fee in --service for A2A: must be a plain number with up to 2 decimal places (USD is the default currency)");
+            }
+            // An empty `fee` is the explicit "no single price" marker (the
+            // subscription model); it is forwarded verbatim as `""`. The CLI
+            // never fabricates a price from it.
+            // freeTrial: a positive integer number of hours, valid ONLY on a
+            // subscription-priced A2A service (a non-empty `subscription`).
+            if let Some(trial) = service.free_trial.as_deref() {
+                if !has_subscription {
+                    bail!("invalid --service for A2A: freeTrial is only allowed on a subscription-priced service");
+                }
+                if !is_positive_integer(trial) {
+                    bail!("invalid freeTrial in --service: must be a positive integer number of hours");
+                }
+            }
+        }
+        "A2MCP" => {
+            // A2MCP structure is unchanged: single-purchase fee only.
+            if !service.subscription.is_empty() {
+                bail!("invalid --service: A2MCP services do not support subscription pricing");
+            }
+            if service.free_trial.is_some() {
+                bail!("invalid --service: A2MCP services do not support freeTrial");
+            }
+            if service.fee.is_empty() {
+                bail!("missing required field in --service for A2MCP: fee");
+            }
+            if !is_plain_number(&service.fee, 6) {
+                bail!("invalid fee in --service for A2MCP: must be a plain number with up to 6 decimal places (USD is the default currency)");
+            }
+            if service.endpoint.is_none() {
+                bail!("missing required field in --service for A2MCP: endpoint");
+            }
+            let req_type = service
+                .req_type
+                .as_deref()
+                .ok_or_else(|| anyhow!("missing required field in --service for A2MCP: reqType"))?;
+            if !matches!(req_type, "MCP" | "HTTP") {
+                bail!("invalid reqType in --service for A2MCP: expected MCP or HTTP");
+            }
+            let method = service
+                .method
+                .as_deref()
+                .ok_or_else(|| anyhow!("missing required field in --service for A2MCP: method"))?;
+            if !matches!(method, "GET" | "POST") {
+                bail!("invalid method in --service for A2MCP: expected GET or POST");
+            }
+            if service.input_schema.as_ref().is_some_and(|schema| !schema.is_object()) {
+                bail!(
+                    "invalid inputSchema in --service for A2MCP: expected JSON object"
+                );
+            }
+            if service.input_schema.is_some() && service.req_example.is_none() {
+                bail!(
+                    "missing required field in --service for A2MCP: reqExample is required when inputSchema is provided"
+                );
+            }
+            if req_type == "MCP" {
+                if service.tool_name.is_none() {
+                    bail!("missing required field in --service for MCP A2MCP: toolName");
+                }
+                if method != "POST" {
+                    bail!("invalid method in --service for MCP A2MCP: expected POST");
+                }
+            }
+        }
+        other => bail!("invalid serviceType in --service: {other} (expected: A2A or A2MCP)"),
+    }
+
+    // operation × id consistency (update-only directive). `operation` is set
+    // only on `update`-flow service entries; register / create-agent services
+    // omit it (None) and are unconstrained here. Per the update delta contract:
+    //   • create → a brand-new service, must NOT carry an id
+    //   • update / delete → target an existing service, must carry its id
+    match service.operation {
+        Some(ServiceOperation::Create) if service.id.is_some() => {
+            bail!("invalid --service: operation 'create' must not carry an id");
+        }
+        Some(ServiceOperation::Update) if service.id.is_none() => {
+            bail!("invalid --service: operation 'update' requires an id");
+        }
+        Some(ServiceOperation::Delete) if service.id.is_none() => {
+            bail!("invalid --service: operation 'delete' requires an id");
+        }
+        _ => {}
+    }
+
+    Ok(service)
+}
+
+fn is_empty_input_schema(schema: &Value) -> bool {
+    let Some(object) = schema.as_object() else {
+        return false;
+    };
+    object.keys().all(|key| matches!(key.as_str(), "type" | "properties" | "required"))
+        && object.get("type").and_then(Value::as_str) == Some("object")
+        // Missing or empty `properties` means no request parameters.
+        && object
+            .get("properties")
+            .is_none_or(|properties| properties.as_object().is_some_and(serde_json::Map::is_empty))
+        && object
+            .get("required")
+            .is_none_or(|required| required.as_array().is_some_and(Vec::is_empty))
+}
+
+/// True when `s` is a plain decimal number with at most `max_decimals`
+/// fractional digits. No sign, currency token, or whitespace. Shared by
+/// create/update normalization and listing QA so both paths enforce the same
+/// service-type-specific fee contract (A2A: 2, A2MCP: 6).
+pub(super) fn is_plain_number(s: &str, max_decimals: usize) -> bool {
+    match s.split_once('.') {
+        None => !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()),
+        Some((int, frac)) => {
+            !int.is_empty()
+                && int.bytes().all(|b| b.is_ascii_digit())
+                && (1..=max_decimals).contains(&frac.len())
+                && frac.bytes().all(|b| b.is_ascii_digit())
+        }
+    }
+}
+
+/// True when `s` is a representation of zero (`0`, `0.0`, `0.00`, `00`, …).
+///
+/// Called **only after `is_plain_number(s)` has passed**, so `s` is already
+/// trimmed and matches `^\d+(\.\d{1,6})?$` — no float parsing, no NaN/inf, no
+/// rounding. Under that precondition `s` is zero iff every byte is `'0'` or
+/// `'.'` (stripping those characters leaves the empty string); a bare `"."`
+/// cannot reach here because `is_plain_number(".")` is false. Shared by
+/// `normalize_service` (strict create/update) and `validate::check_pricing`
+/// (QA) so both paths reject a zero fee identically.
+pub(super) fn is_zero_value(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| b == b'0' || b == b'.')
+}
+
+/// True when `s` is a POSITIVE integer: digits only (`^\d+$`) with at least one
+/// non-zero digit. No sign, no decimal point, no whitespace. `"0"` / `"00"` are
+/// rejected (a zero-hour trial is meaningless — omit the field instead). Used
+/// for the `freeTrial` hour count, shared by `normalize_service` (create/update)
+/// and `validate` (QA) so both paths enforce the identical contract.
+pub(super) fn is_positive_integer(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) && s.bytes().any(|b| b != b'0')
+}
+
+/// East-Asian display width of `s`: every code point in a wide (full-width)
+/// range counts as 2 columns, everything else as 1. This is a faithful port of
+/// the Java backend's `displayLen` / `eaWidth` used for the service-description
+/// length gates (`AgentLlmReviewServiceImpl`), so the CLI's QA character counts
+/// match the backend's exactly (e.g. a CJK character is 2, an ASCII letter 1).
+///
+/// The wide ranges mirror the backend's `WIDE_CP_RANGES` table verbatim (Hangul
+/// Jamo, CJK radicals/ideographs + extensions, Hiragana/Katakana, Hangul
+/// syllables, CJK compatibility, full-width forms, and the CJK supplementary
+/// planes). Anything outside those ranges is half-width (1).
+pub(super) fn display_width(s: &str) -> usize {
+    /// (lo, hi) inclusive code-point ranges that render full-width (2 columns).
+    /// Verbatim mirror of the backend's `WIDE_CP_RANGES`.
+    const WIDE_CP_RANGES: &[(u32, u32)] = &[
+        (0x1100, 0x115F),   // Hangul Jamo
+        (0x2E80, 0x303E),   // CJK Radicals / Kangxi
+        (0x3041, 0x33FF),   // Hiragana / Katakana / etc.
+        (0x3400, 0x4DBF),   // CJK Ext-A
+        (0x4E00, 0x9FFF),   // CJK Unified Ideographs
+        (0xA960, 0xA97F),   // Hangul Jamo Ext-A
+        (0xAC00, 0xD7AF),   // Hangul Syllables
+        (0xD7B0, 0xD7FF),   // Hangul Jamo Ext-B
+        (0xF900, 0xFAFF),   // CJK Compat Ideographs
+        (0xFE10, 0xFE6F),   // Vertical / Compat Forms
+        (0xFF01, 0xFF60),   // Fullwidth Forms
+        (0xFFE0, 0xFFE6),   // Fullwidth Signs
+        (0x20000, 0x2FA1F), // CJK Ext B-F + Compat Supp
+    ];
+    s.chars()
+        .map(|c| {
+            let cp = c as u32;
+            if WIDE_CP_RANGES.iter().any(|&(lo, hi)| cp >= lo && cp <= hi) {
+                2
+            } else {
+                1
+            }
+        })
+        .sum()
+}
+
+/// Parse a `--role` CLI INPUT into its canonical token. STRICT: accepts only
+/// the three canonical values `user` / `asp` / `evaluator` (case-insensitive,
+/// trimmed). Legacy / foreign aliases (`buyer` / `provider` / `requester` /
+/// `requestor`) and numeric codes are NOT accepted — the skill resolves any
+/// synonym the user typed to one of these three before calling. Errors on
+/// anything else.
+///
+/// For PARSING backend RESPONSES (which still carry integer codes / legacy
+/// enums) use [`role_token_from_value`], never this function.
+pub(super) fn normalize_role(role: &str) -> Result<String> {
+    match role.trim().to_ascii_lowercase().as_str() {
+        "user" => Ok("user".to_string()),
+        "asp" => Ok("asp".to_string()),
+        "evaluator" => Ok("evaluator".to_string()),
+        other => bail!("invalid value for --role: {other} (expected: user, asp, or evaluator)"),
+    }
+}
+
+/// Canonical role token (`user` / `asp` / `evaluator`) from a backend `role`
+/// VALUE. The live `agent-list` / `batch-list` endpoints return `role` as the
+/// integer code `1` / `2` / `3` (1=user, 2=asp, 3=evaluator), so this parser
+/// reads that integer form only. Unknown / non-integer → `None`. This is the
+/// single inbound role parser; the strict [`normalize_role`] is for CLI input.
+/// (Outbound is separate: `create` still sends the role STRING via
+/// [`role_to_wire`].)
+pub(super) fn role_token_from_value(role: &Value) -> Option<&'static str> {
+    match role.as_u64()? {
+        1 => Some("user"),
+        2 => Some("asp"),
+        3 => Some("evaluator"),
+        _ => None,
+    }
+}
+
+/// Normalize a role alias to its backend integer code (`"1"` / `"2"` / `"3"`).
+/// Accepts exactly the inputs [`normalize_role`] accepts — the three canonical
+/// tokens `user` / `asp` / `evaluator` only (case-insensitive; no numeric or
+/// legacy aliases) — so callers that send the role as a code (e.g. the
+/// `agent get` listing filter) share one validation path. Errors on any
+/// unrecognized value.
+pub(super) fn normalize_role_code(role: &str) -> Result<String> {
+    match normalize_role(role)?.as_str() {
+        "user" => Ok("1".to_string()),
+        "asp" => Ok("2".to_string()),
+        _ => Ok("3".to_string()),
+    }
+}
+
+/// Map the canonical internal token (`user` / `asp` / `evaluator`) to the role
+/// STRING the backend's `create` contract expects in `cardJson.role` and
+/// `erc8004Msg.role`. The CLI-side rename (requester→user, provider→asp) is
+/// internal + display only; the **backend-accepted enum is unchanged**, so on
+/// the wire we still emit the original `requester` / `provider` / `evaluator`
+/// strings. (The list/filter path is separate — it sends the integer code via
+/// [`normalize_role_code`].)
+pub(super) fn role_to_wire(role: &str) -> &'static str {
+    match role {
+        "user" => "requester",
+        "asp" => "provider",
+        _ => "evaluator",
+    }
+}
+
+/// Normalize a user-supplied language tag into a canonically-cased BCP-47 tag,
+/// then apply product-level default-region completion.
+///
+/// Casing (per RFC 5646 conventions): language subtag lowercased, script subtag
+/// (4 alpha) title-cased, region subtag (2 alpha / 3 digit) uppercased,
+/// everything else lowercased. So `zh_CN` / `ZH-cn` → `zh-CN`, `en_us` →
+/// `en-US`, `zh-hant-tw` → `zh-Hant-TW`.
+///
+/// Default-region completion (product policy — see [`default_region_complete`]):
+/// a *bare* primary-language tag is mapped to the product's canonical region
+/// (`zh` → `zh-CN`, `en` → `en-US`, `ja` → `ja-JP`) so the backend localizes to
+/// a concrete locale rather than its own default. This is deliberately NOT part
+/// of BCP-47 canonicalization (`zh` and `zh-CN` are distinct tags); we add the
+/// region on purpose. Tags that already carry a script/region/variant
+/// (`zh-TW`, `zh-Hant`) are left untouched.
+///
+/// Returns `None` when the input is blank or the leading language subtag is not
+/// a well-formed 2–8 alpha code — callers omit `preferredLanguage` in that case
+/// so the backend falls back to its own default. Note this is a casing
+/// normalizer, not a full BCP-47 validator: subtags after the language are
+/// re-cased but not structurally validated, and grandfathered / deprecated tags
+/// are not specially handled.
+pub(super) fn normalize_bcp47(value: Option<&str>) -> Option<String> {
+    let raw = value?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let mut subtags = raw.split(['-', '_']).filter(|s| !s.is_empty());
+
+    let language = subtags.next()?;
+    if !(2..=8).contains(&language.len()) || !language.chars().all(|c| c.is_ascii_alphabetic()) {
+        return None;
+    }
+    let mut out = language.to_ascii_lowercase();
+
+    for subtag in subtags {
+        out.push('-');
+        let is_alpha = subtag.chars().all(|c| c.is_ascii_alphabetic());
+        let is_digit = subtag.chars().all(|c| c.is_ascii_digit());
+        if subtag.len() == 4 && is_alpha {
+            // script: title-case (e.g. `Hant`)
+            let mut chars = subtag.chars();
+            out.push(chars.next().unwrap().to_ascii_uppercase());
+            out.extend(chars.map(|c| c.to_ascii_lowercase()));
+        } else if (subtag.len() == 2 && is_alpha) || (subtag.len() == 3 && is_digit) {
+            // region: uppercase (e.g. `CN`, `001`)
+            out.push_str(&subtag.to_ascii_uppercase());
+        } else {
+            out.push_str(&subtag.to_ascii_lowercase());
+        }
+    }
+    Some(default_region_complete(out))
+}
+
+/// Product-level default-region completion for a *bare* primary-language tag.
+///
+/// When `tag` carries no further subtag (no `-`), map the supported languages
+/// to their canonical product region so the backend resolves a concrete locale;
+/// unmapped languages and any tag that already has a script/region/variant pass
+/// through unchanged. Not BCP-47 canonicalization — see [`normalize_bcp47`].
+fn default_region_complete(tag: String) -> String {
+    if tag.contains('-') {
+        return tag;
+    }
+    match tag.as_str() {
+        "zh" => "zh-CN".to_string(),
+        "en" => "en-US".to_string(),
+        "ja" => "ja-JP".to_string(),
+        _ => tag,
+    }
+}
+
+// ─── CLI arg helpers ──────────────────────────────────────────────────────
+
+pub(super) fn require_non_empty<'a>(value: Option<&'a str>, flag: &str) -> Result<&'a str> {
+    match value.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(value) => Ok(value),
+        None => bail!("missing required parameter: {flag}"),
+    }
+}
+
+pub(super) fn trim_or_empty(value: Option<&str>) -> String {
+    value.unwrap_or("").trim().to_string()
+}
+
+pub(super) fn ensure_asp_has_service(card: &AgentCard) -> Result<()> {
+    if card.role == "asp" && card.services.is_empty() {
+        bail!("ASP agents require at least one service; provide --service");
+    }
+    Ok(())
+}
+
+/// ASPs MUST carry an uploaded avatar — there is no default fallback (see
+/// references/identity/register.md §5). user / evaluator may keep the default
+/// (empty `--picture` → on-chain default image), so the check is ASP-only.
+/// The skill uploads the image first (`agent upload`) and passes the returned
+/// CDN URL as `--picture`; this gate is the CLI backstop if it doesn't.
+pub(super) fn ensure_asp_has_avatar(card: &AgentCard) -> Result<()> {
+    if card.role == "asp" && card.profile_picture.trim().is_empty() {
+        bail!("ASP agents require an avatar; upload an image and provide --picture");
+    }
+    Ok(())
+}
+
+/// Sniff the avatar image format from its leading magic bytes, returning
+/// `(label, mime)` for a supported format (PNG / JPEG / WebP) or `None` for
+/// anything else. Detection is content-based — a `.png`-renamed PDF still maps
+/// to `None`, because extensions are attacker-controlled and reqwest never sees
+/// the path anyway. Keep the accepted set in sync with references/identity/register.md §5.
+pub(super) fn detect_image_kind(bytes: &[u8]) -> Option<(&'static str, &'static str)> {
+    // PNG: 89 50 4E 47 0D 0A 1A 0A
+    if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
+        return Some(("PNG", "image/png"));
+    }
+    // JPEG: FF D8 FF
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Some(("JPEG", "image/jpeg"));
+    }
+    // WebP: "RIFF" <4-byte size> "WEBP"
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some(("WebP", "image/webp"));
+    }
+    None
+}
+
+/// CLI backstop for avatar uploads: validate `bytes` is a supported image and
+/// return its `(label, mime)`. Bails with a user-facing message otherwise so a
+/// wrong file type is caught at the client boundary instead of producing a
+/// broken avatar URL (the skill prompt also guards this, but prompt guards are
+/// advisory — this is the authoritative check).
+pub(super) fn validate_avatar_image(bytes: &[u8]) -> Result<(&'static str, &'static str)> {
+    detect_image_kind(bytes).ok_or_else(|| {
+        anyhow!(
+            "unsupported image type — only PNG, JPEG, and WebP are accepted; \
+             please convert the file to one of those and retry"
+        )
+    })
+}
+
+pub(super) fn parse_u32_arg(
+    value: Option<&str>,
+    flag: &str,
+    default: u32,
+    min: Option<u32>,
+    max: Option<u32>,
+    clamp_max: bool,
+) -> Result<u32> {
+    let Some(value) = value else {
+        return Ok(default);
+    };
+    let parsed = value
+        .trim()
+        .parse::<u32>()
+        .map_err(|_| anyhow!("invalid value for {flag}: expected integer"))?;
+    if let Some(min) = min {
+        if parsed < min {
+            bail!("invalid value for {flag}: must be >= {min}");
+        }
+    }
+    if let Some(max) = max {
+        if parsed > max {
+            if clamp_max {
+                return Ok(max);
+            }
+            bail!("invalid value for {flag}: must be <= {max}");
+        }
+    }
+    Ok(parsed)
+}
+
+// ─── Rating: stars ↔ score ───────────────────────────────────────────────
+// Split into `parts/rating.rs` (declared here as a `#[path]` child module so
+// `utils::{parse_stars_arg, score_to_stars, convert_feedback_list_scores}`
+// stay the same path for callers).
+#[path = "parts/rating.rs"]
+mod rating;
+pub(super) use rating::{convert_feedback_list_scores, parse_stars_arg};
+// `score_to_stars` is internal to `rating` (called by convert_feedback_list_scores);
+// only the unit tests reference it through `utils`, so re-export it test-only.
+#[cfg(test)]
+pub(super) use rating::score_to_stars;
+
+// ─── `agent get` row enrichment (computed display fields) ─────────────────
+//
+// The CLI does the enum→label MAPPING so the prompt-driven skill layer never
+// miscomputes it. All labels are English-canonical (the skill still localizes
+// the surrounding prose). Each helper returns `None` for unknown / absent
+// inputs so the corresponding key is simply omitted (additive, null-safe) —
+// the skill renders its own fallback ("No rating yet", etc.).
+//
+// NOTE: the `map.insert` calls below (roleLabel / statusLabel / approvalLabel /
+// ratingStars / card / cells) are INTENTIONALLY unconditional overwrites — the
+// CLI-computed display value is authoritative. Do NOT "harden" these into
+// `if !contains_key` guards: those field names are CLI-invented (absent from
+// the ERC-8004 wire schema), so there is nothing real to clobber, and an
+// `if !contains_key` guard would wrongly preserve a stale/partial value over
+// the freshly-computed one.
+
+/// Map the canonical `role` token to its English display label (`user` → "User",
+/// `asp` → "ASP", `evaluator` → "Evaluator"). The skill layer localizes these
+/// labels for display. Callers only ever pass a canonical token (computed by
+/// [`role_token_from_value`]). Unknown → `None` (omit; do not guess).
+fn role_label(role: &str) -> Option<&'static str> {
+    match role.trim() {
+        "user" => Some("User"),
+        "asp" => Some("ASP"),
+        "evaluator" => Some("Evaluator"),
+        _ => None,
+    }
+}
+
+/// Map a raw backend `role` value to its English display label, via the single
+/// inbound parser [`role_token_from_value`] (reads the backend integer code
+/// 1/2/3). Unknown → `None`.
+fn role_label_from_value(role: &Value) -> Option<&'static str> {
+    role_token_from_value(role).map(|token| match token {
+        "user" => "User",
+        "asp" => "ASP",
+        _ => "Evaluator",
+    })
+}
+
+/// True when the row's `role` is the ASP role. Routes through the single inbound
+/// parser [`role_token_from_value`] (the backend integer code `2`).
+/// Gates the ASP-only service rows in `build_agent_card`.
+fn role_is_asp(role: Option<&Value>) -> bool {
+    role.and_then(role_token_from_value) == Some("asp")
+}
+
+/// Apply `f` to every agent-row object in an `agent get` (`/agent-list`)
+/// envelope, tolerating BOTH shapes:
+///   • double-layer  `list[*].agentList[*]` — the live `/agent-list` today,
+///     grouped by owning account (`list[*].accountName`/`ownerAddress`)
+///   • single-layer  `list[*]`              — defensive fallback; not
+///     observed on the live endpoint, kept in case a caller omits grouping
+/// A `list[*]` element is treated as a wrapper iff it carries an `agentList`
+/// array; otherwise the element IS the agent row. No-op when `list` is absent.
+fn for_each_agent_row(v: &mut Value, mut f: impl FnMut(&mut Value)) {
+    let Some(items) = v.get_mut("list").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for item in items.iter_mut() {
+        match item.get_mut("agentList").and_then(Value::as_array_mut) {
+            Some(rows) => {
+                for row in rows.iter_mut() {
+                    f(row);
+                }
+            }
+            None => f(item),
+        }
+    }
+}
+
+/// Map the raw `status` (int or string) to its stable English display label.
+/// `1`/`active` → active, `2` → not listed, `3`/`4`/`5` → unavailable. Unknown → `None`.
+fn status_label(status: &Value) -> Option<&'static str> {
+    let key = match status {
+        Value::Number(n) => n.as_u64().map(|n| n.to_string())?,
+        Value::String(s) => s.trim().to_string(),
+        _ => return None,
+    };
+    match key.as_str() {
+        "1" | "active" => Some("active"),
+        "2" => Some("not listed"),
+        "3" | "4" | "5" => Some("unavailable"),
+        _ => None,
+    }
+}
+
+/// Map `approvalDisplayStatus` (integer) to its canonical English label. The
+/// value rides on the double-layer `agent get` envelope (`list[*].agentList[*]`).
+/// Unknown / absent → `None`. The remark is NOT concatenated here — the skill
+/// appends it when status is 5.
+fn approval_label(status: u64) -> Option<&'static str> {
+    match status {
+        1 => Some("Review not submitted"),
+        2 => Some("Listing under review"),
+        4 => Some("Listed — eligible for task recommendations"),
+        5 => Some("Listing rejected"),
+        7 => Some("This agent is currently unavailable"),
+        _ => None,
+    }
+}
+
+/// Compute the `ratingStars` display string from a 0–100 `reputation.score`:
+/// `score / 20` with up to 2 decimals, trailing zeros trimmed (`92` → "4.6",
+/// `89` → "4.45", `100` → "5"). Returns `None` when there is no usable
+/// reputation (so the key is omitted and the skill renders "No rating yet").
+fn rating_stars(reputation: &Value) -> Option<String> {
+    // No rating yet when count is missing or 0.
+    let count = reputation.get("count").and_then(Value::as_u64);
+    if count == Some(0) {
+        return None;
+    }
+    let score = reputation.get("score").and_then(Value::as_u64)?;
+    Some(format_rating_stars(score))
+}
+
+/// Format a 0–100 score as `score/20` stars: up to 2 decimals, trailing
+/// zeros (and a bare trailing dot) trimmed. Exact at 2 decimals because the
+/// wire grain is one wire unit = 0.05 stars.
+fn format_rating_stars(score: u64) -> String {
+    let score = score.min(100);
+    // Work in hundredths of a star to stay exact: score/20 = score*5 / 100.
+    let hundredths = score * 5; // 0..=500
+    let whole = hundredths / 100;
+    let frac = hundredths % 100; // 0..=99, multiple of 5
+    if frac == 0 {
+        whole.to_string()
+    } else if frac.is_multiple_of(10) {
+        format!("{whole}.{}", frac / 10)
+    } else {
+        format!("{whole}.{frac:02}")
+    }
+}
+
+/// Enrich a `agent get` response in place: for every agent row — read from
+/// the live double-layer shape (`list[*].agentList[*]`) or the single-layer
+/// fallback (`list[*]`), both tolerated by `for_each_agent_row` — ADD the
+/// computed `roleLabel` / `statusLabel` / `approvalLabel` / `ratingStars`
+/// fields. Raw fields are never removed or altered. Each field is added only
+/// when its source maps to a known value.
+pub(super) fn enrich_agent_get_rows(v: &mut Value) {
+    for_each_agent_row(v, enrich_agent_row);
+}
+
+/// Enrich the `agent detail` (batch-list) response — a BARE array of agent
+/// objects (`get_authed` unwraps `data`) — with the SAME per-row display
+/// fields as `agent get` (roleLabel / statusLabel / approvalLabel /
+/// ratingStars / card). No-op when `v` isn't an array. Additive: raw fields
+/// stay intact.
+pub(super) fn enrich_agent_detail_rows(v: &mut Value) {
+    if let Some(rows) = v.as_array_mut() {
+        for row in rows.iter_mut() {
+            enrich_agent_row(row);
+        }
+    }
+}
+
+/// Add the 4 computed display fields to a single agent-row object. No-op for
+/// non-object values and for sources that don't map to a known label.
+fn enrich_agent_row(row: &mut Value) {
+    let Value::Object(map) = row else {
+        return;
+    };
+
+    if let Some(label) = map.get("role").and_then(role_label_from_value) {
+        map.insert("roleLabel".to_string(), Value::String(label.to_string()));
+    }
+
+    if let Some(label) = map.get("status").and_then(status_label) {
+        map.insert("statusLabel".to_string(), Value::String(label.to_string()));
+    }
+
+    if let Some(label) = map
+        .get("approvalDisplayStatus")
+        .and_then(Value::as_u64)
+        .and_then(approval_label)
+    {
+        map.insert(
+            "approvalLabel".to_string(),
+            Value::String(label.to_string()),
+        );
+    }
+
+    if let Some(stars) = map.get("reputation").and_then(rating_stars) {
+        map.insert("ratingStars".to_string(), Value::String(stars));
+    }
+
+    // Additive: a fully-assembled, ordered detail card the skill renders by
+    // iterating + localizing the canonical-English `label`. Built from the
+    // SAME row data (raw fields stay untouched).
+    let card = build_agent_card(map);
+    if !card.is_empty() {
+        map.insert("card".to_string(), Value::Array(card));
+    }
+}
+
+// ─── `card`: ordered, ready-to-render detail-card rows ────────────────────
+//
+// Mirrors `skills/okx-ai/references/identity/profile.md §Agent detail`:
+// one ordered `{ "label": <canonical-English>, "value": <string> }` row per
+// visible field, omitting a row when its value is unavailable (same omit
+// rules the skill uses today). Service rows are ASP-ONLY — the
+// asp-vs-user/evaluator filtering lives here so the skill never has
+// to guard it. Labels are canonical English; the skill localizes them.
+
+/// Build one `{ label, value }` card row.
+fn card_row(label: &str, value: impl Into<String>) -> Value {
+    serde_json::json!({ "label": label, "value": value.into() })
+}
+
+/// Short-form address: first 4 + last 4 hex chars of a `0x…` address
+/// (`0xABCD…WXYZ`). Returns `None` when the value isn't a usable hex address.
+fn short_address(address: &str) -> Option<String> {
+    let address = address.trim();
+    let hex = address
+        .strip_prefix("0x")
+        .or_else(|| address.strip_prefix("0X"))?;
+    if hex.len() < 8 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(format!("0x{}…{}", &hex[..4], &hex[hex.len() - 4..]))
+}
+
+/// Read a non-empty trimmed string from any of the candidate keys (first hit
+/// wins). Tolerates the backend's inconsistent service-key casing across
+/// endpoints (e.g. `serviceName` / `ServiceName` / `name`).
+fn first_str<'a>(map: &'a serde_json::Map<String, Value>, keys: &[&str]) -> Option<&'a str> {
+    keys.iter()
+        .find_map(|k| map.get(*k).and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+/// Read a fee from any of the candidate keys, accepting either a string or a
+/// JSON number (the backend uses `feeAmount` as a number on some endpoints,
+/// `fee` / `Fee` as a string on others). Returns the verbatim non-empty value.
+fn first_fee(map: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|k| match map.get(*k) {
+        Some(Value::String(s)) if !s.trim().is_empty() => Some(s.trim().to_string()),
+        Some(Value::Number(n)) => Some(n.to_string()),
+        _ => None,
+    })
+}
+
+/// Format an A2A service's `subscription` tiers for display. Each tier renders
+/// as `<fee> USD / month` (only the `month` interval is supported today; any other
+/// interval is appended verbatim as `<fee> USD / <interval>`). Reads
+/// tolerantly (string or number fee, camel/Pascal keys). Empty / absent
+/// subscription → empty Vec. A non-empty result means the service is
+/// subscription-priced (its single-purchase `fee` is empty by contract).
+fn format_subscription_tiers(map: &serde_json::Map<String, Value>) -> Vec<String> {
+    let Some(tiers) = map
+        .get("subscription")
+        .or_else(|| map.get("Subscription"))
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+    tiers
+        .iter()
+        .filter_map(|t| {
+            let Value::Object(t) = t else { return None };
+            let fee = first_fee(t, &["fee", "Fee", "feeAmount"])?;
+            let interval = first_str(t, &["interval", "Interval"]).unwrap_or("month");
+            let period = if interval.eq_ignore_ascii_case("month") {
+                "month".to_string()
+            } else {
+                interval.to_string()
+            };
+            Some(format!("{fee} USD / {period}"))
+        })
+        .collect()
+}
+
+/// Format a service's `freeTrial` (duration in HOURS, subscription-priced A2A
+/// only) for display. `"72"` → `"3 days"` (whole days collapse to a day count),
+/// otherwise `"<n> hours"`; singular handled (`"1 day"` / `"1 hour"`). Reads
+/// tolerantly (camel/Pascal keys, string or number). Returns `None` when the
+/// field is absent / blank / not a positive integer — callers render `—`.
+///
+/// A free trial is a subscription-only concept: the write side
+/// (`normalize_service` / `validate.rs` P7) forbids `freeTrial` on a service
+/// that isn't subscription-priced. This mirrors that invariant on the READ side
+/// too — a service with no subscription returns `None` even if the backend row
+/// carries a stray `freeTrial`, so an "orphan" trial never surfaces on the
+/// service-list table or the detail card.
+fn format_free_trial(map: &serde_json::Map<String, Value>) -> Option<String> {
+    // Subscription-only: no subscription tiers ⇒ no trial, regardless of any
+    // stray `freeTrial` value in the row.
+    if format_subscription_tiers(map).is_empty() {
+        return None;
+    }
+    let raw = first_fee(map, &["freeTrial"])?;
+    let raw = raw.trim();
+    if !is_positive_integer(raw) {
+        return None;
+    }
+    let hours: u64 = raw.parse().ok()?;
+    let label = if hours.is_multiple_of(24) {
+        let days = hours / 24;
+        format!("{days} day{}", if days == 1 { "" } else { "s" })
+    } else {
+        format!("{hours} hour{}", if hours == 1 { "" } else { "s" })
+    };
+    Some(label)
+}
+
+/// Fee-slot text for a service that has NEITHER a single-purchase price nor a
+/// subscription. An A2MCP in this state is missing REQUIRED data (create/update
+/// forbid an empty A2MCP fee), so it renders `—` (unknown) rather than implying
+/// the service is free; any other type renders `free`. Keeps the three display
+/// paths (detail card / service-list / search top-service) consistent.
+fn unpriced_fee_label(is_a2mcp: bool) -> String {
+    if is_a2mcp {
+        "—".to_string()
+    } else {
+        "free".to_string()
+    }
+}
+
+/// Format a single ASP service into its card value string for
+/// references/identity/profile.md §Detail for explicit Agent IDs.
+/// A subscription-priced A2A service shows its monthly tier(s) in the fee slot
+/// (`<N> USD / month`) instead of a single-purchase price.
+/// `Type` maps `A2MCP`→"API service" / `A2A`→"agent-to-agent" (verbatim
+/// otherwise); A2A omits the endpoint from the value string. Returns `None`
+/// when there is no service name to anchor the row.
+fn format_service_value(service: &Value) -> Option<String> {
+    let Value::Object(s) = service else {
+        return None;
+    };
+    let name = first_str(s, &["serviceName", "ServiceName", "name"])?;
+
+    let raw_type = first_str(s, &["serviceType", "ServiceType", "servicetype"]).unwrap_or("");
+    let (type_label, is_a2a) = match raw_type.to_ascii_uppercase().as_str() {
+        "A2MCP" => ("API service".to_string(), false),
+        "A2A" => ("agent-to-agent".to_string(), true),
+        "" => (String::new(), false),
+        other => (other.to_string(), false),
+    };
+    let is_a2mcp = raw_type.eq_ignore_ascii_case("A2MCP");
+
+    // Subscription-priced A2A → show the monthly tier(s) in the fee slot;
+    // otherwise a single-purchase price (`<N> USD`), or — when unpriced — `—`
+    // for an A2MCP (missing required fee) / `free` for other types.
+    let subscription = format_subscription_tiers(s);
+    let fee = first_fee(s, &["fee", "Fee", "feeAmount"]);
+    let fee_str = if !subscription.is_empty() {
+        subscription.join(", ")
+    } else {
+        match fee.as_deref() {
+            Some(f) => format!("{f} USD"),
+            None => unpriced_fee_label(is_a2mcp),
+        }
+    };
+
+    let endpoint = if is_a2a {
+        None
+    } else {
+        first_str(s, &["endpoint", "Endpoint"]).map(str::to_string)
+    };
+
+    // Join the descriptor segments (type, fee, optional endpoint), dropping
+    // any empty segment, then prefix `<name> — `.
+    let mut segments: Vec<String> = Vec::new();
+    if !type_label.is_empty() {
+        segments.push(type_label);
+    }
+    segments.push(fee_str);
+    if let Some(trial) = format_free_trial(s) {
+        segments.push(format!("{trial} free trial"));
+    }
+    if let Some(ep) = endpoint {
+        segments.push(ep);
+    }
+    Some(format!("{name} — {}", segments.join(", ")))
+}
+
+/// Assemble the ordered `card` array per references/identity/profile.md §Agent detail.
+fn build_agent_card(map: &serde_json::Map<String, Value>) -> Vec<Value> {
+    let mut card: Vec<Value> = Vec::new();
+
+    // 1. Agent ID (omit if absent).
+    if let Some(id) = map
+        .get("agentId")
+        .and_then(|v| {
+            v.as_u64()
+                .map(|n| n.to_string())
+                .or_else(|| v.as_str().map(str::to_string))
+        })
+        .filter(|s| !s.trim().is_empty())
+    {
+        card.push(card_row("Agent ID", format!("#{id}")));
+    }
+
+    // 2. Name (omit if absent/empty).
+    if let Some(name) = map
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        card.push(card_row("Name", name));
+    }
+
+    // 3. Role — the computed label (omit if role unknown). Accepts the
+    // backend integer role as well as the string enum.
+    if let Some(label) = map.get("role").and_then(role_label_from_value) {
+        card.push(card_row("Role", label));
+    }
+
+    // 4. Status — the computed label.
+    if let Some(label) = map.get("status").and_then(status_label) {
+        card.push(card_row("Status", label));
+    }
+
+    // 5. Approval status — computed label, with rejection reason parenthetical.
+    let approval = map.get("approvalDisplayStatus").and_then(Value::as_u64);
+    if let Some(label) = approval.and_then(approval_label) {
+        let remark = map
+            .get("approvalRemark")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let value = match (approval, remark) {
+            (Some(5), Some(remark)) => format!("{label} (reason: {remark})"),
+            _ => label.to_string(),
+        };
+        card.push(card_row("Approval status", value));
+    }
+
+    // 6. Address — short form (omit if absent/unusable). The live backend
+    // names the agent's wallet `agentWalletAddress`; the older schema used a
+    // bare `address`. Accept either (plus `ownerAddress` as a last resort).
+    if let Some(short) =
+        first_str(map, &["address", "agentWalletAddress", "ownerAddress"]).and_then(short_address)
+    {
+        card.push(card_row("Address", short));
+    }
+
+    // 7. Description — always emit; "(not set)" when empty/missing. Live
+    // backend key is `profileDescription`; older schema used `description`.
+    let description = first_str(map, &["description", "profileDescription"]);
+    card.push(card_row(
+        "Description",
+        description
+            .map(str::to_string)
+            .unwrap_or_else(|| "(not set)".to_string()),
+    ));
+
+    // 8. Profile photo — verbatim URL or "default" when empty. Live backend
+    // key is `profilePicture`; older schema used `picture`.
+    let picture = first_str(map, &["picture", "profilePicture"]);
+    card.push(card_row(
+        "Profile photo",
+        picture
+            .map(str::to_string)
+            .unwrap_or_else(|| "default".to_string()),
+    ));
+
+    // 9. Service rows — ASP ROLE ONLY (omit entirely otherwise).
+    if role_is_asp(map.get("role")) {
+        if let Some(services) = map.get("services").and_then(Value::as_array) {
+            let mut index = 0usize;
+            for service in services {
+                if let Some(value) = format_service_value(service) {
+                    index += 1;
+                    card.push(card_row(&format!("Service {index}"), value));
+                }
+            }
+        }
+    }
+
+    // 10. Rating — omit when count 0 / ratingStars absent.
+    if let Some(reputation) = map.get("reputation") {
+        if let Some(stars) = rating_stars(reputation) {
+            let count = reputation.get("count").and_then(Value::as_u64).unwrap_or(0);
+            card.push(card_row("Rating", format!("★ {stars} ({count} reviews)")));
+        }
+    }
+
+    // 11. txHash — only when present (absent on read-only get).
+    if let Some(tx_hash) = map
+        .get("txHash")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        card.push(card_row("txHash", tx_hash));
+    }
+
+    card
+}
+
+// ─── `cells`: ordered, ready-to-render TABLE-ROW cells ────────────────────
+//
+// `cells` is the table-row analog of `card`: an ordered JSON array of
+// `{ "label": <canonical-English-column-label>, "value": <string> }`, ONE
+// entry per column, omitting NOTHING (a table row keeps every column —
+// missing values render as "—" / "No rating yet" per the per-doc rules).
+// Labels are canonical English; the skill localizes them. All formatting
+// (truncation, ★ stars, A2A fee, type labels, `—` fallbacks) is done HERE so
+// the skill renders the table by simply laying out cells. Mirrors:
+//   • references/identity/profile.md    §My Agents    → `build_agent_list_cells`
+//   • references/identity/profile.md    §Services for an explicit Agent ID → `build_service_cells`
+//   • Search results                              → `build_search_table`
+//   • references/identity/reputation.md §Result       → `build_feedback_cells`
+// All builders are additive: raw fields + existing `card`/labels stay intact.
+// The `cells` insert is an intentional unconditional overwrite — see the
+// overwrite NOTE in the `agent get` row-enrichment section above.
+
+/// Build one `{ label, value }` table cell (same shape as `card_row`).
+fn cell(label: &str, value: impl Into<String>) -> Value {
+    serde_json::json!({ "label": label, "value": value.into() })
+}
+
+/// Truncate a display name to ≤ `max` chars, appending `…` when truncated.
+/// Char-based (not byte-based) so multi-byte names truncate cleanly.
+fn truncate_name(name: &str, max: usize) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    if chars.len() <= max {
+        name.to_string()
+    } else {
+        format!("{}…", chars[..max].iter().collect::<String>())
+    }
+}
+
+/// Read the `agentId` from a row as a display string (`u64` or string forms).
+fn read_agent_id(map: &serde_json::Map<String, Value>) -> Option<String> {
+    map.get("agentId")
+        .and_then(|v| {
+            v.as_u64()
+                .map(|n| n.to_string())
+                .or_else(|| v.as_str().map(str::to_string))
+        })
+        .filter(|s| !s.trim().is_empty())
+}
+
+// ─── §1 agent-list row cells ──────────────────────────────────────────────
+//
+// Columns (references/identity/profile.md §My Agents), in order:
+//   Agent ID | Name | Role | Status | Approval status | Rating
+// Status and approval apply only to ASPs; other roles render `—`.
+fn build_agent_list_cells(map: &serde_json::Map<String, Value>) -> Vec<Value> {
+    let agent_id = read_agent_id(map)
+        .map(|id| format!("#{id}"))
+        .unwrap_or_else(|| "—".to_string());
+
+    let name = map
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| truncate_name(s, 20))
+        .unwrap_or_else(|| "—".to_string());
+
+    let role = map
+        .get("role")
+        .and_then(role_label_from_value)
+        .unwrap_or("—")
+        .to_string();
+
+    let (status, approval) = if role == "ASP" {
+        let status = map
+            .get("status")
+            .and_then(status_label)
+            .unwrap_or("—")
+            .to_string();
+        let approval_code = map.get("approvalDisplayStatus").and_then(Value::as_u64);
+        let approval = match approval_code.and_then(approval_label) {
+            Some(label) => {
+                let remark = map
+                    .get("approvalRemark")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
+                match (approval_code, remark) {
+                    (Some(5), Some(remark)) => format!("Review failed (reason: {remark})"),
+                    (Some(5), None) => "Review failed".to_string(),
+                    _ => label.to_string(),
+                }
+            }
+            None => "—".to_string(),
+        };
+        (status, approval)
+    } else {
+        ("—".to_string(), "—".to_string())
+    };
+
+    let rating = match map.get("reputation").and_then(rating_stars) {
+        Some(stars) => {
+            let count = map
+                .get("reputation")
+                .and_then(|r| r.get("count"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            format!("★ {stars} ({count})")
+        }
+        None => "No rating yet".to_string(),
+    };
+
+    vec![
+        cell("Agent ID", agent_id),
+        cell("Name", name),
+        cell("Role", role),
+        cell("Status", status),
+        cell("Approval status", approval),
+        cell("Rating", rating),
+    ]
+}
+
+/// Add `cells` (per §1) to every agent row and derive `hasMore` from pagination
+/// metadata. Supports single-layer `list[*]` and double-layer
+/// `list[*].agentList[*]` envelopes. Additive: never removes fields.
+pub(super) fn add_agent_list_cells(v: &mut Value) {
+    if let Some(map) = v.as_object_mut() {
+        derive_has_more(map);
+    }
+    for_each_agent_row(v, |row| {
+        if let Value::Object(map) = row {
+            let cells = build_agent_list_cells(map);
+            map.insert("cells".to_string(), Value::Array(cells));
+        }
+    });
+}
+
+// ─── registration pre-check (powers `agent pre-check`) ────────────────────
+// Split into `parts/precheck.rs` (declared here as a `#[path]` child module so
+// `utils::{build_precheck, collect_owned_agents}` stay the same path for callers).
+#[path = "parts/precheck.rs"]
+mod precheck;
+pub(super) use precheck::{build_precheck, collect_owned_agents};
+
+// ─── §6 search-result table ────────────────────────────────────────────
+//
+// Search uses a DIFFERENT backend schema than
+// `agent get`. Search-result columns, in order:
+//   Agent ID | Name | Sold Count | Rating | Min price | Top service
+// Critical schema differences handled HERE:
+//   • Rating source is `feedbackRate`, a backend 0–100 score converted to
+//     0–5 stars by dividing by 20. `null` → `—`; `0` → `No rating yet`
+//     (0 means no feedback yet, never `★ 0`).
+//   • Description is `profileDescription` (not surfaced as a column here).
+//   • Price is `serviceMinPrice` (bare number, NO unit; `null`/missing → `—`).
+//   • `services` may be ABSENT entirely (`@JsonInclude(NON_NULL)`) → `—`.
+//   • Per-service fields are camelCase `serviceName` / `serviceType` /
+//     `feeAmount` / `feeToken`.
+// Forbidden columns (Role / Status / Description / Endpoint) are NOT emitted.
+fn build_search_table_row(map: &serde_json::Map<String, Value>) -> Value {
+    let agent_id = read_agent_id(map)
+        .map(|id| format!("#{id}"))
+        .unwrap_or_else(|| "—".to_string());
+
+    let name = map
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| truncate_name(s, 20))
+        .unwrap_or_else(|| "—".to_string());
+
+    // Rating: convert the backend's 0–100 feedbackRate to 0–5 stars.
+    // null/missing → `—`; exactly 0 → `No rating yet` (never `★ 0`).
+    let rating = match map.get("feedbackRate") {
+        Some(Value::Number(n)) => match n.as_f64() {
+            Some(0.0) => "No rating yet".to_string(),
+            Some(rate) => format!("★ {}", format_search_rate(rate / 20.0)),
+            None => "—".to_string(),
+        },
+        _ => "—".to_string(),
+    };
+
+    // Min price: bare number, NO unit. null/missing → `—`.
+    let min_price = match map.get("serviceMinPrice") {
+        Some(Value::Number(n)) => n.to_string(),
+        _ => "—".to_string(),
+    };
+
+    // Top service: services[0] → `<serviceName> (<localized type>, <feeAmount>
+    // <feeToken>)`, truncated to ≤ 40 chars. services absent / empty → `—`.
+    let top_service = map
+        .get("services")
+        .and_then(Value::as_array)
+        .and_then(|arr| arr.first())
+        .and_then(format_top_service)
+        .unwrap_or_else(|| "—".to_string());
+
+    let sold_count = map
+        .get("soldCount")
+        .filter(|value| !value.is_null())
+        .cloned()
+        .unwrap_or_else(|| Value::String("—".to_string()));
+
+    serde_json::json!({
+        "agentId": agent_id,
+        "name": name,
+        "soldCount": sold_count,
+        "rating": rating,
+        "minPrice": min_price,
+        "recommendService": top_service,
+    })
+}
+
+/// Format a converted search rating (0–5 float) for display: up to 2 decimals,
+/// trailing zeros (and bare trailing dot) trimmed (`4.60` → "4.6", `5.0` →
+/// "5", `4.45` → "4.45").
+pub(super) fn format_search_rate(rate: f64) -> String {
+    let mut s = format!("{rate:.2}");
+    if s.contains('.') {
+        s = s.trim_end_matches('0').trim_end_matches('.').to_string();
+    }
+    s
+}
+
+/// Format the §6 `Top service` cell from a search `services[0]` object:
+/// `<serviceName> (<localized serviceType>, <feeAmount> <feeToken>)`,
+/// truncated to ≤ 40 chars. serviceType localized via the §Service-type
+/// short-form (A2MCP → "API service", A2A → "agent-to-agent"); raw enum never
+/// surfaces. Returns `None` when there is no service name to anchor the cell.
+fn format_top_service(service: &Value) -> Option<String> {
+    let Value::Object(s) = service else {
+        return None;
+    };
+    let name = first_str(s, &["serviceName", "ServiceName", "name"])?;
+
+    let raw_type = first_str(s, &["serviceType", "ServiceType", "servicetype"]).unwrap_or("");
+    let type_label = match raw_type.to_ascii_uppercase().as_str() {
+        "A2MCP" => "API service".to_string(),
+        "A2A" => "agent-to-agent".to_string(),
+        "" => String::new(),
+        other => other.to_string(),
+    };
+    let is_a2mcp = raw_type.eq_ignore_ascii_case("A2MCP");
+
+    // Subscription-priced A2A → show the monthly tier(s) in the fee slot.
+    // Otherwise feeAmount (search) + feeToken (verbatim); an explicit 0 (and any
+    // other amount) renders as the amount, e.g. "0 USDT". No single price and no
+    // subscription → `—` for an A2MCP (missing required fee) / `free` otherwise.
+    let subscription = format_subscription_tiers(s);
+    let fee = first_fee(s, &["feeAmount", "fee", "Fee"]);
+    let fee_token = first_str(s, &["feeToken", "FeeToken"]);
+    let fee_str = if !subscription.is_empty() {
+        subscription.join(", ")
+    } else {
+        match (fee.as_deref(), fee_token) {
+            (Some(f), Some(t)) => format!("{f} {t}"),
+            (Some(f), None) => f.to_string(),
+            (None, _) => unpriced_fee_label(is_a2mcp),
+        }
+    };
+
+    let mut segments: Vec<String> = Vec::new();
+    if !type_label.is_empty() {
+        segments.push(type_label);
+    }
+    segments.push(fee_str);
+    // Note: the free-trial flag is intentionally NOT appended here — the
+    // Top-service cell is a ≤40-char teaser and a trailing trial segment would
+    // be truncated away. The trial surfaces in the full service-list table
+    // (`build_service_cells`) and the detail card (`format_service_value`).
+    let full = format!("{name} ({})", segments.join(", "));
+    Some(truncate_name(&full, 40))
+}
+
+/// Build the display-ready output returned by `agent search`.
+/// Invalid/non-object rows are ignored because they cannot populate the fixed
+/// table schema. Missing `list` degrades to an empty table.
+pub(super) fn build_search_table(v: &Value) -> Value {
+    let rows: Vec<Value> = v
+        .get("list")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_object)
+        .map(build_search_table_row)
+        .collect();
+
+    serde_json::json!({
+        "total": v.get("total").cloned().unwrap_or(Value::Null),
+        "page": v.get("page").cloned().unwrap_or(Value::Null),
+        "pageSize": v.get("pageSize").cloned().unwrap_or(Value::Null),
+        "table": {
+            "columns": [
+                { "key": "agentId", "label": "Agent ID" },
+                { "key": "name", "label": "Name" },
+                { "key": "soldCount", "label": "Sold Count" },
+                { "key": "rating", "label": "Rating" },
+                { "key": "minPrice", "label": "Min price" },
+                { "key": "recommendService", "label": "Top service" }
+            ],
+            "rows": rows
+        }
+    })
+}
+
+// ─── §4 service-list row cells ────────────────────────────────────────────
+//
+// Cells (references/identity/profile.md §Services for an explicit Agent ID), in order:
+//   # | Name | Type | Fee | Subscription | Free trial | Description
+// Read-only service-list never exposes Service guide for any service type;
+// serviceGuide is handled only by the guided register/update flows.
+// service-list returns PascalCase keys
+// (`ServiceName` / `ServiceType` / `Fee` / `Endpoint`); we read tolerantly.
+// Type: display the canonical service type (`A2MCP` or `A2A`) verbatim.
+// Fee: `<n> USD`; subscription-priced A2A → `—`; unpriced A2MCP → `—`, other
+// unpriced → `free`. Subscription: each
+// monthly tier `<n> USD / month`, or `—` when there is none (or A2MCP). Free
+// trial: `<n> days`/`hours` when a subscription trial is set, else `—` (single
+// fee / A2MCP never have one). Endpoint stays in source data, never in list cells.
+// Description: truncated for the discovery Service list (≤ 80 chars).
+fn build_service_cells(index: usize, service: &Value) -> Option<Vec<Value>> {
+    let Value::Object(s) = service else {
+        return None;
+    };
+    let name = first_str(s, &["serviceName", "ServiceName", "name"])?;
+
+    let raw_type = first_str(s, &["serviceType", "ServiceType", "servicetype"]).unwrap_or("");
+    let type_label = match raw_type.to_ascii_uppercase().as_str() {
+        "" => "—".to_string(),
+        other => other.to_string(),
+    };
+    let is_a2mcp = raw_type.eq_ignore_ascii_case("A2MCP");
+
+    // Fee: subscription-priced A2A → `—` (price lives in the Subscription
+    // column); an explicit 0 and any other single price → `<n> USD`; unpriced →
+    // `—` for an A2MCP (missing required fee) / `free` for other types.
+    let subscription = format_subscription_tiers(s);
+    let fee = first_fee(s, &["fee", "Fee", "feeAmount"]);
+    let fee_str = if !subscription.is_empty() {
+        "—".to_string()
+    } else {
+        match fee.as_deref() {
+            Some(f) => format!("{f} USD"),
+            None => unpriced_fee_label(is_a2mcp),
+        }
+    };
+
+    // Subscription: each monthly tier → `<n> USD / month`; empty (or A2MCP) → `—`.
+    let subscription_str = if subscription.is_empty() {
+        "—".to_string()
+    } else {
+        subscription.join(", ")
+    };
+
+    // Free trial: `<n> days`/`hours` when a subscription trial is set; `—` otherwise.
+    let free_trial = format_free_trial(s).unwrap_or_else(|| "—".to_string());
+
+    // Description: truncate per §4 (~80 chars). Empty → `—`.
+    let description = first_str(
+        s,
+        &[
+            "serviceDescription",
+            "ServiceDescription",
+            "servicedescription",
+        ],
+    )
+    .map(|d| truncate_name(d, 80))
+    .unwrap_or_else(|| "—".to_string());
+
+    // §2.3 (CHANGED): 4 read-only A2MCP display cells appended after
+    // `Description`. Missing values render `—` (per surrounding cells, not the
+    // spec table's literal `--`). TBC[8]: camelCase backend keys; TBC[2]:
+    // pre-existing services omit these → `—`.
+    let req_type = first_str(s, &["reqType"])
+        .map(str::to_string)
+        .unwrap_or_else(|| "—".to_string());
+    let method = first_str(s, &["method"])
+        .map(str::to_string)
+        .unwrap_or_else(|| "—".to_string());
+    let tool_name = first_str(s, &["toolName"])
+        .map(str::to_string)
+        .unwrap_or_else(|| "—".to_string());
+    let req_example = first_str(s, &["reqExample"])
+        .map(|e| truncate_name(e, 80))
+        .unwrap_or_else(|| "—".to_string());
+
+    Some(vec![
+        cell("#", index.to_string()),
+        cell("Name", name),
+        cell("Type", type_label),
+        cell("Fee", fee_str),
+        cell("Subscription", subscription_str),
+        cell("Free trial", free_trial),
+        cell("Description", description),
+        cell("Request type", req_type),
+        cell("Method", method),
+        cell("Tool name", tool_name),
+        cell("Request example", req_example),
+    ])
+}
+
+/// Add `cells` (per §4) to every service and derive `hasMore` for paginated
+/// wrappers. The `#` column is 1-based over the rendered services. Tolerates
+/// BOTH shapes:
+///   • live backend: `data` is an ARRAY of `{ agentInfo, list:[service…] }`
+///     wrappers — services live under each wrapper's `list`.
+///   • older/synthetic: a single object carrying a flat `services` array.
+/// Cell enrichment is a no-op when neither service-array shape matches.
+pub(super) fn add_service_list_cells(v: &mut Value) {
+    match v {
+        Value::Array(wrappers) => {
+            for wrapper in wrappers.iter_mut() {
+                add_service_cells_to_node(wrapper);
+            }
+        }
+        node => add_service_cells_to_node(node),
+    }
+}
+
+/// Derive pagination metadata, then locate this node's service array (under
+/// `list` then `services`) and stamp `cells` onto each service object.
+fn add_service_cells_to_node(node: &mut Value) {
+    let Some(map) = node.as_object_mut() else {
+        return;
+    };
+    derive_has_more(map);
+    let key = ["list", "services"]
+        .into_iter()
+        .find(|k| map.get(*k).map(Value::is_array).unwrap_or(false));
+    let Some(key) = key else {
+        return;
+    };
+    let Some(services) = map.get_mut(key).and_then(Value::as_array_mut) else {
+        return;
+    };
+    let mut index = 0usize;
+    for service in services.iter_mut() {
+        index += 1;
+        if let Some(cells) = build_service_cells(index, service) {
+            if let Value::Object(m) = service {
+                if let Some(guide) = m
+                    .get("serviceGuide")
+                    .and_then(Value::as_str)
+                    .filter(|guide| !guide.trim().is_empty())
+                {
+                    m.insert(
+                        "serviceGuideHash".to_string(),
+                        Value::String(format!(
+                            "sha256:{}",
+                            hex::encode(Sha256::digest(guide.as_bytes()))
+                        )),
+                    );
+                }
+                m.insert("cells".to_string(), Value::Array(cells));
+            }
+        } else {
+            // No usable service name → don't consume an index number.
+            index -= 1;
+        }
+    }
+}
+
+fn pagination_value(value: Option<&Value>) -> Option<u64> {
+    match value? {
+        Value::Number(number) => number.as_u64(),
+        Value::String(value) => value.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+fn derive_has_more(map: &mut serde_json::Map<String, Value>) {
+    if let (Some(page), Some(page_size), Some(total)) = (
+        pagination_value(map.get("page")),
+        pagination_value(map.get("pageSize")),
+        pagination_value(map.get("total")),
+    ) {
+        map.insert(
+            "hasMore".to_string(),
+            Value::Bool(page.saturating_mul(page_size) < total),
+        );
+    }
+}
+
+// ─── §5 feedback-list row cells ───────────────────────────────────────────
+//
+// references/identity/reputation.md §Display results renders these
+// ordered cells directly. Fields:
+//   Score (`valueString` / `value` divided by 20 and displayed on a 5-point
+//     scale without a suffix; legacy `score` stays supported as an
+//     already-normalized 5-point value),
+//   Reviewer (`agentName`, with legacy creatorId → `#<id>` fallback),
+//   Date (`time` Unix milliseconds → local date, with legacy createdAt fallback),
+//   Comment (`content`, with legacy description fallback).
+// Missing optional fields render `—` (the row keeps all cells) EXCEPT comment
+// which uses §5's `(no comment)` placeholder.
+fn build_feedback_cells(map: &serde_json::Map<String, Value>) -> Vec<Value> {
+    let score_100 = ["valueString", "value"].into_iter().find_map(|key| {
+        map.get(key).and_then(|value| match value {
+            Value::String(value) => value
+                    .trim()
+                    .strip_suffix("/100")
+                    .unwrap_or(value.trim())
+                    .parse::<f64>()
+                .ok(),
+            Value::Number(value) => value.as_f64(),
+            _ => None,
+        })
+    });
+    let score = score_100
+        .map(|value| format_search_rate(value / 20.0))
+        .or_else(|| {
+            map.get("score")
+                .and_then(Value::as_f64)
+                .map(format_search_rate)
+        })
+        .unwrap_or_else(|| "—".to_string());
+
+    let reviewer = first_str(map, &["agentName"])
+        .map(str::to_string)
+        .or_else(|| {
+            map.get("creatorId")
+                .and_then(|value| {
+                    value
+                        .as_u64()
+                        .map(|number| number.to_string())
+                        .or_else(|| value.as_str().map(str::to_string))
+                })
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .map(|id| format!("#{id}"))
+        })
+        .unwrap_or_else(|| "—".to_string());
+
+    let date = map
+        .get("time")
+        .and_then(|value| {
+            value
+                .as_i64()
+                .or_else(|| value.as_str().and_then(|value| value.trim().parse().ok()))
+        })
+        .and_then(|timestamp| chrono::Local.timestamp_millis_opt(timestamp).single())
+        .map(|date_time| date_time.format("%Y-%m-%d").to_string())
+        .or_else(|| {
+            map.get("createdAt")
+                .and_then(|value| {
+                    value
+                        .as_str()
+                        .map(str::to_string)
+                        .or_else(|| value.as_u64().map(|number| number.to_string()))
+                })
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or_else(|| "—".to_string());
+
+    // Comment: §5 placeholder `(no comment)` when empty / missing.
+    let comment = first_str(map, &["content", "description"])
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| "(no comment)".to_string());
+
+    vec![
+        cell("Score", score),
+        cell("Reviewer", reviewer),
+        cell("Date", date),
+        cell("Comment", comment),
+    ]
+}
+
+/// Add `cells` (per §5) to every feedback entry. The backend array is `list`
+/// on the live endpoint and `items` on older/synthetic shapes (mirrors
+/// `convert_feedback_list_scores`, which already accepts both). No-op when
+/// neither exists. Additive — runs AFTER convert_feedback_list_scores so
+/// `score` is already a 0.00–5.00 float.
+pub(super) fn add_feedback_list_cells(v: &mut Value) {
+    let Value::Object(map) = v else {
+        return;
+    };
+    derive_has_more(map);
+    for key in ["items", "list"] {
+        if let Some(items) = map.get_mut(key).and_then(Value::as_array_mut) {
+            for item in items.iter_mut() {
+                if let Value::Object(entry) = item {
+                    let cells = build_feedback_cells(entry);
+                    entry.insert("cells".to_string(), Value::Array(cells));
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "tests/utils_tests.rs"]
+mod tests;

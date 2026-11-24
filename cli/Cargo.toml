@@ -1,0 +1,107 @@
+[package]
+name = "onchainos-cli"
+version = "4.6.12"
+edition = "2021"
+
+[[bin]]
+name = "onchainos"
+path = "src/main.rs"
+
+[features]
+debug-log = []
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = [
+  "json",
+  "multipart",
+  "rustls-tls",
+] }
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_jcs = "0.1"
+anyhow = "1"
+dirs = "6"
+rpassword = "7"
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["clock"] }
+rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
+
+# Encryption
+aes-gcm = "0.10"
+scrypt = "0.11"
+rand = "0.8"
+zeroize = "1"
+
+# HD derivation + signing
+bip39 = "2.1"
+coins-bip32 = "0.13"
+k256 = { version = "0.13", features = ["ecdsa"] }
+ed25519-dalek = "2"
+tiny-keccak = { version = "2", features = ["keccak"] }
+bs58 = "0.5"
+bitcoin = "0.32"
+num-bigint = "0.4"
+
+# EVM transaction building
+alloy-consensus = "1"
+alloy-signer = "1"
+alloy-sol-types = "1"
+alloy-signer-local = "1"
+alloy-primitives = "1"
+alloy-rlp = "0.3"
+alloy-network = "1"
+
+# Keyring (cross-platform credential storage)
+keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
+fs2 = "0.4"
+tempfile = "3"
+
+# X25519 key derivation (tempPubKey generation)
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+
+# JWT decoding (accessToken expiry parsing)
+jsonwebtoken = "9"
+
+# HPKE (x402 payment signing)
+hpke = "0.12"
+
+# URL encoding
+url = "2"
+percent-encoding = "2"
+
+# Hostname (gethostname syscall for file_keyring)
+libc = "0.2"
+
+# Utils
+hex = "0.4"
+uuid = { version = "1", features = ["v4"] }
+# Device fingerprint (machine_uid::get() reads /etc/machine-id / MachineGuid / IOPlatformUUID); pin 0.3 per spec §11.2 TBC[2] — do NOT upgrade to 0.6
+machine-uid = "0.3"
+# Device display name (whoami::devicename() reads ComputerName / COMPUTERNAME / hostname);
+# must stay on 1.x — 2.x moved/renamed devicename() and will not compile
+whoami = "1.6.1"
+qrcode = { version = "0.14", default-features = false }
+# Cross-platform browser open (macOS/Windows/Linux + WSL); failure is caught, never fatal
+open = "5"
+
+# MCP Server
+rmcp = { version = "1.1.1", features = ["transport-io"] }
+schemars = "1"
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+serde_json = "1"
+tempfile = "3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

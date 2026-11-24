@@ -1,0 +1,9 @@
+{
+  "conversations": [
+    { "conversationId": "conv-active-1", "status": "active", "memberCount": 3, "createdAt": 1700000000 },
+    { "conversationId": "conv-full-1", "status": "full", "memberCount": 50, "createdAt": 1700000100 },
+    { "conversationId": "conv-active-1", "status": "active", "memberCount": 3, "createdAt": 1700000000 },
+    { "status": "active", "memberCount": 1, "createdAt": 1700000200 },
+    { "conversationId": "conv-bad-status", "status": "archived", "memberCount": 2, "createdAt": 1700000300 }
+  ]
+}

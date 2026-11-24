@@ -1,0 +1,218 @@
+//! Local attachment management for user tasks.
+//!
+//! Storage: `~/.onchainos/task/<jobId>/attachments/`
+
+use anyhow::{bail, Result};
+use std::path::{Path, PathBuf};
+
+use crate::commands::agent_commerce::task::common::network::task_api_client::TaskApiClient;
+use crate::commands::agent_commerce::task::common::query::{self as common_query, status_name};
+use crate::commands::agent_commerce::task::common::{AGENT_ROLE_USER, DEBUG_LOG};
+
+const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024; // 100 MB
+
+pub(crate) fn validate_attachment_sources(sources: &[String]) -> Result<()> {
+    for src_path in sources {
+        let src = Path::new(src_path);
+        let metadata = std::fs::metadata(src)
+            .map_err(|e| anyhow::anyhow!("attachment file is not readable: {src_path}: {e}"))?;
+        if !metadata.is_file() {
+            bail!("attachment path is not a regular file: {src_path}");
+        }
+        if metadata.len() > MAX_FILE_SIZE {
+            let size_mb = metadata.len() as f64 / (1024.0 * 1024.0);
+            bail!(
+                "attachment file too large: {src_path} ({size_mb:.1} MB, max 100 MB). \
+                 Please compress or resize the file."
+            );
+        }
+        if src.file_name().is_none() {
+            bail!("invalid attachment file path: {src_path}");
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn attachments_dir(job_id: &str) -> Result<PathBuf> {
+    // Validate before joining the backend-controlled identifier into local state.
+    crate::commands::agent_commerce::task::common::util::validate_job_id_path_component(job_id)?;
+    Ok(crate::home::task_state_dir(job_id)?.join("attachments"))
+}
+
+pub(crate) fn dedup_dest(dir: &Path, file_name: &std::ffi::OsStr) -> PathBuf {
+    let candidate = dir.join(file_name);
+    if !candidate.exists() {
+        return candidate;
+    }
+    let stem = Path::new(file_name)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "file".to_string());
+    let ext = Path::new(file_name)
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    for i in 2..=999 {
+        let renamed = dir.join(format!("{stem}_{i}{ext}"));
+        if !renamed.exists() {
+            return renamed;
+        }
+    }
+    dir.join(format!(
+        "{stem}_{}{}",
+        chrono::Local::now().format("%Y%m%d%H%M%S"),
+        ext
+    ))
+}
+
+pub async fn handle_task_attach(
+    client: &mut TaskApiClient,
+    job_id: &str,
+    file_path: &str,
+) -> Result<()> {
+    let agent_id = common_query::resolve_agent_id("", AGENT_ROLE_USER).await;
+    let resp = client
+        .get_with_agent_id(&client.task_path(job_id), &agent_id)
+        .await?;
+    let status = resp["status"].as_i64().unwrap_or(-1);
+    if status >= 2 {
+        let status_str = status_name(status);
+        bail!(
+            "task status is \"{status_str}\" (status={status}); \
+             attachments can only be added when the task is in created or accepted state"
+        );
+    }
+
+    let src = Path::new(file_path);
+    if !src.exists() {
+        bail!("file not found: {file_path}");
+    }
+
+    let file_size = std::fs::metadata(src)?.len();
+    if file_size > MAX_FILE_SIZE {
+        let size_mb = file_size as f64 / (1024.0 * 1024.0);
+        bail!(
+            "file too large: {size_mb:.1} MB (max 100 MB). \
+             Please compress or resize the file before adding it as an attachment."
+        );
+    }
+
+    let file_name = src
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("invalid file path: {file_path}"))?;
+
+    let dir = attachments_dir(job_id)?;
+    std::fs::create_dir_all(&dir)?;
+
+    let dest = dedup_dest(&dir, file_name);
+    std::fs::copy(src, &dest)?;
+
+    println!("✓ Attachment saved");
+    println!("  jobId: {job_id}");
+    println!("  file:  {}", dest.display());
+    println!();
+    println!("🛑 NEXT STEP (MUST NOT SKIP): the file is saved LOCALLY only — it has NOT been sent to the provider yet.");
+    println!("   If a sub session exists for this job (task already has a matched provider),");
+    println!("   you MUST run `okx-a2a session send` to notify the sub session:");
+    println!();
+    println!("   okx-a2a session send --job-id {job_id} --to-agent-id <peer agentId from sub session> --content \"[ATTACHMENT_ADDED] {}\" --json  ← exact prefix, do NOT change", dest.display());
+    println!();
+    println!(
+        "   If NO sub session exists yet (task not matched with a provider), skip the dispatch —"
+    );
+    println!("   the sub session will pick up the file automatically via list-attachments when it starts.");
+    Ok(())
+}
+
+pub fn list_attachment_paths(job_id: &str) -> Vec<String> {
+    let dir = match attachments_dir(job_id) {
+        Ok(d) => d,
+        Err(_) => return Vec::new(),
+    };
+    if !dir.exists() {
+        return Vec::new();
+    }
+    let mut files: Vec<String> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            if entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                files.push(entry.path().display().to_string());
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+pub fn handle_task_attachments(job_id: &str) -> Result<()> {
+    let files = list_attachment_paths(job_id);
+    let json = serde_json::to_string_pretty(&files)?;
+    println!("{json}");
+    Ok(())
+}
+
+pub fn copy_attachments_to_job(job_id: &str, sources: &[String]) -> Result<()> {
+    copy_attachments_to_job_with_manifest(job_id, sources).map(|_| ())
+}
+
+pub(crate) fn copy_attachments_to_job_with_manifest(
+    job_id: &str,
+    sources: &[String],
+) -> Result<Vec<serde_json::Value>> {
+    validate_attachment_sources(sources)?;
+    if sources.is_empty() {
+        return Ok(Vec::new());
+    }
+    let dir = attachments_dir(job_id)?;
+    std::fs::create_dir_all(&dir)?;
+    let mut manifest = Vec::with_capacity(sources.len());
+
+    for src_path in sources {
+        let src = Path::new(src_path);
+        let file_size = std::fs::metadata(src)?.len();
+        let file_name = src
+            .file_name()
+            .ok_or_else(|| anyhow::anyhow!("invalid file path: {src_path}"))?;
+        let dest = dedup_dest(&dir, file_name);
+        std::fs::copy(src, &dest)?;
+        manifest.push(serde_json::json!({
+            "sourcePath": src.display().to_string(),
+            "storedPath": dest.display().to_string(),
+            "fileName": file_name.to_string_lossy(),
+            "size": file_size,
+        }));
+        if DEBUG_LOG {
+            eprintln!("[task-create] attachment saved: {}", dest.display());
+        }
+    }
+    Ok(manifest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A direct `attachments_dir("../../x")` fails closed with the
+    /// coded error BEFORE any filesystem side effect — the path-component guard runs
+    /// before `dirs::home_dir()` / any join, so no directory is created or read.
+    #[test]
+    fn attachments_dir_rejects_traversal() {
+        for bad in ["../../x", "a/b", "..", "", "/abs", "a\\b"] {
+            let err = attachments_dir(bad).expect_err(bad);
+            let code = err
+                .downcast_ref::<crate::commands::sink::CodedError>()
+                .map(|c| c.code.clone())
+                .unwrap_or_default();
+            assert_eq!(code, "UNSAFE_JOB_PATH_COMPONENT", "case {bad:?}");
+        }
+    }
+
+    /// A legal `0x`+64-hex jobId is a single safe component, so `attachments_dir`
+    /// still builds the expected `<HOME>/.onchainos/task/<jobId>/attachments` path.
+    #[test]
+    fn attachments_dir_accepts_real_jobid() {
+        let hex = format!("0x{}", "a".repeat(64));
+        let dir = attachments_dir(&hex).expect("legal jobId must build a path");
+        assert!(dir.ends_with(format!(".onchainos/task/{hex}/attachments")));
+    }
+}

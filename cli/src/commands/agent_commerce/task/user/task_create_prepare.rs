@@ -1,0 +1,939 @@
+//! Deterministic checks between Service confirmation and task field collection.
+
+use anyhow::{anyhow, bail, Context as _, Result};
+use serde_json::{json, Map, Value};
+
+use crate::commands::agent_commerce::task::common::{
+    self, autotrade::amount::Decimal, autotrade::tooling, network::task_api_client::TaskApiClient,
+};
+use crate::commands::agentic_wallet::auth::ensure_tokens_refreshed;
+
+use super::{asp_ops, create};
+
+const PHASE_LOGIN_VALIDATION: &str = "login_validation";
+const PHASE_IDENTITY_VALIDATION: &str = "identity_validation";
+const PHASE_SERVICE_VALIDATION: &str = "service_validation";
+const PHASE_SUBSCRIPTION_VALIDATION: &str = "subscription_validation";
+const PHASE_CREATION: &str = "creation";
+
+fn build_decision(
+    phase: &str,
+    decision: &str,
+    reason: &str,
+    next_action: Value,
+) -> Map<String, Value> {
+    let mut out = Map::new();
+    out.insert("phase".to_string(), Value::String(phase.to_string()));
+    out.insert("decision".to_string(), Value::String(decision.to_string()));
+    out.insert("reason".to_string(), Value::String(reason.to_string()));
+    out.insert("nextAction".to_string(), next_action);
+    out
+}
+
+fn emit(phase: &str, decision: &str, reason: &str, next_action: Value, payload: Value) {
+    crate::output::success(decision_with_payload(
+        phase,
+        decision,
+        reason,
+        next_action,
+        payload,
+    ));
+}
+
+fn decision_with_payload(
+    phase: &str,
+    decision: &str,
+    reason: &str,
+    next_action: Value,
+    payload: Value,
+) -> Value {
+    let mut out = build_decision(phase, decision, reason, next_action);
+    out.insert("payload".to_string(), payload);
+    Value::Object(out)
+}
+
+fn next_action(id: &str, recommend: bool) -> Value {
+    json!([{"id": id, "recommend": recommend}])
+}
+
+fn reject_a2mcp_service(service: &Value) -> Result<()> {
+    if scalar_string(service.get("serviceType"))
+        .is_some_and(|kind| kind.eq_ignore_ascii_case("A2MCP"))
+    {
+        bail!(
+            "A2MCP services require explicit preparation with --service-type A2MCP --asp-agent-id <ASP_AGENT_ID>"
+        );
+    }
+    Ok(())
+}
+
+struct DuplicateSubscriptionContext {
+    job_id: String,
+    title: String,
+    restore_listening_available: bool,
+}
+
+fn duplicate_next_actions(existing: &DuplicateSubscriptionContext) -> Value {
+    if existing.restore_listening_available {
+        json!([
+            {"id": "restore_subscription", "recommend": true},
+            {"id": "stop", "recommend": false}
+        ])
+    } else {
+        next_action("stop", true)
+    }
+}
+
+fn duplicate_payload(existing: &DuplicateSubscriptionContext) -> Value {
+    json!({
+        "jobId": existing.job_id,
+        "title": existing.title,
+        "restoreListeningAvailable": existing.restore_listening_available,
+    })
+}
+
+fn scalar_string(value: Option<&Value>) -> Option<String> {
+    let value = value?;
+    value
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| value.as_i64().map(|value| value.to_string()))
+        .or_else(|| value.as_u64().map(|value| value.to_string()))
+}
+
+fn required_service_string(service: &Value, key: &str) -> Result<String> {
+    scalar_string(service.get(key))
+        .ok_or_else(|| anyhow!("selected Service is missing required field `{key}`"))
+}
+
+fn duplicate_subscription_context(
+    existing: &super::subscription_ops::ExistingSubscriptionSummary,
+) -> Result<DuplicateSubscriptionContext> {
+    let job_id = existing.job_id.trim();
+    if job_id.is_empty() {
+        bail!("blocking buyer subscription is missing required field `jobId`");
+    }
+    let title = existing.title.trim();
+    if title.is_empty() {
+        bail!("blocking buyer subscription is missing required field `title`");
+    }
+    Ok(DuplicateSubscriptionContext {
+        job_id: job_id.to_string(),
+        title: title.to_string(),
+        restore_listening_available: existing.restore_listening_available,
+    })
+}
+
+fn duplicate_subscription_for_service(
+    service: &Value,
+    existing_subscriptions: &[super::subscription_ops::ExistingSubscriptionSummary],
+) -> Result<Option<DuplicateSubscriptionContext>> {
+    if service.get("supportSubscription").and_then(Value::as_bool) != Some(true) {
+        return Ok(None);
+    }
+    let service_id = required_service_string(service, "serviceId")?;
+    super::subscription_ops::existing_subscription_for_service(existing_subscriptions, &service_id)
+        .map(duplicate_subscription_context)
+        .transpose()
+}
+
+pub(crate) async fn fetch_service_detail(user_agent_id: &str, sid: &str) -> Result<Value> {
+    let output = tokio::process::Command::new(std::env::current_exe()?)
+        .args([
+            "agent",
+            "service-detail",
+            "--sid",
+            sid,
+            "--agentic-id",
+            user_agent_id,
+        ])
+        .output()
+        .await
+        .context("failed to invoke service-detail")?;
+    if !output.status.success() {
+        bail!(
+            "service-detail failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    let response: Value = serde_json::from_slice(&output.stdout)
+        .context("failed to parse service-detail JSON output")?;
+    if response.get("ok").and_then(Value::as_bool) != Some(true) {
+        bail!("service-detail returned a non-success response");
+    }
+    let service = response
+        .get("data")
+        .cloned()
+        .ok_or_else(|| anyhow!("service-detail response is missing data"))?;
+    if !service.is_object() {
+        bail!("service-detail response data must be a Service object");
+    }
+    Ok(service)
+}
+
+fn decimal(value: Option<&Value>, field: &str) -> Result<Option<f64>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let parsed = value
+        .as_f64()
+        .or_else(|| {
+            value
+                .as_str()
+                .and_then(|value| value.trim().parse::<f64>().ok())
+        })
+        .ok_or_else(|| anyhow!("selected Service field `{field}` must be a number"))?;
+    if !parsed.is_finite() || parsed < 0.0 {
+        bail!("selected Service field `{field}` must be a non-negative number");
+    }
+    Ok(Some(parsed))
+}
+
+#[cfg(test)]
+fn effective_fee(service: &Value) -> Result<f64> {
+    if service.get("supportSubscription").and_then(Value::as_bool) == Some(true) {
+        return decimal(
+            service
+                .get("subscriptionInfo")
+                .and_then(|info| info.get("feeAmount")),
+            "subscriptionInfo.feeAmount",
+        )?
+        .ok_or_else(|| anyhow!("selected subscription Service has no subscription fee"));
+    }
+    decimal(service.get("feeAmount"), "feeAmount")?
+        .ok_or_else(|| anyhow!("selected Service has no feeAmount"))
+}
+
+fn trial_available(service: &Value) -> bool {
+    let supports_trial = service
+        .get("subscriptionInfo")
+        .and_then(|info| info.get("supportTrial"))
+        .and_then(Value::as_bool)
+        == Some(true);
+    let has_positive_trial = decimal(
+        service
+            .get("subscriptionInfo")
+            .and_then(|info| info.get("freeTrial")),
+        "subscriptionInfo.freeTrial",
+    )
+    .ok()
+    .flatten()
+    .is_some_and(|value| value > 0.0);
+    supports_trial && has_positive_trial
+}
+
+fn skip_prepare_balance(service: &Value, zero: bool, funding_recovery: bool) -> bool {
+    zero || (!funding_recovery && trial_available(service))
+}
+
+fn resolve_recovery_tokens(
+    funding_token_symbol: Option<&str>,
+    payment_token_symbol: Option<&str>,
+) -> Result<(
+    Option<common::payment_token::PaymentToken>,
+    Option<common::payment_token::PaymentToken>,
+)> {
+    let payment_constraint = common::payment_token::constraint(
+        common::XLAYER_CHAIN_ID as u64,
+        payment_token_symbol.unwrap_or(""),
+        "",
+    )?;
+    let funding_target = common::payment_token::constraint(
+        common::XLAYER_CHAIN_ID as u64,
+        funding_token_symbol.unwrap_or(""),
+        "",
+    )?;
+    if payment_constraint
+        .is_some_and(|payment| funding_target.is_some_and(|funding| payment != funding))
+    {
+        bail!("--funding-token-symbol must match --payment-token-symbol during explicit-token recovery");
+    }
+    Ok((funding_target.or(payment_constraint), payment_constraint))
+}
+
+fn recovery_payload(
+    sid: &str,
+    selected_token: Option<common::payment_token::PaymentToken>,
+    payment_constraint: Option<common::payment_token::PaymentToken>,
+) -> Value {
+    let Some(selected_token) = selected_token else {
+        return json!({});
+    };
+    let mut context = json!({
+        "sid": sid.trim(), "fundingTokenSymbol": selected_token.symbol,
+    });
+    if let Some(token) = payment_constraint {
+        context["paymentTokenSymbol"] = json!(token.symbol);
+        context["serviceTokenAddress"] = json!(token.address);
+    }
+    json!({"resumeContext": context})
+}
+
+/// Pre-computed Trial copy for the subscription creation confirmation card.
+/// `None` for any non-subscription service, so the field is
+/// simply absent in every other context — the Skill layer only ever renders
+/// it verbatim, it never re-derives these branches itself.
+fn trial_display(service: &Value) -> Option<String> {
+    let info = service.get("subscriptionInfo")?.as_object()?;
+    let free_trial = decimal(info.get("freeTrial"), "subscriptionInfo.freeTrial")
+        .ok()
+        .flatten();
+    if !free_trial.is_some_and(|value| value > 0.0) {
+        return Some("No trial available".to_string());
+    }
+    if info.get("supportTrial").and_then(Value::as_bool) != Some(true) {
+        return Some(
+            "You have already used the free trial for this service. The subscription fee will be charged directly."
+                .to_string(),
+        );
+    }
+    let fee_amount = scalar_display(info.get("feeAmount")?)?;
+    let fee_token_symbol = "USD";
+    Some(format!(
+        "3-day free trial. After the trial ends, the first-period fee of {fee_amount} {fee_token_symbol} will be charged automatically."
+    ))
+}
+
+/// Render a JSON scalar exactly as received — no reparsing/reformatting of
+/// numeric strings, so pricing values stay byte-for-byte what the backend sent.
+fn scalar_display(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => Some(text.clone()),
+        Value::Number(number) => Some(number.to_string()),
+        _ => None,
+    }
+}
+
+/// Complete final-confirmation copy from the bound Service, independent of
+/// creation decisions and request parameters. Keep amount strings unchanged.
+fn creation_confirmation(service: &Value) -> Option<String> {
+    let is_subscription = service.get("supportSubscription").and_then(Value::as_bool) == Some(true);
+    let amount = if is_subscription {
+        service.get("subscriptionInfo")?.get("feeAmount")?
+    } else {
+        service.get("feeAmount")?
+    };
+    let is_zero = match amount {
+        Value::String(text) => Decimal::parse(text.trim()).ok()?.is_zero(),
+        Value::Number(number) => {
+            let value = number.as_f64()?;
+            if !value.is_finite() || value < 0.0 {
+                return None;
+            }
+            value == 0.0
+        }
+        _ => return None,
+    };
+    let amount = scalar_display(amount)?;
+    if is_zero {
+        return Some("This task requires no payment. To create it, reply “Confirm”.".to_string());
+    }
+    let token_symbol = "USD";
+    if is_subscription && trial_available(service) {
+        Some(format!(
+            "After you confirm, the subscription task will be created. The free trial starts after the ASP accepts the task. When the trial ends, the first-period fee of {amount} {token_symbol} will be deducted. If you do not wish to continue, cancel the subscription before the charge. To continue, reply “Confirm”."
+        ))
+    } else if is_subscription {
+        Some(format!(
+            "After you confirm, the first-period subscription fee of {amount} {token_symbol} will be deducted. To continue, reply “Confirm”."
+        ))
+    } else {
+        Some(format!(
+            "After you confirm creation, the task fee of {amount} {token_symbol} will be deducted. To continue, reply “Confirm”."
+        ))
+    }
+}
+
+fn normalize_service(mut service: Value) -> Value {
+    let description = service
+        .get("serviceDescription")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let inventory = tooling::ToolInventory::detect();
+    let preflight = tooling::build_preflight(description, &inventory);
+    service["autoTradePreflight"] = serde_json::to_value(preflight).unwrap_or_else(|_| {
+        serde_json::to_value(tooling::degraded_preflight()).unwrap_or_else(|_| json!({}))
+    });
+    asp_ops::compact_task_service_for_ai(&service)
+}
+
+pub(crate) async fn handle_task_create_prepare(
+    client: &mut TaskApiClient,
+    sid: &str,
+    funding_token_symbol: Option<&str>,
+    payment_token_symbol: Option<&str>,
+) -> Result<()> {
+    let (selected_token, payment_constraint) =
+        resolve_recovery_tokens(funding_token_symbol, payment_token_symbol)?;
+    let recovery = recovery_payload(sid, selected_token, payment_constraint);
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG] a2a subscription flow start");
+    }
+
+    if common::current_account_xlayer_address().is_none()
+        || ensure_tokens_refreshed().await.is_err()
+    {
+        emit(
+            PHASE_LOGIN_VALIDATION,
+            "blocked",
+            "login_required",
+            next_action("login", true),
+            recovery.clone(),
+        );
+        return Ok(());
+    }
+
+    let user_agent_id = match create::resolve_user_agent().await {
+        Ok((agent_id, _)) => agent_id,
+        Err(_) => {
+            emit(
+                PHASE_IDENTITY_VALIDATION,
+                "blocked",
+                "user_identity_required",
+                next_action("register_user_agent", true),
+                recovery.clone(),
+            );
+            return Ok(());
+        }
+    };
+
+    let selected_sid = sid.trim();
+    if selected_sid.is_empty() {
+        bail!("--sid must not be blank");
+    }
+    let service = fetch_service_detail(&user_agent_id, selected_sid).await?;
+    reject_a2mcp_service(&service)?;
+    required_service_string(&service, "serviceId")?;
+    let service_type = required_service_string(&service, "serviceType")?;
+    if !service_type.eq_ignore_ascii_case("A2A") {
+        let service = normalize_service(service);
+        emit(
+            PHASE_SERVICE_VALIDATION,
+            "blocked",
+            "unsupported_service_type",
+            next_action("stop", true),
+            service,
+        );
+        return Ok(());
+    }
+
+    let mut service = normalize_service(service);
+    if payment_constraint.is_some() {
+        service["resumeContext"] = recovery["resumeContext"].clone();
+    }
+    if let Some(display) = trial_display(&service) {
+        service["trialDisplay"] = Value::String(display);
+    }
+    if let Some(display) = creation_confirmation(&service) {
+        service["creationConfirmation"] = Value::String(display);
+    }
+
+    // Match create-subscribe's write-boundary source and status policy: only an
+    // Active subscription to this exact service blocks a new purchase. Normalize
+    // first because the raw service-detail response exposes subscription[]
+    // rather than the derived supportSubscription field.
+    let duplicate_subscription =
+        if service.get("supportSubscription").and_then(Value::as_bool) == Some(true) {
+            let existing_subscriptions =
+                super::subscription_ops::fetch_active_buyer_subscriptions_for_agent(
+                    client,
+                    &user_agent_id,
+                )
+                .await?;
+            duplicate_subscription_for_service(&service, &existing_subscriptions)?
+        } else {
+            None
+        };
+    if let Some(existing) = duplicate_subscription.as_ref() {
+        emit(
+            PHASE_SUBSCRIPTION_VALIDATION,
+            "blocked",
+            "duplicate_subscription",
+            duplicate_next_actions(existing),
+            duplicate_payload(existing),
+        );
+        return Ok(());
+    }
+
+    let amount = if service["supportSubscription"].as_bool() == Some(true) {
+        service
+            .get("subscriptionInfo")
+            .and_then(|info| info.get("feeAmount"))
+    } else {
+        service.get("feeAmount")
+    }
+    .and_then(scalar_display)
+    .ok_or_else(|| anyhow!("selected Service has no valid fee"))?;
+    create::validate_decimal_amount(&amount, "feeAmount")?;
+    let zero = crate::funding::readable_shortfall(&amount, "0").as_deref() == Some("0");
+    service["quoteAmount"] = json!(amount);
+    service["quoteCurrency"] = json!("USD");
+    service["paymentOrder"] = json!(["USDC", "USDG", "USDT"]);
+    // Ordinary trial prepare remains ready. Recovery always reads fresh balances.
+    if skip_prepare_balance(&service, zero, selected_token.is_some()) {
+        emit(
+            PHASE_CREATION,
+            "ready",
+            "all_checks_passed",
+            next_action("open_create_playbook", true),
+            service,
+        );
+        return Ok(());
+    }
+    let (account_id, address) =
+        super::super::signing::resolve_wallet_by_agent_id(&user_agent_id).await?;
+    let selection = common::payment_token::select(
+        &amount,
+        &account_id,
+        &address,
+        selected_token,
+        selected_token.is_some(),
+    )
+    .await?;
+    if let Some(token) = selection.token {
+        service["paymentTokenSymbol"] = json!(token.symbol);
+        service["paymentTokenAddress"] = json!(token.address);
+        service["paymentWalletAddress"] = json!(address);
+        emit(
+            PHASE_CREATION,
+            "ready",
+            "all_checks_passed",
+            next_action("open_create_playbook", true),
+            service,
+        );
+    } else {
+        crate::output::success(common::payment_token::funding_result(
+            &selection,
+            &address,
+            &service,
+            selected_sid,
+            selected_token,
+            payment_constraint,
+        )?);
+    }
+    Ok(())
+}
+
+pub(crate) async fn service_recovery_context(
+    user_agent_id: &str,
+    provider_agent_id: &str,
+    service_id: &str,
+) -> Result<(Value, String)> {
+    let sid = super::create_subscribe::resolve_service_sid(provider_agent_id, service_id).await?;
+    let service = normalize_service(fetch_service_detail(user_agent_id, &sid).await?);
+    if required_service_string(&service, "serviceId")? != service_id {
+        bail!("recovery Service differs from the selected Service");
+    }
+    if required_service_string(&service, "providerAgentId")? != provider_agent_id {
+        bail!("recovery provider differs from the selected provider");
+    }
+    if !required_service_string(&service, "serviceType")?.eq_ignore_ascii_case("A2A") {
+        bail!("funding recovery requires an A2A Service");
+    }
+    Ok((service, sid))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auth_recovery_keeps_explicit_currency_without_pinning_funding_only_choices() {
+        let token = common::payment_token::TOKENS[1];
+        let recovery = recovery_payload("123", Some(token), Some(token));
+        for (phase, reason) in [
+            (PHASE_LOGIN_VALIDATION, "login_required"),
+            (PHASE_IDENTITY_VALIDATION, "user_identity_required"),
+        ] {
+            let result = decision_with_payload(
+                phase,
+                "blocked",
+                reason,
+                next_action("stop", true),
+                recovery.clone(),
+            );
+            let context = &result["payload"]["resumeContext"];
+            assert_eq!(context["sid"], "123");
+            assert_eq!(context["fundingTokenSymbol"], "USDG");
+            assert_eq!(context["paymentTokenSymbol"], "USDG");
+            assert_eq!(context["serviceTokenAddress"], token.address);
+        }
+        let funding_only = recovery_payload("123", Some(token), None);
+        assert_eq!(funding_only["resumeContext"]["fundingTokenSymbol"], "USDG");
+        assert!(funding_only["resumeContext"]
+            .get("paymentTokenSymbol")
+            .is_none());
+        assert!(funding_only["resumeContext"]
+            .get("serviceTokenAddress")
+            .is_none());
+        assert_eq!(recovery_payload("123", None, None), json!({}));
+    }
+
+    fn subscription_service(support_trial: bool, free_trial: Value) -> Value {
+        json!({
+            "supportSubscription": true,
+            "subscriptionInfo": {
+                "supportTrial": support_trial,
+                "freeTrial": free_trial
+            }
+        })
+    }
+
+    #[test]
+    fn trial_requires_support_and_positive_free_trial() {
+        assert!(trial_available(&subscription_service(true, json!(7))));
+        assert!(trial_available(&subscription_service(true, json!("7"))));
+        assert!(!trial_available(&subscription_service(true, json!(0))));
+        assert!(!trial_available(&subscription_service(true, Value::Null)));
+        assert!(!trial_available(&subscription_service(false, json!(7))));
+    }
+
+    #[test]
+    fn funding_recovery_rechecks_even_when_ordinary_trial_prepare_is_ready() {
+        let service = subscription_service(true, json!(72));
+        assert!(skip_prepare_balance(&service, false, false));
+        assert!(!skip_prepare_balance(&service, false, true));
+        assert!(skip_prepare_balance(&service, true, true));
+        assert!(!skip_prepare_balance(
+            &subscription_service(false, json!(0)),
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn explicit_payment_constraint_pins_recovery_funding_target() {
+        let (selected, constraint) =
+            resolve_recovery_tokens(None, None).expect("automatic token selection");
+        assert_eq!(selected, None);
+        assert_eq!(constraint, None);
+
+        let (selected, constraint) = resolve_recovery_tokens(Some("USDG"), None)
+            .expect("funding choice without an explicit payment constraint");
+        assert_eq!(selected, Some(common::payment_token::TOKENS[1]));
+        assert_eq!(constraint, None);
+
+        let (selected, constraint) =
+            resolve_recovery_tokens(None, Some("USDG")).expect("valid payment constraint");
+        assert_eq!(selected, Some(common::payment_token::TOKENS[1]));
+        assert_eq!(constraint, selected);
+
+        let (selected, constraint) = resolve_recovery_tokens(Some("USDG"), Some("USDG"))
+            .expect("matching funding and payment tokens");
+        assert_eq!(selected, Some(common::payment_token::TOKENS[1]));
+        assert_eq!(constraint, selected);
+
+        assert!(resolve_recovery_tokens(Some("USDC"), Some("USDG")).is_err());
+    }
+
+    #[test]
+    fn creation_confirmation_distinguishes_paid_and_free_one_time_tasks() {
+        for amount in [json!(0), json!("0.00")] {
+            let service = json!({"supportSubscription": false, "feeAmount": amount});
+            assert_eq!(
+                creation_confirmation(&service).as_deref(),
+                Some("This task requires no payment. To create it, reply “Confirm”.")
+            );
+        }
+        for (amount, display) in [
+            (json!(10), "10"),
+            (json!("10.00"), "10.00"),
+            (json!(0.00000001), "1e-8"),
+            (
+                json!("0.0000000000000000000000000000000000000001"),
+                "0.0000000000000000000000000000000000000001",
+            ),
+        ] {
+            let service = json!({"feeAmount": amount, "feeTokenSymbol": "USDC"});
+            assert_eq!(
+                creation_confirmation(&service),
+                Some(format!(
+                    "After you confirm creation, the task fee of {display} USD will be deducted. To continue, reply “Confirm”."
+                ))
+            );
+        }
+    }
+
+    #[test]
+    fn creation_confirmation_describes_trial_start_and_first_charge() {
+        for duration in [json!(24), json!("72"), json!(168)] {
+            let mut service = subscription_service(true, duration);
+            service["feeAmount"] = json!(999);
+            service["feeTokenSymbol"] = json!("USDT");
+            service["subscriptionInfo"]["feeAmount"] = json!("10.00");
+            assert_eq!(
+                creation_confirmation(&service).as_deref(),
+                Some("After you confirm, the subscription task will be created. The free trial starts after the ASP accepts the task. When the trial ends, the first-period fee of 10.00 USD will be deducted. If you do not wish to continue, cancel the subscription before the charge. To continue, reply “Confirm”.")
+            );
+        }
+    }
+
+    #[test]
+    fn creation_confirmation_uses_subscription_fee_without_eligible_trial() {
+        for (support_trial, duration) in [
+            (false, json!(72)),
+            (true, json!(0)),
+            (true, json!(-1)),
+            (true, Value::Null),
+        ] {
+            let mut service = subscription_service(support_trial, duration);
+            service["feeAmount"] = json!(999);
+            service["feeTokenSymbol"] = json!("USDC");
+            service["subscriptionInfo"]["feeAmount"] = json!("0.0100");
+            assert_eq!(
+                creation_confirmation(&service).as_deref(),
+                Some("After you confirm, the first-period subscription fee of 0.0100 USD will be deducted. To continue, reply “Confirm”.")
+            );
+        }
+        let service = json!({
+            "supportSubscription": true,
+            "feeTokenSymbol": "USDT",
+            "subscriptionInfo": {"feeAmount": 0}
+        });
+        assert_eq!(
+            creation_confirmation(&service).as_deref(),
+            Some("This task requires no payment. To create it, reply “Confirm”.")
+        );
+    }
+
+    #[test]
+    fn creation_confirmation_preserves_service_fields() {
+        let service = json!({
+            "serviceId": "svc-1", "feeTokenSymbol": "USDT",
+            "supportSubscription": true, "trialDisplay": "Existing Trial text",
+            "subscriptionInfo": {"feeAmount": "10.00", "freeTrial": 72, "supportTrial": true},
+            "serviceGuide": "Original guide", "serviceParams": {"enabled": false}
+        });
+        let original = service.clone();
+        assert!(creation_confirmation(&service).is_some());
+        assert_eq!(service, original);
+    }
+
+    #[test]
+    fn incomplete_display_data_does_not_invent_a_fee_or_change_the_payload() {
+        for service in [
+            json!({}),
+            json!({"feeAmount": "invalid", "feeTokenSymbol": "USDT"}),
+        ] {
+            assert_eq!(creation_confirmation(&service), None);
+        }
+    }
+
+    #[test]
+    fn trial_display_is_none_for_non_subscription_service() {
+        assert_eq!(trial_display(&json!({"serviceType": "A2A"})), None);
+        assert_eq!(
+            trial_display(&json!({"supportSubscription": false, "subscriptionInfo": null})),
+            None
+        );
+    }
+
+    #[test]
+    fn quotes_and_trial_copy_do_not_depend_on_listing_token_fields() {
+        let mut service = json!({"feeAmount": "10.00"});
+        assert!(creation_confirmation(&service)
+            .unwrap()
+            .contains("10.00 USD"));
+        service["supportSubscription"] = json!(true);
+        service["subscriptionInfo"] =
+            json!({"feeAmount": "10.00", "freeTrial": 72, "supportTrial": true});
+        assert!(creation_confirmation(&service)
+            .unwrap()
+            .contains("10.00 USD"));
+        assert!(trial_display(&service).unwrap().contains("10.00 USD"));
+    }
+
+    #[test]
+    fn trial_display_covers_no_trial_cases() {
+        for free_trial in [json!(0), json!(-5), Value::Null] {
+            let service = subscription_service(true, free_trial);
+            assert_eq!(
+                trial_display(&service),
+                Some("No trial available".to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn trial_display_covers_ineligible_case() {
+        let service = subscription_service(false, json!(72));
+        assert_eq!(
+            trial_display(&service),
+            Some(
+                "You have already used the free trial for this service. The subscription fee will be charged directly."
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn trial_display_renders_fee_verbatim_for_eligible_trial() {
+        let service = json!({
+            "feeTokenSymbol": "USDT",
+            "subscriptionInfo": {
+                "supportTrial": true,
+                "freeTrial": 72,
+                "feeAmount": "10.00"
+            }
+        });
+        assert_eq!(
+            trial_display(&service),
+            Some(
+                "3-day free trial. After the trial ends, the first-period fee of 10.00 USD will be charged automatically."
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn zero_fee_subscription_is_ready_without_trial() {
+        let service = json!({
+            "supportSubscription": true,
+            "subscriptionInfo": {
+                "supportTrial": false,
+                "freeTrial": 0,
+                "feeAmount": 0
+            }
+        });
+
+        assert!(!trial_available(&service));
+        assert_eq!(effective_fee(&service).unwrap(), 0.0);
+    }
+
+    #[test]
+    fn duplicate_payload_excludes_lifecycle_status_facts() {
+        let summary = super::super::subscription_ops::ExistingSubscriptionSummary {
+            job_id: "job-42".to_string(),
+            service_id: "svc-42".to_string(),
+            provider_agent_id: "asp-42".to_string(),
+            status_name: "ACTIVE".to_string(),
+            status_label: "Active".to_string(),
+            status_description: "The subscription is active.".to_string(),
+            restore_listening_available: true,
+            title: "Signal Subscription".to_string(),
+            status: 1,
+        };
+        let existing = duplicate_subscription_context(&summary).expect("valid duplicate metadata");
+
+        assert_eq!(
+            duplicate_payload(&existing),
+            json!({
+                "jobId": "job-42",
+                "title": "Signal Subscription",
+                "restoreListeningAvailable": true
+            })
+        );
+        assert_eq!(
+            duplicate_next_actions(&existing),
+            json!([
+                {"id": "restore_subscription", "recommend": true},
+                {"id": "stop", "recommend": false}
+            ])
+        );
+    }
+
+    #[test]
+    fn inactive_duplicate_context_defensively_offers_stop_only() {
+        let summary = super::super::subscription_ops::ExistingSubscriptionSummary {
+            job_id: "job-43".to_string(),
+            service_id: "svc-43".to_string(),
+            provider_agent_id: "asp-43".to_string(),
+            status_name: "REJECTED".to_string(),
+            status_label: "Awaiting ASP decision".to_string(),
+            status_description:
+                "The buyer rejected the current delivery and is waiting for the ASP's decision."
+                    .to_string(),
+            restore_listening_available: false,
+            title: "Paused Signals".to_string(),
+            status: 3,
+        };
+        let existing = duplicate_subscription_context(&summary).expect("valid duplicate metadata");
+
+        assert_eq!(existing.title, "Paused Signals");
+        assert!(!existing.restore_listening_available);
+        assert_eq!(duplicate_next_actions(&existing), next_action("stop", true));
+    }
+
+    #[test]
+    fn default_preparation_rejects_mcp_before_requiring_a2a_fields() {
+        for kind in ["A2MCP", "a2mcp", " A2MCP "] {
+            let service = json!({"serviceType": kind});
+            let error = reject_a2mcp_service(&service).unwrap_err().to_string();
+            assert!(error.contains("--service-type A2MCP"));
+            assert!(error.contains("--asp-agent-id"));
+        }
+    }
+
+    #[test]
+    fn default_preparation_preserves_a2a_fee_and_trial_handling() {
+        for (fee, expected) in [(json!(0.1), 0.1), (json!("0.1"), 0.1), (json!(0), 0.0)] {
+            let service = json!({"serviceType": "A2A", "feeAmount": fee});
+            reject_a2mcp_service(&service).unwrap();
+            assert_eq!(effective_fee(&service).unwrap(), expected);
+        }
+        let service = json!({
+            "serviceType": "A2A",
+            "supportSubscription": true,
+            "subscriptionInfo": {"feeAmount": "0.1", "supportTrial": true, "freeTrial": 7},
+        });
+        reject_a2mcp_service(&service).unwrap();
+        assert_eq!(effective_fee(&service).unwrap(), 0.1);
+        assert!(trial_available(&service));
+    }
+
+    #[test]
+    fn login_required_decision_omits_action() {
+        let output = build_decision(
+            PHASE_LOGIN_VALIDATION,
+            "blocked",
+            "login_required",
+            next_action("login", true),
+        );
+
+        assert_eq!(output["phase"], "login_validation");
+        assert_eq!(output["decision"], "blocked");
+        assert_eq!(output["reason"], "login_required");
+        assert_eq!(output["nextAction"][0]["id"], "login");
+        assert_eq!(output["nextAction"][0]["recommend"], true);
+        assert!(output.get("action").is_none());
+    }
+
+    #[test]
+    fn unknown_service_type_decision_omits_action() {
+        let output = build_decision(
+            PHASE_SERVICE_VALIDATION,
+            "blocked",
+            "unsupported_service_type",
+            next_action("stop", true),
+        );
+
+        assert_eq!(output["phase"], "service_validation");
+        assert_eq!(output["decision"], "blocked");
+        assert_eq!(output["reason"], "unsupported_service_type");
+        assert_eq!(output["nextAction"][0]["id"], "stop");
+        assert!(output.get("action").is_none());
+    }
+
+    #[test]
+    fn emit_shape_uses_phase_next_action_and_payload_without_action() {
+        let mut output = build_decision(
+            PHASE_CREATION,
+            "ready",
+            "all_checks_passed",
+            next_action("open_create_playbook", true),
+        );
+        output.insert("payload".to_string(), json!({"serviceId": "svc-1"}));
+
+        assert_eq!(output["phase"], "creation");
+        assert_eq!(output["decision"], "ready");
+        assert_eq!(output["reason"], "all_checks_passed");
+        assert_eq!(output["nextAction"][0]["id"], "open_create_playbook");
+        assert!(output.get("action").is_none());
+        assert_eq!(output["payload"]["serviceId"], "svc-1");
+        assert!(output.get("status").is_none());
+        assert!(output.get("playbook").is_none());
+        assert!(output.get("serviceData").is_none());
+    }
+}

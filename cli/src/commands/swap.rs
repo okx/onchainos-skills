@@ -1,0 +1,2446 @@
+use std::collections::HashMap;
+use std::sync::LazyLock;
+
+use anyhow::{bail, Result};
+use clap::Subcommand;
+use serde_json::{json, Value};
+
+use super::Context;
+use crate::client::ApiClient;
+use crate::commands::common::wait_tx_onchain;
+use crate::commands::risk_classify::classify_swap_route;
+use crate::output;
+use crate::token_alias::{resolve_token_address, validate_address_for_chain};
+use crate::validators::{readable_to_minimal_str, validate_amount, validate_slippage};
+
+#[derive(Subcommand)]
+pub enum SwapCommand {
+    /// Get swap quote (read-only price estimate)
+    Quote {
+        /// Source token contract address
+        #[arg(long)]
+        from: String,
+        /// Destination token contract address
+        #[arg(long)]
+        to: String,
+        /// Amount in minimal units (wei/lamports). Mutually exclusive with --readable-amount.
+        #[arg(long, conflicts_with = "readable_amount")]
+        amount: Option<String>,
+        /// Human-readable amount (e.g. "1.5" for 1.5 USDC). CLI fetches token decimals and converts automatically.
+        #[arg(long, conflicts_with = "amount")]
+        readable_amount: Option<String>,
+        /// Chain (e.g. ethereum, solana, xlayer)
+        #[arg(long)]
+        chain: String,
+        /// Swap mode: exactIn or exactOut
+        #[arg(long, default_value = "exactIn")]
+        swap_mode: String,
+    },
+    /// Get swap transaction data (quote → sign → broadcast)
+    Swap {
+        /// Source token contract address
+        #[arg(long)]
+        from: String,
+        /// Destination token contract address
+        #[arg(long)]
+        to: String,
+        /// Amount in minimal units. Mutually exclusive with --readable-amount.
+        #[arg(long, conflicts_with = "readable_amount")]
+        amount: Option<String>,
+        /// Human-readable amount (e.g. "1.5" for 1.5 USDC). CLI fetches token decimals and converts automatically.
+        #[arg(long, conflicts_with = "amount")]
+        readable_amount: Option<String>,
+        /// Chain
+        #[arg(long)]
+        chain: String,
+        /// Slippage tolerance in percent (e.g. "1" for 1%). Omit to use autoSlippage.
+        #[arg(long)]
+        slippage: Option<String>,
+        /// User wallet address
+        #[arg(long)]
+        wallet: String,
+        /// Gas priority: slow, average, fast (default: average)
+        #[arg(long, default_value = "average")]
+        gas_level: String,
+        /// Swap mode: exactIn or exactOut
+        #[arg(long, default_value = "exactIn")]
+        swap_mode: String,
+        /// Jito tips in SOL for Solana MEV protection (range: 0.0000000001–2). Response includes signatureData for jitoCalldata.
+        #[arg(long)]
+        tips: Option<String>,
+        /// Max auto slippage percent cap when autoSlippage is enabled (e.g. "0.5" for 0.5%)
+        #[arg(long)]
+        max_auto_slippage: Option<String>,
+    },
+    /// Get ERC-20 approval transaction data
+    Approve {
+        /// Token contract address to approve
+        #[arg(long)]
+        token: String,
+        /// Approval amount in minimal units
+        #[arg(long)]
+        amount: String,
+        /// Chain
+        #[arg(long)]
+        chain: String,
+    },
+    /// Check ERC-20 token approval allowance
+    CheckApprovals {
+        /// Chain (e.g. ethereum, xlayer)
+        #[arg(long)]
+        chain: String,
+        /// Wallet address (owner)
+        #[arg(long)]
+        address: String,
+        /// Token contract address to check
+        #[arg(long)]
+        token: String,
+        /// Spender address (optional, defaults to OKX DEX router)
+        #[arg(long)]
+        spender: Option<String>,
+    },
+    /// Get supported chains for DEX aggregator
+    Chains,
+    /// Get available liquidity sources on a chain
+    Liquidity {
+        /// Chain
+        #[arg(long)]
+        chain: String,
+    },
+    /// One-shot swap: quote → approve (if needed) → swap → sign & broadcast → txHash
+    Execute {
+        /// Source token contract address
+        #[arg(long)]
+        from: String,
+        /// Destination token contract address
+        #[arg(long)]
+        to: String,
+        /// Amount in minimal units (wei/lamports). Mutually exclusive with --readable-amount.
+        #[arg(long, conflicts_with = "readable_amount")]
+        amount: Option<String>,
+        /// Human-readable amount (e.g. "1.5" for 1.5 USDC). CLI fetches token decimals and converts automatically.
+        #[arg(long, conflicts_with = "amount")]
+        readable_amount: Option<String>,
+        /// Chain (e.g. ethereum, solana, xlayer)
+        #[arg(long)]
+        chain: String,
+        /// User wallet address
+        #[arg(long)]
+        wallet: String,
+        /// Slippage tolerance in percent. Omit to use autoSlippage.
+        #[arg(long)]
+        slippage: Option<String>,
+        /// Gas priority: slow, average, fast
+        #[arg(long, default_value = "average")]
+        gas_level: String,
+        /// Swap mode: exactIn or exactOut
+        #[arg(long, default_value = "exactIn")]
+        swap_mode: String,
+        /// Jito tips in SOL for Solana MEV protection (range: 0.0000000001–2)
+        #[arg(long)]
+        tips: Option<String>,
+        /// Max auto slippage percent cap
+        #[arg(long)]
+        max_auto_slippage: Option<String>,
+        /// Enable MEV protection
+        #[arg(long, default_value_t = false)]
+        mev_protection: bool,
+        /// Gas token contract address for Gas Station payment (from tokenList).
+        /// Applied to both approve and swap transactions when set.
+        #[arg(long)]
+        gas_token_address: Option<String>,
+        /// Relayer ID for Gas Station (from tokenList). Must be paired with --gas-token-address.
+        #[arg(long)]
+        relayer_id: Option<String>,
+        /// Enable Gas Station first-time activation or re-enable. Pins --gas-token-address as default.
+        #[arg(long, default_value_t = false)]
+        enable_gas_station: bool,
+        /// Force execution: skip backend risk warning 81362 (skipWarning=true on broadcast).
+        /// Use only after explicit user confirmation.
+        #[arg(long, default_value_t = false)]
+        force: bool,
+        /// Auto copy-trade context (set by autotrade execution cards, not for manual use):
+        /// when present, the CLI itself pushes the outcome notification — success tx/order
+        /// id or failure reason — to the task user via `okx-a2a user notify` after the
+        /// command finishes, so the report cannot be skipped by the calling agent.
+        /// Value = the copy-trade jobId.
+        #[arg(long)]
+        notify_job_id: Option<String>,
+    },
+}
+
+pub async fn execute(ctx: &Context, cmd: SwapCommand) -> Result<()> {
+    let mut client = ctx.client_async().await?;
+    match cmd {
+        SwapCommand::Quote {
+            from,
+            to,
+            amount,
+            readable_amount,
+            chain,
+            swap_mode,
+        } => {
+            let chain_index = crate::chains::resolve_chain(&chain);
+            crate::chains::ensure_supported_chain(&chain_index, &chain)?;
+            let raw_amount = resolve_amount_arg(
+                &mut client,
+                amount.as_deref(),
+                readable_amount.as_deref(),
+                &from,
+                &chain_index,
+            )
+            .await?;
+            let mut quote = fetch_quote(
+                &mut client,
+                &chain_index,
+                &from,
+                &to,
+                &raw_amount,
+                &swap_mode,
+            )
+            .await?;
+            // (§1.4 / §2.4): always-on per-route risk classification.
+            classify_swap_response(&mut quote);
+
+            // Balance context (spec §2.2 / §2.3): query the from-asset balance.
+            // On ANY query failure the balance is unavailable → `walletBalance`
+            // is JSON null and the quote still succeeds (§3.2) — never an exit-1
+            // by itself. Native assets are keyed by the empty token address in
+            // the balance response, so map the native placeholder back to "".
+            let resolved_from = resolve_token_address(&chain_index, &from);
+            let native = crate::chains::native_token_address(&chain_index);
+            let balance_token = if resolved_from.eq_ignore_ascii_case(native) {
+                ""
+            } else {
+                resolved_from.as_str()
+            };
+            let wallet_balance =
+                crate::commands::agentic_wallet::balance::query_token_readable_balance(
+                    &chain_index,
+                    balance_token,
+                )
+                .await
+                .ok()
+                .flatten();
+
+            // Insufficient-balance scene (spec §2.2): compare the held from-token
+            // balance with the actual from-token requirement. For exactIn the
+            // request amount already is the from-token amount; for exactOut it is
+            // the desired to-token amount, so only the quote's fromTokenAmount is
+            // authoritative. Symbol + decimals come from that same quote route.
+            // Missing or malformed facts degrade to the normal quote rather than
+            // incorrectly entering Funding.
+            let required_from_amount =
+                quote_required_from_amount(&quote, &swap_mode, &raw_amount);
+            if let (Some(balance), (symbol, Some(decimals)), Some(required_minimal)) = (
+                wallet_balance.as_deref(),
+                quote_from_token_meta(&quote),
+                required_from_amount.as_deref(),
+            )
+            {
+                let insufficient = match readable_to_minimal_str(balance, decimals) {
+                    Ok(balance_minimal) => {
+                        is_allowance_insufficient(&balance_minimal, required_minimal)
+                    }
+                    // Balance can't be normalized → cannot compare cleanly, so do
+                    // NOT block (safe degrade; the normal quote still emits).
+                    Err(_) => false,
+                };
+                if insufficient {
+                    if let Ok(requested_amount) =
+                        crate::commands::agentic_wallet::shared::common::amount::minimal_to_readable(
+                            required_minimal,
+                            decimals,
+                        )
+                    {
+                        let params = SwapSceneParams {
+                            from_token: &resolved_from,
+                            from_symbol: symbol.as_deref().unwrap_or(""),
+                            requested_amount: &requested_amount,
+                        };
+                        let value = crate::funding::build_funding_bundle(
+                            &chain_index,
+                            swap_funding_input(&params, balance),
+                        )
+                        .await?;
+                        return Err(output::CliFundingBlocked { data: value }.into());
+                    }
+                }
+            }
+
+            attach_wallet_balance(&mut quote, wallet_balance);
+            output::success(quote);
+        }
+        SwapCommand::Swap {
+            from,
+            to,
+            amount,
+            readable_amount,
+            chain,
+            slippage,
+            wallet,
+            gas_level,
+            swap_mode,
+            tips,
+            max_auto_slippage,
+        } => {
+            let chain_index = crate::chains::resolve_chain(&chain);
+            crate::chains::ensure_supported_chain(&chain_index, &chain)?;
+            let raw_amount = resolve_amount_arg(
+                &mut client,
+                amount.as_deref(),
+                readable_amount.as_deref(),
+                &from,
+                &chain_index,
+            )
+            .await?;
+            let mut swap = fetch_swap(
+                &mut client,
+                &chain_index,
+                &from,
+                &to,
+                &raw_amount,
+                slippage.as_deref(),
+                &wallet,
+                &swap_mode,
+                &gas_level,
+                tips.as_deref(),
+                max_auto_slippage.as_deref(),
+            )
+            .await?;
+            // (§1.4 / §2.4): always-on per-route risk classification.
+            classify_swap_response(&mut swap);
+            output::success(swap);
+        }
+        SwapCommand::Approve {
+            token,
+            amount,
+            chain,
+        } => {
+            let chain_index = crate::chains::resolve_chain(&chain);
+            crate::chains::ensure_supported_chain(&chain_index, &chain)?;
+            output::success(fetch_approve(&mut client, &chain_index, &token, &amount).await?);
+        }
+        SwapCommand::CheckApprovals {
+            chain,
+            address,
+            token,
+            spender,
+        } => {
+            let chain_index = crate::chains::resolve_chain(&chain);
+            output::success(
+                fetch_check_approvals(
+                    &mut client,
+                    &chain_index,
+                    &address,
+                    &token,
+                    spender.as_deref(),
+                )
+                .await?,
+            );
+        }
+        SwapCommand::Chains => {
+            output::success(fetch_chains(&mut client).await?);
+        }
+        SwapCommand::Liquidity { chain } => {
+            let chain_index = crate::chains::resolve_chain(&chain);
+            crate::chains::ensure_supported_chain(&chain_index, &chain)?;
+            output::success(fetch_liquidity(&mut client, &chain_index).await?);
+        }
+        SwapCommand::Execute {
+            from,
+            to,
+            amount,
+            readable_amount,
+            chain,
+            wallet,
+            slippage,
+            gas_level,
+            swap_mode,
+            tips,
+            max_auto_slippage,
+            mev_protection,
+            gas_token_address,
+            relayer_id,
+            enable_gas_station,
+            force,
+            notify_job_id,
+        } => {
+            let chain_index = crate::chains::resolve_chain(&chain);
+            let run = async {
+                crate::chains::ensure_supported_chain(&chain_index, &chain)?;
+                let raw_amount = resolve_amount_arg(
+                    &mut client,
+                    amount.as_deref(),
+                    readable_amount.as_deref(),
+                    &from,
+                    &chain_index,
+                )
+                .await?;
+                cmd_execute(
+                    &mut client,
+                    &from,
+                    &to,
+                    &raw_amount,
+                    &chain,
+                    &wallet,
+                    slippage.as_deref(),
+                    &gas_level,
+                    &swap_mode,
+                    tips.as_deref(),
+                    max_auto_slippage.as_deref(),
+                    mev_protection,
+                    gas_token_address.as_deref(),
+                    relayer_id.as_deref(),
+                    enable_gas_station,
+                    force,
+                )
+                .await
+            };
+            match notify_job_id {
+                None => {
+                    run.await?;
+                }
+                // Auto copy-trade context: the CLI reports the outcome (success AND
+                // failure) to the task user itself, so the notification can't be
+                // skipped by the calling agent — one-shot sub sessions were observed
+                // to drop the follow-up `user-notify` step when it was left to them.
+                Some(job) => {
+                    let display_amount = readable_amount
+                        .as_deref()
+                        .or(amount.as_deref())
+                        .unwrap_or("?")
+                        .to_string();
+                    match run.await {
+                        Ok(out) => {
+                            crate::commands::agent_commerce::task::common::autotrade::notify::notify_swap_outcome(
+                                &job, &chain, &display_amount, &from, &to, Ok(&out),
+                            );
+                        }
+                        Err(e) => {
+                            crate::commands::agent_commerce::task::common::autotrade::notify::notify_swap_outcome(
+                                &job, &chain, &display_amount, &from, &to, Err(&e),
+                            );
+                            return Err(e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Locate the per-route objects inside a quote/swap response for risk classification to
+/// classify each one in place (§1.4 / §2.4). Two response shapes are handled
+/// while preserving the outer shape:
+/// - **quote**: `data` is an array (or a single object) whose entries carry
+///   `fromToken`/`toToken` directly — the entry itself is the route.
+/// - **swap**: each entry wraps the route under `routerResult` (alongside a
+///   `tx` sibling) — descend into `routerResult` so the appended
+///   `action`/`reason` land next to the tokens `classify_swap_route` reads.
+///
+/// Returns disjoint mutable references; the caller applies `classify_swap_route`
+/// to each. Non-array, non-object roots (e.g. `null`) yield the value itself,
+/// which `classify_swap_route` leaves untouched.
+fn swap_routes_mut(value: &mut Value) -> Vec<&mut Value> {
+    // Descend into `routerResult` (swap shape) when present, else the entry
+    // itself (quote shape).
+    fn route_of(entry: &mut Value) -> &mut Value {
+        if entry.get("routerResult").is_some_and(Value::is_object) {
+            entry
+                .get_mut("routerResult")
+                .expect("routerResult checked present and object")
+        } else {
+            entry
+        }
+    }
+
+    match value {
+        Value::Array(items) => items.iter_mut().map(route_of).collect(),
+        other => vec![route_of(other)],
+    }
+}
+
+/// (§1.4 / §2.4 / §10.2): apply always-on per-route risk classification to a
+/// fetched quote/swap response in place. Single source of truth for the route-walk
+/// and classify loop so the CLI (`execute`) and MCP (`swap_quote` / `swap_swap`)
+/// paths stay byte-identical — avoids the two-copy drift PRD §3.3 warns against.
+pub(crate) fn classify_swap_response(value: &mut Value) {
+    for route in swap_routes_mut(value) {
+        classify_swap_route(route);
+    }
+}
+
+/// Resolve the effective raw amount from either --amount (raw) or --readable-amount (human-readable).
+/// If --readable-amount is given, fetches token decimals via token info and converts.
+pub(crate) async fn resolve_amount_arg(
+    client: &mut ApiClient,
+    amount: Option<&str>,
+    readable_amount: Option<&str>,
+    from: &str,
+    chain_index: &str,
+) -> Result<String> {
+    if let Some(amt) = amount {
+        let amt = amt.trim();
+        validate_amount(amt)?;
+        return Ok(amt.to_string());
+    }
+    if let Some(readable) = readable_amount {
+        let readable = readable.trim();
+        if readable.is_empty() {
+            bail!("--readable-amount must not be empty");
+        }
+        let resolved_from = resolve_token_address(chain_index, from);
+        let info = crate::commands::token::fetch_info(client, &resolved_from, chain_index)
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to fetch token decimals for {}: {}. Use --amount with raw units instead.",
+                    resolved_from, e
+                )
+            })?;
+        let info_arr = info.as_array().filter(|a| !a.is_empty()).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Token not found for address {} on chain {}. Verify the address is correct. \
+                 Use --amount with raw units instead.",
+                resolved_from,
+                chain_index
+            )
+        })?;
+        let decimal: u32 = match &info_arr[0]["decimal"] {
+            serde_json::Value::String(s) => s.parse().map_err(|_| {
+                anyhow::anyhow!(
+                    "Invalid decimal value \"{}\" for token {}",
+                    s,
+                    resolved_from
+                )
+            })?,
+            serde_json::Value::Number(n) => n.as_u64().ok_or_else(|| {
+                anyhow::anyhow!("Invalid decimal value for token {}", resolved_from)
+            })? as u32,
+            _ => anyhow::bail!(
+                "Token decimal not found for {}. Use --amount with raw units instead.",
+                resolved_from
+            ),
+        };
+        return readable_to_minimal_str(readable, decimal);
+    }
+    bail!("Either --amount or --readable-amount is required")
+}
+
+/// Reject swaps where fromToken and toToken are the same address.
+fn ensure_different_tokens(from: &str, to: &str) -> Result<()> {
+    if from.eq_ignore_ascii_case(to) {
+        bail!(
+            "fromToken and toToken are the same address ({}). Cannot swap a token to itself.",
+            from
+        );
+    }
+    Ok(())
+}
+
+/// Validate resolved token pair: format matches chain + tokens are different.
+/// Call after `resolve_token_address`.
+fn validate_swap_params(chain_index: &str, from: &str, to: &str) -> Result<()> {
+    validate_address_for_chain(chain_index, from, "from")?;
+    validate_address_for_chain(chain_index, to, "to")?;
+    ensure_different_tokens(from, to)?;
+    Ok(())
+}
+
+/// Validate that `swap_mode` is one of the accepted values: "exactIn" or "exactOut".
+fn validate_swap_mode(swap_mode: &str) -> Result<()> {
+    match swap_mode {
+        "exactIn" | "exactOut" => Ok(()),
+        _ => bail!(
+            "--swap-mode must be \"exactIn\" or \"exactOut\", got \"{}\"",
+            swap_mode
+        ),
+    }
+}
+
+/// Validate that `gas_level` is one of the accepted values: "slow", "average", or "fast".
+fn validate_gas_level(gas_level: &str) -> Result<()> {
+    match gas_level {
+        "slow" | "average" | "fast" => Ok(()),
+        _ => bail!(
+            "--gas-level must be \"slow\", \"average\", or \"fast\", got \"{}\"",
+            gas_level
+        ),
+    }
+}
+
+/// Validate that `tips` is a positive integer (greater than 0).
+fn validate_tips(tips: &str) -> Result<()> {
+    let tips = tips.trim();
+    if tips.is_empty() {
+        bail!("--tips must not be empty");
+    }
+    let val: f64 = tips
+        .parse()
+        .map_err(|_| anyhow::anyhow!("--tips must be a number in SOL, got \"{}\"", tips))?;
+    if val < 1e-10 {
+        bail!("--tips must be at least 0.0000000001 SOL, got \"{}\"", tips);
+    }
+    if val > 2.0 {
+        bail!("--tips must be at most 2 SOL, got \"{}\"", tips);
+    }
+    Ok(())
+}
+
+// ── Aggregator API functions ─────────────────────────────────────────
+
+/// GET /api/v6/dex/aggregator/quote
+pub async fn fetch_quote(
+    client: &mut ApiClient,
+    chain_index: &str,
+    from: &str,
+    to: &str,
+    amount: &str,
+    swap_mode: &str,
+) -> Result<Value> {
+    if !swap_mode.is_empty() {
+        validate_swap_mode(swap_mode)?;
+    }
+    let orig_from = from;
+    let orig_to = to;
+    let from = resolve_token_address(chain_index, orig_from);
+    let to = resolve_token_address(chain_index, orig_to);
+    validate_swap_params(chain_index, &from, &to)?;
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][fetch_quote] chain_index={}, from={}, to={}, amount={}, swap_mode={}",
+            chain_index, orig_from, orig_to, amount, swap_mode
+        );
+        if orig_from != from.as_str() {
+            eprintln!(
+                "[DEBUG][fetch_quote] from resolved: {} → {}",
+                orig_from, from
+            );
+        }
+        if orig_to != to.as_str() {
+            eprintln!("[DEBUG][fetch_quote] to resolved: {} → {}", orig_to, to);
+        }
+    }
+    // Generate trace ID: resolved from address + timestamp (not cached; quote has its own independent tid)
+    let timestamp = chrono::Utc::now().timestamp_millis().to_string();
+    let tid = format!("{}{}", from, timestamp);
+
+    let params = vec![
+        ("chainIndex", chain_index),
+        ("fromTokenAddress", from.as_str()),
+        ("toTokenAddress", to.as_str()),
+        ("amount", amount),
+        ("swapMode", swap_mode),
+    ];
+    let headers = [
+        ("ok-client-tid", tid.as_str()),
+        ("ok-client-timestamp", timestamp.as_str()),
+    ];
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][fetch_quote] trace headers: ok-client-tid={}, ok-client-timestamp={}",
+            tid, timestamp
+        );
+    }
+    let result = client
+        .get_with_headers("/api/v6/dex/aggregator/quote", &params, Some(&headers))
+        .await;
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][fetch_quote] response: {:?}", result);
+    }
+    result
+}
+
+/// GET /api/v6/dex/aggregator/swap
+#[allow(clippy::too_many_arguments)]
+pub async fn fetch_swap(
+    client: &mut ApiClient,
+    chain_index: &str,
+    from: &str,
+    to: &str,
+    amount: &str,
+    slippage: Option<&str>,
+    wallet: &str,
+    swap_mode: &str,
+    gas_level: &str,
+    tips: Option<&str>,
+    max_auto_slippage: Option<&str>,
+) -> Result<Value> {
+    // ── Input validation ──
+    if !swap_mode.is_empty() {
+        validate_swap_mode(swap_mode)?;
+    }
+    if !gas_level.is_empty() {
+        validate_gas_level(gas_level)?;
+    }
+    if let Some(s) = slippage {
+        validate_slippage(s)?;
+    }
+    if let Some(t) = tips {
+        validate_tips(t)?;
+    }
+    if let Some(m) = max_auto_slippage {
+        validate_slippage(m)?;
+    }
+    validate_address_for_chain(chain_index, wallet, "wallet")?;
+    validate_amount(amount)?;
+
+    let orig_from = from;
+    let orig_to = to;
+    let from = resolve_token_address(chain_index, orig_from);
+    let to = resolve_token_address(chain_index, orig_to);
+    validate_swap_params(chain_index, &from, &to)?;
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][fetch_swap] chain_index={}, from={}, to={}, amount={}, wallet={}, swap_mode={}, gas_level={}, slippage={:?}, tips={:?}, max_auto_slippage={:?}",
+            chain_index, orig_from, orig_to, amount, wallet, swap_mode, gas_level, slippage, tips, max_auto_slippage
+        );
+        if orig_from != from.as_str() {
+            eprintln!(
+                "[DEBUG][fetch_swap] from resolved: {} → {}",
+                orig_from, from
+            );
+        }
+        if orig_to != to.as_str() {
+            eprintln!("[DEBUG][fetch_swap] to resolved: {} → {}", orig_to, to);
+        }
+    }
+    let mut params = vec![
+        ("chainIndex", chain_index),
+        ("fromTokenAddress", from.as_str()),
+        ("toTokenAddress", to.as_str()),
+        ("amount", amount),
+        ("userWalletAddress", wallet),
+        ("swapMode", swap_mode),
+        ("gasLevel", gas_level),
+    ];
+    if let Some(s) = slippage {
+        params.push(("slippagePercent", s));
+    } else {
+        params.push(("autoSlippage", "true"));
+        params.push(("slippagePercent", "0.5"));
+    }
+    if let Some(t) = tips {
+        params.push(("tips", t));
+        // Jito tips and computeUnitPrice are mutually exclusive
+        params.push(("computeUnitPrice", "0"));
+    }
+    if let Some(m) = max_auto_slippage {
+        params.push(("maxAutoSlippagePercent", m));
+    }
+    // Generate a new trace ID for the swap flow and save to cache
+    let timestamp = chrono::Utc::now().timestamp_millis().to_string();
+    let tid = format!("{}{}", from, timestamp);
+    // Save to cache (best-effort) — downstream sign_and_broadcast reads it for contract calls
+    let _ = crate::wallet_store::set_swap_trace_id(&tid);
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][fetch_swap] trace headers: ok-client-tid={}, ok-client-timestamp={}",
+            tid, timestamp
+        );
+    }
+    let headers = [
+        ("ok-client-tid", tid.as_str()),
+        ("ok-client-timestamp", timestamp.as_str()),
+    ];
+    let result = client
+        .get_with_headers("/api/v6/dex/aggregator/swap", &params, Some(&headers))
+        .await;
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][fetch_swap] response: {:?}", result);
+    }
+    result
+}
+
+/// Validate that `amount` is a non-negative integer string (allows "0" for revoke).
+fn validate_approve_amount(amount: &str) -> Result<()> {
+    let amount = amount.trim();
+    if amount.is_empty() {
+        bail!("--amount must not be empty");
+    }
+    if amount.contains('.') {
+        bail!("--amount must be a whole number in minimal units (no decimals)");
+    }
+    if !amount.chars().all(|c| c.is_ascii_digit()) {
+        bail!(
+            "--amount must be a whole number in minimal units, got \"{}\". \
+             Infinity, NaN, negative numbers and non-numeric values are not accepted.",
+            amount
+        );
+    }
+    // Allow "0" for revoke, but reject leading zeros like "007"
+    if amount.len() > 1 && amount.starts_with('0') {
+        bail!("--amount must not have leading zeros, got \"{}\"", amount);
+    }
+    Ok(())
+}
+
+/// GET /api/v6/dex/aggregator/approve-transaction
+pub async fn fetch_approve(
+    client: &mut ApiClient,
+    chain_index: &str,
+    token: &str,
+    amount: &str,
+) -> Result<Value> {
+    // ── Input validation ──
+    validate_approve_amount(amount)?;
+    let orig_token = token;
+    let token = resolve_token_address(chain_index, orig_token);
+    validate_address_for_chain(chain_index, &token, "token")?;
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][fetch_approve] chain_index={}, token={}, amount={}",
+            chain_index, orig_token, amount
+        );
+        if orig_token != token.as_str() {
+            eprintln!(
+                "[DEBUG][fetch_approve] token resolved: {} → {}",
+                orig_token, token
+            );
+        }
+    }
+    let result = client
+        .get(
+            "/api/v6/dex/aggregator/approve-transaction",
+            &[
+                ("chainIndex", chain_index),
+                ("tokenContractAddress", token.as_str()),
+                ("approveAmount", amount),
+            ],
+        )
+        .await;
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][fetch_approve] response: {:?}", result);
+    }
+    result
+}
+
+/// POST /api/v6/dex/pre-transaction/check-approvals
+pub async fn fetch_check_approvals(
+    client: &mut ApiClient,
+    chain_index: &str,
+    address: &str,
+    token: &str,
+    spender: Option<&str>,
+) -> Result<Value> {
+    // ── Input validation ──
+    validate_address_for_chain(chain_index, address, "address")?;
+    let token = resolve_token_address(chain_index, token);
+    validate_address_for_chain(chain_index, &token, "token")?;
+    if let Some(s) = spender {
+        validate_address_for_chain(chain_index, s, "spender")?;
+    }
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][fetch_check_approvals] chain_index={}, address={}, token={}, spender={:?}",
+            chain_index, address, token, spender
+        );
+    }
+    let mut body = json!({
+        "chainIndex": chain_index,
+        "address": address,
+        "tokens": [{ "tokenContractAddress": token }],
+    });
+    if let Some(s) = spender {
+        body["spender"] = json!(s);
+    }
+    let result = client
+        .post("/api/v6/dex/pre-transaction/check-approvals", &body)
+        .await;
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][fetch_check_approvals] response: {:?}", result);
+    }
+    result
+}
+
+/// GET /api/v6/dex/aggregator/supported/chain
+pub async fn fetch_chains(client: &mut ApiClient) -> Result<Value> {
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][fetch_chains] fetching supported chains");
+    }
+    let result = client
+        .get("/api/v6/dex/aggregator/supported/chain", &[])
+        .await;
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][fetch_chains] response: {:?}", result);
+    }
+    result
+}
+
+/// GET /api/v6/dex/aggregator/get-liquidity
+pub async fn fetch_liquidity(client: &mut ApiClient, chain_index: &str) -> Result<Value> {
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][fetch_liquidity] chain_index={}", chain_index);
+    }
+    let result = client
+        .get(
+            "/api/v6/dex/aggregator/get-liquidity",
+            &[("chainIndex", chain_index)],
+        )
+        .await;
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][fetch_liquidity] response: {:?}", result);
+    }
+    result
+}
+
+// ── Execute orchestration ────────────────────────────────────────────
+
+/// Call `execute_contract_call` directly and return the txHash wrapped in a JSON value.
+#[allow(clippy::too_many_arguments)]
+async fn wallet_contract_call(
+    to: &str,
+    chain: &str,
+    amt: &str,
+    input_data: Option<&str>,
+    unsigned_tx: Option<&str>,
+    gas_limit: Option<&str>,
+    aa_dex_token_addr: Option<&str>,
+    aa_dex_token_amount: Option<&str>,
+    mev_protection: bool,
+    jito_unsigned_tx: Option<&str>,
+    gas_token_address: Option<&str>,
+    relayer_id: Option<&str>,
+    enable_gas_station: bool,
+    force: bool,
+) -> Result<Value> {
+    let resp = crate::commands::agentic_wallet::transfer::execute_contract_call(
+        to,
+        chain,
+        amt,
+        input_data,
+        unsigned_tx,
+        gas_limit,
+        None, // from: use selected account
+        aa_dex_token_addr,
+        aa_dex_token_amount,
+        mev_protection,
+        jito_unsigned_tx,
+        force,
+        None, // tx_source: not cross-chain
+        gas_token_address,
+        relayer_id,
+        enable_gas_station,
+        Some("dex"), // agent_biz_type: swap flow
+        None,        // agent_skill_name
+    )
+    .await?;
+    Ok(json!({ "txHash": resp.tx_hash, "orderId": resp.order_id }))
+}
+
+/// Extract txHash from `wallet contract-call` output data.
+fn extract_tx_hash(data: &Value) -> Result<String> {
+    data["txHash"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow::anyhow!("missing txHash in contract-call output"))
+}
+
+/// Extract (txHash, orderId) from `wallet contract-call` output data. orderId
+/// may be empty for non-Gas-Station broadcasts; only txHash is required.
+fn extract_tx_hash_and_order_id(data: &Value) -> Result<(String, String)> {
+    let tx_hash = data["txHash"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow::anyhow!("missing txHash in contract-call output"))?;
+    let order_id = data["orderId"].as_str().unwrap_or("").to_string();
+    Ok((tx_hash, order_id))
+}
+
+/// Build ready-to-paste `onchainos wallet history` commands so callers can poll
+/// on-chain status without string surgery. Prefer `--tx-hash`; when the hash is
+/// empty (Gas Station broadcasts return an orderId before the relayer fills in
+/// the on-chain hash) fall back to `--order-id`, which routes to `/order/detail`
+/// and locates the order deterministically. A `--tx-hash <empty>` command would
+/// instead fall through to `/order/list` and cannot identify the order.
+fn next_steps_for_swap(
+    chain_index: &str,
+    swap_tx_hash: &str,
+    swap_order_id: &str,
+    approve_tx_hash: Option<&str>,
+    approve_order_id: Option<&str>,
+) -> Value {
+    let mut steps = serde_json::Map::new();
+    if let Some(cmd) = history_status_cmd(chain_index, swap_tx_hash, swap_order_id) {
+        steps.insert("checkSwapStatus".to_string(), json!(cmd));
+    }
+    if let Some(cmd) = history_status_cmd(
+        chain_index,
+        approve_tx_hash.unwrap_or(""),
+        approve_order_id.unwrap_or(""),
+    ) {
+        steps.insert("checkApproveStatus".to_string(), json!(cmd));
+    }
+    Value::Object(steps)
+}
+
+/// Build a `wallet history` status-query command, preferring txHash (routes to
+/// `/order/detail` by hash) and falling back to orderId (`/order/detail` by
+/// orderId, used for Gas Station broadcasts whose hash is not yet available).
+/// Returns `None` when neither identifier is present.
+fn history_status_cmd(chain_index: &str, tx_hash: &str, order_id: &str) -> Option<String> {
+    if !tx_hash.is_empty() {
+        Some(format!(
+            "onchainos wallet history --tx-hash {} --chain {}",
+            tx_hash, chain_index
+        ))
+    } else if !order_id.is_empty() {
+        Some(format!(
+            "onchainos wallet history --order-id {} --chain {}",
+            order_id, chain_index
+        ))
+    } else {
+        None
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn cmd_execute(
+    client: &mut ApiClient,
+    from_token: &str,
+    to_token: &str,
+    amount: &str,
+    chain: &str,
+    wallet_address: &str,
+    slippage: Option<&str>,
+    gas_level: &str,
+    swap_mode: &str,
+    tips: Option<&str>,
+    max_auto_slippage: Option<&str>,
+    mev_protection: bool,
+    gas_token_address: Option<&str>,
+    relayer_id: Option<&str>,
+    enable_gas_station: bool,
+    force: bool,
+) -> Result<Value> {
+    use crate::chains;
+
+    let chain_index = chains::resolve_chain(chain);
+    let family = chains::chain_family(&chain_index);
+    let native_addr = chains::native_token_address(&chain_index);
+    let from_token = resolve_token_address(&chain_index, from_token);
+    let to_token = resolve_token_address(&chain_index, to_token);
+    validate_swap_params(&chain_index, &from_token, &to_token)?;
+    let is_from_native = from_token.eq_ignore_ascii_case(native_addr);
+
+    // Routing:
+    //   non-native + no Gas Station params + chain in support list  → batch path
+    //   any condition fails                                         → single-tx path
+    let batch_supported = !is_from_native
+        && !enable_gas_station
+        && gas_token_address.is_none()
+        && relayer_id.is_none()
+        && is_chain_batch_supported(&chain_index).await;
+    if batch_supported {
+        return cmd_execute_batch(
+            client,
+            &from_token,
+            &to_token,
+            amount,
+            &chain_index,
+            wallet_address,
+            slippage,
+            gas_level,
+            swap_mode,
+            tips,
+            max_auto_slippage,
+            mev_protection,
+            force,
+        )
+        .await;
+    }
+
+    // Gas Station `enableGasStation=true` must only fire on the FIRST gas-consuming
+    // tx of this flow (revoke / approve / swap, whichever runs first). After that,
+    // the account is activated — subsequent txs only need gasTokenAddress + relayerId.
+    let mut gs_enable_remaining = enable_gas_station;
+
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][cmd_execute] from_token={}, to_token={}, amount={}, chain={} (chain_index={}, family={}), wallet={}, slippage={:?}, gas_level={}, swap_mode={}, tips={:?}, max_auto_slippage={:?}, mev_protection={}",
+            from_token, to_token, amount, chain, chain_index, family, wallet_address, slippage, gas_level, swap_mode, tips, max_auto_slippage, mev_protection
+        );
+    }
+
+    // ── 1. Approve (EVM + non-native only) ──────────────────────────
+    let mut approve_tx_hash: Option<String> = None;
+    let mut approve_order_id: Option<String> = None;
+
+    if family == "evm" && !is_from_native {
+        // Fetch approve-transaction first to get dexContractAddress (spender) and calldata
+        let approve_data = fetch_approve(client, &chain_index, &from_token, amount).await?;
+        let approve_obj = unwrap_api_array(&approve_data);
+        let approve_calldata = approve_obj["data"]
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow::anyhow!("missing 'data' field in approve response"))?;
+        let dex_contract_address = approve_obj["dexContractAddress"]
+            .as_str()
+            .map(|s| s.to_string());
+        if cfg!(feature = "debug-log") {
+            eprintln!(
+                "[DEBUG][cmd_execute] dexContractAddress={:?}",
+                dex_contract_address
+            );
+        }
+
+        let approvals = fetch_check_approvals(
+            client,
+            &chain_index,
+            wallet_address,
+            &from_token,
+            dex_contract_address.as_deref(),
+        )
+        .await?;
+
+        let spendable = approvals
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|r| r["tokens"].as_array())
+            .and_then(|tokens| tokens.first())
+            .and_then(|t| t["spendable"].as_str())
+            .unwrap_or("0");
+
+        let (needs_approve, needs_revoke) =
+            classify_approve_action(&chain_index, &from_token, spendable, amount);
+
+        if cfg!(feature = "debug-log") {
+            eprintln!(
+                "[DEBUG][cmd_execute] spendable={}, amount={}, needs_approve={}, needs_revoke={}",
+                spendable, amount, needs_approve, needs_revoke
+            );
+        }
+
+        if needs_approve {
+            if needs_revoke {
+                if cfg!(feature = "debug-log") {
+                    eprintln!("[swap execute] revoking stale approval (USDT pattern)...");
+                }
+                let revoke_data = fetch_approve(client, &chain_index, &from_token, "0").await?;
+                let revoke_calldata = extract_approve_calldata(&revoke_data)?;
+
+                let gs_enable_this_call = std::mem::replace(&mut gs_enable_remaining, false);
+                let result = wallet_contract_call(
+                    &from_token,
+                    &chain_index,
+                    "0",
+                    Some(&revoke_calldata),
+                    None,
+                    None,
+                    None,
+                    None,
+                    false,
+                    None,
+                    gas_token_address,
+                    relayer_id,
+                    gs_enable_this_call,
+                    force,
+                )
+                .await?;
+                let revoke_tx_hash = extract_tx_hash(&result)?;
+                // Approve must wait for revoke to confirm — sending approve
+                // before the revoke is mined leaves the original allowance
+                // in place and the swap will revert.
+                wait_tx_onchain(client, &revoke_tx_hash, &chain_index).await?;
+            }
+
+            if cfg!(feature = "debug-log") {
+                eprintln!("[swap execute] approving token...");
+            }
+            // Reuse the approve calldata already fetched above
+            let gs_enable_this_call = std::mem::replace(&mut gs_enable_remaining, false);
+            let result = wallet_contract_call(
+                &from_token,
+                &chain_index,
+                "0",
+                Some(&approve_calldata),
+                None,
+                None,
+                None,
+                None,
+                false,
+                None,
+                gas_token_address,
+                relayer_id,
+                gs_enable_this_call,
+                force,
+            )
+            .await?;
+            let (tx_hash, order_id) = extract_tx_hash_and_order_id(&result)?;
+            // Swap must see the approve on-chain before fetching the swap tx —
+            // otherwise the router quote will reject the route.
+            wait_tx_onchain(client, &tx_hash, &chain_index).await?;
+            approve_tx_hash = Some(tx_hash);
+            if !order_id.is_empty() {
+                approve_order_id = Some(order_id);
+            }
+        }
+    }
+
+    // ── 4. Swap ──────────────────────────────────────────────────────
+    if cfg!(feature = "debug-log") {
+        eprintln!("[swap execute] executing swap...");
+    }
+    let swap_data = fetch_swap(
+        client,
+        &chain_index,
+        &from_token,
+        &to_token,
+        amount,
+        slippage,
+        wallet_address,
+        swap_mode,
+        gas_level,
+        tips,
+        max_auto_slippage,
+    )
+    .await?;
+
+    let swap_result = unwrap_api_array(&swap_data);
+    if swap_result.is_null() {
+        bail!("swap API returned empty result");
+    }
+    if cfg!(feature = "debug-log") {
+        eprintln!("[DEBUG][cmd_execute] swap_result: {}", swap_result);
+    }
+
+    let tx = &swap_result["tx"];
+
+    // ── 5. Sign & broadcast swap tx via wallet contract-call ─────────
+    let (swap_tx_hash, swap_order_id) = if family == "solana" {
+        let unsigned_tx = tx["data"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing tx.data (unsigned tx) in swap response"))?;
+        let to_addr = tx["to"].as_str().unwrap_or("");
+
+        // Jito MEV protection: `/swap` returns jitoCalldata nested inside
+        // tx.signatureData[0] as a JSON string, not at the top level.
+        let jito_tx_owned: Option<String> = tx["signatureData"]
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.as_str())
+            .and_then(|s| serde_json::from_str::<Value>(s).ok())
+            .and_then(|v| v["jitoCalldata"].as_str().map(str::to_string));
+        let jito_tx = jito_tx_owned.as_deref();
+        let effective_mev = jito_tx.is_some() || mev_protection;
+
+        let gs_enable_this_call = std::mem::replace(&mut gs_enable_remaining, false);
+        let result = wallet_contract_call(
+            to_addr,
+            &chain_index,
+            "0",
+            None,
+            Some(unsigned_tx),
+            None,
+            None,
+            None,
+            effective_mev,
+            jito_tx,
+            gas_token_address,
+            relayer_id,
+            gs_enable_this_call,
+            force,
+        )
+        .await?;
+        extract_tx_hash_and_order_id(&result)?
+    } else {
+        let to_addr = tx["to"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing tx.to in swap response"))?;
+        let input_data = tx["data"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing tx.data in swap response"))?;
+        let tx_value_wei = tx["value"].as_str().unwrap_or("0");
+
+        // Gas limit from swap response
+        let gas_limit_str = tx["gas"].as_str();
+
+        // XLayer AA DEX params (mainnet 196 + testnet 1952)
+        let from_token_amount;
+        let (aa_addr, aa_amount) = if chain_index == "196" || chain_index == "1952" {
+            from_token_amount = swap_result["routerResult"]["fromTokenAmount"]
+                .as_str()
+                .unwrap_or(amount)
+                .to_string();
+            (Some(from_token.as_str()), Some(from_token_amount.as_str()))
+        } else {
+            (None, None)
+        };
+
+        let gs_enable_this_call = std::mem::replace(&mut gs_enable_remaining, false);
+        let result = wallet_contract_call(
+            to_addr,
+            &chain_index,
+            tx_value_wei,
+            Some(input_data),
+            None,
+            gas_limit_str,
+            aa_addr,
+            aa_amount,
+            mev_protection,
+            None,
+            gas_token_address,
+            relayer_id,
+            gs_enable_this_call,
+            force,
+        )
+        .await?;
+        extract_tx_hash_and_order_id(&result)?
+    };
+
+    // ── 6. Output ────────────────────────────────────────────────────
+    if cfg!(feature = "debug-log") {
+        eprintln!(
+            "[DEBUG][cmd_execute] swap_tx_hash={}, approve_tx_hash={:?}",
+            swap_tx_hash, approve_tx_hash
+        );
+    }
+    let router_result = &swap_result["routerResult"];
+    let next_steps = next_steps_for_swap(
+        &chain_index,
+        &swap_tx_hash,
+        &swap_order_id,
+        approve_tx_hash.as_deref(),
+        approve_order_id.as_deref(),
+    );
+    let mut out = json!({
+        "approveTxHash": approve_tx_hash,
+        "swapTxHash": swap_tx_hash,
+        "fromToken": router_result["fromToken"],
+        "toToken": router_result["toToken"],
+        "fromAmount": router_result["fromTokenAmount"],
+        "toAmount": router_result["toTokenAmount"],
+        "priceImpact": router_result["priceImpactPercent"],
+        "gasUsed": router_result["estimateGasFee"],
+        "nextSteps": next_steps,
+    });
+    // Only emit orderId fields when Gas Station was actually used (non-empty).
+    // Normal (native-gas) swaps return empty orderId and shouldn't pollute output.
+    if let Some(ref oid) = approve_order_id {
+        out["approveOrderId"] = json!(oid);
+    }
+    if !swap_order_id.is_empty() {
+        out["swapOrderId"] = json!(swap_order_id);
+    }
+    output::success(&out);
+
+    Ok(out)
+}
+
+// ── Batch unsignedInfo + broadcast ───────────────────────────────────
+// Build [revoke?, approve?, swap], one batch unsignedInfo call, sign
+// locally, dispatch via batch broadcast (or single broadcast if backend
+// merged to len=1 — XLayer EIP-5792).
+
+/// Returns `false` on any failure so the caller falls through to single-tx.
+async fn is_chain_batch_supported(chain_index: &str) -> bool {
+    let access_token = match crate::commands::agentic_wallet::auth::ensure_tokens_refreshed().await
+    {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+    let mut client = match crate::wallet_api::WalletApiClient::new() {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    match client.batch_support_chain_index_list(&access_token).await {
+        // chain_index in list → supports batch
+        // not in list or request error → not supported (fall through to single-tx)
+        Ok(list) => list.iter().any(|c| c == chain_index),
+        Err(_) => false,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn cmd_execute_batch(
+    client: &mut ApiClient,
+    from_token: &str,
+    to_token: &str,
+    amount: &str,
+    chain_index: &str,
+    wallet_address: &str,
+    slippage: Option<&str>,
+    gas_level: &str,
+    swap_mode: &str,
+    tips: Option<&str>,
+    max_auto_slippage: Option<&str>,
+    mev_protection: bool,
+    force: bool,
+) -> Result<Value> {
+    use crate::commands::agentic_wallet::transfer::{batch_sign_and_broadcast, BatchTxParams};
+
+    // 1. Approve check (gates revoke / approve / swap construction).
+    let approve_data = fetch_approve(client, chain_index, from_token, amount).await?;
+    let approve_obj = unwrap_api_array(&approve_data);
+    let approve_calldata = approve_obj["data"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow::anyhow!("missing 'data' field in approve response"))?;
+    let dex_contract_address = approve_obj["dexContractAddress"]
+        .as_str()
+        .map(|s| s.to_string());
+
+    let approvals = fetch_check_approvals(
+        client,
+        chain_index,
+        wallet_address,
+        from_token,
+        dex_contract_address.as_deref(),
+    )
+    .await?;
+    let spendable = approvals
+        .as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|r| r["tokens"].as_array())
+        .and_then(|tokens| tokens.first())
+        .and_then(|t| t["spendable"].as_str())
+        .unwrap_or("0")
+        .to_string();
+
+    let (needs_approve, needs_revoke) =
+        classify_approve_action(chain_index, from_token, &spendable, amount);
+
+    // 2. Fetch swap calldata.
+    let swap_data = fetch_swap(
+        client,
+        chain_index,
+        from_token,
+        to_token,
+        amount,
+        slippage,
+        wallet_address,
+        swap_mode,
+        gas_level,
+        tips,
+        max_auto_slippage,
+    )
+    .await?;
+    let swap_result = unwrap_api_array(&swap_data);
+    if swap_result.is_null() {
+        bail!("swap API returned empty result");
+    }
+    let swap_tx = &swap_result["tx"];
+    let swap_to = swap_tx["to"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing tx.to in swap response"))?
+        .to_string();
+    let swap_input_data = swap_tx["data"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing tx.data in swap response"))?
+        .to_string();
+    let swap_value_wei = swap_tx["value"].as_str().unwrap_or("0").to_string();
+    let swap_gas_limit = swap_tx["gas"].as_str().map(|s| s.to_string());
+
+    // XLayer (196) AA DEX params, mirrored from the single-tx path.
+    let (aa_addr, aa_amount) = if chain_index == "196" {
+        let amt = swap_result["routerResult"]["fromTokenAmount"]
+            .as_str()
+            .unwrap_or(amount)
+            .to_string();
+        (Some(from_token.to_string()), Some(amt))
+    } else {
+        (None, None)
+    };
+
+    // Layer 4 fallback:
+    //   allowance >= amount (no approve, no revoke needed) → single-tx broadcast (skip batch)
+    //   allowance insufficient                             → continue to batch construction
+    if !needs_approve && !needs_revoke {
+        let result = wallet_contract_call(
+            &swap_to,
+            chain_index,
+            &swap_value_wei,
+            Some(&swap_input_data),
+            None, // unsigned_tx (Solana only)
+            swap_gas_limit.as_deref(),
+            aa_addr.as_deref(),
+            aa_amount.as_deref(),
+            mev_protection,
+            None,  // jito_unsigned_tx
+            None,  // gas_token_address (no GS in batch)
+            None,  // relayer_id
+            false, // enable_gas_station
+            force,
+        )
+        .await?;
+        let swap_tx_hash = extract_tx_hash(&result)?;
+        // Batch path never uses Gas Station → no orderId; txHash is always present.
+        let next_steps = next_steps_for_swap(chain_index, &swap_tx_hash, "", None, None);
+        let router_result = &swap_result["routerResult"];
+        let out = json!({
+            "approveTxHash": Value::Null,
+            "swapTxHash": swap_tx_hash,
+            "fromToken": router_result["fromToken"],
+            "toToken": router_result["toToken"],
+            "fromAmount": router_result["fromTokenAmount"],
+            "toAmount": router_result["toTokenAmount"],
+            "priceImpact": router_result["priceImpactPercent"],
+            "gasUsed": router_result["estimateGasFee"],
+            "nextSteps": next_steps,
+        });
+        output::success(&out);
+        return Ok(out);
+    }
+
+    // Build elements: [revoke?, approve, swap].
+    let mut tx_params: Vec<BatchTxParams> = Vec::new();
+    if needs_revoke {
+        let revoke_data = fetch_approve(client, chain_index, from_token, "0").await?;
+        let revoke_calldata = extract_approve_calldata(&revoke_data)?;
+        tx_params.push(BatchTxParams {
+            to_addr: from_token.to_string(),
+            value: "0".to_string(),
+            contract_addr: Some(from_token.to_string()),
+            input_data: Some(revoke_calldata),
+            ..Default::default()
+        });
+    }
+    tx_params.push(BatchTxParams {
+        to_addr: from_token.to_string(),
+        value: "0".to_string(),
+        contract_addr: Some(from_token.to_string()),
+        input_data: Some(approve_calldata),
+        ..Default::default()
+    });
+    tx_params.push(BatchTxParams {
+        to_addr: swap_to.clone(),
+        value: swap_value_wei,
+        // Swap router must appear in unsignedInfo's contractAddr field
+        // (same as single-tx execute_contract_call).
+        contract_addr: Some(swap_to),
+        input_data: Some(swap_input_data),
+        gas_limit: swap_gas_limit,
+        aa_dex_token_addr: aa_addr,
+        aa_dex_token_amount: aa_amount,
+    });
+
+    let responses = batch_sign_and_broadcast(
+        chain_index,
+        Some(wallet_address),
+        &tx_params,
+        true, // is_contract_call
+        mev_protection,
+        force,
+        None,        // tx_source — backend coerces with parseInt; omit to match single-tx path
+        Some("dex"), // agent_biz_type
+        Some("okx-dex-swap-batch"),
+    )
+    .await?;
+
+    // Response length contract:
+    //   merging chain (X Layer 196/1952) → response.len ∈ {1, request_len}
+    //   non-merging EVM                  → response.len == request_len
+    //   anything else                    → bail
+    let merging_chain = crate::chains::merges_batch_unsignedinfo(chain_index);
+    let length_ok = if merging_chain {
+        responses.len() == 1 || responses.len() == tx_params.len()
+    } else {
+        responses.len() == tx_params.len()
+    };
+    if !length_ok {
+        bail!(
+            "batch broadcast on chain {chain_index}: response length {} not in expected set \
+             (request length {}, merging chain={merging_chain})",
+            responses.len(),
+            tx_params.len(),
+        );
+    }
+
+    let hashes: Vec<String> = responses.iter().map(|r| r.tx_hash.clone()).collect();
+    let (approve_tx_hash, swap_tx_hash) =
+        extract_batch_hashes(&hashes, needs_approve, needs_revoke);
+    if cfg!(feature = "debug-log") && needs_revoke && responses.len() >= 2 {
+        eprintln!(
+            "[DEBUG][cmd_execute_batch] revoke txHash={} (silent)",
+            responses[0].tx_hash
+        );
+    }
+
+    let router_result = &swap_result["routerResult"];
+    // Batch path never uses Gas Station → no orderId; txHash is always present.
+    let next_steps = next_steps_for_swap(
+        chain_index,
+        &swap_tx_hash,
+        "",
+        approve_tx_hash.as_deref(),
+        None,
+    );
+    let out = json!({
+        "approveTxHash": approve_tx_hash,
+        "swapTxHash": swap_tx_hash,
+        "fromToken": router_result["fromToken"],
+        "toToken": router_result["toToken"],
+        "fromAmount": router_result["fromTokenAmount"],
+        "toAmount": router_result["toTokenAmount"],
+        "priceImpact": router_result["priceImpactPercent"],
+        "gasUsed": router_result["estimateGasFee"],
+        "nextSteps": next_steps,
+    });
+    output::success(&out);
+    Ok(out)
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────
+
+/// Map batch hashes (input order `[revoke?, approve, swap]`) to
+/// `(approveTxHash, swapTxHash)`. `len==1` = X Layer merge (only swap hash
+/// survives). Caller must pre-validate `hashes.len()`.
+pub(crate) fn extract_batch_hashes(
+    hashes: &[String],
+    needs_approve: bool,
+    needs_revoke: bool,
+) -> (Option<String>, String) {
+    debug_assert!(!hashes.is_empty(), "responses must be non-empty");
+    // len == 1 → X Layer merge: approve folded into swap, only swap hash exists.
+    if hashes.len() == 1 {
+        return (None, hashes[0].clone());
+    }
+    // len > 1 → no merge: swap is always last; approve sits at idx 1 (with revoke
+    // at idx 0) or idx 0 (no revoke); surfaced only when needs_approve.
+    let swap = hashes.last().expect("non-empty").clone();
+    let approve = if needs_approve {
+        let idx = if needs_revoke { 1 } else { 0 };
+        Some(hashes[idx].clone())
+    } else {
+        None
+    };
+    (approve, swap)
+}
+
+/// If the API returns an array, extract the first element; otherwise return as-is.
+fn unwrap_api_array(data: &Value) -> Value {
+    if data.is_array() {
+        data.as_array()
+            .and_then(|a| a.first())
+            .cloned()
+            .unwrap_or(Value::Null)
+    } else {
+        data.clone()
+    }
+}
+
+/// Extract calldata from approve API response.
+fn extract_approve_calldata(approve_data: &Value) -> Result<String> {
+    let obj = unwrap_api_array(approve_data);
+    obj["data"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow::anyhow!("missing 'data' field in approve response"))
+}
+
+/// Tokens that require revoke-to-zero before re-approval (USDT-pattern
+/// `approve` race-condition guard). Keyed by `chain_index`; values are
+/// lowercase token addresses.
+static REVOKE_REQUIRED_TOKENS: LazyLock<HashMap<&str, &[&str]>> = LazyLock::new(|| {
+    HashMap::from([(
+        // Ethereum
+        "1",
+        &[
+            "0xdac17f958d2ee523a2206206994597c13d831ec7",
+            "0x5a98fcbea516cf06857215779fd812ca3bef1b32",
+            "0x1776e1f26f98b1a5df9cd347953a26dd3cb46671",
+            "0xd3e4ba569045546d09cf021ecc5dfe42b1d7f6e4",
+        ][..],
+    )])
+});
+
+/// True if `(chain_index, token)` is a known USDT-pattern token and the caller
+/// must revoke before re-approving.
+fn token_requires_revoke(chain_index: &str, token: &str) -> bool {
+    let token_lc = token.to_lowercase();
+    REVOKE_REQUIRED_TOKENS
+        .get(chain_index)
+        .is_some_and(|addrs| addrs.iter().any(|a| a.to_lowercase() == token_lc))
+}
+
+/// Compare allowance (spendable) against required amount.
+/// Single source of truth for approve / revoke gating. Used by both single-tx
+/// and batch swap paths to guarantee identical decisions for identical inputs.
+///
+/// Returns `(needs_approve, needs_revoke)`:
+///   spendable >= amount                                      → (false, false)
+///   spendable == 0                                           → (true,  false)
+///   0 < spendable < amount, non-USDT-pattern token           → (true,  false)
+///   0 < spendable < amount, USDT-pattern token (whitelist)   → (true,  true)
+pub(crate) fn classify_approve_action(
+    chain_index: &str,
+    token: &str,
+    spendable: &str,
+    amount: &str,
+) -> (bool, bool) {
+    let needs_approve = is_allowance_insufficient(spendable, amount);
+    let spendable_nonzero = spendable != "0" && !spendable.is_empty();
+    let needs_revoke =
+        needs_approve && spendable_nonzero && token_requires_revoke(chain_index, token);
+    (needs_approve, needs_revoke)
+}
+
+/// Both are decimal strings in minimal units. Returns true if allowance < amount.
+pub(crate) fn is_allowance_insufficient(spendable: &str, amount: &str) -> bool {
+    // If spendable is very long (uint256 max approval = 78 digits), treat as sufficient.
+    // This avoids u128 overflow for unlimited approvals.
+    if spendable.len() > 38 {
+        return false;
+    }
+    let spendable_val = spendable.parse::<u128>().unwrap_or(0);
+    let amount_val = amount.parse::<u128>().unwrap_or(u128::MAX);
+    spendable_val < amount_val
+}
+
+// ── Balance context + insufficient-balance scene (spec §2.2 / §2.3 / §7.2) ──
+
+/// Attach `walletBalance` to a normal (sufficient) swap-quote response so the
+/// field is ALWAYS present (spec §2.3): `Some(bal)` → the readable-decimal
+/// string; `None` (balance query failed / unavailable) → JSON `null` (never
+/// `0`, never omitted, never a string sentinel — the Skill layer branches on
+/// `walletBalance === null`). The aggregator quote `data` is an array of route
+/// objects (integration asserts `data.is_array()`), so the field is attached to
+/// every route to preserve that shape; a single-object response gets it at the
+/// top level. Non-object/array roots are left untouched.
+pub(crate) fn attach_wallet_balance(quote: &mut Value, wallet_balance: Option<String>) {
+    let value = match wallet_balance {
+        Some(balance) => Value::String(balance),
+        None => Value::Null,
+    };
+    match quote {
+        Value::Array(routes) => {
+            for route in routes.iter_mut() {
+                if let Some(obj) = route.as_object_mut() {
+                    obj.insert("walletBalance".to_string(), value.clone());
+                }
+            }
+        }
+        Value::Object(obj) => {
+            obj.insert("walletBalance".to_string(), value);
+        }
+        _ => {}
+    }
+}
+
+/// Read the from-token `(symbol, decimals)` out of a fetched quote response —
+/// the aggregator already returns these on `fromToken`, so the Swap scene needs
+/// no extra token-info call. Handles both the array-of-routes and single-object
+/// shapes and both string / numeric `decimal`. Missing fields yield `None`.
+fn quote_from_token_meta(quote: &Value) -> (Option<String>, Option<u32>) {
+    let route = first_quote_route(quote);
+    let from = route.and_then(|r| r.get("fromToken"));
+    let symbol = from
+        .and_then(|f| f.get("tokenSymbol"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let decimals = from.and_then(|f| f.get("decimal")).and_then(|d| match d {
+        Value::String(s) => s.parse::<u32>().ok(),
+        Value::Number(n) => n.as_u64().map(|v| v as u32),
+        _ => None,
+    });
+    (symbol, decimals)
+}
+
+fn first_quote_route(quote: &Value) -> Option<&Value> {
+    match quote {
+        Value::Array(routes) => routes.first(),
+        Value::Object(_) => Some(quote),
+        _ => None,
+    }
+}
+
+/// Resolve the authoritative from-token requirement in minimal units.
+/// `exactIn` supplies it directly; `exactOut` must use the quote result because
+/// the request amount belongs to the destination token.
+fn quote_required_from_amount(
+    quote: &Value,
+    swap_mode: &str,
+    request_amount: &str,
+) -> Option<String> {
+    if swap_mode != "exactOut" {
+        return Some(request_amount.to_string());
+    }
+    first_quote_route(quote)
+        .and_then(|route| route.get("fromTokenAmount"))
+        .and_then(
+            crate::commands::agentic_wallet::shared::common::amount::value_as_decimal_string,
+        )
+}
+
+/// Fixed business facts supplied to the shared Funding result builder when a
+/// quote is blocked by the from-token balance.
+struct SwapSceneParams<'a> {
+    /// Resolved full from-token contract address.
+    from_token: &'a str,
+    /// From-token display symbol (may be empty when unavailable).
+    from_symbol: &'a str,
+    /// Readable requested amount.
+    requested_amount: &'a str,
+}
+
+fn swap_funding_input<'a>(
+    params: &'a SwapSceneParams<'a>,
+    wallet_balance: &'a str,
+) -> crate::funding::FundingBlockedInput<'a> {
+    crate::funding::FundingBlockedInput {
+        asset: if params.from_symbol.is_empty() {
+            params.from_token
+        } else {
+            params.from_symbol
+        },
+        token_address: params.from_token,
+        required: params.requested_amount,
+        balance: Some(wallet_balance),
+        operation: Some(crate::funding::FUNDING_OPERATION_SWAP),
+        error_code: None,
+        error_message: None,
+    }
+}
+
+/// Pure fixture helper for the shared Funding contract. Production calls the
+/// one-call `build_funding_bundle` facade after the business proves a shortfall.
+#[cfg(test)]
+fn build_swap_insufficient_scene(
+    bundle: &crate::funding::FundingBundle,
+    params: &SwapSceneParams,
+    wallet_balance: &str,
+) -> Value {
+    crate::funding::build_funding_blocked_result(bundle, swap_funding_input(params, wallet_balance))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_allowance_insufficient() {
+        assert!(is_allowance_insufficient("0", "1000000"));
+        assert!(is_allowance_insufficient("999999", "1000000"));
+        assert!(!is_allowance_insufficient("1000000", "1000000"));
+        assert!(!is_allowance_insufficient("2000000", "1000000"));
+        // Unparseable spendable defaults to 0 → insufficient
+        assert!(is_allowance_insufficient("abc", "1000000"));
+        // uint256 max approval (78 digits) → sufficient (not insufficient)
+        let uint256_max =
+            "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+        assert!(!is_allowance_insufficient(uint256_max, "1000000"));
+    }
+
+    // ── next-step status-query command builders ────────────────────
+
+    #[test]
+    fn history_status_cmd_prefers_tx_hash() {
+        // txHash present → use --tx-hash (orderId ignored even if present)
+        assert_eq!(
+            history_status_cmd("solana", "0xabc", "999").as_deref(),
+            Some("onchainos wallet history --tx-hash 0xabc --chain solana")
+        );
+    }
+
+    #[test]
+    fn history_status_cmd_falls_back_to_order_id() {
+        // txHash empty + orderId present (Gas Station) → use --order-id
+        assert_eq!(
+            history_status_cmd("solana", "", "1659439748798636032").as_deref(),
+            Some("onchainos wallet history --order-id 1659439748798636032 --chain solana")
+        );
+    }
+
+    #[test]
+    fn history_status_cmd_none_when_both_empty() {
+        assert_eq!(history_status_cmd("solana", "", ""), None);
+    }
+
+    #[test]
+    fn next_steps_for_swap_normal_uses_tx_hash() {
+        // Normal swap: swap txHash present, no orderId, no approve.
+        let steps = next_steps_for_swap("1", "0xswap", "", None, None);
+        assert_eq!(
+            steps["checkSwapStatus"].as_str(),
+            Some("onchainos wallet history --tx-hash 0xswap --chain 1")
+        );
+        // No approve identifiers → key must be absent.
+        assert!(steps.get("checkApproveStatus").is_none());
+    }
+
+    #[test]
+    fn next_steps_for_swap_gas_station_uses_order_id() {
+        // Gas Station swap: txHash empty, orderId present → --order-id.
+        let steps = next_steps_for_swap("solana", "", "1659439748798636032", None, None);
+        assert_eq!(
+            steps["checkSwapStatus"].as_str(),
+            Some("onchainos wallet history --order-id 1659439748798636032 --chain solana")
+        );
+        assert!(steps.get("checkApproveStatus").is_none());
+    }
+
+    #[test]
+    fn next_steps_for_swap_includes_approve_tx_hash() {
+        // EVM swap with a preceding approve tx → both keys, both via --tx-hash.
+        let steps = next_steps_for_swap("1", "0xswap", "", Some("0xapprove"), None);
+        assert_eq!(
+            steps["checkSwapStatus"].as_str(),
+            Some("onchainos wallet history --tx-hash 0xswap --chain 1")
+        );
+        assert_eq!(
+            steps["checkApproveStatus"].as_str(),
+            Some("onchainos wallet history --tx-hash 0xapprove --chain 1")
+        );
+    }
+
+    #[test]
+    fn next_steps_for_swap_approve_falls_back_to_order_id() {
+        // Gas Station with approve: both txHashes empty, both orderIds present.
+        let steps = next_steps_for_swap("solana", "", "swap-oid", None, Some("approve-oid"));
+        assert_eq!(
+            steps["checkSwapStatus"].as_str(),
+            Some("onchainos wallet history --order-id swap-oid --chain solana")
+        );
+        assert_eq!(
+            steps["checkApproveStatus"].as_str(),
+            Some("onchainos wallet history --order-id approve-oid --chain solana")
+        );
+    }
+
+    #[test]
+    fn next_steps_for_swap_omits_swap_when_no_identifier() {
+        // Defensive: neither swap txHash nor orderId → checkSwapStatus absent.
+        let steps = next_steps_for_swap("1", "", "", None, None);
+        assert!(steps.get("checkSwapStatus").is_none());
+        assert!(steps.get("checkApproveStatus").is_none());
+    }
+
+    #[test]
+    fn classify_approve_action_truth_table() {
+        const USDT_ETH: &str = "0xdac17f958d2ee523a2206206994597c13d831ec7";
+        const USDC_ETH: &str = "0xA0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48";
+
+        // spendable >= amount → no approve / no revoke (Layer 4 case)
+        assert_eq!(
+            classify_approve_action("1", USDT_ETH, "1000000", "500000"),
+            (false, false)
+        );
+        // spendable == 0 → approve only (no revoke even for USDT)
+        assert_eq!(
+            classify_approve_action("1", USDT_ETH, "0", "1000000"),
+            (true, false)
+        );
+        // 0 < spendable < amount, USDT-pattern token → revoke + approve
+        assert_eq!(
+            classify_approve_action("1", USDT_ETH, "100", "1000000"),
+            (true, true)
+        );
+        // 0 < spendable < amount, non-USDT-pattern token (USDC) → approve only
+        assert_eq!(
+            classify_approve_action("1", USDC_ETH, "100", "1000000"),
+            (true, false)
+        );
+        // 0 < spendable < amount, USDT but on chain without entry → approve only
+        assert_eq!(
+            classify_approve_action("56", USDT_ETH, "100", "1000000"),
+            (true, false)
+        );
+    }
+
+    // ── approve amount validation (allows 0 for revoke) ────────────
+
+    #[test]
+    fn test_validate_approve_amount_valid() {
+        assert!(validate_approve_amount("0").is_ok()); // revoke
+        assert!(validate_approve_amount("1").is_ok());
+        assert!(validate_approve_amount("1000000").is_ok());
+    }
+
+    #[test]
+    fn test_validate_approve_amount_reject_decimal() {
+        assert!(validate_approve_amount("1.5").is_err());
+        assert!(validate_approve_amount("0.1").is_err());
+    }
+
+    #[test]
+    fn test_validate_approve_amount_reject_leading_zeros() {
+        assert!(validate_approve_amount("007").is_err());
+        assert!(validate_approve_amount("00").is_err());
+    }
+
+    #[test]
+    fn test_validate_approve_amount_reject_negative_and_non_numeric() {
+        assert!(validate_approve_amount("-1").is_err());
+        assert!(validate_approve_amount("abc").is_err());
+        assert!(validate_approve_amount("").is_err());
+    }
+
+    // ── swapMode validation ───────────────────────────────────────────
+
+    #[test]
+    fn test_validate_swap_mode_valid() {
+        assert!(validate_swap_mode("exactIn").is_ok());
+        assert!(validate_swap_mode("exactOut").is_ok());
+    }
+
+    #[test]
+    fn test_validate_swap_mode_invalid() {
+        assert!(validate_swap_mode("exactin").is_err());
+        assert!(validate_swap_mode("EXACTIN").is_err());
+        assert!(validate_swap_mode("ExactIn").is_err());
+        assert!(validate_swap_mode("").is_err());
+        assert!(validate_swap_mode("foobar").is_err());
+        assert!(validate_swap_mode("exact_in").is_err());
+    }
+
+    #[test]
+    fn test_validate_swap_mode_error_message() {
+        let err = validate_swap_mode("bad").unwrap_err();
+        assert!(err.to_string().contains("exactIn"));
+        assert!(err.to_string().contains("exactOut"));
+    }
+
+    // ── gasLevel validation ───────────────────────────────────────────
+
+    #[test]
+    fn test_validate_gas_level_valid() {
+        assert!(validate_gas_level("slow").is_ok());
+        assert!(validate_gas_level("average").is_ok());
+        assert!(validate_gas_level("fast").is_ok());
+    }
+
+    #[test]
+    fn test_validate_gas_level_invalid() {
+        assert!(validate_gas_level("").is_err());
+        assert!(validate_gas_level("Slow").is_err());
+        assert!(validate_gas_level("FAST").is_err());
+        assert!(validate_gas_level("medium").is_err());
+        assert!(validate_gas_level("turbo").is_err());
+        assert!(validate_gas_level("instant").is_err());
+    }
+
+    #[test]
+    fn test_validate_gas_level_error_message() {
+        let err = validate_gas_level("medium").unwrap_err();
+        assert!(err.to_string().contains("slow"));
+        assert!(err.to_string().contains("average"));
+        assert!(err.to_string().contains("fast"));
+    }
+
+    // ── tips validation ───────────────────────────────────────────────
+
+    #[test]
+    fn test_validate_tips_valid() {
+        assert!(validate_tips("0.0000000001").is_ok());
+        assert!(validate_tips("0.001").is_ok());
+        assert!(validate_tips("1").is_ok());
+        assert!(validate_tips("2").is_ok());
+    }
+
+    #[test]
+    fn test_validate_tips_rejects_out_of_range() {
+        assert!(validate_tips("0").is_err());
+        assert!(validate_tips("0.00000000001").is_err()); // below minimum
+        assert!(validate_tips("2.0000000001").is_err()); // above maximum
+        assert!(validate_tips("3").is_err());
+    }
+
+    #[test]
+    fn test_validate_tips_rejects_non_numeric() {
+        assert!(validate_tips("abc").is_err());
+        assert!(validate_tips("-1").is_err());
+        assert!(validate_tips("").is_err());
+        assert!(validate_tips("  ").is_err());
+    }
+
+    #[test]
+    fn test_validate_tips_trims_whitespace() {
+        assert!(validate_tips("  1  ").is_ok());
+    }
+
+    // ── extract_tx_hash_and_order_id (Gas Station orderId propagation) ──
+
+    #[test]
+    fn extract_tx_hash_and_order_id_both_present() {
+        let data = json!({ "txHash": "0xabc", "orderId": "ord_123" });
+        let (tx_hash, order_id) = extract_tx_hash_and_order_id(&data).unwrap();
+        assert_eq!(tx_hash, "0xabc");
+        assert_eq!(order_id, "ord_123");
+    }
+
+    #[test]
+    fn extract_tx_hash_and_order_id_order_id_optional() {
+        // Non-Gas-Station path: orderId is absent → defaults to empty string, no error.
+        let data = json!({ "txHash": "0xabc" });
+        let (tx_hash, order_id) = extract_tx_hash_and_order_id(&data).unwrap();
+        assert_eq!(tx_hash, "0xabc");
+        assert_eq!(order_id, "");
+    }
+
+    #[test]
+    fn extract_tx_hash_and_order_id_order_id_empty_string() {
+        // Backend may return empty orderId explicitly for non-GS broadcasts.
+        let data = json!({ "txHash": "0xabc", "orderId": "" });
+        let (tx_hash, order_id) = extract_tx_hash_and_order_id(&data).unwrap();
+        assert_eq!(tx_hash, "0xabc");
+        assert_eq!(order_id, "");
+    }
+
+    #[test]
+    fn extract_tx_hash_and_order_id_empty_tx_hash_still_ok() {
+        // GS async: txHash is empty string but present; orderId carries the state.
+        let data = json!({ "txHash": "", "orderId": "ord_async" });
+        let (tx_hash, order_id) = extract_tx_hash_and_order_id(&data).unwrap();
+        assert_eq!(tx_hash, "");
+        assert_eq!(order_id, "ord_async");
+    }
+
+    #[test]
+    fn extract_tx_hash_and_order_id_errors_when_tx_hash_missing() {
+        let data = json!({ "orderId": "ord_123" });
+        assert!(extract_tx_hash_and_order_id(&data).is_err());
+    }
+
+    // ── extract_batch_hashes (input order: [revoke?, approve, swap]) ──
+
+    #[test]
+    fn batch_hashes_full_merge_xlayer_5792() {
+        // XLayer / smart-account: backend collapses [approve, swap] into one tx.
+        let hashes = vec!["0xmerged".to_string()];
+        let (approve, swap) = extract_batch_hashes(&hashes, true, false);
+        assert_eq!(approve, None);
+        assert_eq!(swap, "0xmerged");
+    }
+
+    #[test]
+    fn batch_hashes_full_merge_with_revoke() {
+        // [revoke, approve, swap] collapsed into one tx.
+        let hashes = vec!["0xmerged".to_string()];
+        let (approve, swap) = extract_batch_hashes(&hashes, true, true);
+        assert_eq!(approve, None);
+        assert_eq!(swap, "0xmerged");
+    }
+
+    #[test]
+    fn batch_hashes_no_merge_approve_swap() {
+        // EOA chain (Optimism etc.): [approve, swap] kept separate.
+        let hashes = vec!["0xapprove".to_string(), "0xswap".to_string()];
+        let (approve, swap) = extract_batch_hashes(&hashes, true, false);
+        assert_eq!(approve.as_deref(), Some("0xapprove"));
+        assert_eq!(swap, "0xswap");
+    }
+
+    #[test]
+    fn batch_hashes_no_merge_revoke_approve_swap() {
+        let hashes = vec![
+            "0xrevoke".to_string(),
+            "0xapprove".to_string(),
+            "0xswap".to_string(),
+        ];
+        let (approve, swap) = extract_batch_hashes(&hashes, true, true);
+        // revoke (idx 0) is intentionally not surfaced — see fn doc.
+        assert_eq!(approve.as_deref(), Some("0xapprove"));
+        assert_eq!(swap, "0xswap");
+    }
+
+    #[test]
+    fn batch_hashes_no_approve_needed() {
+        // Allowance sufficient case should short-circuit upstream, but if we
+        // ever reach this fn with needs_approve=false, swap-only output is
+        // the safe behavior.
+        let hashes = vec!["0xswap".to_string()];
+        let (approve, swap) = extract_batch_hashes(&hashes, false, false);
+        assert_eq!(approve, None);
+        assert_eq!(swap, "0xswap");
+    }
+
+    // ── per-route action/reason post-processing (§1.4 / §2.4) ──
+    //
+    // These exercise `swap_routes_mut` + `classify_swap_route` together: the
+    // route-walk must locate each route object across both response shapes
+    // (quote element carries `toToken`/`fromToken` directly; swap element wraps
+    // them under `routerResult`) and the classifier appends `action`/`reason`
+    // in place. The taxRate boundary is TBC[4]-blocked and owned by T-tax.
+
+    #[test]
+    fn swap_routes_mut_quote_to_token_honeypot_blocks() {
+        // Quote shape: array of route objects with tokens at the top level.
+        let mut quote = json!([
+            {
+                "fromToken": { "isHoneyPot": false },
+                "toToken": { "isHoneyPot": true }
+            }
+        ]);
+        for route in swap_routes_mut(&mut quote) {
+            classify_swap_route(route);
+        }
+        assert_eq!(quote[0]["action"], json!("block"));
+        assert!(quote[0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("to-token is a honeypot"));
+        // Outer shape preserved: array stays an array.
+        assert!(quote.is_array());
+    }
+
+    #[test]
+    fn swap_routes_mut_swap_from_token_honeypot_warns() {
+        // Swap shape: array element wraps the route under `routerResult`; the
+        // walk must descend so the appended fields land next to the tokens.
+        let mut swap = json!([
+            {
+                "routerResult": {
+                    "fromToken": { "isHoneyPot": true },
+                    "toToken": { "isHoneyPot": false }
+                },
+                "tx": { "to": "0xrouter" }
+            }
+        ]);
+        for route in swap_routes_mut(&mut swap) {
+            classify_swap_route(route);
+        }
+        assert_eq!(swap[0]["routerResult"]["action"], json!("warn"));
+        assert!(swap[0]["routerResult"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("exit allowed"));
+        // Sibling `tx` is untouched by classification.
+        assert_eq!(swap[0]["tx"]["to"], json!("0xrouter"));
+    }
+
+    #[test]
+    fn swap_routes_mut_clean_route_is_ok_with_empty_reason() {
+        let mut quote = json!([
+            {
+                "fromToken": { "isHoneyPot": false },
+                "toToken": { "isHoneyPot": false }
+            }
+        ]);
+        for route in swap_routes_mut(&mut quote) {
+            classify_swap_route(route);
+        }
+        assert_eq!(quote[0]["action"], json!("ok"));
+        assert_eq!(quote[0]["reason"], json!(""));
+    }
+
+    #[test]
+    fn swap_routes_mut_preserves_object_outer_shape() {
+        // Single object at root (not array-wrapped) stays an object.
+        let mut quote = json!({
+            "fromToken": { "isHoneyPot": false },
+            "toToken": { "isHoneyPot": true }
+        });
+        for route in swap_routes_mut(&mut quote) {
+            classify_swap_route(route);
+        }
+        assert!(quote.is_object());
+        assert_eq!(quote["action"], json!("block"));
+    }
+
+    #[test]
+    fn swap_routes_mut_classifies_every_route_in_array() {
+        // Multiple quote routes are each classified independently.
+        let mut quote = json!([
+            { "fromToken": { "isHoneyPot": false }, "toToken": { "isHoneyPot": true } },
+            { "fromToken": { "isHoneyPot": false }, "toToken": { "isHoneyPot": false } }
+        ]);
+        for route in swap_routes_mut(&mut quote) {
+            classify_swap_route(route);
+        }
+        assert_eq!(quote[0]["action"], json!("block"));
+        assert_eq!(quote[1]["action"], json!("ok"));
+    }
+
+    #[test]
+    fn classify_swap_response_applies_classification_to_quote_shape() {
+        // The shared helper drives the route-walk + classify loop that both the
+        // CLI `swap::execute` arms and the MCP `swap_quote`/`swap_swap` tools now
+        // call, so classifying through it proves both paths carry the
+        // `action`/`reason` fields (integration gap, spec §10.2).
+        let mut quote = json!([
+            { "fromToken": { "isHoneyPot": false }, "toToken": { "isHoneyPot": true } },
+            { "fromToken": { "isHoneyPot": false }, "toToken": { "isHoneyPot": false } }
+        ]);
+        classify_swap_response(&mut quote);
+        // Honeypot to-token route → block + reason substring.
+        assert_eq!(quote[0]["action"], json!("block"));
+        assert!(quote[0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("to-token is a honeypot"));
+        // Clean route → ok with empty reason.
+        assert_eq!(quote[1]["action"], json!("ok"));
+        assert_eq!(quote[1]["reason"], json!(""));
+        // Outer shape preserved: array stays an array.
+        assert!(quote.is_array());
+    }
+
+    // ── Swap balance context + insufficient-balance scene (§2.2/§2.3/§7.2) ──
+
+    use crate::funding::{FundingBundle, FundingTarget};
+    use crate::qr::QrOutput;
+
+    const USDT_ETH_CA: &str = "0xdac17f958d2ee523a2206206994597c13d831ec7";
+    const USDC_ETH_CA: &str = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+
+    /// Hermetic FundingBundle for chain 1 (Ethereum) with a terminal-mode QR —
+    /// no disk / network (mirrors funding.rs's own fixtures).
+    fn eth_funding_bundle() -> FundingBundle {
+        FundingBundle {
+            target: FundingTarget {
+                account_name: "Trading".to_string(),
+                chain_index: "1".to_string(),
+                chain_name: "Ethereum".to_string(),
+                receive_address: "0xEvmShared".to_string(),
+                gas_free: false,
+                same_network_required: true,
+            },
+            qr: QrOutput {
+                requested_format: "auto".to_string(),
+                resolved_format: Some("unicode".to_string()),
+                display_mode: "terminal-unicode".to_string(),
+                terminal_qr: Some("QR-BLOCK".to_string()),
+                image_path: None,
+                mime_type: None,
+                markdown_image: None,
+                notify_command_args: None,
+            },
+        }
+    }
+
+    fn base_scene_params() -> SwapSceneParams<'static> {
+        SwapSceneParams {
+            from_token: USDT_ETH_CA,
+            from_symbol: "USDT",
+            requested_amount: "100",
+        }
+    }
+
+    // ── (a) normal-quote walletBalance ─────────────────────────────────
+
+    #[test]
+    fn attach_wallet_balance_object_shape_present_is_string() {
+        let mut data = json!({ "fromToken": { "tokenSymbol": "USDT" } });
+        attach_wallet_balance(&mut data, Some("500.25".to_string()));
+        assert_eq!(data["walletBalance"], json!("500.25"));
+    }
+
+    #[test]
+    fn attach_wallet_balance_none_is_json_null_never_omitted() {
+        // §2.3: on balance-query failure the field is ALWAYS present as JSON null
+        // (never 0, never omitted, never a string sentinel).
+        let mut data = json!({ "fromToken": {} });
+        attach_wallet_balance(&mut data, None);
+        assert!(data.get("walletBalance").is_some(), "field must be present");
+        assert!(data["walletBalance"].is_null(), "value must be JSON null");
+        assert_ne!(data["walletBalance"], json!("null"));
+        assert_ne!(data["walletBalance"], json!(0));
+    }
+
+    #[test]
+    fn attach_wallet_balance_array_shape_each_route_carries_it() {
+        // Real aggregator quote data is an array of routes (data.is_array()); the
+        // field is attached to every route so it survives the array shape.
+        let mut data = json!([{ "fromToken": {} }, { "fromToken": {} }]);
+        attach_wallet_balance(&mut data, Some("500.25".to_string()));
+        assert!(data.is_array(), "array shape must be preserved");
+        assert_eq!(data[0]["walletBalance"], json!("500.25"));
+        assert_eq!(data[1]["walletBalance"], json!("500.25"));
+    }
+
+    #[test]
+    fn attach_wallet_balance_array_none_is_null_on_each_route() {
+        let mut data = json!([{ "fromToken": {} }]);
+        attach_wallet_balance(&mut data, None);
+        assert!(data[0].get("walletBalance").is_some());
+        assert!(data[0]["walletBalance"].is_null());
+    }
+
+    // ── quote_from_token_meta (symbol + decimals from the quote we hold) ──
+
+    #[test]
+    fn quote_from_token_meta_reads_string_decimal_from_array_route() {
+        let quote = json!([{
+            "fromToken": { "tokenSymbol": "USDT", "decimal": "6" },
+            "toToken": { "tokenSymbol": "USDC" }
+        }]);
+        let (symbol, decimals) = quote_from_token_meta(&quote);
+        assert_eq!(symbol.as_deref(), Some("USDT"));
+        assert_eq!(decimals, Some(6));
+    }
+
+    #[test]
+    fn quote_from_token_meta_reads_numeric_decimal_and_object_shape() {
+        let quote = json!({ "fromToken": { "tokenSymbol": "ETH", "decimal": 18 } });
+        let (symbol, decimals) = quote_from_token_meta(&quote);
+        assert_eq!(symbol.as_deref(), Some("ETH"));
+        assert_eq!(decimals, Some(18));
+    }
+
+    #[test]
+    fn quote_from_token_meta_missing_yields_none() {
+        let quote = json!([{ "toToken": {} }]);
+        let (symbol, decimals) = quote_from_token_meta(&quote);
+        assert!(symbol.is_none());
+        assert!(decimals.is_none());
+    }
+
+    // ── authoritative from-token requirement ────────────────────────
+
+    #[test]
+    fn quote_required_from_amount_uses_request_for_exact_in() {
+        let quote = json!([{"fromTokenAmount": "1250000"}]);
+        assert_eq!(
+            quote_required_from_amount(&quote, "exactIn", "1000000").as_deref(),
+            Some("1000000")
+        );
+    }
+
+    #[test]
+    fn quote_required_from_amount_uses_quoted_input_for_exact_out() {
+        let quote = json!([{"fromTokenAmount": "1250000"}]);
+        assert_eq!(
+            quote_required_from_amount(&quote, "exactOut", "1000000").as_deref(),
+            Some("1250000")
+        );
+    }
+
+    #[test]
+    fn quote_required_from_amount_exact_out_requires_quote_fact() {
+        let quote = json!([{"toTokenAmount": "1000000"}]);
+        assert!(quote_required_from_amount(&quote, "exactOut", "1000000").is_none());
+    }
+
+    // ── (b) insufficient scene uses the common Funding contract ───────
+
+    #[test]
+    fn build_swap_insufficient_scene_matches_spec_2_2() {
+        let bundle = eth_funding_bundle();
+        let params = base_scene_params();
+        let v = build_swap_insufficient_scene(&bundle, &params, "20");
+
+        assert_eq!(v["phase"], crate::funding::FUNDING_REQUIRED_PHASE);
+        assert_eq!(v["decision"], "blocked");
+        assert_eq!(v["reason"], "insufficient_balance");
+        assert_eq!(v["nextAction"], json!([]));
+        assert_eq!(v["payload"]["operation"], "swap");
+        // chainName + fundingAddress come from the FundingTarget (single source).
+        assert_eq!(v["payload"]["fundingTarget"]["chainIndex"], "1");
+        assert_eq!(v["payload"]["fundingTarget"]["chainName"], "Ethereum");
+        assert_eq!(v["payload"]["fundingTarget"]["receiveAddress"], "0xEvmShared");
+        // Consumable scene flags projected from the FundingTarget (§2.5): Ethereum
+        // is same-network-required but not gas-free.
+        assert_eq!(v["payload"]["fundingTarget"]["sameNetworkRequired"], json!(true));
+        assert_eq!(v["payload"]["fundingTarget"]["gasFree"], json!(false));
+        assert_eq!(v["payload"]["fundingNeed"]["asset"], "USDT");
+        assert_eq!(v["payload"]["fundingNeed"]["tokenAddress"], USDT_ETH_CA);
+        assert_eq!(v["payload"]["fundingNeed"]["shortfall"], "80");
+        assert_eq!(v["payload"]["fundingNeed"]["required"], "100");
+        assert_eq!(v["payload"]["fundingNeed"]["balance"], "20");
+        assert_eq!(
+            v["payload"]["fundingTarget"]["receiveAddress"],
+            "0xEvmShared"
+        );
+
+        // Full Common QR field set embedded per display mode (§2.5 / TBC[4]).
+        assert_eq!(v["payload"]["qr"]["requestedFormat"], "auto");
+        assert_eq!(v["payload"]["qr"]["resolvedFormat"], "unicode");
+        assert_eq!(v["payload"]["qr"]["displayMode"], "terminal-unicode");
+        assert_eq!(v["payload"]["qr"]["terminalQr"], "QR-BLOCK");
+        assert!(v["payload"]["qr"].get("imagePath").is_none());
+
+        assert!(v.get("next").is_none());
+    }
+}
