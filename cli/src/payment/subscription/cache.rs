@@ -2,8 +2,9 @@
 //!
 //! Plain JSON at `$ONCHAINOS_HOME/subscriptions.json`; maps resource host →
 //! buyer's active subId. Convenience index only, never authoritative — the
-//! chain / SA are the source of truth. Updated write-through on
-//! subscribe/change/cancel and fully reconciled by `my-subscriptions`.
+//! chain / SA are the source of truth. Updated write-through on subscribe and
+//! change, from a receipt-confirmed APP cancellation, or from an authoritative
+//! subscription-list read.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -42,9 +43,17 @@ pub fn host_of(url: &str) -> String {
     host.to_ascii_lowercase()
 }
 
+/// Composite cache key = `protocol \u{1} host`. Keeps an x402 `period` sub and an
+/// APP/1 sub on the SAME host in separate slots (they previously collided on a
+/// host-only key, so the second subscribe overwrote the first).
+fn cache_key(protocol: &str, host: &str) -> String {
+    format!("{}\u{1}{}", protocol, host.to_ascii_lowercase())
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SubscriptionCache {
-    /// resource host → entry.
+    /// `cache_key(protocol, host)` → entry. (Field name kept for JSON compat; the
+    /// key is protocol-scoped since the protocol discriminator was added.)
     #[serde(default)]
     by_host: HashMap<String, SubscriptionCacheEntry>,
 }
@@ -55,14 +64,34 @@ impl SubscriptionCache {
     }
 
     /// Load from disk; a missing or corrupt file is treated as an empty cache.
+    /// Legacy files keyed by bare host are re-keyed to `cache_key(protocol, host)`
+    /// (entries default `protocol = x402`), so old caches keep resolving.
     pub fn load() -> Self {
         let Ok(path) = Self::cache_path() else {
             return Self::default();
         };
-        std::fs::read(&path)
+        let mut cache: Self = std::fs::read(&path)
             .ok()
             .and_then(|data| serde_json::from_slice(&data).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        cache.migrate_keys();
+        cache
+    }
+
+    /// Rebuild the map keys from each entry's `(protocol, resource_host)` when they
+    /// don't already match (bare-host legacy keys). Idempotent.
+    fn migrate_keys(&mut self) {
+        let stale = self
+            .by_host
+            .iter()
+            .any(|(k, e)| *k != cache_key(&e.protocol, &e.resource_host));
+        if !stale {
+            return;
+        }
+        for e in std::mem::take(&mut self.by_host).into_values() {
+            self.by_host
+                .insert(cache_key(&e.protocol, &e.resource_host), e);
+        }
     }
 
     /// Atomic write (tmp + rename).
@@ -87,28 +116,33 @@ impl SubscriptionCache {
     }
 
     pub fn put(&mut self, entry: SubscriptionCacheEntry) {
-        self.by_host.insert(entry.resource_host.clone(), entry);
-    }
-
-    pub fn get(&self, host: &str) -> Option<&SubscriptionCacheEntry> {
-        self.by_host.get(&host.to_ascii_lowercase())
-    }
-
-    /// Resolve the active subId for a URL's host. Returns `None` when there is
-    /// no entry or the cached entry is not `active`.
-    pub fn resolve(&self, url: &str) -> Option<&SubscriptionCacheEntry> {
         self.by_host
-            .get(&host_of(url))
+            .insert(cache_key(&entry.protocol, &entry.resource_host), entry);
+    }
+
+    pub fn get(&self, protocol: &str, host: &str) -> Option<&SubscriptionCacheEntry> {
+        self.by_host.get(&cache_key(protocol, host))
+    }
+
+    /// Resolve the active subId for a URL's host under `protocol`. Returns `None`
+    /// when there is no entry or the cached entry is not `active`.
+    pub fn resolve(&self, protocol: &str, url: &str) -> Option<&SubscriptionCacheEntry> {
+        self.by_host
+            .get(&cache_key(protocol, &host_of(url)))
             .filter(|e| e.state == "active")
     }
 
-    /// Mark every entry with this subId `canceled`.
-    pub fn mark_canceled(&mut self, sub_id: &str) {
-        for e in self.by_host.values_mut() {
-            if e.sub_id == sub_id {
-                e.state = "canceled".to_string();
+    /// Commit a receipt-confirmed APP/1 cancellation. Returns the number of
+    /// matching host entries changed.
+    pub fn mark_app_canceled(&mut self, sub_id: &str) -> usize {
+        let mut changed = 0;
+        for entry in self.by_host.values_mut() {
+            if entry.protocol == "app/1" && entry.sub_id.eq_ignore_ascii_case(sub_id) {
+                entry.state = "canceled".to_string();
+                changed += 1;
             }
         }
+        changed
     }
 
     /// Record a change: the old subId becomes `changed` (with
@@ -161,6 +195,15 @@ mod tests {
     use super::*;
 
     fn entry(host: &str, sub_id: &str, state: &str) -> SubscriptionCacheEntry {
+        entry_proto("x402", host, sub_id, state)
+    }
+
+    fn entry_proto(
+        protocol: &str,
+        host: &str,
+        sub_id: &str,
+        state: &str,
+    ) -> SubscriptionCacheEntry {
         SubscriptionCacheEntry {
             sub_id: sub_id.to_string(),
             resource_host: host.to_string(),
@@ -170,6 +213,7 @@ mod tests {
             max_periods: 12,
             state: state.to_string(),
             changed_to_sub_id: None,
+            protocol: protocol.to_string(),
         }
     }
 
@@ -188,10 +232,10 @@ mod tests {
     fn resolve_returns_only_active() {
         let mut c = SubscriptionCache::default();
         c.put(entry("api.example.com", "0xsub", "active"));
-        assert!(c.resolve("https://api.example.com/data").is_some());
+        assert!(c.resolve("x402", "https://api.example.com/data").is_some());
 
-        c.mark_canceled("0xsub");
-        assert!(c.resolve("https://api.example.com/data").is_none());
+        c.put(entry("api.example.com", "0xsub", "canceled"));
+        assert!(c.resolve("x402", "https://api.example.com/data").is_none());
     }
 
     #[test]
@@ -201,10 +245,41 @@ mod tests {
         let mut new = entry("api.example.com", "0xnew", "active");
         new.plan_tier = 3;
         c.mark_changed("0xold", new);
-        let cur = c.get("api.example.com").unwrap();
+        let cur = c.get("x402", "api.example.com").unwrap();
         assert_eq!(cur.sub_id, "0xnew");
         assert_eq!(cur.plan_tier, 3);
         assert_eq!(cur.state, "active");
+    }
+
+    #[test]
+    fn same_host_two_protocols_do_not_collide() {
+        let mut c = SubscriptionCache::default();
+        c.put(entry_proto("x402", "api.example.com", "0xx402", "active"));
+        c.put(entry_proto("app/1", "api.example.com", "0xapp1", "active"));
+        // Both survive; each protocol resolves to its own subId (no overwrite).
+        assert_eq!(
+            c.resolve("x402", "https://api.example.com/x").unwrap().sub_id,
+            "0xx402"
+        );
+        assert_eq!(
+            c.resolve("app/1", "https://api.example.com/x").unwrap().sub_id,
+            "0xapp1"
+        );
+    }
+
+    #[test]
+    fn receipt_confirmed_cancel_only_updates_app_entry() {
+        let mut c = SubscriptionCache::default();
+        c.put(entry_proto("x402", "x402.example.com", "0xsame", "active"));
+        c.put(entry_proto("app/1", "app.example.com", "0xsame", "active"));
+
+        assert_eq!(c.mark_app_canceled("0xsame"), 1);
+
+        assert_eq!(
+            c.get("x402", "x402.example.com").unwrap().state,
+            "active"
+        );
+        assert_eq!(c.get("app/1", "app.example.com").unwrap().state, "canceled");
     }
 
     #[test]
@@ -214,6 +289,7 @@ mod tests {
 
         let mut old_item = BuyerSubscriptionItem {
             chain_index: 196,
+            offer_id: "offer-old".to_string(),
             sub_id: "0xold".to_string(),
             state: 4, // changed
             payer: "0xbuyer".to_string(),
@@ -231,6 +307,7 @@ mod tests {
             plan_id: "basic".to_string(),
             plan_tier: 1,
             changed_to_sub_id: Some("0xnew".to_string()),
+            pending_change: None,
             is_active: false,
             service_ended: false,
             current_period: 1,
@@ -244,9 +321,49 @@ mod tests {
         old_item.changed_to_sub_id = Some("0xnew".to_string());
 
         c.reconcile_from(&[old_item, new_item]);
-        let cur = c.get("api.example.com").unwrap();
+        let cur = c.get("x402", "api.example.com").unwrap();
         assert_eq!(cur.sub_id, "0xnew");
         assert_eq!(cur.state, "active");
         assert_eq!(cur.plan_tier, 3);
+    }
+
+    #[test]
+    fn app_reconcile_marks_canceled_only_from_authoritative_state() {
+        let mut c = SubscriptionCache::default();
+        c.put(entry_proto("app/1", "api.example.com", "0xsub", "active"));
+        assert!(c.resolve("app/1", "https://api.example.com/data").is_some());
+
+        let canceled_item = BuyerSubscriptionItem {
+            chain_index: 196,
+            offer_id: "offer-canceled".to_string(),
+            sub_id: "0xsub".to_string(),
+            state: 3,
+            payer: "0xbuyer".to_string(),
+            token: "0xtoken".to_string(),
+            amount_per_period: "5000000".to_string(),
+            period_sec: 2_592_000,
+            period_mode: 0,
+            billing_anchor_at: 0,
+            max_periods: 12,
+            start_at: 0,
+            initial_charge_periods: 1,
+            initial_charge_amount: "5000000".to_string(),
+            last_charged_period: 1,
+            total_pulled: "5000000".to_string(),
+            plan_id: "basic".to_string(),
+            plan_tier: 1,
+            changed_to_sub_id: None,
+            pending_change: None,
+            is_active: false,
+            service_ended: true,
+            current_period: 1,
+            next_chargeable_at: None,
+        };
+
+        c.reconcile_from(&[canceled_item]);
+
+        let cached = c.get("app/1", "api.example.com").unwrap();
+        assert_eq!(cached.state, "canceled");
+        assert!(c.resolve("app/1", "https://api.example.com/data").is_none());
     }
 }

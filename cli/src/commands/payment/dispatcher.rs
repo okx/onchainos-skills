@@ -2,7 +2,9 @@ use crate::commands::agentic_wallet::auth::{ensure_tokens_refreshed, format_api_
 use crate::commands::payment::a2a_pay::{self, A2aPayCommand};
 use crate::commands::payment::addr::{is_valid_evm_address, parse_recipient_addr};
 use crate::commands::payment::payment_flow;
-use crate::commands::payment::{decode_receipt, quote, session_state};
+use crate::commands::payment::{
+    decode_receipt, quote, session_state, subscription_operation_state,
+};
 use crate::output;
 use crate::wallet_api::WalletApiClient;
 use crate::{keyring_store, wallet_store};
@@ -142,6 +144,314 @@ pub enum PaymentCommand {
     Subscription {
         #[command(subcommand)]
         command: crate::commands::payment::subscription::SubscriptionCommand,
+    },
+
+    /// APP/1 protocol (`protocol="app/1"`) buyer-side signing. Same
+    /// `WWW-Authenticate: Payment` challenge wire-form as MPP, but the credential
+    /// echoes `protocol` + `opaque` (both bound into `challenge.id`'s HMAC) and
+    /// uses APP/1 payload shapes. Isolated from the MPP `charge`/`session` paths
+    /// so those stay byte-for-byte untouched.
+    App {
+        #[command(subcommand)]
+        command: AppCommand,
+    },
+}
+
+/// APP/1 (`protocol="app/1"`) buyer intents. Reuses the same TEE signing
+/// primitives as MPP but assembles the APP/1 credential envelope.
+#[derive(Subcommand)]
+pub enum AppCommand {
+    /// One-shot exact-amount charge. Signs `authorization` (EIP-3009 via TEE),
+    /// `permit2` (SignatureTransfer+witness via TEE), or `hash` (wrap a
+    /// client-broadcast tx, requires `--tx-hash`, needs `feePayer=false`).
+    /// Type defaults to `authorization` (feePayer=true) / `hash` (feePayer=false).
+    Charge {
+        /// Full `WWW-Authenticate: Payment ...` header value from the 402 response.
+        #[arg(long)]
+        challenge: String,
+        /// Payer address (optional, defaults to the selected account).
+        #[arg(long)]
+        from: Option<String>,
+        /// Tx hash of a client-broadcast `transferWithAuthorization` (hash mode).
+        /// Required when `challenge.methodDetails.feePayer=false`.
+        #[arg(long)]
+        tx_hash: Option<String>,
+        /// Signature type: `authorization` | `permit2` | `hash`. Omit to auto-pick
+        /// by `feePayer`.
+        #[arg(long = "type")]
+        type_: Option<String>,
+    },
+    /// Variable-amount authorization up to a ceiling. Signs `authorization`
+    /// (EIP-3009) or `permit2` for the ceiling (`challenge.request.amount`); the
+    /// seller settles the actual amount (≤ ceiling) via the facilitator. No hash
+    /// mode (the seller must relay so it can settle a lower actual).
+    Upto {
+        /// Full `WWW-Authenticate: Payment ...` header value from the 402 response.
+        #[arg(long)]
+        challenge: String,
+        /// Payer address (optional, defaults to the selected account).
+        #[arg(long)]
+        from: Option<String>,
+        /// Signature type. Omit to auto-pick from the challenge's acceptedTypes
+        /// (upto only offers `permit2`).
+        #[arg(long = "type")]
+        type_: Option<String>,
+    },
+    /// Streaming channel session: open / voucher / topup / close. Reuses the MPP
+    /// channel primitives (channelId derivation, deposit EIP-3009, voucher
+    /// EIP-712) but assembles APP/1 payloads — opens carry no initial voucher and
+    /// the voucher field is `voucherSignature`.
+    Session {
+        #[command(subcommand)]
+        command: AppSessionCommand,
+    },
+    /// Periodic subscription: `subscribe` (Permit2 AllowanceTransfer, one
+    /// signature authorizes many periods) / `cancel` / `cancel-pending`.
+    Subscription {
+        #[command(subcommand)]
+        command: AppSubscriptionCommand,
+    },
+}
+
+/// APP/1 subscription sub-operations. `subscribe` signs a PermitSingle
+/// (AllowanceTransfer) to create the subscription; `cancel` / `cancel-pending`
+/// sign the cancel authorizations the seller submits. Per-period charges are
+/// seller-driven (no buyer signature).
+#[derive(Subcommand)]
+pub enum AppSubscriptionCommand {
+    /// Sign the PermitSingle allowance that creates the subscription. spender /
+    /// permit2 contract / on-chain uint48 nonce come from the facilitator's
+    /// allowance-status. NOTE: the SIGNED permit amount is CUMULATIVE — it is
+    /// `reservedAmount (all your active subs' committed total) + this sub's
+    /// commitment`, NOT the challenge's `allowance` (which is only this sub's
+    /// share). Being many× the challenge value is expected, not over-authorization
+    /// (Permit2 has ONE allowance per owner/token/spender). See references/app.md.
+    Subscribe {
+        /// Full `WWW-Authenticate: Payment ...` header (intent=subscription).
+        #[arg(long)]
+        challenge: String,
+        /// Resource URL used as the subscription reconciliation key.
+        #[arg(long)]
+        url: Option<String>,
+        /// Cumulative Permit2 cap confirmed by the user after allowance-status.
+        #[arg(long)]
+        expected_cap: String,
+        /// Preserve the active mapping and stage metadata for later reconciliation.
+        #[arg(long)]
+        no_cache: bool,
+        /// Payer address (optional, defaults to the selected account).
+        #[arg(long)]
+        from: Option<String>,
+    },
+    /// Sign an up/downgrade from a change-offer 402 (challenge carries
+    /// `changeFrom`). Same double-sign as subscribe, but migrates the subId.
+    Change {
+        /// Full `WWW-Authenticate: Payment ...` header (intent=subscription,
+        /// request contains `changeFrom`).
+        #[arg(long)]
+        challenge: String,
+        /// The subId being changed (overrides `challenge.request.changeFrom.fromSubId`).
+        #[arg(long)]
+        sub_id: Option<String>,
+        /// Resource URL used as the subscription reconciliation key.
+        #[arg(long)]
+        url: Option<String>,
+        /// Cumulative Permit2 cap confirmed by the user after allowance-status.
+        #[arg(long)]
+        expected_cap: String,
+        /// Preserve the active mapping and stage metadata for later reconciliation.
+        #[arg(long)]
+        no_cache: bool,
+        /// Payer address (optional, defaults to the selected account).
+        #[arg(long)]
+        from: Option<String>,
+    },
+    /// Sign a cancelAuthorization (payer-initiated) for `POST /subscription/cancel`.
+    Cancel {
+        #[arg(long)]
+        sub_id: String,
+        /// Seller business key. Binds the pending operation to its receipt.
+        #[arg(long)]
+        offer_id: String,
+        /// Subscription contract (EIP-712 verifyingContract for the cancel auth).
+        /// Optional — if omitted, resolved from APP/1 allowance-status via `--token`
+        /// (mirrors the x402 `resolve_contract` convenience).
+        #[arg(long)]
+        subscription_contract: Option<String>,
+        /// Token contract — used to look up the subscription contract when
+        /// `--subscription-contract` is omitted.
+        #[arg(long)]
+        token: Option<String>,
+        #[arg(long)]
+        chain_id: u64,
+        #[arg(long)]
+        from: Option<String>,
+    },
+    /// Sign an authorization to cancel a not-yet-effective downgrade, for
+    /// `POST /subscription/cancel-pending-change`.
+    CancelPending {
+        #[arg(long)]
+        sub_id: String,
+        /// The pending downgrade's newSubId being canceled.
+        #[arg(long)]
+        new_sub_id: String,
+        /// Seller business key. Binds the pending operation to its receipt.
+        #[arg(long)]
+        offer_id: String,
+        /// Optional — resolved from APP/1 allowance-status via `--token` if omitted.
+        #[arg(long)]
+        subscription_contract: Option<String>,
+        /// Token contract — used to resolve the subscription contract when
+        /// `--subscription-contract` is omitted.
+        #[arg(long)]
+        token: Option<String>,
+        #[arg(long)]
+        chain_id: u64,
+        #[arg(long)]
+        from: Option<String>,
+    },
+    /// Resolve a signed cancel or cancel-pending operation after seller replay.
+    Resolve {
+        #[arg(long)]
+        operation_id: String,
+        #[arg(long, required_unless_present = "outcome", conflicts_with = "outcome")]
+        receipt: Option<String>,
+        #[arg(long, value_parser = ["network-error", "no-receipt"])]
+        outcome: Option<String>,
+    },
+    /// Build an `APP-Access` proof header to access a Seller's protected resource
+    /// after subscribing. Signs `personal_sign(keccak(subId ‖ payer ‖ timestamp))`;
+    /// the Seller verifies the signer + checks the subscription is active.
+    Access {
+        /// Resource URL — resolves the active subId from the host→subId cache
+        /// (written by `subscribe`/`change --url`). No manual subId needed.
+        #[arg(long)]
+        url: Option<String>,
+        /// Explicit subId override (skips the cache lookup).
+        #[arg(long)]
+        sub_id: Option<String>,
+        /// Payer address (optional, defaults to the selected account).
+        #[arg(long)]
+        from: Option<String>,
+        /// Chain name or index (default: xlayer).
+        #[arg(long, default_value = "xlayer")]
+        chain: String,
+    },
+    /// List the buyer's own APP/1 subscriptions through the buyer-direct endpoint.
+    List {
+        /// Buyer address (optional, defaults to the selected account).
+        #[arg(long)]
+        from: Option<String>,
+        /// Page size (1..=100).
+        #[arg(long, default_value_t = 20)]
+        limit: u32,
+        /// Page offset.
+        #[arg(long, default_value_t = 0)]
+        offset: u32,
+    },
+    /// Query the APP/1 Permit2 allowance status: current uint48 nonce,
+    /// reserved/committed amount, token balance, and the subscription/permit2
+    /// contract addresses. Read-only; mirrors the x402 `allowance-status`.
+    AllowanceStatus {
+        /// Token contract (the subscription's settlement token).
+        #[arg(long)]
+        token: String,
+        /// Chain id (numeric, e.g. 196 for X Layer).
+        #[arg(long)]
+        chain_id: u64,
+        /// Buyer address (optional, defaults to the selected account).
+        #[arg(long)]
+        from: Option<String>,
+    },
+}
+
+/// APP/1 session sub-operations. `open` deposits and derives the channelId;
+/// `voucher` signs a monotonic cumulative-amount voucher; `topup` adds deposit;
+/// `close` signs the final voucher for the seller to submit to `/session/close`.
+#[derive(Subcommand)]
+pub enum AppSessionCommand {
+    /// Open a channel: deposit authorization (EIP-3009 via TEE) or `--tx-hash`
+    /// hash mode. APP/1 opens are deposit-only (no initial voucher).
+    Open {
+        /// Full `WWW-Authenticate: Payment ...` header (intent=session).
+        #[arg(long)]
+        challenge: String,
+        /// Payer address (optional, defaults to the selected account).
+        #[arg(long)]
+        from: Option<String>,
+        /// Hash mode: tx hash of your on-chain open (requires `--salt`).
+        #[arg(long)]
+        tx_hash: Option<String>,
+        /// Hash mode: the bytes32 salt used in your on-chain open.
+        #[arg(long)]
+        salt: Option<String>,
+        /// Delegate voucher signer (must not equal payer); omit for self-signing.
+        #[arg(long)]
+        authorized_signer: Option<String>,
+    },
+    /// Sign a cumulative-amount voucher (EIP-712) → `voucherSignature`. The
+    /// seller adds its own `payeeSignature`/`nonce`/`deadline` when settling.
+    Voucher {
+        /// The open challenge header (voucher echoes the same challenge id).
+        #[arg(long)]
+        challenge: String,
+        #[arg(long)]
+        channel_id: String,
+        /// New absolute cumulative amount (strictly increasing), atomic units.
+        #[arg(long)]
+        cumulative_amount: String,
+        /// Escrow/channel contract (binds the voucher EIP-712 domain).
+        #[arg(long)]
+        escrow: String,
+        #[arg(long)]
+        chain_id: u64,
+        #[arg(long)]
+        from: Option<String>,
+    },
+    /// Add deposit to a channel: EIP-3009 via TEE, or `--tx-hash` hash mode.
+    Topup {
+        #[arg(long)]
+        challenge: String,
+        #[arg(long)]
+        channel_id: String,
+        #[arg(long)]
+        additional_deposit: String,
+        #[arg(long)]
+        escrow: String,
+        #[arg(long)]
+        chain_id: u64,
+        /// Token address; required in transaction mode (omit for `--tx-hash`).
+        #[arg(long)]
+        currency: Option<String>,
+        #[arg(long)]
+        from: Option<String>,
+        #[arg(long)]
+        tx_hash: Option<String>,
+    },
+    /// Sign the final voucher for channel close. Emits `voucherSignature` +
+    /// `cumulativeAmount`; the seller submits them to `POST /session/close`.
+    Close {
+        #[arg(long)]
+        challenge: String,
+        #[arg(long)]
+        channel_id: String,
+        #[arg(long)]
+        cumulative_amount: String,
+        #[arg(long)]
+        escrow: String,
+        #[arg(long)]
+        chain_id: u64,
+        #[arg(long)]
+        from: Option<String>,
+    },
+    /// Resolve a signed topup or close after replaying it to the seller.
+    Resolve {
+        #[arg(long)]
+        operation_id: String,
+        #[arg(long, required_unless_present = "outcome", conflicts_with = "outcome")]
+        receipt: Option<String>,
+        #[arg(long, value_parser = ["network-error", "no-receipt"])]
+        outcome: Option<String>,
     },
 }
 
@@ -367,6 +677,214 @@ pub async fn execute(cmd: PaymentCommand) -> Result<()> {
             from,
             tx_hash,
         } => cmd_mpp_charge(&challenge, from.as_deref(), tx_hash.as_deref()).await,
+        PaymentCommand::App { command } => match command {
+            AppCommand::Charge {
+                challenge,
+                from,
+                tx_hash,
+                type_,
+            } => {
+                cmd_app_charge(
+                    &challenge,
+                    from.as_deref(),
+                    tx_hash.as_deref(),
+                    type_.as_deref(),
+                )
+                .await
+            }
+            AppCommand::Upto {
+                challenge,
+                from,
+                type_,
+            } => cmd_app_upto(&challenge, from.as_deref(), type_.as_deref()).await,
+            AppCommand::Session { command } => match command {
+                AppSessionCommand::Open {
+                    challenge,
+                    from,
+                    tx_hash,
+                    salt,
+                    authorized_signer,
+                } => {
+                    cmd_app_session_open(
+                        &challenge,
+                        from.as_deref(),
+                        tx_hash.as_deref(),
+                        salt.as_deref(),
+                        authorized_signer.as_deref(),
+                    )
+                    .await
+                }
+                AppSessionCommand::Voucher {
+                    challenge,
+                    channel_id,
+                    cumulative_amount,
+                    escrow,
+                    chain_id,
+                    from,
+                } => {
+                    cmd_app_session_voucher(
+                        &challenge,
+                        &channel_id,
+                        &cumulative_amount,
+                        &escrow,
+                        chain_id,
+                        from.as_deref(),
+                    )
+                    .await
+                }
+                AppSessionCommand::Topup {
+                    challenge,
+                    channel_id,
+                    additional_deposit,
+                    escrow,
+                    chain_id,
+                    currency,
+                    from,
+                    tx_hash,
+                } => {
+                    cmd_app_session_topup(
+                        &challenge,
+                        &channel_id,
+                        &additional_deposit,
+                        &escrow,
+                        chain_id,
+                        currency.as_deref(),
+                        from.as_deref(),
+                        tx_hash.as_deref(),
+                    )
+                    .await
+                }
+                AppSessionCommand::Close {
+                    challenge,
+                    channel_id,
+                    cumulative_amount,
+                    escrow,
+                    chain_id,
+                    from,
+                } => {
+                    cmd_app_session_close(
+                        &challenge,
+                        &channel_id,
+                        &cumulative_amount,
+                        &escrow,
+                        chain_id,
+                        from.as_deref(),
+                    )
+                    .await
+                }
+                AppSessionCommand::Resolve {
+                    operation_id,
+                    receipt,
+                    outcome,
+                } => cmd_app_session_resolve(
+                    &operation_id,
+                    receipt.as_deref(),
+                    outcome.as_deref(),
+                ),
+            },
+            AppCommand::Subscription { command } => match command {
+                AppSubscriptionCommand::Subscribe {
+                    challenge,
+                    url,
+                    expected_cap,
+                    no_cache,
+                    from,
+                } => cmd_app_subscription_subscribe(
+                    &challenge,
+                    url.as_deref(),
+                    &expected_cap,
+                    no_cache,
+                    from.as_deref(),
+                )
+                .await,
+                AppSubscriptionCommand::Change {
+                    challenge,
+                    sub_id,
+                    url,
+                    expected_cap,
+                    no_cache,
+                    from,
+                } => {
+                    cmd_app_subscription_change(
+                        &challenge,
+                        sub_id.as_deref(),
+                        url.as_deref(),
+                        &expected_cap,
+                        no_cache,
+                        from.as_deref(),
+                    )
+                    .await
+                }
+                AppSubscriptionCommand::Access {
+                    url,
+                    sub_id,
+                    from,
+                    chain,
+                } => {
+                    cmd_app_subscription_access(url.as_deref(), sub_id.as_deref(), from.as_deref(), &chain)
+                        .await
+                }
+                AppSubscriptionCommand::Cancel {
+                    sub_id,
+                    offer_id,
+                    subscription_contract,
+                    token,
+                    chain_id,
+                    from,
+                } => {
+                    cmd_app_subscription_cancel(
+                        &sub_id,
+                        &offer_id,
+                        subscription_contract.as_deref(),
+                        token.as_deref(),
+                        chain_id,
+                        from.as_deref(),
+                    )
+                    .await
+                }
+                AppSubscriptionCommand::CancelPending {
+                    sub_id,
+                    new_sub_id,
+                    offer_id,
+                    subscription_contract,
+                    token,
+                    chain_id,
+                    from,
+                } => {
+                    cmd_app_subscription_cancel_pending(
+                        &sub_id,
+                        &new_sub_id,
+                        &offer_id,
+                        subscription_contract.as_deref(),
+                        token.as_deref(),
+                        chain_id,
+                        from.as_deref(),
+                    )
+                    .await
+                }
+                AppSubscriptionCommand::Resolve {
+                    operation_id,
+                    receipt,
+                    outcome,
+                } => cmd_app_subscription_resolve(
+                    &operation_id,
+                    receipt.as_deref(),
+                    outcome.as_deref(),
+                ),
+                AppSubscriptionCommand::List {
+                    from,
+                    limit,
+                    offset,
+                } => cmd_app_subscription_list(from.as_deref(), limit, offset).await,
+                AppSubscriptionCommand::AllowanceStatus {
+                    token,
+                    chain_id,
+                    from,
+                } => {
+                    cmd_app_subscription_allowance_status(&token, chain_id, from.as_deref()).await
+                }
+            },
+        },
         PaymentCommand::Session { command } => match command {
             SessionCommand::Open {
                 challenge,
@@ -687,7 +1205,11 @@ fn emit_pay_result(
 /// Example:
 ///   `Payment id="abc", realm="api.shop.com", method="evm", request="eyJ..."`
 fn parse_www_authenticate(header: &str) -> Result<serde_json::Value> {
-    let content = header.strip_prefix("Payment ").unwrap_or(header);
+    let content = header
+        .get(..8)
+        .filter(|prefix| prefix.eq_ignore_ascii_case("Payment "))
+        .map(|_| &header[8..])
+        .unwrap_or(header);
     let mut map = serde_json::Map::new();
 
     let bytes = content.as_bytes();
@@ -1459,6 +1981,1624 @@ fn normalize_bytes32_hex(value: &str, label: &str) -> Result<String> {
     Ok(format!("0x{}", body.to_ascii_lowercase()))
 }
 
+/// Build the APP/1 credential challenge echo.
+///
+/// Unlike MPP's [`build_challenge_echo`], this carries `protocol` and `opaque`
+/// verbatim: both are folded into the HMAC that binds `challenge.id`
+/// (`protocol|realm|method|intent|request|expires|opaque`), so the facilitator
+/// recomputes over them. `request`/`opaque` are echoed as the original base64url
+/// strings from the header (not the decoded object) — the HMAC is over those raw
+/// bytes.
+fn build_app_challenge_echo(challenge: &Value) -> Value {
+    let s = |k: &str| challenge.get(k).and_then(|v| v.as_str()).unwrap_or("");
+    json!({
+        "id": s("id"),
+        "realm": s("realm"),
+        "protocol": s("protocol"),
+        "method": s("method"),
+        "intent": s("intent"),
+        "expires": s("expires"),
+        "request": s("request"),
+        "opaque": s("opaque"),
+    })
+}
+
+/// Shared APP/1 charge/upto signer. `intent` is `"charge"` (exact amount) or
+/// `"upto"` (authorize a ceiling; seller settles the actual ≤ ceiling). Both
+/// TEE-sign EIP-3009 `transferWithAuthorization` for `challenge.request.amount`;
+/// charge additionally supports hash mode (`feePayer=false`, `--tx-hash`).
+async fn cmd_app_charge_like(
+    challenge_header: &str,
+    from: Option<&str>,
+    tx_hash: Option<&str>,
+    sig_type: Option<&str>,
+    intent: &str,
+) -> Result<()> {
+    let challenge = parse_www_authenticate(challenge_header)?;
+
+    // APP/1 command family only handles protocol="app/1"; route MPP elsewhere.
+    let protocol = challenge
+        .get("protocol")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if protocol != "app/1" {
+        bail!(
+            "APP/1 command requires challenge protocol=\"app/1\", got \"{protocol}\"; \
+             use `payment charge` for MPP challenges"
+        );
+    }
+    let ch_intent = challenge
+        .get("intent")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if ch_intent != intent {
+        bail!("challenge.intent=\"{ch_intent}\" does not match `payment app {intent}`");
+    }
+
+    let request = decode_challenge_request(&challenge)?;
+    let recipient_in = request["recipient"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing 'recipient' in challenge request"))?;
+    let amount = request["amount"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing 'amount' in challenge request"))?;
+    let currency = request["currency"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing 'currency' in challenge request"))?;
+    let chain_id = request["methodDetails"]["chainId"]
+        .as_u64()
+        .ok_or_else(|| anyhow!("missing 'methodDetails.chainId'"))?;
+    let fee_payer = request["methodDetails"]["feePayer"]
+        .as_bool()
+        .unwrap_or(true);
+
+    // XKO/0x dual capture: canonical → signing, display → output JSON.
+    let (recipient, recipient_display) =
+        parse_recipient_addr(recipient_in, chain_id).with_context(|| "challenge.request.recipient")?;
+    let recipient = recipient.as_str();
+    let recipient_display = recipient_display.as_str();
+
+    let (chain_index, payer_addr) = resolve_chain_and_payer(chain_id, from).await?;
+    let payer_addr = payer_addr.as_str();
+    let source = format!("did:pkh:eip155:{chain_id}:{payer_addr}");
+
+    // Pick signature type from the challenge's acceptedTypes (the seller/facilitator
+    // capability matrix is authoritative — e.g. upto only offers permit2). Explicit
+    // --type must be one of the offered types; if omitted, auto-pick by preference
+    // (authorization > permit2 > hash), falling back to the feePayer heuristic only
+    // when the challenge omits acceptedTypes.
+    let accepted: Vec<&str> = request["methodDetails"]["acceptedTypes"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    let sig_type = match sig_type {
+        Some(t) => {
+            if !accepted.is_empty() && !accepted.contains(&t) {
+                bail!("--type {t} is not in challenge acceptedTypes {accepted:?}");
+            }
+            t
+        }
+        None => ["authorization", "permit2", "hash"]
+            .into_iter()
+            .find(|t| accepted.contains(t))
+            .unwrap_or(if fee_payer { "authorization" } else { "hash" }),
+    };
+
+    // permit2 (SignatureTransfer + witness): shared by charge and upto; amount =
+    // exact (charge) or ceiling (upto). Facilitator relays via the permit2 proxy,
+    // so feePayer is irrelevant here.
+    if sig_type == "permit2" {
+        let spender = request["methodDetails"]["permit2"]["spender"]
+            .as_str()
+            .ok_or_else(|| anyhow!("type=permit2 requires request.methodDetails.permit2.spender"))?;
+        // Pre-check the one-time ERC20→Permit2 allowance before signing: Permit2
+        // SignatureTransfer needs `approve(Permit2, ≥amount)` on the token first.
+        // Bails with an actionable approve hint if short; degrades to a warning if
+        // the RPC probe is unavailable (the facilitator still gates at /verify).
+        payment_flow::preflight_permit2_allowance(&chain_index, currency, payer_addr, amount)
+            .await?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+        // deadline aligned to challenge.expires (+grace); take only the 256-bit
+        // random nonce from the shared helper (its TTL/deadline is discarded).
+        let deadline = compute_valid_before(&challenge, now)?;
+        let (_, _, nonce) = payment_flow::permit2_timing_and_nonce(300)?;
+        // upto proxy 的 witness 多 `facilitator`(链上强制 msg.sender == witness.facilitator);
+        // exact(charge)的 witness 只有 {to, validAfter}。用 intent 分流两条签名路径。
+        let (typed_data, witness) = if intent == "upto" {
+            let facilitator = request["methodDetails"]["permit2"]["facilitator"]
+                .as_str()
+                .ok_or_else(|| {
+                    anyhow!("upto permit2 requires request.methodDetails.permit2.facilitator")
+                })?;
+            let input = crate::payment::permit2::eip712::UptoPermit2Input {
+                token: currency,
+                amount,
+                spender,
+                nonce: &nonce,
+                deadline: &deadline,
+                witness_to: recipient,
+                witness_facilitator: facilitator,
+                witness_valid_after: "0",
+                chain_id,
+            };
+            let td = crate::payment::permit2::eip712::build_upto_permit2_typed_data(&input);
+            // witness 字段序必须 to, facilitator, validAfter(与 EIP-712 typehash 一致)。
+            (td, json!({ "to": recipient, "facilitator": facilitator, "validAfter": "0" }))
+        } else {
+            let input = crate::payment::permit2::eip712::ExactPermit2Input {
+                token: currency,
+                amount,
+                spender,
+                nonce: &nonce,
+                deadline: &deadline,
+                witness_to: recipient,
+                witness_valid_after: "0",
+                chain_id,
+            };
+            let td = crate::payment::permit2::eip712::build_exact_permit2_typed_data(&input);
+            (td, json!({ "to": recipient, "validAfter": "0" }))
+        };
+        let signature =
+            crate::payment::permit2::sign::tee_sign_eip712(&chain_index, payer_addr, &typed_data)
+                .await?;
+        let credential = json!({
+            "challenge": build_app_challenge_echo(&challenge),
+            "source": source,
+            "payload": {
+                "type": "permit2",
+                "from": payer_addr,
+                "token": currency,
+                "amount": amount,
+                "spender": spender,
+                "nonce": nonce,
+                "deadline": deadline,
+                "witness": witness,
+                "signature": signature,
+            }
+        });
+        let authorization_header = format!("Payment {}", base64url_encode_json(&credential)?);
+        output::success(json!({
+            "protocol": "app/1",
+            "method": "evm",
+            "intent": intent,
+            "mode": "permit2",
+            "authorization_header": authorization_header,
+            "wallet": payer_addr,
+            "challenge": { "id": challenge["id"], "realm": challenge["realm"] },
+        }));
+        return Ok(());
+    }
+
+    // Hash mode (charge only): client already broadcast transferWithAuthorization.
+    if sig_type == "hash" {
+        if fee_payer {
+            bail!("type=hash requires challenge.methodDetails.feePayer=false");
+        }
+        if intent == "upto" {
+            bail!(
+                "upto does not support feePayer=false (hash mode): the seller must relay \
+                 in order to settle the actual amount"
+            );
+        }
+        let hash = tx_hash.ok_or_else(|| {
+            anyhow!(
+                "challenge.methodDetails.feePayer=false requires --tx-hash (broadcast \
+                 transferWithAuthorization yourself first)"
+            )
+        })?;
+        if !hash.starts_with("0x")
+            || hash.len() != 66
+            || !hash[2..].chars().all(|c| c.is_ascii_hexdigit())
+        {
+            bail!("--tx-hash must be 0x + 64 hex chars");
+        }
+        let credential = json!({
+            "challenge": build_app_challenge_echo(&challenge),
+            "source": source,
+            "payload": {
+                "type": "hash",
+                "from": payer_addr,
+                "to": recipient_display,
+                "value": amount,
+                "txHash": hash,
+            }
+        });
+        let authorization_header = format!("Payment {}", base64url_encode_json(&credential)?);
+        output::success(json!({
+            "protocol": "app/1",
+            "method": "evm",
+            "intent": intent,
+            "mode": "hash",
+            "authorization_header": authorization_header,
+            "wallet": payer_addr,
+            "challenge": { "id": challenge["id"], "realm": challenge["realm"] },
+        }));
+        return Ok(());
+    }
+
+    if sig_type != "authorization" {
+        bail!("unsupported signature type \"{sig_type}\"; expected authorization | permit2 | hash");
+    }
+    if tx_hash.is_some() {
+        bail!("--tx-hash is only valid with type=hash (feePayer=false)");
+    }
+
+    // Transaction mode: TEE-sign EIP-3009 for `amount` (exact for charge, ceiling
+    // for upto). No splits — the APP/1 authorization payload is single-recipient.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    let valid_before = compute_valid_before(&challenge, now)?;
+    let nonce = random_nonce_hex();
+    let (signature, _) = tee_sign_eip3009(
+        Eip3009AuthType::Transfer,
+        &chain_index,
+        payer_addr,
+        recipient,
+        amount,
+        &valid_before,
+        &nonce,
+        currency,
+    )
+    .await?;
+
+    let credential = json!({
+        "challenge": build_app_challenge_echo(&challenge),
+        "source": source,
+        "payload": {
+            "type": "authorization",
+            "from": payer_addr,
+            "to": recipient_display,
+            "value": amount,
+            "validAfter": "0",
+            "validBefore": valid_before,
+            "nonce": nonce,
+            "signature": signature,
+        }
+    });
+    let authorization_header = format!("Payment {}", base64url_encode_json(&credential)?);
+    output::success(json!({
+        "protocol": "app/1",
+        "method": "evm",
+        "intent": intent,
+        "mode": "transaction",
+        "authorization_header": authorization_header,
+        "wallet": payer_addr,
+        "challenge": { "id": challenge["id"], "realm": challenge["realm"] },
+    }));
+    Ok(())
+}
+
+/// `payment app charge` — APP/1 one-shot exact charge.
+async fn cmd_app_charge(
+    challenge_header: &str,
+    from: Option<&str>,
+    tx_hash: Option<&str>,
+    sig_type: Option<&str>,
+) -> Result<()> {
+    cmd_app_charge_like(challenge_header, from, tx_hash, sig_type, "charge").await
+}
+
+/// `payment app upto` — APP/1 variable amount up to a ceiling.
+async fn cmd_app_upto(
+    challenge_header: &str,
+    from: Option<&str>,
+    sig_type: Option<&str>,
+) -> Result<()> {
+    cmd_app_charge_like(challenge_header, from, None, sig_type, "upto").await
+}
+
+/// Ensure the challenge is APP/1 and (when given) matches the expected intent.
+fn app_guard(challenge: &Value, intent: Option<&str>) -> Result<()> {
+    let p = challenge
+        .get("protocol")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if p != "app/1" {
+        bail!("APP/1 command requires challenge protocol=\"app/1\", got \"{p}\"");
+    }
+    if let Some(want) = intent {
+        let got = challenge
+            .get("intent")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if got != want {
+            bail!("challenge.intent=\"{got}\" does not match `payment app session` (expected {want})");
+        }
+    }
+    Ok(())
+}
+
+/// `payment app session open` — deposit-only channel open (no initial voucher).
+async fn cmd_app_session_open(
+    challenge_header: &str,
+    from: Option<&str>,
+    tx_hash: Option<&str>,
+    salt_arg: Option<&str>,
+    authorized_signer_arg: Option<&str>,
+) -> Result<()> {
+    let challenge = parse_www_authenticate(challenge_header)?;
+    app_guard(&challenge, Some("session"))?;
+
+    let request = decode_challenge_request(&challenge)?;
+    let recipient_in = request["recipient"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing 'recipient' (payee) in challenge request"))?;
+    let currency = request["currency"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing 'currency' in challenge request"))?;
+    let chain_id = request["methodDetails"]["chainId"]
+        .as_u64()
+        .ok_or_else(|| anyhow!("missing 'methodDetails.chainId'"))?;
+    let escrow = request["methodDetails"]["escrowContract"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing 'methodDetails.escrowContract'"))?;
+    let fee_payer = request["methodDetails"]["feePayer"]
+        .as_bool()
+        .unwrap_or(true);
+    let deposit = app_session_open_deposit(&request)?;
+
+    let (recipient, _display) =
+        parse_recipient_addr(recipient_in, chain_id).with_context(|| "challenge.request.recipient")?;
+    let recipient = recipient.as_str();
+
+    let (chain_index, payer_addr) = resolve_chain_and_payer(chain_id, from).await?;
+    let payer_addr = payer_addr.as_str();
+    let source = format!("did:pkh:eip155:{chain_id}:{payer_addr}");
+
+    const ZERO_SIGNER: &str = "0x0000000000000000000000000000000000000000";
+    let authorized_signer = authorized_signer_arg.unwrap_or(ZERO_SIGNER);
+    if authorized_signer != ZERO_SIGNER && authorized_signer.eq_ignore_ascii_case(payer_addr) {
+        bail!("authorizedSigner must not equal payer (omit / use zero address for self-signing)");
+    }
+
+    // salt: hash mode reuses the on-chain bytes32; transaction mode generates one.
+    let salt = match (fee_payer, salt_arg) {
+        (false, Some(s)) => normalize_bytes32_hex(s, "--salt")?,
+        (false, None) => bail!(
+            "hash mode (feePayer=false) requires --salt (the bytes32 you passed to your \
+             on-chain escrow.open)"
+        ),
+        (true, Some(_)) => bail!("--salt is only valid in hash mode (feePayer=false)"),
+        (true, None) => {
+            use rand::RngCore;
+            let mut s = [0u8; 32];
+            rand::rngs::OsRng.fill_bytes(&mut s);
+            format!("0x{}", hex::encode(s))
+        }
+    };
+    if fee_payer && tx_hash.is_some() {
+        bail!("--tx-hash is only valid in hash mode (feePayer=false)");
+    }
+
+    let channel_id = compute_channel_id(
+        payer_addr,
+        recipient,
+        currency,
+        &salt,
+        authorized_signer,
+        escrow,
+        chain_id,
+    )?;
+
+    let payload = if !fee_payer {
+        let hash = tx_hash.ok_or_else(|| {
+            anyhow!("hash mode requires --tx-hash (broadcast escrow.open yourself first)")
+        })?;
+        let hash = normalize_bytes32_hex(hash, "--tx-hash")?;
+        let mut p = json!({
+            "action": "open",
+            "type": "hash",
+            "channelId": channel_id,
+            "hash": hash,
+            "salt": salt,
+        });
+        if authorized_signer != ZERO_SIGNER {
+            p["authorizedSigner"] = json!(authorized_signer);
+        }
+        p
+    } else {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+        let valid_before = compute_valid_before(&challenge, now)?;
+        // Deposit → escrow.receiveWithAuthorization (Receive typehash); nonce per
+        // the contract's open-authorization formula (no splits in APP/1 sessions).
+        let nonce = compute_open_nonce(
+            payer_addr,
+            recipient,
+            currency,
+            &salt,
+            authorized_signer,
+            &[],
+            &[],
+        )?;
+        let (signature, _) = tee_sign_eip3009(
+            Eip3009AuthType::Receive,
+            &chain_index,
+            payer_addr,
+            escrow,
+            deposit,
+            &valid_before,
+            &nonce,
+            currency,
+        )
+        .await?;
+        let mut p = json!({
+            "action": "open",
+            "type": "authorization",
+            "channelId": channel_id,
+            "authorization": {
+                "from": payer_addr,
+                "to": escrow,
+                "value": deposit,
+                "validAfter": "0",
+                "validBefore": valid_before,
+                "nonce": nonce,
+            },
+            "signature": signature,
+            "salt": salt,
+        });
+        if authorized_signer != ZERO_SIGNER {
+            p["authorizedSigner"] = json!(authorized_signer);
+        }
+        p
+    };
+
+    let credential = json!({
+        "challenge": build_app_challenge_echo(&challenge),
+        "source": source,
+        "payload": payload,
+    });
+    let authorization_header = format!("Payment {}", base64url_encode_json(&credential)?);
+    persist_channel_open(&channel_id, payer_addr, deposit, "0");
+    output::success(json!({
+        "protocol": "app/1",
+        "method": "evm",
+        "intent": "session",
+        "action": "open",
+        "mode": if fee_payer { "transaction" } else { "hash" },
+        "authorization_header": authorization_header,
+        "channel_id": channel_id,
+        "escrow": escrow,
+        "chain_id": chain_id,
+        "deposit": deposit,
+        "wallet": payer_addr,
+        "challenge": { "id": challenge["id"], "realm": challenge["realm"] },
+    }));
+    Ok(())
+}
+
+/// `payment app session voucher` — sign a monotonic cumulative-amount voucher.
+async fn cmd_app_session_voucher(
+    challenge_header: &str,
+    channel_id: &str,
+    cumulative_amount: &str,
+    escrow: &str,
+    chain_id: u64,
+    from: Option<&str>,
+) -> Result<()> {
+    let challenge = parse_www_authenticate(challenge_header)?;
+    app_guard(&challenge, Some("session"))?;
+    let _channel_lock = session_state::lock(channel_id)?;
+
+    // Fail closed before resolving the wallet or asking the TEE to sign. An
+    // over-deposit voucher can become usable after a later top-up, so merely
+    // refusing to advance the local cache after signing is not sufficient.
+    let prior = session_state::read(channel_id).ok_or_else(|| {
+        anyhow!(
+            "APP session state not found for channel {channel_id}; cannot verify \
+             --cumulative-amount before signing"
+        )
+    })?;
+    prior.ensure_no_pending()?;
+    validate_app_voucher_cumulative(&prior.cumulative, &prior.deposit, cumulative_amount)?;
+
+    let (chain_index, payer_addr) = resolve_chain_and_payer(chain_id, from).await?;
+    let payer_addr = payer_addr.as_str();
+
+    // Buyer produces only `voucherSignature`; the seller adds its own
+    // payeeSignature / nonce / deadline (SettleAuthorization) when settling.
+    let voucher_sig =
+        tee_sign_voucher(&chain_index, payer_addr, channel_id, cumulative_amount, escrow, chain_id)
+            .await?;
+
+    let credential = json!({
+        "challenge": build_app_challenge_echo(&challenge),
+        "source": format!("did:pkh:eip155:{chain_id}:{payer_addr}"),
+        "payload": {
+            "action": "voucher",
+            "channelId": channel_id,
+            "cumulativeAmount": cumulative_amount,
+            "voucherSignature": voucher_sig,
+        }
+    });
+    let authorization_header = format!("Payment {}", base64url_encode_json(&credential)?);
+
+    // Advance persisted cumulative when viable (mirrors MPP voucher bookkeeping).
+    let mut prior = prior;
+    prior.cumulative = cumulative_amount.to_string();
+    prior.updated_at = session_state::now_unix();
+    let _ = prior.write();
+
+    output::success(json!({
+        "protocol": "app/1",
+        "method": "evm",
+        "intent": "session",
+        "action": "voucher",
+        "authorization_header": authorization_header,
+        "channel_id": channel_id,
+        "cumulative_amount": cumulative_amount,
+        "wallet": payer_addr,
+        "challenge": { "id": challenge["id"], "realm": challenge["realm"] },
+    }));
+    Ok(())
+}
+
+/// `payment app session topup` — add deposit to an existing channel.
+#[allow(clippy::too_many_arguments)]
+async fn cmd_app_session_topup(
+    challenge_header: &str,
+    channel_id: &str,
+    additional_deposit: &str,
+    escrow: &str,
+    chain_id: u64,
+    currency: Option<&str>,
+    from: Option<&str>,
+    tx_hash: Option<&str>,
+) -> Result<()> {
+    let challenge = parse_www_authenticate(challenge_header)?;
+    app_guard(&challenge, Some("session"))?;
+    let offer_id = app_session_offer_id(&challenge)?;
+    let _channel_lock = session_state::lock(channel_id)?;
+
+    let mut prior = session_state::read(channel_id).ok_or_else(|| {
+        anyhow!(
+            "APP session state not found for channel {channel_id}; cannot track topup before replay"
+        )
+    })?;
+    prior.ensure_no_pending()?;
+    parse_app_session_amount(additional_deposit, "additional-deposit")?;
+
+    let (chain_index, payer_addr) = resolve_chain_and_payer(chain_id, from).await?;
+    let payer_addr = payer_addr.as_str();
+
+    let payload = if let Some(hash) = tx_hash {
+        let hash = normalize_bytes32_hex(hash, "--tx-hash")?;
+        json!({
+            "action": "topup",
+            "type": "hash",
+            "channelId": channel_id,
+            "hash": hash,
+            "additionalDeposit": additional_deposit,
+        })
+    } else {
+        let currency = currency.ok_or_else(|| {
+            anyhow!("--currency is required in transaction mode (omit --tx-hash for hash mode)")
+        })?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+        let valid_before = compute_valid_before(&challenge, now)?;
+        let top_up_salt = {
+            use rand::RngCore;
+            let mut s = [0u8; 32];
+            rand::rngs::OsRng.fill_bytes(&mut s);
+            format!("0x{}", hex::encode(s))
+        };
+        // EIP-3009 nonce per the contract's computeTopUpAuthorizationNonce formula.
+        let nonce = compute_topup_nonce(payer_addr, channel_id, additional_deposit, &top_up_salt)?;
+        let (signature, _) = tee_sign_eip3009(
+            Eip3009AuthType::Receive,
+            &chain_index,
+            payer_addr,
+            escrow,
+            additional_deposit,
+            &valid_before,
+            &nonce,
+            currency,
+        )
+        .await?;
+        json!({
+            "action": "topup",
+            "type": "authorization",
+            "channelId": channel_id,
+            "authorization": {
+                "from": payer_addr,
+                "to": escrow,
+                "value": additional_deposit,
+                "validAfter": "0",
+                "validBefore": valid_before,
+                "nonce": nonce,
+            },
+            "signature": signature,
+            "additionalDeposit": additional_deposit,
+            "topUpSalt": top_up_salt,
+        })
+    };
+
+    let credential = json!({
+        "challenge": build_app_challenge_echo(&challenge),
+        "source": format!("did:pkh:eip155:{chain_id}:{payer_addr}"),
+        "payload": payload,
+    });
+    let authorization_header = format!("Payment {}", base64url_encode_json(&credential)?);
+
+    let operation_id = prior.begin_pending(
+        session_state::PendingAction::Topup,
+        additional_deposit,
+        &offer_id,
+    )?;
+    prior.write()?;
+
+    output::success(json!({
+        "protocol": "app/1",
+        "method": "evm",
+        "intent": "session",
+        "action": "topup",
+        "mode": if tx_hash.is_some() { "hash" } else { "transaction" },
+        "authorization_header": authorization_header,
+        "operation_id": operation_id,
+        "channel_id": channel_id,
+        "additional_deposit": additional_deposit,
+        "wallet": payer_addr,
+        "challenge": { "id": challenge["id"], "realm": challenge["realm"] },
+    }));
+    Ok(())
+}
+
+/// `payment app session close` — sign the final voucher for `/session/close`.
+async fn cmd_app_session_close(
+    challenge_header: &str,
+    channel_id: &str,
+    cumulative_amount: &str,
+    escrow: &str,
+    chain_id: u64,
+    from: Option<&str>,
+) -> Result<()> {
+    let challenge = parse_www_authenticate(challenge_header)?;
+    app_guard(&challenge, Some("session"))?;
+    let offer_id = app_session_offer_id(&challenge)?;
+    let _channel_lock = session_state::lock(channel_id)?;
+
+    // Match the MPP lifecycle rule: close reuses the latest valid cumulative
+    // amount. It must not create a new authorization or exceed the deposit.
+    let prior = session_state::read(channel_id).ok_or_else(|| {
+        anyhow!(
+            "APP session state not found for channel {channel_id}; cannot verify \
+             --cumulative-amount before signing"
+        )
+    })?;
+    prior.ensure_no_pending()?;
+    validate_app_close_cumulative(&prior.cumulative, &prior.deposit, cumulative_amount)?;
+
+    let (chain_index, payer_addr) = resolve_chain_and_payer(chain_id, from).await?;
+    let payer_addr = payer_addr.as_str();
+
+    // Buyer signs only the final voucher; the seller adds its CloseAuthorization
+    // (payeeSignature / nonce / deadline) and submits to POST /session/close.
+    let voucher_sig =
+        tee_sign_voucher(&chain_index, payer_addr, channel_id, cumulative_amount, escrow, chain_id)
+            .await?;
+
+    // Emit a `close` credential (symmetric with open/topup/voucher): the buyer
+    // replays `Authorization: Payment <cred>` to the seller's session endpoint,
+    // which dispatches by `payload.action` and adds its payee CloseAuthorization.
+    let source = format!("did:pkh:eip155:{chain_id}:{payer_addr}");
+    let credential = json!({
+        "challenge": build_app_challenge_echo(&challenge),
+        "source": source,
+        "payload": {
+            "action": "close",
+            "channelId": channel_id,
+            "cumulativeAmount": cumulative_amount,
+            "signature": voucher_sig,
+        }
+    });
+    let authorization_header = format!("Payment {}", base64url_encode_json(&credential)?);
+
+    let mut prior = prior;
+    let operation_id = prior.begin_pending(
+        session_state::PendingAction::Close,
+        cumulative_amount,
+        &offer_id,
+    )?;
+    prior.write()?;
+    output::success(json!({
+        "protocol": "app/1",
+        "method": "evm",
+        "intent": "session",
+        "action": "close",
+        "authorization_header": authorization_header,
+        "operation_id": operation_id,
+        "wallet": payer_addr,
+        "channel_id": channel_id,
+        "cumulative_amount": cumulative_amount,
+        "challenge": { "id": challenge["id"], "realm": challenge["realm"] },
+    }));
+    Ok(())
+}
+
+fn app_session_offer_id(challenge: &Value) -> Result<String> {
+    let opaque = challenge["opaque"]
+        .as_str()
+        .ok_or_else(|| anyhow!("APP session challenge is missing opaque"))?;
+    let decoded = decode_payment_blob(opaque).context("decode APP session challenge opaque")?;
+    decoded["offerId"]
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| anyhow!("APP session challenge opaque is missing offerId"))
+}
+
+fn app_session_receipt_status(
+    receipt: &str,
+    state: &session_state::ChannelState,
+    pending: &session_state::PendingOperation,
+) -> Result<(String, Option<String>)> {
+    let value = decode_payment_blob(receipt).context("decode APP session receipt")?;
+    let require = |field: &str| {
+        value[field]
+            .as_str()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow!("APP session receipt is missing {field}"))
+    };
+    if require("protocol")? != "app/1" {
+        bail!("APP session receipt protocol must be app/1");
+    }
+    if require("intent")? != "session" {
+        bail!("APP session receipt intent must be session");
+    }
+    if require("offerId")? != pending.offer_id {
+        bail!("APP session receipt offerId does not match the pending operation");
+    }
+    if !require("payer")?.eq_ignore_ascii_case(&state.owner_wallet) {
+        bail!("APP session receipt payer does not match the channel owner");
+    }
+    let status = decode_receipt::decode_receipt(Some(receipt), None)?
+        .status
+        .to_ascii_lowercase();
+    if !matches!(status.as_str(), "success" | "failed" | "pending" | "timeout") {
+        bail!("APP session receipt has unsupported status {status}");
+    }
+    if status != "success" {
+        return Ok((status, None));
+    }
+
+    let amount = value
+        .get("settledAmount")
+        .or_else(|| value.get("amount"))
+        .and_then(|value| match value {
+            Value::String(value) => Some(value.clone()),
+            Value::Number(value) => Some(value.to_string()),
+            _ => None,
+        })
+        .ok_or_else(|| anyhow!("successful APP session receipt is missing settledAmount"))?;
+    let settled_amount = parse_app_session_amount(&amount, "receipt-settled-amount")?;
+    let pending_amount = parse_app_session_amount(&pending.amount, "pending-operation-amount")?;
+    let expected_amount = match pending.action {
+        session_state::PendingAction::Topup => {
+            let deposit = parse_app_session_amount(&state.deposit, "channel-deposit")?;
+            deposit
+                .checked_add(pending_amount)
+                .ok_or_else(|| anyhow!("channel deposit overflow"))?
+        }
+        session_state::PendingAction::Close => pending_amount,
+    };
+    if settled_amount != expected_amount {
+        bail!("APP session receipt amount does not match the pending operation");
+    }
+    let reference = require("reference")?.to_ascii_lowercase();
+    Ok((status, Some(reference)))
+}
+
+fn cmd_app_session_resolve(
+    operation_id: &str,
+    receipt: Option<&str>,
+    outcome: Option<&str>,
+) -> Result<()> {
+    if let Some(resolved) = session_state::read_resolution(operation_id) {
+        emit_app_session_resolution(&resolved, true);
+        return Ok(());
+    }
+    let candidate = match session_state::find_pending(operation_id)? {
+        Some(candidate) => candidate,
+        None => {
+            if let Some(resolved) = session_state::read_resolution(operation_id) {
+                emit_app_session_resolution(&resolved, true);
+                return Ok(());
+            }
+            bail!(
+                "APP session operation {operation_id} is not pending; it may already be resolved"
+            );
+        }
+    };
+    let _channel_lock = session_state::lock(&candidate.channel_id)?;
+    if let Some(resolved) = session_state::read_resolution(operation_id) {
+        emit_app_session_resolution(&resolved, true);
+        return Ok(());
+    }
+    let mut state = session_state::read(&candidate.channel_id).ok_or_else(|| {
+        anyhow!("APP session channel {} is no longer active", candidate.channel_id)
+    })?;
+    let pending = state
+        .pending_operation
+        .clone()
+        .filter(|pending| pending.operation_id == operation_id)
+        .ok_or_else(|| anyhow!("APP session operation {operation_id} is not pending"))?;
+    let (resolution, receipt_reference) = if let Some(receipt) = receipt {
+        app_session_receipt_status(receipt, &state, &pending)?
+    } else {
+        (
+            outcome
+                .ok_or_else(|| anyhow!("--receipt or --outcome is required"))?
+                .to_string(),
+            None,
+        )
+    };
+    let success = resolution == "success";
+    let _receipt_lock = if let Some(reference) = receipt_reference.as_deref() {
+        Some(session_state::lock_receipt_reference(reference)?)
+    } else {
+        None
+    };
+    if let Some(reference) = receipt_reference.as_deref() {
+        if session_state::receipt_reference_used(reference)? {
+            bail!("APP session receipt reference was already used by another operation");
+        }
+    }
+
+    let resolved = session_state::ResolvedOperation {
+        operation_id: operation_id.to_string(),
+        channel_id: state.channel_id.clone(),
+        action: pending.action.clone(),
+        resolution: resolution.clone(),
+        committed: success,
+        receipt_reference: receipt_reference.clone(),
+        resolved_at: session_state::now_unix(),
+    };
+    match (&pending.action, success) {
+        (session_state::PendingAction::Topup, true) => {
+            let deposit = parse_app_session_amount(&state.deposit, "channel-deposit")?;
+            let additional = parse_app_session_amount(&pending.amount, "additional-deposit")?;
+            state.deposit = deposit
+                .checked_add(additional)
+                .ok_or_else(|| anyhow!("channel deposit overflow"))?
+                .to_string();
+            state.pending_operation = None;
+            state.resolved_operations.push(resolved.clone());
+            state.updated_at = session_state::now_unix();
+            state.write()?;
+        }
+        (session_state::PendingAction::Close, true) => {
+            session_state::archive_close_success(
+                &state.channel_id,
+                operation_id,
+                receipt_reference
+                    .as_deref()
+                    .ok_or_else(|| anyhow!("successful receipt is missing reference"))?,
+            )?;
+        }
+        (_, false) => {
+            state.pending_operation = None;
+            state.resolved_operations.push(resolved.clone());
+            state.updated_at = session_state::now_unix();
+            state.write()?;
+        }
+    }
+
+    let operation = match &pending.action {
+        session_state::PendingAction::Topup => "topup",
+        session_state::PendingAction::Close => "close",
+    };
+    output::success(json!({
+        "protocol": "app/1",
+        "method": "evm",
+        "intent": "session",
+        "action": "resolve",
+        "operation": operation,
+        "operation_id": operation_id,
+        "channel_id": state.channel_id,
+        "resolution": resolution,
+        "committed": success,
+        "already_resolved": false,
+    }));
+    Ok(())
+}
+
+fn emit_app_session_resolution(
+    resolved: &session_state::ResolvedOperation,
+    already_resolved: bool,
+) {
+    let operation = match resolved.action {
+        session_state::PendingAction::Topup => "topup",
+        session_state::PendingAction::Close => "close",
+    };
+    output::success(json!({
+        "protocol": "app/1",
+        "method": "evm",
+        "intent": "session",
+        "action": "resolve",
+        "operation": operation,
+        "operation_id": resolved.operation_id,
+        "channel_id": resolved.channel_id,
+        "resolution": resolved.resolution,
+        "committed": resolved.committed,
+        "already_resolved": already_resolved,
+    }));
+}
+
+/// Adapt an app/1 subscription `challenge.request` into the x402-shaped `accepted`
+/// offer that the shared subscription double-sign consumes. Maps periodMode
+/// string→number (calendar_month→1 with periodSec 0), sources the contracts from
+/// the authoritative allowance-status, and requires the seller-pinned `facilitator`
+/// (= capabilities.methods.evm.facilitator) — it is a signed SubscriptionTerms
+/// field, so it must come from the challenge, not be invented.
+fn build_app_subscription_accepted(
+    request: &Value,
+    token: &str,
+    a: &crate::payment::subscription::types::AllowanceStatus,
+    permit2_contract: &str,
+) -> Result<Value> {
+    let recipient = request["recipient"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing 'recipient' in subscription challenge"))?;
+    // Prefer `amountPerPeriod`; accept `amount` from older sellers.
+    let amount_per_period = request["amountPerPeriod"]
+        .as_str()
+        .or_else(|| request["amount"].as_str())
+        .ok_or_else(|| anyhow!("subscription requires request.amountPerPeriod (per-period)"))?;
+    let max_periods = request["maxPeriods"]
+        .as_u64()
+        .ok_or_else(|| anyhow!("missing 'maxPeriods'"))?;
+    let plan = request.get("plan").ok_or_else(|| anyhow!("missing 'plan'"))?;
+    let plan_id = plan
+        .get("id")
+        .and_then(Value::as_str)
+        .or_else(|| plan.get("planId").and_then(Value::as_str))
+        .unwrap_or("");
+    let plan_tier = plan
+        .get("tier")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| anyhow!("missing 'plan.tier'"))?;
+    let facilitator = request["facilitator"].as_str().ok_or_else(|| {
+        anyhow!("subscription challenge missing 'facilitator' (seller must pin \
+                 capabilities.methods.evm.facilitator; it is signed into SubscriptionTerms)")
+    })?;
+    // periodMode string → number; calendar_month has no fixed periodSec (0).
+    let (period_mode, period_sec) = match request["periodMode"].as_str().unwrap_or("fixed_seconds") {
+        "calendar_month" => (1u64, 0u64),
+        _ => (0u64, request["periodSec"].as_u64().unwrap_or(0)),
+    };
+    let start_at = request["startAt"].as_u64().unwrap_or(0);
+    // Normalize seller keys `periods`/`amount` to the `periodCount`/`totalAmount`
+    // keys read by the shared x402 `extract_terms_params`. Accept either key set.
+    let initial_charge = match request.get("initialCharge") {
+        Some(ic) if !ic.is_null() => {
+            let periods = ic
+                .get("periods")
+                .or_else(|| ic.get("periodCount"))
+                .cloned()
+                .unwrap_or_else(|| Value::from(0));
+            let amount = ic
+                .get("amount")
+                .or_else(|| ic.get("totalAmount"))
+                .cloned()
+                .unwrap_or_else(|| Value::from("0"));
+            json!({ "periodCount": periods, "totalAmount": amount })
+        }
+        _ => Value::Null,
+    };
+    // Plan-change offers carry `changeFrom` {fromSubId, direction|effectiveAt};
+    // pass it through so the shared x402 `sign_change` can read the old subId and
+    // derive changeEffectiveAt. Absent on a fresh subscribe.
+    let change_from = request.get("changeFrom").cloned().unwrap_or(Value::Null);
+    // Seller-provided terms salt (bytes32): the buyer MUST sign this exact value
+    // into SubscriptionTerms so the facilitator's `terms.salt == request.salt`
+    // binding holds. If the challenge omits it (older seller), the signer falls
+    // back to a random salt (x402 behaviour).
+    let salt = request.get("salt").cloned().unwrap_or(Value::Null);
+    Ok(json!({
+        "asset": token,
+        "payTo": recipient,
+        "maxTimeoutSeconds": 600,
+        "extra": {
+            "amountPerPeriod": amount_per_period,
+            "periodSec": period_sec,
+            "periodMode": period_mode,
+            "maxPeriods": max_periods,
+            "startAt": start_at,
+            "initialCharge": initial_charge,
+            "changeFrom": change_from,
+            "salt": salt,
+            // Seller-pinned signed terms field — the buyer MUST sign this exact
+            // value (not recompute), else terms_signature_invalid.
+            "termsDeadline": request.get("termsDeadline").cloned().unwrap_or(Value::Null),
+            "plan": { "id": plan_id, "tier": plan_tier },
+            "facilitator": facilitator,
+            "contracts": { "subscription": a.subscription_contract, "permit2": permit2_contract }
+        }
+    }))
+}
+
+/// `payment app subscription subscribe` — double-sign (PermitSingle +
+/// SubscriptionTerms) that creates the subscription, reusing the x402 subscription
+/// terms logic. APP/1 subscriptions reuse the existing x402 subscription signer.
+async fn cmd_app_subscription_subscribe(
+    challenge_header: &str,
+    url: Option<&str>,
+    expected_cap: &str,
+    no_cache: bool,
+    from: Option<&str>,
+) -> Result<()> {
+    app_subscription_settle(challenge_header, from, None, url, expected_cap, no_cache).await
+}
+
+/// `payment app subscription change` — up/downgrade an existing subscription from
+/// a change-offer 402 (challenge carries `changeFrom`). Mirrors the x402
+/// `subscription change` command: same double-sign as subscribe, but signs the
+/// old subId + derived `changeEffectiveAt` into the terms so the subId migrates.
+/// `sub_id` overrides `challenge.request.changeFrom.fromSubId`.
+async fn cmd_app_subscription_change(
+    challenge_header: &str,
+    sub_id: Option<&str>,
+    url: Option<&str>,
+    expected_cap: &str,
+    no_cache: bool,
+    from: Option<&str>,
+) -> Result<()> {
+    app_subscription_settle(
+        challenge_header,
+        from,
+        Some(sub_id.unwrap_or("")),
+        url,
+        expected_cap,
+        no_cache,
+    )
+    .await
+}
+
+/// Shared APP/1 subscription settle flow (subscribe + change). `change_sub_id`:
+/// `None` = fresh subscribe (changeFromSubId = 0); `Some(old)` = plan change
+/// (`old` may be `""` → fall back to challenge `changeFrom.fromSubId`). Both
+/// double-sign, inject the buyer-computed `permitHash` into challenge.request,
+/// and wrap the payload in an app/1 credential. On-chain state comes from the
+/// APP/1 `GET /subscription/allowance-status` endpoint.
+async fn app_subscription_settle(
+    challenge_header: &str,
+    from: Option<&str>,
+    change_sub_id: Option<&str>,
+    url: Option<&str>,
+    expected_cap: &str,
+    no_cache: bool,
+) -> Result<()> {
+    let challenge = parse_www_authenticate(challenge_header)?;
+    app_guard(&challenge, Some("subscription"))?;
+
+    let request = decode_challenge_request(&challenge)?;
+    let chain_id = request["methodDetails"]["chainId"]
+        .as_u64()
+        .ok_or_else(|| anyhow!("missing 'methodDetails.chainId'"))?;
+    let token = request["currency"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing 'currency' in challenge request"))?;
+
+    let (chain_index, payer_addr) = resolve_chain_and_payer(chain_id, from).await?;
+    let payer_addr = payer_addr.as_str();
+
+    // APP/1 buyer-direct read (chainId): authoritative on-chain Permit2 state
+    // (uint48 nonce, subscription contract = spender, Permit2 contract, reserved).
+    let a = crate::payment::subscription::facilitator::app_allowance_status(
+        payer_addr, token, chain_id,
+    )
+    .await?;
+    if a.subscription_contract.is_empty() {
+        bail!("allowance-status returned no subscription contract (spender)");
+    }
+    let permit2_contract = if a.permit2_contract.is_empty() {
+        "0x000000000022D473030F116dDEE9F6B43aC78BA3".to_string()
+    } else {
+        a.permit2_contract.clone()
+    };
+
+    // Adapt app/1 challenge → x402 offer, then double-sign with the injected
+    // allowance-status (so on-chain reads went through the app/1 endpoint).
+    let accepted = build_app_subscription_accepted(&request, token, &a, &permit2_contract)?;
+    let signed = match change_sub_id {
+        Some(old) => {
+            crate::payment::subscription::sign::sign_change_with_allowance(
+                &chain_index,
+                chain_id,
+                payer_addr,
+                old,
+                &accepted,
+                &a,
+                Some(expected_cap),
+            )
+            .await
+        }
+        None => {
+            crate::payment::subscription::sign::sign_subscribe_with_allowance(
+                &chain_index,
+                chain_id,
+                payer_addr,
+                &accepted,
+                &a,
+                Some(expected_cap),
+            )
+            .await
+        }
+    }
+    .map_err(payment_flow::map_pre_signing_allowance_error)?;
+
+    // The decoded subscription challenge.request must carry `permitHash`
+    // (= keccak256 of the PermitSingle) to bind the terms signature to this
+    // permit. Its absence produces invalid_params. The
+    // seller can't compute it at challenge time (permit amount/nonce/expiration
+    // are buyer-derived from allowance-status), so the buyer injects it after
+    // signing and re-encodes challenge.request with JCS. termsDeadline and salt
+    // are already seller-pinned. subscriptionContract is echoed from
+    // allowance-status. Everything else (nested payload shape, spender =
+    // subscription contract) stays as the reused x402 double-sign.
+    let payload_val = serde_json::to_value(&signed.payload)?;
+    let mut request_full = request.clone();
+    if let Some(obj) = request_full.as_object_mut() {
+        if let Some(ph) = payload_val.get("terms").and_then(|t| t.get("permitHash")) {
+            obj.insert("permitHash".to_string(), ph.clone());
+        }
+        obj.insert(
+            "subscriptionContract".to_string(),
+            Value::String(a.subscription_contract.clone()),
+        );
+    }
+    let mut challenge_echo = build_app_challenge_echo(&challenge);
+    challenge_echo["request"] = Value::String(base64url_encode_json(&request_full)?);
+
+    // The subscription settle `payload` is the flat Permit2 AllowanceTransfer
+    // object, not the nested `permit{}` / `terms{}`
+    // structs. The terms live in challenge.request (validated there); the payload
+    // carries only the PermitSingle fields + BOTH signatures (`signature` =
+    // PermitSingle sig, `termsSignature` = SubscriptionTerms sig). `nonce`,
+    // `expiration`, `sigDeadline` are JSON numbers per the spec. `spender` is the
+    // value that was actually signed (subscription contract — see sign.rs), so
+    // the facilitator can recover the PermitSingle signature.
+    let permit = &payload_val["permit"];
+    let details = &permit["details"];
+    let sig_deadline = permit["sigDeadline"]
+        .as_str()
+        .and_then(|s| s.parse::<u64>().ok())
+        .map(Value::from)
+        .unwrap_or_else(|| permit["sigDeadline"].clone());
+    let flat_payload = json!({
+        "type": "permit2",
+        "from": payer_addr,
+        "token": details["token"],
+        "allowance": details["amount"],
+        "spender": permit["spender"],
+        "nonce": details["nonce"],
+        "expiration": details["expiration"],
+        "sigDeadline": sig_deadline,
+        "signature": payload_val["permitSignature"],
+        "termsSignature": payload_val["termsSignature"],
+    });
+
+    let credential = json!({
+        "challenge": challenge_echo,
+        "source": format!("did:pkh:eip155:{chain_id}:{payer_addr}"),
+        "payload": flat_payload,
+    });
+    let authorization_header = format!("Payment {}", base64url_encode_json(&credential)?);
+    let action = if change_sub_id.is_some() {
+        "change"
+    } else {
+        "subscribe"
+    };
+    // With `--no-cache`, stage an inactive host→subId mapping. The authoritative
+    // list read activates it after seller settlement, while access cannot use it
+    // early. Existing active mappings survive unconfirmed changes.
+    crate::commands::payment::subscription::cache_subscription(
+        "app/1",
+        url,
+        &signed.payload,
+        &signed.sub_id,
+        &signed.plan_id,
+        no_cache,
+    );
+    output::success(json!({
+        "protocol": "app/1",
+        "method": "evm",
+        "intent": "subscription",
+        "action": action,
+        "authorization_header": authorization_header,
+        "wallet": payer_addr,
+        "sub_id": signed.sub_id,
+        "cached_for_host": if no_cache {
+            None
+        } else {
+            url.map(crate::payment::subscription::cache::host_of)
+        },
+        "reconcile_for_host": if no_cache {
+            url.map(crate::payment::subscription::cache::host_of)
+        } else {
+            None
+        },
+        "challenge": { "id": challenge["id"], "realm": challenge["realm"] },
+    }));
+    Ok(())
+}
+
+/// `payment app subscription cancel` — sign a payer cancelAuthorization.
+/// `payment app subscription access` — build an `APP-Access` proof header to
+/// access a Seller's protected resource after subscribing (reuses the x402
+/// `build_access_proof`: EIP-191 personal_sign over `keccak(subId ‖ payer ‖
+/// timestamp)`). The buyer sends the returned header to the resource URL; the
+/// Seller recovers the signer and checks the subscription is active. No 402.
+async fn cmd_app_subscription_access(
+    url: Option<&str>,
+    sub_id: Option<&str>,
+    from: Option<&str>,
+    chain: &str,
+) -> Result<()> {
+    use crate::payment::subscription::cache::{host_of, SubscriptionCache};
+    // Resolve the subId: explicit override, else the active cache entry for the
+    // resource URL's host (written by subscribe/change --url). Mirrors x402.
+    let (resolved_sub, source) = match sub_id {
+        Some(sid) => (sid.to_string(), "override"),
+        None => {
+            let url = url.ok_or_else(|| {
+                anyhow!("access needs --url <resourceUrl> (to resolve the subId from cache) or --sub-id")
+            })?;
+            let cache = SubscriptionCache::load();
+            let entry = cache.resolve("app/1", url).ok_or_else(|| {
+                anyhow!(
+                    "no active subscription cached for host {}. Subscribe with \
+                     `payment app subscription subscribe --url {url} …`, run \
+                     `payment app subscription list` to reconcile, or pass --sub-id.",
+                    host_of(url)
+                )
+            })?;
+            (entry.sub_id.clone(), "cache")
+        }
+    };
+    let (chain_index, _chain_id, payer) =
+        payment_flow::resolve_chain_and_payer_by_chain(chain, from).await?;
+    let (hname, hvalue) =
+        crate::payment::subscription::sign::build_access_proof(&chain_index, &payer, &resolved_sub)
+            .await?;
+    output::success(json!({
+        "protocol": "app/1",
+        "method": "evm",
+        "intent": "subscription",
+        "action": "access",
+        "sub_id": resolved_sub,
+        "sub_id_source": source,
+        "wallet": payer,
+        "access_header_name": hname,
+        "access_header_value": hvalue,
+        "next_step": format!("send `{hname}: {hvalue}` to the protected resource URL (no `Payment ` prefix)"),
+    }));
+    Ok(())
+}
+
+/// Resolve the subscription contract for a cancel auth: use `--subscription-contract`
+/// if given, else look it up from APP/1 allowance-status via `--token` (mirrors the
+/// x402 `resolve_contract` — no more forcing the user to paste the contract).
+async fn resolve_app_contract(
+    contract: Option<&str>,
+    token: Option<&str>,
+    payer: &str,
+    chain_id: u64,
+) -> Result<String> {
+    if let Some(c) = contract {
+        return Ok(c.to_string());
+    }
+    let token =
+        token.ok_or_else(|| anyhow!("cancel needs --subscription-contract or --token"))?;
+    let a = crate::payment::subscription::facilitator::app_allowance_status(payer, token, chain_id)
+        .await?;
+    if a.subscription_contract.is_empty() {
+        bail!("allowance-status returned no subscriptionContract for token {token}");
+    }
+    Ok(a.subscription_contract)
+}
+
+async fn cmd_app_subscription_cancel(
+    sub_id: &str,
+    offer_id: &str,
+    subscription_contract: Option<&str>,
+    token: Option<&str>,
+    chain_id: u64,
+    from: Option<&str>,
+) -> Result<()> {
+    if offer_id.trim().is_empty() {
+        bail!("cancel requires a non-empty --offer-id");
+    }
+    let (chain_index, payer_addr) = resolve_chain_and_payer(chain_id, from).await?;
+    let contract =
+        resolve_app_contract(subscription_contract, token, &payer_addr, chain_id).await?;
+    let _operation_lock = subscription_operation_state::lock_subscription(sub_id)?;
+    subscription_operation_state::ensure_no_pending(sub_id)?;
+    let auth = crate::payment::subscription::sign::sign_cancel(
+        &chain_index,
+        chain_id,
+        &payer_addr,
+        sub_id,
+        &contract,
+        3600,
+    )
+    .await?;
+    let operation = subscription_operation_state::begin_pending(
+        subscription_operation_state::PendingAction::Cancel,
+        sub_id,
+        None,
+        offer_id,
+        &payer_addr,
+    )?;
+    // Signing only authorizes the seller to cancel. Keep the cache active until
+    // a matching successful receipt resolves the pending operation.
+    output::success(json!({
+        "protocol": "app/1",
+        "method": "evm",
+        "intent": "subscription",
+        "action": "cancel",
+        "cancelAuthorization": serde_json::to_value(&auth)?,
+        "operation_id": operation.operation_id,
+        "offer_id": offer_id,
+        "wallet": payer_addr,
+        "next_step": "seller submits { offerId, cancelAuthorization } to POST /subscription/cancel, then resolve the operation with its Payment-Receipt",
+    }));
+    Ok(())
+}
+
+/// `payment app subscription allowance-status` — read-only APP/1 Permit2
+/// status (uint48 nonce, reserved/committed, contracts). Mirrors the x402
+/// `allowance-status`; backend wrapper `app_allowance_status` already exists.
+async fn cmd_app_subscription_allowance_status(
+    token: &str,
+    chain_id: u64,
+    from: Option<&str>,
+) -> Result<()> {
+    let (_chain_index, payer_addr) = resolve_chain_and_payer(chain_id, from).await?;
+    let a = crate::payment::subscription::facilitator::app_allowance_status(
+        &payer_addr,
+        token,
+        chain_id,
+    )
+    .await?;
+    output::success(json!({
+        "protocol": "app/1",
+        "method": "evm",
+        "intent": "subscription",
+        "action": "allowance-status",
+        "wallet": payer_addr,
+        "token": token,
+        "chainId": chain_id,
+        "approvedAmount": a.approved_amount,
+        "expiration": a.expiration,
+        "nonce": a.nonce,
+        "reservedAmount": a.reserved_amount,
+        "reservedExpiration": a.reserved_expiration,
+        "tokenBalance": a.token_balance,
+        "availableAmount": a.available_amount,
+        "permit2Allowance": a.permit2_allowance,
+        "subscriptionContract": a.subscription_contract,
+        "permit2Contract": a.permit2_contract,
+    }));
+    Ok(())
+}
+
+/// `payment app subscription cancel-pending` — sign an authorization to revoke a
+/// not-yet-effective downgrade.
+async fn cmd_app_subscription_cancel_pending(
+    sub_id: &str,
+    new_sub_id: &str,
+    offer_id: &str,
+    subscription_contract: Option<&str>,
+    token: Option<&str>,
+    chain_id: u64,
+    from: Option<&str>,
+) -> Result<()> {
+    if offer_id.trim().is_empty() {
+        bail!("cancel-pending requires a non-empty --offer-id");
+    }
+    let (chain_index, payer_addr) = resolve_chain_and_payer(chain_id, from).await?;
+    let contract =
+        resolve_app_contract(subscription_contract, token, &payer_addr, chain_id).await?;
+    let _operation_lock = subscription_operation_state::lock_subscription(sub_id)?;
+    subscription_operation_state::ensure_no_pending(sub_id)?;
+    let auth = crate::payment::subscription::sign::sign_cancel_pending_change(
+        &chain_index,
+        chain_id,
+        &payer_addr,
+        sub_id,
+        new_sub_id,
+        &contract,
+    )
+    .await?;
+    let operation = subscription_operation_state::begin_pending(
+        subscription_operation_state::PendingAction::CancelPending,
+        sub_id,
+        Some(new_sub_id),
+        offer_id,
+        &payer_addr,
+    )?;
+    output::success(json!({
+        "protocol": "app/1",
+        "method": "evm",
+        "intent": "subscription",
+        "action": "cancel-pending-change",
+        "authorization": serde_json::to_value(&auth)?,
+        "operation_id": operation.operation_id,
+        "offer_id": offer_id,
+        "wallet": payer_addr,
+        "next_step": "seller submits { offerId, authorization } to POST /subscription/cancel-pending-change, then resolve the operation with its Payment-Receipt",
+    }));
+    Ok(())
+}
+
+fn app_subscription_receipt_status(
+    receipt: &str,
+    pending: &subscription_operation_state::OperationState,
+) -> Result<(String, Option<String>)> {
+    let value = decode_payment_blob(receipt).context("decode APP subscription receipt")?;
+    let require = |field: &str| {
+        value[field]
+            .as_str()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow!("APP subscription receipt is missing {field}"))
+    };
+    if require("protocol")? != "app/1" {
+        bail!("APP subscription receipt protocol must be app/1");
+    }
+    if require("intent")? != "subscription" {
+        bail!("APP subscription receipt intent must be subscription");
+    }
+    if require("offerId")? != pending.offer_id {
+        bail!("APP subscription receipt offerId does not match the pending operation");
+    }
+    if !require("payer")?.eq_ignore_ascii_case(&pending.payer) {
+        bail!("APP subscription receipt payer does not match the pending operation");
+    }
+    let status = decode_receipt::decode_receipt(Some(receipt), None)?
+        .status
+        .to_ascii_lowercase();
+    if !matches!(status.as_str(), "success" | "failed" | "pending" | "timeout") {
+        bail!("APP subscription receipt has unsupported status {status}");
+    }
+    if status != "success" {
+        return Ok((status, None));
+    }
+    let reference = require("reference")?.to_ascii_lowercase();
+    Ok((status, Some(reference)))
+}
+
+fn cmd_app_subscription_resolve(
+    operation_id: &str,
+    receipt: Option<&str>,
+    outcome: Option<&str>,
+) -> Result<()> {
+    if let Some(resolved) = subscription_operation_state::read_resolution(operation_id) {
+        let _operation_lock =
+            subscription_operation_state::lock_subscription(&resolved.sub_id)?;
+        finish_app_subscription_resolution(&resolved)?;
+        emit_app_subscription_resolution(&resolved, true);
+        return Ok(());
+    }
+    let candidate = subscription_operation_state::read_pending(operation_id).ok_or_else(|| {
+        anyhow!(
+            "APP subscription operation {operation_id} is not pending; it may already be resolved"
+        )
+    })?;
+    let _operation_lock = subscription_operation_state::lock_subscription(&candidate.sub_id)?;
+    if let Some(resolved) = subscription_operation_state::read_resolution(operation_id) {
+        finish_app_subscription_resolution(&resolved)?;
+        emit_app_subscription_resolution(&resolved, true);
+        return Ok(());
+    }
+    let pending = subscription_operation_state::read_pending(operation_id)
+        .ok_or_else(|| anyhow!("APP subscription operation {operation_id} is not pending"))?;
+    let (resolution, receipt_reference) = if let Some(receipt) = receipt {
+        app_subscription_receipt_status(receipt, &pending)?
+    } else {
+        (
+            outcome
+                .ok_or_else(|| anyhow!("--receipt or --outcome is required"))?
+                .to_string(),
+            None,
+        )
+    };
+    let committed = resolution == "success";
+    let _receipt_lock = if let Some(reference) = receipt_reference.as_deref() {
+        Some(subscription_operation_state::lock_receipt_reference(reference)?)
+    } else {
+        None
+    };
+    if let Some(reference) = receipt_reference.as_deref() {
+        if subscription_operation_state::receipt_reference_used(reference)? {
+            bail!("APP subscription receipt reference was already used by another operation");
+        }
+    }
+
+    // Persist the resolution first so a successful receipt reference is
+    // claimed before any cache side effect. A retry completes that side effect
+    // idempotently if the process exits after this durable commit point.
+    let resolved = subscription_operation_state::resolve(
+        pending,
+        &resolution,
+        committed,
+        receipt_reference.as_deref(),
+    )?;
+    finish_app_subscription_resolution(&resolved)?;
+    emit_app_subscription_resolution(&resolved, false);
+    Ok(())
+}
+
+fn finish_app_subscription_resolution(
+    resolved: &subscription_operation_state::OperationState,
+) -> Result<()> {
+    if resolved.committed
+        && matches!(
+            resolved.action,
+            subscription_operation_state::PendingAction::Cancel
+        )
+    {
+        let mut cache = crate::payment::subscription::cache::SubscriptionCache::load();
+        if cache.mark_app_canceled(&resolved.sub_id) > 0 {
+            cache.save()?;
+        }
+    }
+    Ok(())
+}
+
+fn emit_app_subscription_resolution(
+    resolved: &subscription_operation_state::OperationState,
+    already_resolved: bool,
+) {
+    let operation = match resolved.action {
+        subscription_operation_state::PendingAction::Cancel => "cancel",
+        subscription_operation_state::PendingAction::CancelPending => "cancel-pending",
+    };
+    output::success(json!({
+        "protocol": "app/1",
+        "method": "evm",
+        "intent": "subscription",
+        "action": "resolve",
+        "operation": operation,
+        "operation_id": resolved.operation_id,
+        "sub_id": resolved.sub_id,
+        "new_sub_id": resolved.new_sub_id,
+        "resolution": resolved.resolution,
+        "committed": resolved.committed,
+        "already_resolved": already_resolved,
+    }));
+}
+
+/// `payment app subscription list` — the buyer's own APP/1 subscriptions
+/// (buyer-direct read; EVM address is chain-independent, resolved
+/// via X Layer for the selected account).
+async fn cmd_app_subscription_list(from: Option<&str>, limit: u32, offset: u32) -> Result<()> {
+    let (_chain_index, payer_addr) = resolve_chain_and_payer(196, from).await?;
+    let resp = crate::payment::subscription::facilitator::app_list(&payer_addr, limit, offset).await?;
+    // Reconcile the host→subId cache from authoritative on-chain state, following
+    // `changedToSubId` migrations (so `access --url` tracks upgrades/downgrades).
+    let mut cache = crate::payment::subscription::cache::SubscriptionCache::load();
+    cache.reconcile_from(&resp.subscriptions);
+    if let Err(e) = cache.save() {
+        eprintln!("Warning: subscription cache reconcile save failed: {e:#}");
+    }
+    output::success(json!({
+        "protocol": "app/1",
+        "intent": "subscription",
+        "action": "list",
+        "buyer": payer_addr,
+        "count": resp.subscriptions.len(),
+        "subscriptions": serde_json::to_value(&resp.subscriptions)?,
+    }));
+    Ok(())
+}
+
 /// onchainos payment charge: Charge single payment.
 /// - feePayer=true (default): TEE-sign EIP-3009, emit TransactionPayload (+ splits if present).
 /// - feePayer=false: require --tx-hash, emit HashPayload (client self-broadcasts).
@@ -1662,6 +3802,8 @@ fn persist_channel_open(channel_id: &str, payer_addr: &str, deposit: &str, initi
         cumulative: initial_cum.to_string(),
         created_at: now,
         updated_at: now,
+        pending_operation: None,
+        resolved_operations: Vec::new(),
     }
     .write();
 }
@@ -1943,6 +4085,153 @@ fn voucher_advances_cumulative(unit: u128, new_cum_u: u128, deposit_u: Option<u1
     unit > 0 && deposit_u.is_none_or(|d| new_cum_u <= d)
 }
 
+fn parse_app_session_amount(value: &str, label: &str) -> Result<u128> {
+    crate::validators::validate_non_negative_integer(value, label)?;
+    value
+        .parse::<u128>()
+        .with_context(|| format!("--{label} exceeds the supported uint128 range"))
+}
+
+/// APP/1 Session open uses the Seller's fixed challenge amount as its only
+/// deposit source. Validate it before wallet resolution or TEE signing.
+fn app_session_open_deposit(request: &Value) -> Result<&str> {
+    let deposit = request["amount"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing 'amount' in APP session challenge request"))?;
+    crate::validators::validate_amount(deposit)
+        .context("invalid APP session challenge request.amount")?;
+    deposit
+        .parse::<u128>()
+        .context("APP session challenge request.amount exceeds the supported uint128 range")?;
+    Ok(deposit)
+}
+
+#[cfg(test)]
+mod app_session_open_tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(subcommand)]
+        command: PaymentCommand,
+    }
+
+    #[test]
+    fn accepts_only_the_challenge_deposit() {
+        let request = json!({ "amount": "1000000" });
+        assert_eq!(app_session_open_deposit(&request).unwrap(), "1000000");
+        let max_supported = json!({
+            "amount": "340282366920938463463374607431768211455"
+        });
+        assert_eq!(
+            app_session_open_deposit(&max_supported).unwrap(),
+            "340282366920938463463374607431768211455"
+        );
+
+        let cli = TestCli::parse_from([
+            "test",
+            "app",
+            "session",
+            "open",
+            "--challenge",
+            "Payment id=\"1\", realm=\"r\", protocol=\"app/1\", method=\"evm\", intent=\"session\", request=\"e30\"",
+        ]);
+        assert!(matches!(
+            cli.command,
+            PaymentCommand::App {
+                command: AppCommand::Session {
+                    command: AppSessionCommand::Open { .. }
+                }
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_removed_deposit_flag() {
+        let parsed = TestCli::try_parse_from([
+            "test",
+            "app",
+            "session",
+            "open",
+            "--challenge",
+            "Payment id=\"1\", realm=\"r\", protocol=\"app/1\", method=\"evm\", intent=\"session\", request=\"e30\"",
+            "--deposit",
+            "999999",
+        ]);
+        assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_challenge_deposit() {
+        for amount in ["0", "01", "-1", "1.5", " 1"] {
+            let request = json!({ "amount": amount });
+            assert!(
+                app_session_open_deposit(&request).is_err(),
+                "amount {amount:?} should be rejected"
+            );
+        }
+
+        let missing = json!({});
+        assert!(app_session_open_deposit(&missing).is_err());
+        let non_string = json!({ "amount": 100 });
+        assert!(app_session_open_deposit(&non_string).is_err());
+        let session_range_overflow = json!({
+            "amount": "340282366920938463463374607431768211456"
+        });
+        assert!(app_session_open_deposit(&session_range_overflow).is_err());
+    }
+}
+
+/// APP vouchers must advance the cumulative amount without exceeding the
+/// channel's currently persisted deposit. Call this before any TEE signing.
+fn validate_app_voucher_cumulative(current: &str, deposit: &str, requested: &str) -> Result<()> {
+    let current = parse_app_session_amount(current, "current-cumulative-amount")?;
+    let deposit = parse_app_session_amount(deposit, "channel-deposit")?;
+    let requested = parse_app_session_amount(requested, "cumulative-amount")?;
+
+    if current > deposit {
+        bail!(
+            "APP session state is inconsistent: current cumulative {current} exceeds deposit \
+             {deposit}; refusing to sign"
+        );
+    }
+    if requested <= current {
+        bail!(
+            "--cumulative-amount must be greater than the current cumulative {current}; \
+             got {requested}"
+        );
+    }
+    if requested > deposit {
+        bail!(
+            "--cumulative-amount {requested} exceeds the current channel deposit {deposit}; \
+             top up the channel before signing"
+        );
+    }
+    Ok(())
+}
+
+/// APP close reuses the latest voucher cumulative. It never raises or lowers
+/// the authorization while closing the channel.
+fn validate_app_close_cumulative(current: &str, deposit: &str, requested: &str) -> Result<()> {
+    let current = parse_app_session_amount(current, "current-cumulative-amount")?;
+    let deposit = parse_app_session_amount(deposit, "channel-deposit")?;
+    let requested = parse_app_session_amount(requested, "cumulative-amount")?;
+
+    if current > deposit {
+        bail!(
+            "APP session state is inconsistent: current cumulative {current} exceeds deposit \
+             {deposit}; refusing to sign"
+        );
+    }
+    if requested != current {
+        bail!(
+            "APP session close must reuse the latest cumulative amount {current}; got {requested}"
+        );
+    }
+    Ok(())
+}
+
 /// onchainos payment session voucher: sign EIP-712 voucher (or wrap an existing
 /// signature when `reuse_signature` is supplied).
 /// Returns authorization_header for replaying business requests.
@@ -2184,6 +4473,12 @@ async fn cmd_mpp_session_topup(
         cumulative: prior_cum.clone(),
         created_at: prior.as_ref().map(|s| s.created_at).unwrap_or(now),
         updated_at: now,
+        pending_operation: prior
+            .as_ref()
+            .and_then(|state| state.pending_operation.clone()),
+        resolved_operations: prior
+            .map(|state| state.resolved_operations)
+            .unwrap_or_default(),
     }
     .write();
 
@@ -3142,6 +5437,23 @@ mod tests {
     }
 
     #[test]
+    fn parse_www_authenticate_accepts_case_insensitive_payment_scheme() {
+        for scheme in ["Payment", "payment", "PAYMENT", "PaYmEnT"] {
+            let header = format!(
+                "{scheme} id=\"abc123\", realm=\"api.shop.com\", method=\"evm\", intent=\"charge\", request=\"e30\""
+            );
+            let parsed = parse_www_authenticate(&header).unwrap();
+            assert_eq!(parsed["id"].as_str(), Some("abc123"));
+            assert_eq!(parsed["method"].as_str(), Some("evm"));
+            assert_eq!(parsed["intent"].as_str(), Some("charge"));
+
+            let decoded = decode_payment_blob(&header).unwrap();
+            assert_eq!(decoded["id"].as_str(), Some("abc123"));
+            assert_eq!(decoded["request"], json!({}));
+        }
+    }
+
+    #[test]
     fn parse_www_authenticate_rejects_missing_required() {
         let header = "Payment realm=\"x\""; // missing id/method/intent
         assert!(parse_www_authenticate(header).is_err());
@@ -3524,5 +5836,538 @@ mod tests {
         assert!(!voucher_advances_cumulative(0, 100, Some(200)));
         // ...and also when the deposit is unknown.
         assert!(!voucher_advances_cumulative(0, 100, None));
+    }
+
+    // APP enforces the channel budget before TEE signing. MPP keeps its existing
+    // orchestration and decision-layer behavior unchanged.
+
+    #[test]
+    fn app_voucher_accepts_strict_increase_within_deposit() {
+        assert!(validate_app_voucher_cumulative("100", "300", "250").is_ok());
+        assert!(validate_app_voucher_cumulative("100", "300", "300").is_ok());
+    }
+
+    #[test]
+    fn app_voucher_rejects_non_increasing_cumulative() {
+        assert!(validate_app_voucher_cumulative("100", "300", "100").is_err());
+        assert!(validate_app_voucher_cumulative("100", "300", "99").is_err());
+    }
+
+    #[test]
+    fn app_voucher_rejects_cumulative_over_deposit() {
+        let err = validate_app_voucher_cumulative("100", "300", "301")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("top up the channel before signing"));
+    }
+
+    #[test]
+    fn app_close_accepts_only_latest_cumulative() {
+        assert!(validate_app_close_cumulative("250", "300", "250").is_ok());
+        assert!(validate_app_close_cumulative("250", "300", "251").is_err());
+        assert!(validate_app_close_cumulative("250", "300", "249").is_err());
+    }
+
+    #[test]
+    fn app_guards_reject_inconsistent_persisted_state() {
+        assert!(validate_app_voucher_cumulative("301", "300", "302").is_err());
+        assert!(validate_app_close_cumulative("301", "300", "301").is_err());
+    }
+
+    #[test]
+    fn app_subscription_signing_requires_confirmed_cap() {
+        for action in ["subscribe", "change"] {
+            let parsed = TestCli::try_parse_from([
+                "test",
+                "app",
+                "subscription",
+                action,
+                "--challenge",
+                "challenge-fixture",
+            ]);
+            assert!(parsed.is_err(), "{action} must require --expected-cap");
+        }
+    }
+
+    #[test]
+    fn app_subscription_signing_parses_cap_and_no_cache() {
+        let parsed = TestCli::parse_from([
+            "test",
+            "app",
+            "subscription",
+            "subscribe",
+            "--challenge",
+            "challenge-fixture",
+            "--expected-cap",
+            "60000000",
+            "--no-cache",
+        ]);
+        assert!(matches!(
+            parsed.command,
+            PaymentCommand::App {
+                command: AppCommand::Subscription {
+                    command: AppSubscriptionCommand::Subscribe {
+                        expected_cap,
+                        no_cache: true,
+                        ..
+                    }
+                }
+            } if expected_cap == "60000000"
+        ));
+    }
+
+    #[test]
+    fn app_subscription_cancel_requires_offer_id() {
+        let parsed = TestCli::try_parse_from([
+            "test",
+            "app",
+            "subscription",
+            "cancel",
+            "--sub-id",
+            "0xsub",
+            "--subscription-contract",
+            "0x1111111111111111111111111111111111111111",
+            "--chain-id",
+            "196",
+        ]);
+        assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn app_subscription_resolve_requires_receipt_or_outcome() {
+        let missing = TestCli::try_parse_from([
+            "test",
+            "app",
+            "subscription",
+            "resolve",
+            "--operation-id",
+            "op_1",
+        ]);
+        assert!(missing.is_err());
+
+        let parsed = TestCli::parse_from([
+            "test",
+            "app",
+            "subscription",
+            "resolve",
+            "--operation-id",
+            "op_1",
+            "--receipt",
+            r#"{"status":"success"}"#,
+        ]);
+        assert!(matches!(
+            parsed.command,
+            PaymentCommand::App {
+                command: AppCommand::Subscription {
+                    command: AppSubscriptionCommand::Resolve { .. }
+                }
+            }
+        ));
+    }
+
+    #[test]
+    fn app_session_resolve_commits_topup_once() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let dir = tmp_home("app_session_resolve_topup");
+        std::env::set_var("ONCHAINOS_HOME", &dir);
+        let mut state = session_state::ChannelState {
+            channel_id: "0xresolve".into(),
+            owner_wallet: "wallet-1".into(),
+            deposit: "1000".into(),
+            cumulative: "20".into(),
+            created_at: 1,
+            updated_at: 1,
+            pending_operation: None,
+            resolved_operations: Vec::new(),
+        };
+        let operation_id = state
+            .begin_pending(session_state::PendingAction::Topup, "1000", "offer-1")
+            .unwrap();
+        state.write().unwrap();
+
+        assert!(cmd_app_session_resolve(
+            &operation_id,
+            Some(r#"{"status":"success"}"#),
+            None,
+        )
+        .is_err());
+        assert_eq!(session_state::read("0xresolve").unwrap().deposit, "1000");
+        let wrong_amount_receipt = r#"{"status":"success","protocol":"app/1","intent":"session","offerId":"offer-1","payer":"wallet-1","settledAmount":"1000","reference":"0xtx-wrong"}"#;
+        assert!(cmd_app_session_resolve(
+            &operation_id,
+            Some(wrong_amount_receipt),
+            None,
+        )
+        .is_err());
+        assert_eq!(session_state::read("0xresolve").unwrap().deposit, "1000");
+
+        let receipt = r#"{"status":"success","protocol":"app/1","intent":"session","offerId":"offer-1","payer":"wallet-1","settledAmount":"2000","reference":"0xtx1"}"#;
+        cmd_app_session_resolve(&operation_id, Some(receipt), None).unwrap();
+        assert_eq!(session_state::read("0xresolve").unwrap().deposit, "2000");
+        cmd_app_session_resolve(&operation_id, Some(receipt), None).unwrap();
+        assert_eq!(session_state::read("0xresolve").unwrap().deposit, "2000");
+
+        let mut state = session_state::read("0xresolve").unwrap();
+        let second_operation = state
+            .begin_pending(session_state::PendingAction::Topup, "1000", "offer-1")
+            .unwrap();
+        state.write().unwrap();
+        assert!(cmd_app_session_resolve(&second_operation, Some(receipt), None).is_err());
+        assert_eq!(session_state::read("0xresolve").unwrap().deposit, "2000");
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    #[test]
+    fn app_session_resolve_clears_close_after_network_error() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let dir = tmp_home("app_session_resolve_close_error");
+        std::env::set_var("ONCHAINOS_HOME", &dir);
+        let mut state = session_state::ChannelState {
+            channel_id: "0xclose".into(),
+            owner_wallet: "wallet-1".into(),
+            deposit: "100".into(),
+            cumulative: "20".into(),
+            created_at: 1,
+            updated_at: 1,
+            pending_operation: None,
+            resolved_operations: Vec::new(),
+        };
+        let operation_id = state
+            .begin_pending(session_state::PendingAction::Close, "20", "offer-1")
+            .unwrap();
+        state.write().unwrap();
+
+        cmd_app_session_resolve(&operation_id, None, Some("network-error")).unwrap();
+        let state = session_state::read("0xclose").unwrap();
+        assert_eq!(state.deposit, "100");
+        assert!(state.pending_operation.is_none());
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    #[test]
+    fn app_session_resolve_archives_successful_close_once() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let dir = tmp_home("app_session_resolve_close_success");
+        std::env::set_var("ONCHAINOS_HOME", &dir);
+        let mut state = session_state::ChannelState {
+            channel_id: "0xclosed".into(),
+            owner_wallet: "wallet-1".into(),
+            deposit: "100".into(),
+            cumulative: "20".into(),
+            created_at: 1,
+            updated_at: 1,
+            pending_operation: None,
+            resolved_operations: Vec::new(),
+        };
+        let operation_id = state
+            .begin_pending(session_state::PendingAction::Close, "20", "offer-1")
+            .unwrap();
+        state.write().unwrap();
+        let receipt = r#"{"status":"success","protocol":"app/1","intent":"session","offerId":"offer-1","payer":"wallet-1","settledAmount":"20","reference":"0xclose1"}"#;
+
+        cmd_app_session_resolve(&operation_id, Some(receipt), None).unwrap();
+        assert!(session_state::read("0xclosed").is_none());
+        cmd_app_session_resolve(&operation_id, Some(receipt), None).unwrap();
+        assert!(session_state::read("0xclosed").is_none());
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    #[test]
+    fn app_session_non_success_receipts_need_no_settled_amount() {
+        let state = session_state::ChannelState {
+            channel_id: "0xstatus".into(),
+            owner_wallet: "wallet-1".into(),
+            deposit: "100".into(),
+            cumulative: "20".into(),
+            created_at: 1,
+            updated_at: 1,
+            pending_operation: None,
+            resolved_operations: Vec::new(),
+        };
+        let pending = session_state::PendingOperation {
+            operation_id: "op_status".into(),
+            action: session_state::PendingAction::Topup,
+            amount: "25".into(),
+            offer_id: "offer-1".into(),
+            created_at: 1,
+        };
+        for status in ["failed", "pending", "timeout"] {
+            let receipt = format!(
+                r#"{{"status":"{status}","protocol":"app/1","intent":"session","offerId":"offer-1","payer":"wallet-1"}}"#
+            );
+            assert_eq!(
+                app_session_receipt_status(&receipt, &state, &pending).unwrap(),
+                (status.to_string(), None)
+            );
+        }
+        let unknown = r#"{"status":"unknown","protocol":"app/1","intent":"session","offerId":"offer-1","payer":"wallet-1"}"#;
+        assert!(app_session_receipt_status(unknown, &state, &pending).is_err());
+    }
+
+    fn seed_app_subscription_cache(sub_id: &str) {
+        let mut cache = crate::payment::subscription::cache::SubscriptionCache::default();
+        cache.put(
+            crate::payment::subscription::types::SubscriptionCacheEntry {
+                sub_id: sub_id.to_string(),
+                resource_host: "api.example.com".to_string(),
+                merchant: "0xmerchant".to_string(),
+                plan_id: "basic".to_string(),
+                plan_tier: 1,
+                max_periods: 12,
+                state: "active".to_string(),
+                changed_to_sub_id: None,
+                protocol: "app/1".to_string(),
+            },
+        );
+        cache.save().unwrap();
+    }
+
+    #[test]
+    fn app_subscription_resolve_commits_cancel_once() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let dir = tmp_home("app_subscription_resolve_cancel");
+        std::env::set_var("ONCHAINOS_HOME", &dir);
+        seed_app_subscription_cache("0xsub");
+        let pending = subscription_operation_state::begin_pending(
+            subscription_operation_state::PendingAction::Cancel,
+            "0xsub",
+            None,
+            "offer-1",
+            "0xpayer",
+        )
+        .unwrap();
+
+        assert!(cmd_app_subscription_resolve(
+            &pending.operation_id,
+            Some(r#"{"status":"success"}"#),
+            None,
+        )
+        .is_err());
+        assert_eq!(
+            crate::payment::subscription::cache::SubscriptionCache::load()
+                .get("app/1", "api.example.com")
+                .unwrap()
+                .state,
+            "active"
+        );
+
+        let receipt = r#"{"status":"success","protocol":"app/1","intent":"subscription","offerId":"offer-1","payer":"0xpayer","reference":"0xtx1"}"#;
+        cmd_app_subscription_resolve(&pending.operation_id, Some(receipt), None).unwrap();
+        assert_eq!(
+            crate::payment::subscription::cache::SubscriptionCache::load()
+                .get("app/1", "api.example.com")
+                .unwrap()
+                .state,
+            "canceled"
+        );
+        cmd_app_subscription_resolve(&pending.operation_id, Some(receipt), None).unwrap();
+        let resolved =
+            subscription_operation_state::read_resolution(&pending.operation_id).unwrap();
+        assert!(resolved.committed);
+        assert_eq!(resolved.resolution.as_deref(), Some("success"));
+
+        let second = subscription_operation_state::begin_pending(
+            subscription_operation_state::PendingAction::Cancel,
+            "0xother",
+            None,
+            "offer-1",
+            "0xpayer",
+        )
+        .unwrap();
+        assert!(cmd_app_subscription_resolve(&second.operation_id, Some(receipt), None).is_err());
+        assert!(subscription_operation_state::read_pending(&second.operation_id).is_some());
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    #[test]
+    fn app_subscription_resolve_cancel_pending_keeps_current_subscription_active() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let dir = tmp_home("app_subscription_resolve_cancel_pending");
+        std::env::set_var("ONCHAINOS_HOME", &dir);
+        seed_app_subscription_cache("0xsub");
+        let pending = subscription_operation_state::begin_pending(
+            subscription_operation_state::PendingAction::CancelPending,
+            "0xsub",
+            Some("0xnew"),
+            "offer-2",
+            "0xpayer",
+        )
+        .unwrap();
+        let receipt = r#"{"status":"success","protocol":"app/1","intent":"subscription","offerId":"offer-2","payer":"0xpayer","reference":"0xtx2"}"#;
+
+        cmd_app_subscription_resolve(&pending.operation_id, Some(receipt), None).unwrap();
+
+        assert_eq!(
+            crate::payment::subscription::cache::SubscriptionCache::load()
+                .get("app/1", "api.example.com")
+                .unwrap()
+                .state,
+            "active"
+        );
+        let resolved =
+            subscription_operation_state::read_resolution(&pending.operation_id).unwrap();
+        assert!(resolved.committed);
+        assert_eq!(resolved.new_sub_id.as_deref(), Some("0xnew"));
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    #[test]
+    fn app_subscription_resolve_recovers_cache_after_durable_commit() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let dir = tmp_home("app_subscription_resolve_recovery");
+        std::env::set_var("ONCHAINOS_HOME", &dir);
+        seed_app_subscription_cache("0xsub");
+        let pending = subscription_operation_state::begin_pending(
+            subscription_operation_state::PendingAction::Cancel,
+            "0xsub",
+            None,
+            "offer-recovery",
+            "0xpayer",
+        )
+        .unwrap();
+
+        // Simulate a process exit after the receipt claim was persisted but
+        // before the cache side effect ran.
+        subscription_operation_state::resolve(
+            pending.clone(),
+            "success",
+            true,
+            Some("0xtx-recovery"),
+        )
+        .unwrap();
+        assert_eq!(
+            crate::payment::subscription::cache::SubscriptionCache::load()
+                .get("app/1", "api.example.com")
+                .unwrap()
+                .state,
+            "active"
+        );
+
+        cmd_app_subscription_resolve(&pending.operation_id, None, None).unwrap();
+        assert_eq!(
+            crate::payment::subscription::cache::SubscriptionCache::load()
+                .get("app/1", "api.example.com")
+                .unwrap()
+                .state,
+            "canceled"
+        );
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    #[test]
+    fn app_subscription_resolve_non_success_does_not_change_cache() {
+        let _lock = crate::home::TEST_ENV_MUTEX.lock().unwrap();
+        let dir = tmp_home("app_subscription_resolve_failed");
+        std::env::set_var("ONCHAINOS_HOME", &dir);
+        seed_app_subscription_cache("0xsub");
+        let pending = subscription_operation_state::begin_pending(
+            subscription_operation_state::PendingAction::Cancel,
+            "0xsub",
+            None,
+            "offer-3",
+            "0xpayer",
+        )
+        .unwrap();
+        let receipt = r#"{"status":"failed","protocol":"app/1","intent":"subscription","offerId":"offer-3","payer":"0xpayer"}"#;
+
+        cmd_app_subscription_resolve(&pending.operation_id, Some(receipt), None).unwrap();
+
+        assert_eq!(
+            crate::payment::subscription::cache::SubscriptionCache::load()
+                .get("app/1", "api.example.com")
+                .unwrap()
+                .state,
+            "active"
+        );
+        let resolved =
+            subscription_operation_state::read_resolution(&pending.operation_id).unwrap();
+        assert!(!resolved.committed);
+        assert_eq!(resolved.resolution.as_deref(), Some("failed"));
+        std::env::remove_var("ONCHAINOS_HOME");
+    }
+
+    #[test]
+    fn app_subscription_receipt_must_match_pending_context() {
+        let pending = subscription_operation_state::OperationState {
+            operation_id: "op_test".into(),
+            action: subscription_operation_state::PendingAction::Cancel,
+            sub_id: "0xsub".into(),
+            new_sub_id: None,
+            offer_id: "offer-1".into(),
+            payer: "0xPayer".into(),
+            created_at: 1,
+            resolution: None,
+            committed: false,
+            receipt_reference: None,
+            resolved_at: None,
+        };
+        let valid = r#"{"status":"success","protocol":"app/1","intent":"subscription","offerId":"offer-1","payer":"0xpayer","reference":"0xTX1"}"#;
+        assert_eq!(
+            app_subscription_receipt_status(valid, &pending).unwrap(),
+            ("success".to_string(), Some("0xtx1".to_string()))
+        );
+
+        for invalid in [
+            r#"{"status":"success","protocol":"app/2","intent":"subscription","offerId":"offer-1","payer":"0xpayer","reference":"0xtx1"}"#,
+            r#"{"status":"success","protocol":"app/1","intent":"session","offerId":"offer-1","payer":"0xpayer","reference":"0xtx1"}"#,
+            r#"{"status":"success","protocol":"app/1","intent":"subscription","offerId":"offer-2","payer":"0xpayer","reference":"0xtx1"}"#,
+            r#"{"status":"success","protocol":"app/1","intent":"subscription","offerId":"offer-1","payer":"0xother","reference":"0xtx1"}"#,
+            r#"{"status":"success","protocol":"app/1","intent":"subscription","offerId":"offer-1","payer":"0xpayer"}"#,
+        ] {
+            assert!(app_subscription_receipt_status(invalid, &pending).is_err());
+        }
+    }
+
+    // ── APP/1 (protocol="app/1") ──────────────────────────────────────
+
+    /// The APP/1 echo must carry `protocol` and `opaque` verbatim (both feed the
+    /// `challenge.id` HMAC), unlike the MPP echo which omits them.
+    #[test]
+    fn app_echo_carries_protocol_and_opaque() {
+        let challenge = json!({
+            "id": "abc123",
+            "realm": "api.shop.com",
+            "protocol": "app/1",
+            "method": "evm",
+            "intent": "charge",
+            "expires": "2026-07-16T00:00:00Z",
+            "request": "eyJyZXF1ZXN0IjoxfQ",
+            "opaque": "eyJvZmZlcklkIjoieCJ9",
+        });
+        let echo = build_app_challenge_echo(&challenge);
+        for k in [
+            "id", "realm", "protocol", "method", "intent", "expires", "request", "opaque",
+        ] {
+            assert!(echo.get(k).and_then(|v| v.as_str()).is_some(), "missing {k}");
+        }
+        assert_eq!(echo["protocol"], "app/1");
+        // `request` / `opaque` echoed as the original base64url strings (not decoded).
+        assert_eq!(echo["opaque"], "eyJvZmZlcklkIjoieCJ9");
+        assert_eq!(echo["request"], "eyJyZXF1ZXN0IjoxfQ");
+    }
+
+    /// The `payment app` family rejects MPP challenges (protocol != "app/1")
+    /// before any TEE call, so MPP always routes through `payment charge`.
+    #[tokio::test]
+    async fn app_charge_rejects_mpp_protocol() {
+        // A well-formed MPP challenge (method=evm, no protocol field).
+        let header = r#"Payment id="x", realm="api.shop.com", method="evm", intent="charge", request="e30", opaque="e30""#;
+        let err = cmd_app_charge(header, None, None, None).await.unwrap_err();
+        assert!(
+            err.to_string().contains("protocol"),
+            "expected protocol reject, got: {err}"
+        );
+    }
+
+    /// The subcommand intent must match `challenge.intent` — a `charge` command
+    /// against a `session` challenge is rejected before any TEE call.
+    #[tokio::test]
+    async fn app_charge_rejects_intent_mismatch() {
+        let header = r#"Payment id="x", realm="api.shop.com", protocol="app/1", method="evm", intent="session", request="e30", opaque="e30""#;
+        let err = cmd_app_charge(header, None, None, None).await.unwrap_err();
+        assert!(
+            err.to_string().contains("intent"),
+            "expected intent mismatch reject, got: {err}"
+        );
     }
 }

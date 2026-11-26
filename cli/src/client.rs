@@ -209,6 +209,15 @@ fn truncate_dex_token_metadata(path: &str, value: &mut Value) {
     crate::token_metadata::truncate(value);
 }
 
+/// Only fixed platform labels go on the wire; never expose the hostname itself.
+fn agent_platform(hostname: Option<&str>) -> &'static str {
+    match hostname {
+        Some(name) if name.starts_with("grok-bot") => "grok-bot",
+        Some(_) => "default",
+        None => "unknown",
+    }
+}
+
 impl ApiClient {
     /// Create a client with JWT auth when logged in, otherwise anonymous auth.
     pub fn new() -> Result<Self> {
@@ -344,6 +353,7 @@ impl ApiClient {
     /// - `ok-client-version: <version>`
     /// - `Ok-Access-Client-type: agent-cli`
     /// - `platform: agent-cli`
+    /// - `agent-platform: grok-bot | default | unknown`
     /// - `device-id: <id>` — best-effort; present iff a valid ASCII device id is
     ///   available (spec §6.2). `get_cached_device_id()` is a pure memory read
     ///   after first init (spec §9.2); an invalid value or `None` silently skips
@@ -363,6 +373,12 @@ impl ApiClient {
             HeaderValue::from_static("agent-cli"),
         );
         map.insert("platform", HeaderValue::from_static("agent-cli"));
+        map.insert(
+            "agent-platform",
+            HeaderValue::from_static(agent_platform(
+                crate::file_keyring::read_hostname().as_deref(),
+            )),
+        );
         if let Some(id) = crate::device::id::get_cached_device_id() {
             if let Ok(val) = HeaderValue::from_str(id) {
                 map.insert("device-id", val);
@@ -1795,7 +1811,7 @@ pub(crate) async fn handle_agent_commerce_response(
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_msg, truncate_dex_token_metadata, ApiClient};
+    use super::{extract_msg, truncate_dex_token_metadata, ApiClient, AuthMode};
     use serde_json::json;
 
     // ── extract_msg ──────────────────────────────────────────────────────────
@@ -1853,6 +1869,174 @@ mod tests {
     }
 
     // ── JWT headers ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn agent_platform_headers_cover_all_hostname_results() {
+        use crate::test_helpers::request_headers::with_hostname;
+        for (hostname, expected) in [
+            (Some("grok-bot"), "grok-bot"),
+            (Some("grok-bot-vm-352510608"), "grok-bot"),
+            (Some("my-laptop"), "default"),
+            (Some("vm-grok-bot-1"), "default"),
+            (Some("Grok-Bot-vm-1"), "default"),
+            (Some("unknown-host"), "default"),
+            (None, "unknown"),
+        ] {
+            with_hostname(hostname, || {
+                let anonymous = ApiClient::anonymous_headers();
+                let jwt = ApiClient::jwt_headers("fixture-token");
+                for headers in [&anonymous, &jwt] {
+                    assert_eq!(headers["agent-platform"], expected);
+                    assert_eq!(headers["ok-access-client-type"], "agent-cli");
+                    assert_eq!(headers["platform"], "agent-cli");
+                }
+                assert!(!anonymous.contains_key("authorization"));
+                assert_eq!(jwt["authorization"], "Bearer fixture-token");
+            });
+        }
+    }
+
+    #[test]
+    fn agent_platform_survives_payment_402_retry() {
+        use crate::test_helpers::request_headers::*;
+        with_test_home(|_| {
+            // Deterministic fixture key, used only against the loopback receiver.
+            with_env(
+                &[("EVM_PRIVATE_KEY", &format!("0x{}", "11".repeat(32)))],
+                || {
+                    let runtime = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .unwrap();
+                    for (hostname, expected) in [
+                        (Some("grok-bot-vm-1"), "grok-bot"),
+                        (Some("unknown-host"), "default"),
+                        (None, "unknown"),
+                    ] {
+                        with_hostname(hostname, || {
+                            runtime.block_on(async {
+                                let challenge = json!({"accepts": [{
+                                    "scheme": "exact", "network": "eip155:196", "amount": "1",
+                                    "payTo": "0x1111111111111111111111111111111111111111",
+                                    "asset": "0x2222222222222222222222222222222222222222",
+                                    "maxTimeoutSeconds": 300, "extra": {"name": "USDG", "version": "1"}
+                                }]});
+                                let (url, server) = mock_http(vec![
+                                    (402, challenge.to_string()),
+                                    (200, r#"{"code":"0","data":["paid"]}"#.into()),
+                                ]);
+                                let mut client = ApiClient::new_for_test(&url).unwrap();
+                                client.payment_state().config_loaded = true;
+                                let body = json!({"request": "unchanged"});
+                                assert_eq!(
+                                    client
+                                        .post_with_headers(
+                                            "/paid",
+                                            &body,
+                                            Some(&[("agenticId", "fixture-agent")])
+                                        )
+                                        .await
+                                        .unwrap(),
+                                    json!(["paid"])
+                                );
+                                let requests = server.join().unwrap();
+                                assert_eq!(requests.len(), 2);
+                                for request in &requests {
+                                    assert_platform(request, expected);
+                                    assert_eq!(header(request, "authorization"), None);
+                                    assert_eq!(header(request, "agenticId"), Some("fixture-agent"));
+                                    assert_eq!(
+                                        serde_json::from_str::<Value>(
+                                            request.split_once("\r\n\r\n").unwrap().1
+                                        )
+                                        .unwrap(),
+                                        body
+                                    );
+                                }
+                                assert_eq!(header(&requests[0], "payment-signature"), None);
+                                assert!(!header(&requests[1], "payment-signature")
+                                    .unwrap()
+                                    .is_empty());
+                            })
+                        });
+                    }
+                },
+            );
+        });
+    }
+
+    #[test]
+    fn agent_platform_on_api_get_post_and_payment_header_requests() {
+        use crate::test_helpers::request_headers::{
+            assert_platform, header, mock_http, with_hostname,
+        };
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        for (hostname, expected) in [
+            (Some("grok-bot-vm-1"), "grok-bot"),
+            (Some("unknown-host"), "default"),
+            (None, "unknown"),
+        ] {
+            with_hostname(hostname, || {
+                runtime.block_on(async {
+                    let response = r#"{"code":"0","data":[]}"#.to_string();
+                    let (url, server) = mock_http(vec![(200, response); 4]);
+                    let mut client = ApiClient::new_for_test(&url).unwrap();
+                    let body = serde_json::json!({"request": "unchanged"});
+                    let extra = [("agenticId", "fixture-agent")];
+                    client
+                        .do_get_request("/public", &[("q", "test")], Some(&extra), None)
+                        .await
+                        .unwrap();
+                    client
+                        .do_post_request("/public", &body, None, None)
+                        .await
+                        .unwrap();
+                    client.auth = AuthMode::Jwt("fixture-token".into());
+                    let payment = ("payment-signature", "fixture-payment".to_string());
+                    client
+                        .do_get_request("/authed", &[], Some(&extra), Some(&payment))
+                        .await
+                        .unwrap();
+                    client
+                        .do_post_request("/authed", &body, Some(&extra), Some(&payment))
+                        .await
+                        .unwrap();
+                    let requests = server.join().unwrap();
+                    assert_eq!(requests.len(), 4);
+                    for (index, request) in requests.iter().enumerate() {
+                        assert_platform(request, expected);
+                        assert_eq!(
+                            header(request, "authorization"),
+                            if index < 2 {
+                                None
+                            } else {
+                                Some("Bearer fixture-token")
+                            }
+                        );
+                        if index >= 2 {
+                            assert_eq!(
+                                header(request, "payment-signature"),
+                                Some("fixture-payment")
+                            );
+                            assert_eq!(header(request, "agenticId"), Some("fixture-agent"));
+                        }
+                        if index % 2 == 1 {
+                            assert_eq!(
+                                serde_json::from_str::<Value>(
+                                    request.split_once("\r\n\r\n").unwrap().1
+                                )
+                                .unwrap(),
+                                body
+                            );
+                        }
+                    }
+                })
+            });
+        }
+    }
 
     #[test]
     fn jwt_headers_authorization_bearer() {

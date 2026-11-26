@@ -5,6 +5,8 @@
 //! share a single definition instead of hand-rolling their own.
 #![cfg(test)]
 
+pub mod request_headers;
+
 pub mod gas_station {
     use crate::wallet_api::{GasStationToken, UnsignedInfoResponse};
 

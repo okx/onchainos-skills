@@ -15,6 +15,9 @@ use crate::payment::subscription::types::{AllowanceStatus, BuyerSubscriptionList
 use crate::wallet_api::WalletApiClient;
 
 const BASE: &str = "/api/v6/pay/x402";
+/// APP/1 base path — same buyer-direct reads as x402, under the app/1 namespace
+/// with static paths, `buyer` in query, and `chainId` instead of `chainIndex`.
+const APP_BASE: &str = "/api/v6/pay/app/v1";
 
 /// If the envelope `data` is a non-empty array, return its first element;
 /// otherwise return it as-is.
@@ -60,6 +63,56 @@ pub async fn my_subscriptions(
         .get_no_okheaders(&path)
         .await
         .context("my-subscriptions query failed")?;
+    parse_subscription_list(data)
+}
+
+/// Client for the app/1 buyer reads. If `OKX_SA_GATEWAY_BASE_URL`
+/// is set, these two endpoints use it as the base URL — a **scoped** override for
+/// integration testing against the SA gateway that does NOT affect any other
+/// endpoint (nor the x402 buyer reads, nor global `OKX_BASE_URL`). Otherwise falls
+/// back to the standard `WalletApiClient` resolution (default `https://web3.okx.com`).
+fn app_gateway_client() -> Result<WalletApiClient> {
+    match std::env::var("OKX_SA_GATEWAY_BASE_URL") {
+        Ok(url) if !url.trim().is_empty() => WalletApiClient::new_for_scoped_base_url(url.trim()),
+        _ => WalletApiClient::new(),
+    }
+}
+
+/// APP/1 `GET /subscription/allowance-status?buyer=..&token=..&chainId=..`
+///
+/// APP/1 counterpart of [`allowance_status`]: same PermitSingle inputs (uint48
+/// nonce, subscription contract = spender, Permit2 contract), static path with
+/// `buyer` in query and `chainId` (not `chainIndex`). Re-read immediately before
+/// signing each PermitSingle to avoid over-commit / nonce races. Base URL honors
+/// `OKX_SA_GATEWAY_BASE_URL` (see [`app_gateway_client`]).
+pub async fn app_allowance_status(
+    buyer: &str,
+    token: &str,
+    chain_id: u64,
+) -> Result<AllowanceStatus> {
+    let mut client = app_gateway_client()?;
+    let path =
+        format!("{APP_BASE}/subscription/allowance-status?buyer={buyer}&token={token}&chainId={chain_id}");
+    let data = client
+        .get_no_okheaders(&path)
+        .await
+        .context("app/1 allowance-status query failed")?;
+    serde_json::from_value(unwrap_first(data)).context("parse app/1 allowance-status response")
+}
+
+/// APP/1 `GET /subscription/list?buyer=..&limit=..&offset=..`
+///
+/// APP/1 counterpart of [`my_subscriptions`]: the buyer's own app/1 subscriptions
+/// (merchant identifiers excluded by design). `limit` clamped to `1..=100`. Base
+/// URL honors `OKX_SA_GATEWAY_BASE_URL` (see [`app_gateway_client`]).
+pub async fn app_list(buyer: &str, limit: u32, offset: u32) -> Result<BuyerSubscriptionListResp> {
+    let mut client = app_gateway_client()?;
+    let limit = limit.clamp(1, 100);
+    let path = format!("{APP_BASE}/subscription/list?buyer={buyer}&limit={limit}&offset={offset}");
+    let data = client
+        .get_no_okheaders(&path)
+        .await
+        .context("app/1 subscription list query failed")?;
     parse_subscription_list(data)
 }
 

@@ -86,7 +86,7 @@ Required sequence: `access` (proof) → one proof-carrying probe of the change e
 | Param | Required | Description |
 |---|---|---|
 | `--sub-id` | yes | the active subscription |
-| `--new-sub-id` | yes | the PENDING downgrade's `newSubId` (from `my-subscriptions` → `pendingPlanChange.newSubId`); signed into the auth and must equal the on-chain pending value |
+| `--new-sub-id` | yes | the PENDING downgrade's `newSubId` (from `my-subscriptions` → `pendingChange.newSubId`); signed into the auth and must equal the on-chain pending value |
 | `--contract` | no | verifying contract (as in `cancel`) |
 | `--token` | no | used to look up `--contract` when omitted |
 | `--chain` | no | chain name or index (default `xlayer` / `196`) |

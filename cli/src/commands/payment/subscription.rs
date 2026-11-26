@@ -107,7 +107,7 @@ pub enum SubscriptionCommand {
         #[arg(long)]
         sub_id: String,
         /// The PENDING downgrade's newSubId (from `my-subscriptions`
-        /// pendingPlanChange.newSubId). Signed into the auth (the authorization typehash).
+        /// pendingChange.newSubId). Signed into the auth (the authorization typehash).
         #[arg(long)]
         new_sub_id: String,
         #[arg(long)]
@@ -277,17 +277,14 @@ fn build_subscription_payment_header(
 
 /// Write-through cache update after a successful subscribe / change sign.
 /// `plan_id` is the `extra.plan.id` business identifier (cache-only).
-fn cache_subscription(
+pub(crate) fn cache_subscription(
+    protocol: &str,
     url: Option<&str>,
     payload: &SubscriptionPayload,
     sub_id: &str,
     plan_id: &str,
     no_cache: bool,
 ) {
-    // Order-based callers must wait for seller confirmation. Preserve any old entry.
-    if no_cache {
-        return;
-    }
     let Some(url) = url else {
         eprintln!(
             "Warning: subscription NOT cached (no --url). Subsequent \
@@ -296,7 +293,7 @@ fn cache_subscription(
         return;
     };
     let mut cache = SubscriptionCache::load();
-    let entry = SubscriptionCacheEntry {
+    let mut entry = SubscriptionCacheEntry {
         sub_id: sub_id.to_string(),
         resource_host: host_of(url),
         merchant: payload.terms.merchant.clone(),
@@ -305,7 +302,34 @@ fn cache_subscription(
         max_periods: payload.terms.max_periods,
         state: "active".to_string(),
         changed_to_sub_id: None,
+        protocol: protocol.to_string(),
     };
+
+    // APP credentials are handed to the seller after signing. Keep enough local
+    // metadata for an authoritative `subscription list` to activate a new host,
+    // but never let `access --url` resolve the entry before that confirmation.
+    // For a change, preserve an existing active mapping so the current
+    // subscription remains usable until the seller accepts the replacement.
+    if no_cache {
+        if protocol == "app/1" {
+            let host = entry.resource_host.clone();
+            let has_active = cache
+                .get(protocol, &host)
+                .is_some_and(|current| current.state == "active");
+            if !has_active {
+                entry.state = "pending".to_string();
+                cache.put(entry);
+                if let Err(e) = cache.save() {
+                    let _ = writeln!(
+                        std::io::stderr(),
+                        "Warning: failed to stage subscription cache: {e:#}"
+                    );
+                }
+            }
+        }
+        return;
+    }
+
     let old_sub_id = payload.terms.change_from_sub_id.clone();
     let is_change = !old_sub_id
         .trim_start_matches("0x")
@@ -353,6 +377,7 @@ async fn cmd_subscribe(
             .map_err(payment_flow::map_pre_signing_allowance_error)?;
     let (hname, hvalue) = build_subscription_payment_header(&accepted, url, &signed.payload)?;
     cache_subscription(
+        "x402",
         url,
         &signed.payload,
         &signed.sub_id,
@@ -390,7 +415,14 @@ async fn cmd_change(
     )
     .await?;
     let (hname, hvalue) = build_subscription_payment_header(&accepted, url, &signed.payload)?;
-    cache_subscription(url, &signed.payload, &signed.sub_id, &signed.plan_id, false);
+    cache_subscription(
+        "x402",
+        url,
+        &signed.payload,
+        &signed.sub_id,
+        &signed.plan_id,
+        false,
+    );
     let payload_v =
         serde_json::to_value(&signed.payload).context("serialize subscription payload")?;
     output::success(json!({
@@ -414,7 +446,7 @@ async fn cmd_access(
         Some(sid) => (sid.to_string(), "override"),
         None => {
             let cache = SubscriptionCache::load();
-            let entry = cache.resolve(url).ok_or_else(|| {
+            let entry = cache.resolve("x402", url).ok_or_else(|| {
                 anyhow!(
                     "no active subscription cached for host {}. Run \
                      `payment subscription my-subscriptions` to reconcile, or pass --sub-id.",
@@ -551,6 +583,7 @@ async fn cmd_allowance_status(token: &str, chain: &str, from: Option<&str>) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::payment::subscription::types::BuyerSubscriptionItem;
 
     #[test]
     fn pre_signing_allowance_failure_preserves_structured_facts() {
@@ -664,10 +697,12 @@ mod tests {
             max_periods: 1,
             state: "active".into(),
             changed_to_sub_id: None,
+            protocol: "x402".into(),
         });
         cache.save().unwrap();
         let before = std::fs::read(SubscriptionCache::cache_path().unwrap()).unwrap();
         cache_subscription(
+            "x402",
             Some("https://api.x.com/d"),
             &payload,
             "unconfirmed-sub",
@@ -680,7 +715,118 @@ mod tests {
         );
         assert_eq!(
             SubscriptionCache::load()
-                .resolve("https://api.x.com/d")
+                .resolve("x402", "https://api.x.com/d")
+                .unwrap()
+                .sub_id,
+            "old-confirmed-sub"
+        );
+        match previous {
+            Some(value) => std::env::set_var("ONCHAINOS_HOME", value),
+            None => std::env::remove_var("ONCHAINOS_HOME"),
+        }
+    }
+
+    #[test]
+    fn app_no_cache_stages_inactive_mapping_until_authoritative_reconcile() {
+        let payload = subscription_payload_fixture();
+        let _guard = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let root = tempfile::tempdir().unwrap();
+        let previous = std::env::var_os("ONCHAINOS_HOME");
+        std::env::set_var("ONCHAINOS_HOME", root.path());
+
+        cache_subscription(
+            "app/1",
+            Some("https://api.x.com/d"),
+            &payload,
+            "new-sub",
+            "new-plan",
+            true,
+        );
+
+        let mut cache = SubscriptionCache::load();
+        assert!(cache.resolve("app/1", "https://api.x.com/d").is_none());
+        assert_eq!(
+            cache.get("app/1", "api.x.com").unwrap().state,
+            "pending"
+        );
+
+        cache.reconcile_from(&[BuyerSubscriptionItem {
+            chain_index: 196,
+            offer_id: "offer-new".into(),
+            sub_id: "new-sub".into(),
+            state: 1,
+            payer: "0xbuyer".into(),
+            token: "0xtoken".into(),
+            amount_per_period: "5000000".into(),
+            period_sec: 2_592_000,
+            period_mode: 0,
+            billing_anchor_at: 0,
+            max_periods: 12,
+            start_at: 0,
+            initial_charge_periods: 1,
+            initial_charge_amount: "5000000".into(),
+            last_charged_period: 0,
+            total_pulled: "0".into(),
+            plan_id: "new-plan".into(),
+            plan_tier: 2,
+            changed_to_sub_id: None,
+            pending_change: None,
+            is_active: true,
+            service_ended: false,
+            current_period: 1,
+            next_chargeable_at: None,
+        }]);
+        assert_eq!(
+            cache
+                .resolve("app/1", "https://api.x.com/d")
+                .unwrap()
+                .sub_id,
+            "new-sub"
+        );
+
+        match previous {
+            Some(value) => std::env::set_var("ONCHAINOS_HOME", value),
+            None => std::env::remove_var("ONCHAINOS_HOME"),
+        }
+    }
+
+    #[test]
+    fn app_no_cache_preserves_existing_active_mapping() {
+        let payload = subscription_payload_fixture();
+        let _guard = crate::home::TEST_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let root = tempfile::tempdir().unwrap();
+        let previous = std::env::var_os("ONCHAINOS_HOME");
+        std::env::set_var("ONCHAINOS_HOME", root.path());
+        let mut cache = SubscriptionCache::default();
+        cache.put(SubscriptionCacheEntry {
+            sub_id: "old-confirmed-sub".into(),
+            resource_host: "api.x.com".into(),
+            merchant: "merchant-fixture".into(),
+            plan_id: "old-plan".into(),
+            plan_tier: 1,
+            max_periods: 12,
+            state: "active".into(),
+            changed_to_sub_id: None,
+            protocol: "app/1".into(),
+        });
+        cache.save().unwrap();
+
+        cache_subscription(
+            "app/1",
+            Some("https://api.x.com/d"),
+            &payload,
+            "unconfirmed-new-sub",
+            "new-plan",
+            true,
+        );
+
+        assert_eq!(
+            SubscriptionCache::load()
+                .resolve("app/1", "https://api.x.com/d")
                 .unwrap()
                 .sub_id,
             "old-confirmed-sub"

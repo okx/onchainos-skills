@@ -5,30 +5,6 @@ use serde_json::{json, Value};
 
 use crate::doh::DohManager;
 
-/// Hostname prefix of Grok Bot VMs (e.g. `grok-bot-vm-352510608`).
-const GROK_BOT_HOSTNAME_PREFIX: &str = "grok-bot";
-
-/// `Ok-Access-Client-type` value for the auth/refresh request: `grok-bot` on a
-/// `grok-bot*` host, else `agent-cli`.
-fn refresh_client_type(hostname: &str) -> &'static str {
-    if hostname.starts_with(GROK_BOT_HOSTNAME_PREFIX) {
-        "grok-bot"
-    } else {
-        "agent-cli"
-    }
-}
-
-/// Anonymous headers for the auth/refresh request, with
-/// `Ok-Access-Client-type` set from the hostname. Other headers are unchanged.
-fn refresh_headers(hostname: &str) -> reqwest::header::HeaderMap {
-    let mut headers = crate::client::ApiClient::anonymous_headers();
-    headers.insert(
-        "Ok-Access-Client-type",
-        reqwest::header::HeaderValue::from_static(refresh_client_type(hostname)),
-    );
-    headers
-}
-
 /// Structured error for non-zero API response codes.
 /// Preserves the original backend `code` and `msg` so callers can
 /// output them directly via `output::error`.
@@ -793,15 +769,26 @@ fn unwrap_wallet_envelope(http_status: u16, body: &Value) -> Result<Value> {
 
 impl WalletApiClient {
     pub fn new() -> Result<Self> {
+        #[cfg(test)]
+        if let Some(url) = crate::test_helpers::request_headers::refresh_endpoint() {
+            return Self::new_for_test(&url);
+        }
         Self::build(
             crate::endpoints::base_url(),
             crate::endpoints::base_url_is_custom(),
         )
     }
 
+    /// Build a client for a caller-scoped endpoint override.
+    ///
+    /// This does not change the process-wide endpoint used by other clients.
+    pub(crate) fn new_for_scoped_base_url(base_url: &str) -> Result<Self> {
+        Self::build(base_url, true)
+    }
+
     #[cfg(test)]
     pub(crate) fn new_for_test(base_url: &str) -> Result<Self> {
-        Self::build(base_url, true)
+        Self::new_for_scoped_base_url(base_url)
     }
 
     fn build(base_url: &str, custom_base_url: bool) -> Result<Self> {
@@ -1467,9 +1454,8 @@ impl WalletApiClient {
     /// POST /priapi/v5/wallet/agentic/auth/refresh
     pub async fn auth_refresh(&mut self, refresh_token: &str) -> Result<RefreshResponse> {
         let body = json!({ "refreshToken": refresh_token });
-        let headers = refresh_headers(&crate::file_keyring::hostname());
         let data = self
-            .post_public_with_headers("/priapi/v5/wallet/agentic/auth/refresh", &body, headers)
+            .post_public("/priapi/v5/wallet/agentic/auth/refresh", &body)
             .await?;
         let arr = data
             .as_array()
@@ -1985,20 +1971,273 @@ mod tests {
     use super::*;
 
     #[test]
-    fn refresh_headers_client_type_agent_cli_on_other_hosts() {
-        for host in ["my-laptop", "vm-grok-bot-1"] {
-            let h = refresh_headers(host);
-            assert_eq!(h["ok-access-client-type"], "agent-cli");
-            assert_eq!(h["platform"], "agent-cli");
-        }
+    fn agent_platform_survives_invalid_token_refresh_retry() {
+        use crate::test_helpers::request_headers::*;
+        with_test_home(|_| {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            for (hostname, expected) in [
+                (Some("grok-bot-vm-1"), "grok-bot"),
+                (Some("unknown-host"), "default"),
+                (None, "unknown"),
+            ] {
+                let (url, server) = mock_http(vec![
+                    (200, r#"{"code":"10008","msg":"Invalid access token"}"#.into()),
+                    (200, r#"{"code":"0","data":[{"refreshToken":"rotated-refresh","accessToken":"rotated-access"}]}"#.into()),
+                    (200, r#"{"code":"0","data":["success"]}"#.into()),
+                ]);
+                crate::keyring_store::store(&[
+                    ("refresh_token", "fixture-refresh"),
+                    ("access_token", "fixture-access"),
+                ])
+                .unwrap();
+                with_hostname(hostname, || {
+                    with_refresh_endpoint(&url, || {
+                        runtime.block_on(async {
+                            let mut client = WalletApiClient::new_for_test(&url).unwrap();
+                            let body = json!({"request": "unchanged"});
+                            let result = client
+                                .post_authed_with_headers(
+                                    "/authed",
+                                    "fixture-access",
+                                    &body,
+                                    Some(&[("agenticId", "fixture-agent")]),
+                                )
+                                .await
+                                .unwrap();
+                            assert_eq!(result, json!(["success"]));
+                        })
+                    })
+                });
+                let requests = server.join().unwrap();
+                assert_eq!(requests.len(), 3);
+                for request in &requests {
+                    assert_platform(request, expected);
+                }
+                assert_eq!(
+                    header(&requests[0], "authorization"),
+                    Some("Bearer fixture-access")
+                );
+                assert_eq!(header(&requests[1], "authorization"), None);
+                assert_eq!(
+                    header(&requests[2], "authorization"),
+                    Some("Bearer rotated-access")
+                );
+                assert_eq!(header(&requests[2], "agenticId"), Some("fixture-agent"));
+                assert_eq!(
+                    requests[0].split_once("\r\n\r\n").unwrap().1,
+                    requests[2].split_once("\r\n\r\n").unwrap().1
+                );
+                assert!(requests[1].starts_with("POST /priapi/v5/wallet/agentic/auth/refresh "));
+                assert_eq!(
+                    serde_json::from_str::<Value>(requests[1].split_once("\r\n\r\n").unwrap().1)
+                        .unwrap(),
+                    json!({"refreshToken": "fixture-refresh"})
+                );
+                let blob = crate::keyring_store::read_blob().unwrap();
+                assert_eq!(blob["access_token"], "rotated-access");
+                assert_eq!(blob["refresh_token"], "rotated-refresh");
+            }
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn agent_platform_survives_doh_retry_without_replaying_broadcast() {
+        use crate::test_helpers::request_headers::*;
+        use std::os::unix::fs::PermissionsExt;
+        with_test_home(|home| {
+            // Exhaust the local DoH fixture: the existing manager allows one final direct attempt.
+            let binary = home.join("doh-fixture");
+            std::fs::write(&binary, "#!/bin/sh\nexit 1\n").unwrap();
+            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+            with_env(&[("OKX_DOH_BINARY_PATH", binary.to_str().unwrap())], || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                for (hostname, expected) in [
+                    (Some("grok-bot-vm-1"), "grok-bot"),
+                    (Some("unknown-host"), "default"),
+                    (None, "unknown"),
+                ] {
+                    with_hostname(hostname, || {
+                        runtime.block_on(async {
+                            let (url, server) = mock_http(vec![
+                                (0, String::new()),
+                                (
+                                    200,
+                                    r#"{"code":"0","data":[{"refreshToken":"r","accessToken":"a"}]}"#
+                                        .into(),
+                                ),
+                            ]);
+                            let mut client = WalletApiClient::new_for_test(&url).unwrap();
+                            client.doh = DohManager::new("127.0.0.1", &url, false);
+                            client.http = reqwest::Client::builder()
+                                .timeout(std::time::Duration::from_millis(100))
+                                .build()
+                                .unwrap();
+                            client.auth_refresh("fixture-refresh").await.unwrap();
+                            let requests = server.join().unwrap();
+                            assert_eq!(requests.len(), 2);
+                            for request in &requests {
+                                assert_platform(request, expected);
+                            }
+                            assert_eq!(
+                                requests[0].split_once("\r\n\r\n").unwrap().1,
+                                requests[1].split_once("\r\n\r\n").unwrap().1
+                            );
+
+                            let (url, server) = mock_http_observe_replays(vec![(0, String::new())]);
+                            let mut client = WalletApiClient::new_for_test(&url).unwrap();
+                            client.doh = DohManager::new("127.0.0.1", &url, false);
+                            client.http = reqwest::Client::builder()
+                                .timeout(std::time::Duration::from_millis(100))
+                                .build()
+                                .unwrap();
+                            let error = client
+                                .broadcast_transaction(
+                                    "fixture-access",
+                                    "fixture-account",
+                                    "fixture-address",
+                                    "1",
+                                    "{}",
+                                    None,
+                                    None,
+                                )
+                                .await
+                                .unwrap_err();
+                            assert!(error.to_string().contains("Broadcast result is unknown"));
+                            let requests = server.join().unwrap();
+                            assert_eq!(requests.len(), 1);
+                            assert_platform(&requests[0], expected);
+                            assert_eq!(
+                                header(&requests[0], "authorization"),
+                                Some("Bearer fixture-access")
+                            );
+                        })
+                    });
+                }
+            });
+        });
     }
 
     #[test]
-    fn refresh_headers_client_type_grok_bot_on_grok_bot_host() {
-        for host in ["grok-bot", "grok-bot-vm-352510608"] {
-            let h = refresh_headers(host);
-            assert_eq!(h["ok-access-client-type"], "grok-bot");
-            assert_eq!(h["platform"], "agent-cli");
+    fn agent_platform_on_refresh_wallet_upload_download_and_geoblock() {
+        use crate::test_helpers::request_headers::{
+            assert_platform, header, mock_http_with_content_types, with_hostname,
+        };
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        for (hostname, expected) in [
+            (Some("grok-bot-vm-1"), "grok-bot"),
+            (Some("unknown-host"), "default"),
+            (None, "unknown"),
+        ] {
+            with_hostname(hostname, || {
+                runtime.block_on(async {
+                    let response = r#"{"code":"0","data":[]}"#.to_string();
+                    let refresh_response = json!({"code": "0", "data": [{
+                        "refreshToken": "rotated-refresh", "accessToken": "rotated-access"
+                    }]})
+                    .to_string();
+                    let (url, server) = mock_http_with_content_types(vec![
+                        (200, "application/json", refresh_response),
+                        (200, "application/json", response.clone()),
+                        (200, "application/json", response.clone()),
+                        (200, "application/json", response.clone()),
+                        (200, "application/json", response.clone()),
+                        (200, "application/octet-stream", "evidence-bytes".into()),
+                        (200, "application/json", response),
+                    ]);
+                    let mut client = WalletApiClient::new_for_test(&url).unwrap();
+                    let refreshed = client.auth_refresh("fixture-refresh").await.unwrap();
+                    assert_eq!(refreshed.access_token, "rotated-access");
+                    assert_eq!(refreshed.refresh_token, "rotated-refresh");
+                    let body = json!({"request": "unchanged"});
+                    let extra = [("agenticId", "fixture-agent")];
+                    client.post_public("/public", &body).await.unwrap();
+                    client
+                        .post_authed_with_headers("/authed", "fixture-token", &body, Some(&extra))
+                        .await
+                        .unwrap();
+                    client
+                        .post_authed_multipart_with_headers(
+                            "/upload",
+                            "fixture-token",
+                            reqwest::multipart::Form::new().text("file", "fixture-content"),
+                            Some(&extra),
+                        )
+                        .await
+                        .unwrap();
+                    client
+                        .post_authed_raw_with_headers(
+                            "/raw-upload",
+                            "fixture-token",
+                            b"raw-file".to_vec(),
+                            "application/octet-stream",
+                            Some(&extra),
+                        )
+                        .await
+                        .unwrap();
+                    let bytes = client
+                        .get_authed_bytes_with_headers("/download", "fixture-token", &[], Some(&extra))
+                        .await
+                        .unwrap();
+                    assert_eq!(bytes, b"evidence-bytes");
+                    client
+                        .get_no_okheaders("/priapi/v5/wallet/agentic/geoblock/check")
+                        .await
+                        .unwrap();
+                    let requests = server.join().unwrap();
+                    assert_eq!(requests.len(), 7);
+                    for (index, request) in requests.iter().enumerate() {
+                        if index == 6 {
+                            assert_eq!(header(request, "agent-platform"), None);
+                            assert_eq!(header(request, "ok-access-client-type"), None);
+                        } else {
+                            assert_platform(request, expected);
+                        }
+                        assert_eq!(
+                            header(request, "authorization"),
+                            if (2..6).contains(&index) {
+                                Some("Bearer fixture-token")
+                            } else {
+                                None
+                            }
+                        );
+                        if (2..6).contains(&index) {
+                            assert_eq!(header(request, "agenticId"), Some("fixture-agent"));
+                        }
+                    }
+                    assert!(requests[0].starts_with("POST /priapi/v5/wallet/agentic/auth/refresh "));
+                    assert_eq!(
+                        serde_json::from_str::<Value>(requests[0].split_once("\r\n\r\n").unwrap().1)
+                            .unwrap(),
+                        json!({"refreshToken": "fixture-refresh"})
+                    );
+                    for request in &requests[1..3] {
+                        assert_eq!(
+                            serde_json::from_str::<Value>(request.split_once("\r\n\r\n").unwrap().1)
+                                .unwrap(),
+                            body
+                        );
+                    }
+                    assert!(header(&requests[3], "content-type")
+                        .unwrap()
+                        .starts_with("multipart/form-data; boundary="));
+                    assert!(requests[3].contains("fixture-content"));
+                    assert_eq!(
+                        header(&requests[4], "content-type"),
+                        Some("application/octet-stream")
+                    );
+                    assert_eq!(requests[4].split_once("\r\n\r\n").unwrap().1, "raw-file");
+                })
+            });
         }
     }
 
@@ -2521,64 +2760,7 @@ mod tests {
         assert_eq!(resp.accounts[1].addresses[1].chain_index, "501");
     }
 
-    // A local server keeps session creation tests independent of live accounts.
-    fn login_mock(responses: Vec<(u16, String)>) -> (String, std::thread::JoinHandle<Vec<String>>) {
-        use std::io::{Read, Write};
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        listener.set_nonblocking(true).unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let server = std::thread::spawn(move || {
-            let mut requests = Vec::new();
-            for (status, body) in responses {
-                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-                let mut stream = loop {
-                    match listener.accept() {
-                        Ok((stream, _)) => break stream,
-                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                            assert!(std::time::Instant::now() < deadline, "missing request");
-                            std::thread::sleep(std::time::Duration::from_millis(5));
-                        }
-                        Err(e) => panic!("accept: {e}"),
-                    }
-                };
-                stream
-                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
-                    .unwrap();
-                let mut request = Vec::new();
-                loop {
-                    let mut buf = [0; 4096];
-                    let n = stream.read(&mut buf).unwrap();
-                    assert!(n > 0, "incomplete request");
-                    request.extend_from_slice(&buf[..n]);
-                    if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
-                        let length = String::from_utf8_lossy(&request[..end])
-                            .lines()
-                            .filter_map(|line| line.split_once(':'))
-                            .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
-                            .map(|(_, value)| value.trim().parse::<usize>().unwrap())
-                            .unwrap_or(0);
-                        if request.len() >= end + 4 + length {
-                            break;
-                        }
-                    }
-                }
-                requests.push(String::from_utf8(request).unwrap());
-                if status == 1 {
-                    // Return headers and a partial body before stalling the body read.
-                    stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{").unwrap();
-                    stream.flush().unwrap();
-                }
-                if status == 0 || status == 1 {
-                    // 0 stalls headers; 1 stalls the body. Both exceed the client timeout.
-                    std::thread::sleep(std::time::Duration::from_millis(300));
-                    continue;
-                }
-                write!(stream, "HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
-            }
-            requests
-        });
-        (url, server)
-    }
+    use crate::test_helpers::request_headers::mock_http as login_mock;
 
     #[tokio::test]
     async fn login_session_creation_and_poll_use_server_id() {
