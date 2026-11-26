@@ -4,7 +4,7 @@ description: "Use NewsLiquid / 6551 APIs with wallet-backed credentials. Use for
 license: MIT
 metadata:
   author: okx
-  version: "4.6.12"
+  version: "4.6.13"
   homepage: "https://web3.okx.com"
 ---
 
