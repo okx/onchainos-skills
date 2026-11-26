@@ -453,6 +453,65 @@ mod tests {
     use super::*;
 
     #[test]
+    fn agent_platform_on_task_evidence_download() {
+        use crate::test_helpers::request_headers::*;
+        use base64::Engine;
+        with_test_home(|_| {
+            let exp = chrono::Utc::now().timestamp() + 86400;
+            let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(serde_json::json!({"exp": exp}).to_string());
+            let token = format!("fixture.{payload}.signature");
+            crate::keyring_store::store(&[("refresh_token", &token), ("access_token", &token)])
+                .unwrap();
+            wallet_store::save_session(&wallet_store::SessionJson {
+                session_key_expire_at: exp.to_string(),
+                ..Default::default()
+            })
+            .unwrap();
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            for (hostname, expected) in [
+                (Some("grok-bot-vm-1"), "grok-bot"),
+                (Some("unknown-host"), "default"),
+                (None, "unknown"),
+            ] {
+                with_hostname(hostname, || {
+                    runtime.block_on(async {
+                        let (url, server) = mock_http(vec![(200, "evidence-bytes".into())]);
+                        let client = TaskApiClient {
+                            wallet: WalletApiClient::new_for_test(&url).unwrap(),
+                            raw_http: reqwest::Client::new(),
+                            base_url: url,
+                        };
+                        let bytes = client
+                            .get_bytes_with_identity(
+                                "/evidence/download",
+                                &[("fileId", "fixture-file")],
+                                "fixture-agent",
+                            )
+                            .await
+                            .unwrap();
+                        assert_eq!(bytes, b"evidence-bytes");
+                        let requests = server.join().unwrap();
+                        assert_eq!(requests.len(), 1);
+                        assert_platform(&requests[0], expected);
+                        assert_eq!(
+                            header(&requests[0], "authorization"),
+                            Some(format!("Bearer {token}").as_str())
+                        );
+                        assert_eq!(header(&requests[0], "agenticId"), Some("fixture-agent"));
+                        assert!(
+                            requests[0].starts_with("GET /evidence/download?fileId=fixture-file ")
+                        );
+                    })
+                });
+            }
+        });
+    }
+
+    #[test]
     fn debug_body_redacts_session_certificate() {
         let body = serde_json::json!({
             "jobId": "job-1",

@@ -62,7 +62,9 @@ Three payment paths, distinguished by HTTP signature: **`accepts`-based 402** (c
 - The same trigger vocabulary applies to its equivalents in any other language (e.g. Chinese subscription / recurring-billing terms route to the `period` scheme the same way).
 - Carve-out: AI-service/ASP subscriptions from the agent marketplace (context: ASP / Agent#N / 任务 / 试用期 / 服务方; NO 402 offer / resource URL / paymentId) belong to okx-ai (onchainos agent my-subscriptions / subscribe-detail), NOT the period scheme. For a bare "my subscriptions / 我的订阅" with neither signal, ask the user once instead of assuming period.
 
-Any close / topup / settle / voucher / refund near a `channel_id` or session context = MPP mid-session op → `references/session.md`.
+Any close / topup / settle / voucher / refund near a `channel_id` or session context
+must reuse the saved open challenge. If its protocol is `app/1`, load
+`references/app.md`. Otherwise load `references/session.md` for MPP.
 
 ## Preflight
 
@@ -76,8 +78,9 @@ Each 402 signal (or paymentId) → CLI command → reference. Detailed gating + 
 |---|---|---|
 | 402 + `PAYMENT-REQUIRED` (v2) / body `x402Version` (v1) — one **or many** `accepts[]` schemes (`exact` / `exact`+Permit2 / `upto` / `aggr_deferred`) | **Primary — Path A:** `payment quote <url>` → confirm → `payment pay --payment-id --yes`. Single-scheme and multi-scheme take the **same** quote flow (the CLI decodes, converts, balance-checks, signs, **replays**, and returns the receipt). Even if you already curled the raw 402, re-enter via `payment quote <url>` — never assemble a header by hand and never jump straight to sign-only. **Compat only:** `payment pay --payload [--selected-index]` (sign-only + manual replay) when `quote` is unavailable. | Success path loads **no** reference. `references/accepts-schemes.md` only for: post-pay scheme-specific receipt reading, `Permit2 allowance insufficient` one-time approve, `pay-local`, the `pay --payload` compat path, or legacy x402 v1 (the CLI-output field tells you which scheme — `permit2Authorization` = `upto` / `exact`+Permit2, `sessionCert` = `aggr_deferred`, `authorization` = `exact`) |
 | 402 offer with an `accepts[]` entry whose `scheme == "period"` (a.k.a. `permit2_subscription`) — recurring/subscription billing | `payment subscription subscribe/access/change/cancel/cancel-pending/my-subscriptions/allowance-status` | `references/subscription.md` |
-| 402 + `WWW-Authenticate: Payment`, `intent="charge"` | `payment charge --challenge` | `references/charge.md` |
-| 402 + `WWW-Authenticate: Payment`, `intent="session"` (or mid-session `channel_id`) | `payment session open/voucher/topup/close` | `references/session.md` |
+| 402 + `WWW-Authenticate: Payment` **with `protocol="app/1"`** (any intent: `charge` / `upto` / `session` / `subscription`) | `payment app charge` / `app upto` / `app session ...` / `app subscription ...` | `references/app.md` |
+| 402 + `WWW-Authenticate: Payment`, `intent="charge"` (no `protocol=app/1` → MPP) | `payment charge --challenge` | `references/charge.md` |
+| 402 + `WWW-Authenticate: Payment`, `intent="session"` (no `protocol=app/1` → MPP; or mid-session `channel_id`) | `payment session open/voucher/topup/close` | `references/session.md` |
 | paymentId / `a2a_…` link / create-or-check payment link | `payment a2a-pay create/pay/status` | `references/a2a_charge.md` |
 | A2MCP / 402 endpoint URL, "pay this endpoint", entry A/B payment node | `payment quote <url> [--param k=v ...] [--method GET \| POST \| ...]` | (inline — Path A) |
 | A2MCP **MCP-transport** endpoint (URL ends `/mcp` or `/sse`, returns `text/event-stream` / JSON-RPC, or you have a tool name) | `payment quote <url>` (discovery → `mcpTools[]`) → `payment quote <url> --tool <name> --param k=v` (trigger 402) → `payment pay --payment-id <id> --yes` | `references/a2mcp-mcp.md` |
@@ -193,14 +196,19 @@ You already have the original HTTP response. If it is **not 402**, return the bo
 ## Step A2: Detect the protocol
 
 ```
-Priority 1: response.headers['WWW-Authenticate']
-  starts with "Payment "        → continue at Step A3-WWW-Authenticate
+Priority 1: each response.headers['WWW-Authenticate'] value/challenge
+  contains the case-insensitive auth scheme "Payment"
+    auth-param protocol="app/1"   → APP/1: sign via `payment app ...`, load references/app.md
+    otherwise (MPP)               → continue at Step A3-WWW-Authenticate
 Priority 2: response.headers['PAYMENT-REQUIRED']
   base64-encoded JSON           → continue at Step A3-Accepts (v2)
 Priority 3: response body JSON has "x402Version"
                                 → continue at Step A3-Accepts (v1)
 Otherwise                       → not a supported payment protocol, stop
 ```
+
+If the Payment challenge has `protocol="app/1"`, load `references/app.md` and do
+not merge it into the accepts candidate pool.
 
 **Both indicators present** — branch on the WWW-Authenticate intent:
 

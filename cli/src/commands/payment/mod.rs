@@ -10,13 +10,17 @@ pub mod sale_report;
 pub mod session_state;
 pub mod state;
 pub mod subscription;
+pub mod subscription_operation_state;
 
 #[cfg(test)]
 mod a2mcp_tests;
 
 // Re-export the dispatcher entry-points so external call sites read
 // `crate::commands::payment::PaymentCommand` instead of `payment::dispatcher::PaymentCommand`.
-pub use dispatcher::{execute, DefaultAction, PaymentCommand, SessionCommand};
+pub use dispatcher::{
+    execute, AppCommand, AppSessionCommand, AppSubscriptionCommand, DefaultAction, PaymentCommand,
+    SessionCommand,
+};
 
 // Re-export the two-phase quote/pay MCP entry points so
 // `cli/src/mcp/mod.rs` calls `commands::payment::fetch_*` without reaching into

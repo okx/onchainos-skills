@@ -121,6 +121,17 @@ pub struct SubscriptionCacheEntry {
     pub state: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub changed_to_sub_id: Option<String>,
+    /// Which protocol owns this entry: `x402` (period scheme) or `app/1`. Keeps a
+    /// host that serves BOTH protocols from colliding on one cache slot. Defaults
+    /// to `x402` so pre-existing `subscriptions.json` (single-protocol) migrates.
+    #[serde(default = "default_protocol")]
+    pub protocol: String,
+}
+
+/// serde default for [`SubscriptionCacheEntry::protocol`] — legacy entries were
+/// all `period` (x402).
+fn default_protocol() -> String {
+    "x402".to_string()
 }
 
 // ─────────────────── buyer-direct facilitator read responses ────────────────
@@ -163,11 +174,28 @@ pub struct AllowanceStatus {
     pub permit2_contract: String,
 }
 
+/// A scheduled subscription change that has not taken effect yet.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingSubscriptionChange {
+    #[serde(default)]
+    pub new_sub_id: String,
+    #[serde(default)]
+    pub new_plan_id: String,
+    #[serde(default)]
+    pub new_plan_tier: u8,
+    #[serde(default)]
+    pub effective_at: String,
+}
+
 /// One item of `GET /buyers/{buyer}/subscriptions`. Excludes merchant-side
 /// identifiers by design.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BuyerSubscriptionItem {
+    /// AppPay business key (APP/1 §4.12; absent on the x402 buyer view).
+    #[serde(default)]
+    pub offer_id: String,
     #[serde(default, deserialize_with = "flex_u64")]
     pub chain_index: u64,
     pub sub_id: String,
@@ -208,6 +236,9 @@ pub struct BuyerSubscriptionItem {
     /// Successor subId once this subscription is changed (up/downgrade).
     #[serde(default)]
     pub changed_to_sub_id: Option<String>,
+    /// A scheduled change that has not taken effect yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_change: Option<PendingSubscriptionChange>,
     #[serde(default)]
     pub is_active: bool,
     #[serde(default)]
@@ -388,5 +419,39 @@ mod tests {
         assert_eq!(item.changed_to_sub_id.as_deref(), Some("0xnewsub"));
         assert!(!item.is_active);
         assert_eq!(item.next_chargeable_at, None);
+        assert!(serde_json::to_value(item)
+            .unwrap()
+            .get("pendingChange")
+            .is_none());
+    }
+
+    #[test]
+    fn buyer_subscription_list_preserves_pending_change() {
+        let resp: BuyerSubscriptionListResp = serde_json::from_value(json!({
+            "subscriptions": [
+                {
+                    "subId": "0xcurrent",
+                    "state": 1,
+                    "planTier": 2,
+                    "pendingChange": {
+                        "newSubId": "0xpending",
+                        "newPlanId": "0xplan",
+                        "newPlanTier": 1,
+                        "effectiveAt": "2026-12-11T08:55:17Z"
+                    }
+                }
+            ]
+        }))
+        .unwrap();
+
+        let pending = resp.subscriptions[0].pending_change.as_ref().unwrap();
+        assert_eq!(pending.new_sub_id, "0xpending");
+        assert_eq!(pending.new_plan_id, "0xplan");
+        assert_eq!(pending.new_plan_tier, 1);
+        assert_eq!(pending.effective_at, "2026-12-11T08:55:17Z");
+
+        let output = serde_json::to_value(&resp.subscriptions).unwrap();
+        assert_eq!(output[0]["pendingChange"]["newSubId"], "0xpending");
+        assert_eq!(output[0]["pendingChange"]["newPlanTier"], 1);
     }
 }

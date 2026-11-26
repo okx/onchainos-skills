@@ -14,7 +14,9 @@ use crate::wallet_store::{self, AccountMapEntry, AddressInfo, WalletsJson};
 
 /// Refresh JWTs before their actual expiry so in-flight requests do not reach
 /// the server with an expired token.
-const TOKEN_EXPIRY_MARGIN_SECS: i64 = 60;
+const ACCESS_TOKEN_EXPIRY_MARGIN_SECS: i64 = 180;
+/// Rolling refresh tokens need a larger renewal window than access tokens.
+const REFRESH_TOKEN_EXPIRY_MARGIN_SECS: i64 = 300;
 
 /// Ensure accessToken and refreshToken exist and the session is still valid.
 pub(super) fn ensure_tokens() -> Result<(String, String)> {
@@ -195,7 +197,7 @@ pub(crate) async fn ensure_tokens_refreshed() -> Result<String> {
                 diff,
                 diff as f64 / 3600.0,
                 now_ts >= exp_ts,
-                is_expiring_timestamp(exp_ts, now_ts)
+                is_expiring_timestamp(exp_ts, now_ts, REFRESH_TOKEN_EXPIRY_MARGIN_SECS)
             );
         }
     }
@@ -289,25 +291,22 @@ fn is_token_expired_at(token: &str, now: i64) -> bool {
 }
 
 fn should_refresh_tokens(access_token: &str, refresh_token: &str) -> bool {
-    should_refresh_tokens_at(
-        access_token,
-        refresh_token,
-        chrono::Utc::now().timestamp(),
-    )
+    should_refresh_tokens_at(access_token, refresh_token, chrono::Utc::now().timestamp())
 }
 
 fn should_refresh_tokens_at(access_token: &str, refresh_token: &str, now: i64) -> bool {
-    is_token_expiring_at(access_token, now) || is_token_expiring_at(refresh_token, now)
+    is_token_expiring_at(access_token, now, ACCESS_TOKEN_EXPIRY_MARGIN_SECS)
+        || is_token_expiring_at(refresh_token, now, REFRESH_TOKEN_EXPIRY_MARGIN_SECS)
 }
 
-fn is_token_expiring_at(token: &str, now: i64) -> bool {
+fn is_token_expiring_at(token: &str, now: i64, margin_secs: i64) -> bool {
     token_exp_timestamp(token)
-        .map(|exp| is_expiring_timestamp(exp, now))
+        .map(|exp| is_expiring_timestamp(exp, now, margin_secs))
         .unwrap_or(true)
 }
 
-fn is_expiring_timestamp(exp: i64, now: i64) -> bool {
-    now.saturating_add(TOKEN_EXPIRY_MARGIN_SECS) >= exp
+fn is_expiring_timestamp(exp: i64, now: i64, margin_secs: i64) -> bool {
+    now.saturating_add(margin_secs) >= exp
 }
 
 /// Extract `exp` claim from a JWT without signature verification.
@@ -543,7 +542,7 @@ async fn new_login_session() -> Result<(String, String, String)> {
     let (session_private_key, temp_pub_key) = crate::crypto::generate_x25519_session_keypair();
     let mut client = WalletApiClient::new()?;
     let auth_session_id = client.create_login_session().await?;
-    let login_url = build_login_url(&social_login_base_url(), &auth_session_id, &temp_pub_key);
+    let login_url = build_login_url(social_login_base_url(), &auth_session_id, &temp_pub_key);
     Ok((auth_session_id, session_private_key, login_url))
 }
 
@@ -1475,23 +1474,46 @@ mod tests {
     }
 
     #[test]
-    fn is_token_expiring_respects_refresh_margin_boundary() {
+    fn token_refresh_windows_are_inclusive_and_distinct() {
         let now = 1_700_000_000;
 
-        assert!(is_token_expiring_at(&make_jwt(now + 59), now));
-        assert!(is_token_expiring_at(&make_jwt(now + 60), now));
-        assert!(!is_token_expiring_at(&make_jwt(now + 61), now));
+        for (access_secs, refresh_secs, expected) in [
+            (181, 301, false),
+            (180, 301, true),
+            (179, 301, true),
+            (181, 300, true),
+            (181, 299, true),
+            (180, 300, true),
+            (0, 301, true),
+            (-1, 301, true),
+        ] {
+            assert_eq!(
+                should_refresh_tokens_at(
+                    &make_jwt(now + access_secs),
+                    &make_jwt(now + refresh_secs),
+                    now,
+                ),
+                expected,
+                "access remaining={access_secs}s, refresh remaining={refresh_secs}s"
+            );
+        }
     }
 
     #[test]
     fn should_refresh_when_either_token_enters_refresh_margin() {
         let now = 1_700_000_000;
         let far_future = make_jwt(now + 3600);
-        let expiring = make_jwt(now + 60);
+        let expiring = make_jwt(now + 180);
 
         assert!(should_refresh_tokens_at(&expiring, &far_future, now));
         assert!(should_refresh_tokens_at(&far_future, &expiring, now));
         assert!(!should_refresh_tokens_at(&far_future, &far_future, now));
+    }
+
+    #[test]
+    fn token_refresh_timestamp_margin_does_not_overflow() {
+        assert!(is_expiring_timestamp(i64::MAX, i64::MAX - 1, 180));
+        assert!(!is_expiring_timestamp(i64::MAX, i64::MAX - 301, 300));
     }
 
     #[test]

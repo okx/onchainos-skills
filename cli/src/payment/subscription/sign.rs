@@ -84,6 +84,12 @@ struct TermsParams {
     subscription_contract: String,
     /// `extra.contracts.permit2` — the Permit2 domain verifyingContract.
     permit2_contract: String,
+    /// `extra.salt` (bytes32) — seller-provided terms salt for APP/1.
+    /// `None` for x402 means the signer creates a random one.
+    salt: Option<String>,
+    /// `extra.termsDeadline` (epoch s) — seller-pinned for APP/1.
+    /// `None` for x402 means the signer computes `now + timeout`.
+    terms_deadline: Option<u64>,
 }
 
 fn str_field<'a>(v: &'a Value, key: &str) -> Result<&'a str> {
@@ -176,6 +182,12 @@ fn extract_terms_params(accepted: &Value) -> Result<TermsParams> {
             .unwrap_or(DEFAULT_TIMEOUT_SECS),
         subscription_contract,
         permit2_contract,
+        salt: extra
+            .get("salt")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        terms_deadline: extra.get("termsDeadline").and_then(Value::as_u64),
     })
 }
 
@@ -289,12 +301,12 @@ async fn sign_double(
     accepted: &Value,
     change_from_sub_id: &str,
     change_effective_at: u8,
+    // On-chain truth, fetched by the caller so the signing core can serve both
+    // the x402 and APP/1 allowance-status endpoints.
+    a: &AllowanceStatus,
     expected_cap: Option<&str>,
 ) -> Result<SignedSubscription> {
     let p = extract_terms_params(accepted)?;
-
-    // Read on-chain truth right before signing.
-    let a = allowance_status(payer, &p.token, chain_index).await?;
 
     // Fail closed: the seller-declared contract addresses MUST match the
     // authoritative allowance-status values before any signature, amount math,
@@ -307,7 +319,6 @@ async fn sign_double(
     // rather than the unverified seller declaration; this also eliminates
     // EIP-55 checksum-case drift between offer and authority.
     let spender = a.subscription_contract.clone();
-
     // newCommit = initialChargeAmount + (maxPeriods - initialChargePeriods) * amountPerPeriod
     let (_, amount) = commitment_cap(
         &p.initial_charge_amount,
@@ -370,7 +381,9 @@ async fn sign_double(
     let nonce = a.nonce;
     let now = now_secs();
     let sig_deadline = (now + p.timeout_secs).to_string();
-    let terms_deadline = now + p.timeout_secs;
+    // APP/1 pins this signed field in the challenge. Recomputing it after sign
+    // latency would make the facilitator reject the terms signature.
+    let terms_deadline = p.terms_deadline.unwrap_or(now + p.timeout_secs);
     let amount_str = amount.to_string();
 
     // 1) PermitSingle (Permit2 domain) — spender = subscription contract.
@@ -396,7 +409,8 @@ async fn sign_double(
         crate::payment::permit2::sign::tee_sign_eip712(chain_index, payer, &permit_td).await?;
 
     // 2) SubscriptionTerms (subscription domain) — permitHash binds the two sigs.
-    let salt = random_bytes32_hex();
+    // APP/1 pins the salt in the challenge. x402 has no seller salt.
+    let salt = p.salt.clone().unwrap_or_else(random_bytes32_hex);
     let terms_in = SubscriptionTermsInput {
         payer,
         merchant: &p.merchant,
@@ -490,6 +504,8 @@ pub(crate) async fn sign_subscribe_with_cap(
     accepted: &Value,
     expected_cap: Option<&str>,
 ) -> Result<SignedSubscription> {
+    let token = extract_terms_params(accepted)?.token;
+    let a = allowance_status(payer, &token, chain_index).await?;
     sign_double(
         chain_index,
         chain_id,
@@ -497,6 +513,30 @@ pub(crate) async fn sign_subscribe_with_cap(
         accepted,
         ZERO_BYTES32,
         0,
+        &a,
+        expected_cap,
+    )
+    .await
+}
+
+/// APP/1 subscribe: use authoritative allowance state already fetched from the
+/// APP/1 allowance-status endpoint.
+pub async fn sign_subscribe_with_allowance(
+    chain_index: &str,
+    chain_id: u64,
+    payer: &str,
+    accepted: &Value,
+    a: &AllowanceStatus,
+    expected_cap: Option<&str>,
+) -> Result<SignedSubscription> {
+    sign_double(
+        chain_index,
+        chain_id,
+        payer,
+        accepted,
+        ZERO_BYTES32,
+        0,
+        a,
         expected_cap,
     )
     .await
@@ -511,6 +551,31 @@ pub async fn sign_change(
     payer: &str,
     old_sub_id: &str,
     accepted: &Value,
+) -> Result<SignedSubscription> {
+    let token = extract_terms_params(accepted)?.token;
+    let a = allowance_status(payer, &token, chain_index).await?;
+    sign_change_with_allowance(
+        chain_index,
+        chain_id,
+        payer,
+        old_sub_id,
+        accepted,
+        &a,
+        None,
+    )
+    .await
+}
+
+/// APP/1 change: use authoritative allowance state already fetched from the
+/// APP/1 allowance-status endpoint.
+pub async fn sign_change_with_allowance(
+    chain_index: &str,
+    chain_id: u64,
+    payer: &str,
+    old_sub_id: &str,
+    accepted: &Value,
+    a: &AllowanceStatus,
+    expected_cap: Option<&str>,
 ) -> Result<SignedSubscription> {
     let change_from = accepted.get("extra").and_then(|e| e.get("changeFrom"));
     let from_sub_id = if !old_sub_id.is_empty() {
@@ -530,7 +595,8 @@ pub async fn sign_change(
         accepted,
         &from_sub_id,
         effective_at,
-        None,
+        a,
+        expected_cap,
     )
     .await
 }

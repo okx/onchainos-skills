@@ -19,6 +19,9 @@ pub struct DecodedReceipt {
     pub payer: String,
     #[serde(rename = "chainId")]
     pub chain_id: String,
+    /// APP/1 business key; empty (and omitted) for x402/MPP receipts.
+    #[serde(rename = "offerId", skip_serializing_if = "String::is_empty")]
+    pub offer_id: String,
 }
 
 /// Decode a `PAYMENT-RESPONSE` header (base64/base64url JSON) OR a raw charge
@@ -64,8 +67,11 @@ fn pick(v: &Value, keys: &[&str]) -> Option<String> {
 /// Normalize an x402 settle response / charge receipt into the stable shape.
 ///
 /// x402 `PAYMENT-RESPONSE` uses `{success, transaction, network, payer}`; the
-/// charge receipt uses `{status, txHash, amount, from, chainId}`. We accept the
-/// union of aliases so either source decodes to the same fields.
+/// charge receipt uses `{status, txHash, amount, from, chainId}`; an APP/1
+/// `Payment-Receipt` uses `{success, status, protocol, intent, offerId, payer,
+/// reference, settledAmount}`. We accept the union of aliases so any source
+/// decodes to the same fields (`reference` → transaction, `settledAmount` →
+/// amount, `offerId` surfaced separately).
 fn normalize(v: &Value) -> DecodedReceipt {
     // status: explicit string wins; else derive from a boolean `success`.
     let status = pick(v, &["status"]).unwrap_or_else(|| match v.get("success") {
@@ -75,10 +81,12 @@ fn normalize(v: &Value) -> DecodedReceipt {
     });
     DecodedReceipt {
         status,
-        transaction: pick(v, &["transaction", "txHash", "transactionHash"]).unwrap_or_default(),
-        amount: pick(v, &["amount", "value"]).unwrap_or_default(),
+        transaction: pick(v, &["transaction", "txHash", "transactionHash", "reference"])
+            .unwrap_or_default(),
+        amount: pick(v, &["amount", "value", "settledAmount"]).unwrap_or_default(),
         payer: pick(v, &["payer", "from"]).unwrap_or_default(),
         chain_id: pick(v, &["chainId", "network", "chain_id"]).unwrap_or_default(),
+        offer_id: pick(v, &["offerId"]).unwrap_or_default(),
     }
 }
 
@@ -102,6 +110,7 @@ mod tests {
                 amount: "".into(),
                 payer: "0xpayer".into(),
                 chain_id: "8453".into(),
+                offer_id: "".into(),
             }
         );
     }
@@ -118,8 +127,21 @@ mod tests {
                 amount: "10000".into(),
                 payer: "0xfrom".into(),
                 chain_id: "196".into(),
+                offer_id: "".into(),
             }
         );
+    }
+
+    #[test]
+    fn decodes_app1_receipt_reference_settled_amount_offer_id() {
+        // APP/1 Payment-Receipt: reference=txHash, settledAmount=amount, offerId key.
+        let receipt = r#"{"success":true,"status":"success","protocol":"app/1","intent":"charge","offerId":"550e8400","payer":"0xbuyer","reference":"0xtxapp","settledAmount":"1000000"}"#;
+        let got = decode_receipt(None, Some(receipt)).unwrap();
+        assert_eq!(got.status, "success");
+        assert_eq!(got.transaction, "0xtxapp");
+        assert_eq!(got.amount, "1000000");
+        assert_eq!(got.payer, "0xbuyer");
+        assert_eq!(got.offer_id, "550e8400");
     }
 
     #[test]

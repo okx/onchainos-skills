@@ -276,6 +276,11 @@ const REDACT_FULL: &[&str] = &[
     // business params can carry sensitive challenge / order data — never log them.
     "--payload",
     "--param",
+    // Payment protocol inputs can contain merchant requests, callback data,
+    // and signed receipt details. Keep them out of the audit log.
+    "--challenge",
+    "--receipt",
+    "--header",
     // Free-form request bodies can contain user or challenge data across
     // payment transports; keep the generic redaction after removing the old
     // task-based A2MCP command.
@@ -309,6 +314,9 @@ const REDACT_ADDR: &[&str] = &[
     // MPP hash-mode broadcast tx identifier — mask prefix+suffix in the audit log.
     "--tx-hash",
 ];
+
+/// URL flags keep the resource location but drop query and fragment data.
+const REDACT_URL: &[&str] = &["--url"];
 
 /// Subcommand sequences whose next positional argument is sensitive.
 /// e.g. `onchainos wallet verify <OTP>` — the OTP is a positional arg, not a flag.
@@ -401,6 +409,7 @@ fn find_subcommand_sequence_last_idx(args: &[String], pattern: &[&str]) -> Optio
 enum RedactKind {
     Full,
     Addr,
+    Url,
 }
 
 fn classify_flag(flag: &str) -> Option<RedactKind> {
@@ -410,6 +419,9 @@ fn classify_flag(flag: &str) -> Option<RedactKind> {
     if REDACT_ADDR.iter().any(|f| f.eq_ignore_ascii_case(flag)) {
         return Some(RedactKind::Addr);
     }
+    if REDACT_URL.iter().any(|f| f.eq_ignore_ascii_case(flag)) {
+        return Some(RedactKind::Url);
+    }
     None
 }
 
@@ -417,7 +429,22 @@ fn apply_redact(value: &str, kind: RedactKind) -> String {
     match kind {
         RedactKind::Full => "[REDACTED]".to_string(),
         RedactKind::Addr => mask_addr(value),
+        RedactKind::Url => strip_url_private_parts(value),
     }
+}
+
+/// Keep the URL through its path. User info, query parameters, and fragments
+/// may contain credentials or merchant data and are omitted from audit output.
+fn strip_url_private_parts(value: &str) -> String {
+    let Ok(mut parsed) = url::Url::parse(value) else {
+        return "[REDACTED]".to_string();
+    };
+    if parsed.set_password(None).is_err() || parsed.set_username("").is_err() {
+        return "[REDACTED]".to_string();
+    }
+    parsed.set_query(None);
+    parsed.set_fragment(None);
+    parsed.to_string()
 }
 
 /// Keep first 6 and last 4 characters, mask the rest with "***".
@@ -812,7 +839,9 @@ fn security_sub(c: &SecurityCommand) -> &'static str {
 }
 
 fn payment_sub(c: &PaymentCommand) -> String {
-    use crate::commands::payment::{DefaultAction, SessionCommand};
+    use crate::commands::payment::{
+        AppCommand, AppSessionCommand, AppSubscriptionCommand, DefaultAction, SessionCommand,
+    };
     match c {
         PaymentCommand::X402Pay { .. } => "pay".to_string(),
         PaymentCommand::Validate { .. } => "validate".to_string(),
@@ -835,6 +864,31 @@ fn payment_sub(c: &PaymentCommand) -> String {
         PaymentCommand::Subscription { command } => {
             format!("subscription {}", subscription_sub(command))
         }
+        PaymentCommand::App { command } => match command {
+            AppCommand::Charge { .. } => "app charge".to_string(),
+            AppCommand::Upto { .. } => "app upto".to_string(),
+            AppCommand::Session { command } => match command {
+                AppSessionCommand::Open { .. } => "app session open".to_string(),
+                AppSessionCommand::Voucher { .. } => "app session voucher".to_string(),
+                AppSessionCommand::Topup { .. } => "app session topup".to_string(),
+                AppSessionCommand::Close { .. } => "app session close".to_string(),
+                AppSessionCommand::Resolve { .. } => "app session resolve".to_string(),
+            },
+            AppCommand::Subscription { command } => match command {
+                AppSubscriptionCommand::Subscribe { .. } => "app subscription subscribe".to_string(),
+                AppSubscriptionCommand::Change { .. } => "app subscription change".to_string(),
+                AppSubscriptionCommand::Access { .. } => "app subscription access".to_string(),
+                AppSubscriptionCommand::Cancel { .. } => "app subscription cancel".to_string(),
+                AppSubscriptionCommand::CancelPending { .. } => {
+                    "app subscription cancel-pending".to_string()
+                }
+                AppSubscriptionCommand::Resolve { .. } => "app subscription resolve".to_string(),
+                AppSubscriptionCommand::List { .. } => "app subscription list".to_string(),
+                AppSubscriptionCommand::AllowanceStatus { .. } => {
+                    "app subscription allowance-status".to_string()
+                }
+            },
+        },
     }
 }
 
@@ -1216,6 +1270,106 @@ mod tests {
         let out = redact_args(&args);
         assert_eq!(out[4], "--param");
         assert_eq!(out[5], "[REDACTED]");
+    }
+
+    #[test]
+    fn redact_payment_protocol_inputs_two_arg_form() {
+        for flag in ["--challenge", "--receipt", "--header"] {
+            let args = vec_s(&[
+                "onchainos",
+                "payment",
+                "app",
+                "command",
+                flag,
+                "private-value",
+            ]);
+            let out = redact_args(&args);
+            assert_eq!(out[4], flag);
+            assert_eq!(out[5], "[REDACTED]");
+            assert!(!out.iter().any(|arg| arg.contains("private-value")));
+        }
+    }
+
+    #[test]
+    fn redact_payment_protocol_inputs_equals_form() {
+        for flag in ["--challenge", "--receipt", "--header"] {
+            let arg = format!("{flag}=private-value");
+            let args = vec![
+                "onchainos".to_string(),
+                "payment".to_string(),
+                "app".to_string(),
+                "command".to_string(),
+                arg,
+            ];
+            let out = redact_args(&args);
+            assert_eq!(out[4], format!("{flag}=[REDACTED]"));
+            assert!(!out.iter().any(|value| value.contains("private-value")));
+        }
+    }
+
+    #[test]
+    fn redact_url_private_parts_in_both_forms() {
+        let args = vec_s(&[
+            "onchainos",
+            "payment",
+            "app",
+            "subscription",
+            "access",
+            "--url",
+            "https://merchant.example/resource/path?order=private#callback",
+        ]);
+        let out = redact_args(&args);
+        assert_eq!(out[6], "https://merchant.example/resource/path");
+
+        let args = vec_s(&[
+            "onchainos",
+            "payment",
+            "app",
+            "subscription",
+            "access",
+            "--url=https://merchant.example/resource/path?order=private#callback",
+        ]);
+        let out = redact_args(&args);
+        assert_eq!(out[5], "--url=https://merchant.example/resource/path");
+        assert!(!out.iter().any(|arg| arg.contains("private")));
+        assert!(!out.iter().any(|arg| arg.contains("callback")));
+    }
+
+    #[test]
+    fn redact_url_fragment_and_user_info() {
+        let args = vec_s(&[
+            "onchainos",
+            "payment",
+            "app",
+            "subscription",
+            "access",
+            "--url",
+            "https://user:password@merchant.example/resource/path#private-fragment",
+        ]);
+        let out = redact_args(&args);
+        assert_eq!(out[6], "https://merchant.example/resource/path");
+        assert!(!out.iter().any(|arg| arg.contains("user")));
+        assert!(!out.iter().any(|arg| arg.contains("password")));
+        assert!(!out.iter().any(|arg| arg.contains("private-fragment")));
+
+        let args = vec_s(&[
+            "onchainos",
+            "payment",
+            "app",
+            "subscription",
+            "access",
+            "--url=https://merchant.example/resource/path#private-fragment",
+        ]);
+        let out = redact_args(&args);
+        assert_eq!(out[5], "--url=https://merchant.example/resource/path");
+        assert!(!out.iter().any(|arg| arg.contains("private-fragment")));
+    }
+
+    #[test]
+    fn redact_unparseable_url() {
+        let args = vec_s(&["onchainos", "command", "--url", "not a safe URL"]);
+        let out = redact_args(&args);
+        assert_eq!(out[3], "[REDACTED]");
     }
 
     #[test]

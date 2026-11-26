@@ -114,14 +114,38 @@ fn read_system_machine_id() -> String {
 }
 
 pub(crate) fn hostname() -> String {
+    read_hostname().unwrap_or_else(|| "unknown-host".to_string())
+}
+
+/// Read a normalized hostname without conflating failure with a real `unknown-host`.
+pub(crate) fn read_hostname() -> Option<String> {
+    #[cfg(test)]
+    if let Some(value) = crate::test_helpers::request_headers::hostname_override() {
+        return value;
+    }
+
     // Read hostname directly from /proc (Linux) or via gethostname (other Unix).
     // Avoids spawning a child process and PATH hijacking risk.
-    if let Ok(h) = fs::read_to_string("/proc/sys/kernel/hostname") {
-        let trimmed = h.trim().to_string();
-        if !trimmed.is_empty() {
-            return trimmed;
-        }
+    read_hostname_with(
+        || fs::read_to_string("/proc/sys/kernel/hostname").ok(),
+        system_hostname,
+    )
+}
+
+fn read_hostname_with(
+    primary: impl FnOnce() -> Option<String>,
+    fallback: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    fn nonempty(value: String) -> Option<String> {
+        let value = value.trim();
+        (!value.is_empty()).then(|| value.to_string())
     }
+    primary()
+        .and_then(nonempty)
+        .or_else(|| fallback().and_then(nonempty))
+}
+
+fn system_hostname() -> Option<String> {
     // Fallback: gethostname syscall via libc
     #[cfg(unix)]
     {
@@ -132,14 +156,11 @@ pub(crate) fn hostname() -> String {
         if ret == 0 {
             let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
             if let Ok(s) = std::str::from_utf8(&buf[..len]) {
-                let trimmed = s.trim();
-                if !trimmed.is_empty() {
-                    return trimmed.to_string();
-                }
+                return Some(s.to_string());
             }
         }
     }
-    "unknown-host".to_string()
+    None
 }
 
 /// Derive a 32-byte AES-256 key from identity and salt via scrypt.
@@ -322,6 +343,55 @@ fn keyring_path() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hostname_readers_normalize_and_stop_after_primary_success() {
+        for name in [
+            "grok-bot",
+            "grok-bot-vm-352510608",
+            "unknown-host",
+            "my-laptop",
+        ] {
+            let result = read_hostname_with(
+                || Some(format!(" \t{name}\n")),
+                || panic!("fallback must not run after primary success"),
+            );
+            assert_eq!(result.as_deref(), Some(name));
+        }
+    }
+
+    #[test]
+    fn hostname_readers_try_fallback_on_error_empty_or_whitespace() {
+        for primary in [None, Some(""), Some(" \t\n")] {
+            for name in ["grok-bot-vm-352510608", "my-laptop", "unknown-host"] {
+                let result = read_hostname_with(
+                    || primary.map(str::to_owned),
+                    || Some(format!(" \t{name}\n")),
+                );
+                assert_eq!(result.as_deref(), Some(name));
+            }
+            for fallback in [None, Some(""), Some(" \t\n")] {
+                assert_eq!(
+                    read_hostname_with(
+                        || primary.map(str::to_owned),
+                        || fallback.map(str::to_owned),
+                    ),
+                    None
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn hostname_legacy_fallback_preserves_identity_input() {
+        use crate::test_helpers::request_headers::with_hostname;
+        for value in [None, Some("unknown-host"), Some("grok-bot-vm-1")] {
+            with_hostname(value, || {
+                assert_eq!(read_hostname().as_deref(), value);
+                assert_eq!(hostname(), value.unwrap_or("unknown-host"));
+            });
+        }
+    }
 
     #[test]
     fn machine_identity_returns_non_empty() {
